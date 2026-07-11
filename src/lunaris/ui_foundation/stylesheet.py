@@ -255,7 +255,8 @@ def build_app_stylesheet(
            settings worth seeing at all times (gravity model, output path). They
            replace the separate status ribbon: an elevated pill on the shell so
            they read as chips, not buttons, and carry a leading icon + value. */
-        QPushButton#headerContextChip {{
+        QPushButton#headerContextChip,
+        QLabel#headerContextChip {{
             background: {theme['bg_card_alt']};
             border: 1px solid {theme['border_soft']};
             border-radius: {DESIGN_TOKENS.radii.pill}px;
@@ -264,6 +265,14 @@ def build_app_stylesheet(
             padding: 4px 12px;
             min-height: {metrics.status_badge_height}px;
             text-align: left;
+        }}
+        /* Informational chips (frame, resolved backend) are QLabels: no hover
+           affordance. A backend that fell back from the requested one is
+           flagged in the warning color; the "(requested ...)" text carries the
+           meaning, color only reinforces it. */
+        QLabel#headerContextChip[kind="warning"] {{
+            color: {theme['warning']};
+            border-color: {theme['warning']};
         }}
         QPushButton#headerContextChip:hover {{
             border-color: {acc_hover_border};
@@ -301,6 +310,62 @@ def build_app_stylesheet(
             color: {theme['fg_muted']};
             font-size: {type_tokens.size_caption_pt:g}pt;
         }}
+        /* Hint variants: state-colored inline guidance (validation warnings,
+           applied-manifest confirmations). Text always carries the meaning;
+           color only reinforces it. */
+        QLabel#fieldHint[kind="warning"] {{
+            color: {theme['warning']};
+        }}
+        QLabel#fieldHint[kind="success"] {{
+            color: {theme['success']};
+        }}
+        QLabel#fieldHint[kind="info"] {{
+            color: {theme['info']};
+        }}
+        QLabel#fieldHint[kind="soft"] {{
+            color: {theme['fg_soft']};
+        }}
+        QLabel#fieldHint[kind="accent"] {{
+            color: {theme['accent']};
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        /* Soft inset note: multi-line guidance rendered on a recessed pill
+           (readiness checklists, generation summaries). */
+        QLabel#insetHint {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            background: {with_alpha(theme['bg_inset'], 0.70)};
+            border-radius: 6px;
+            padding: 4px 8px;
+        }}
+        /* Small in-card group heading with the accent tint (used by the
+           studio's queue/architecture separators). */
+        QLabel#accentGroupLabel {{
+            color: {theme['accent_hov']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+            padding: 4px 0;
+        }}
+        /* Always-visible run control bar (studio training pages): elevated
+           card tint with a faint accent outline so the run controls read as
+           one unit above the log. */
+        QFrame#trainRunBar {{
+            background: {with_alpha(theme['bg_card'], 0.88)};
+            border: 1px solid {with_alpha(theme['accent'], 0.22)};
+            border-radius: 10px;
+        }}
+        /* Same heading rendered as a tinted separator bar with an accent
+           left edge (in-form group divider). */
+        QLabel#accentGroupBar {{
+            color: {theme['accent_hov']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+            padding: 4px 10px;
+            margin-top: 4px;
+            background: {with_alpha(theme['accent'], 0.08)};
+            border-left: 2px solid {with_alpha(theme['accent'], 0.40)};
+            border-radius: 0 6px 6px 0;
+        }}
         QLabel#panelTitle {{
             color: {theme['fg_main']};
             font-size: {type_tokens.size_subsection_pt:g}pt;
@@ -314,6 +379,11 @@ def build_app_stylesheet(
         }}
         QLabel#fieldLabel, QLabel#keyLabel, QLabel#metricLabel {{
             color: {theme['fg_muted']};
+        }}
+        /* Derived (display-only) form values: the label echoes the field's
+           ghost styling so read-only state is announced at the label too. */
+        QLabel#fieldLabel[derived="true"] {{
+            font-style: italic;
         }}
         QLabel#fieldUnit {{
             color: {theme['fg_muted']};
@@ -339,6 +409,445 @@ def build_app_stylesheet(
             color: {theme['fg_soft']};
             font-size: 9pt;
             font-weight: 600;
+        }}
+
+        /* STUDIO RUN DASHBOARD — translucent monitor cards, slim progress
+           bars, run-state pill and pipeline chips (benchmark/monitor pages).
+           Text always carries the state; color only reinforces it. */
+        QFrame#dashCard {{
+            background: {with_alpha(theme['bg_card'], 0.72)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.90)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QLabel#dashCaption {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QLabel#dashValue {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_body_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QProgressBar#slimBar {{
+            background: {with_alpha(theme['bg_log'], 0.85)};
+            border: 1px solid {with_alpha(theme['border_strong'], 0.18)};
+            border-radius: 5px;
+        }}
+        QProgressBar#slimBar::chunk {{
+            border-radius: 5px;
+            background: {theme['accent']};
+        }}
+        QProgressBar#slimBar[kind="success"]::chunk {{
+            background: {theme['success']};
+        }}
+        QLabel#dashBadge {{
+            color: {theme['fg_soft']};
+            background: {with_alpha(theme['fg_soft'], 0.12)};
+            border-radius: 9px;
+            padding: 3px 12px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#dashBadge[kind="running"] {{
+            color: {theme['warning']};
+            background: {with_alpha(theme['warning'], 0.16)};
+        }}
+        QLabel#dashBadge[kind="completed"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.16)};
+        }}
+        QLabel#dashBadge[kind="failed"] {{
+            color: {theme['error']};
+            background: {with_alpha(theme['error'], 0.18)};
+        }}
+        /* Pipeline chip: the frame tint and the status-label color move
+           together through the same "kind" property. */
+        QFrame#pipelineChip {{
+            background: {with_alpha(theme['fg_soft'], 0.10)};
+            border: 1px solid {with_alpha(theme['fg_soft'], 0.30)};
+            border-radius: 8px;
+        }}
+        QFrame#pipelineChip QLabel {{
+            background: transparent;
+            border: none;
+        }}
+        QLabel#pipelineChipName {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#pipelineChipStatus {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QFrame#pipelineChip[kind="pending"] {{
+            background: {with_alpha(theme['fg_muted'], 0.10)};
+            border-color: {with_alpha(theme['fg_muted'], 0.28)};
+        }}
+        QLabel#pipelineChipStatus[kind="pending"] {{
+            color: {theme['fg_muted']};
+        }}
+        QFrame#pipelineChip[kind="running"] {{
+            background: {with_alpha(theme['warning'], 0.16)};
+            border-color: {with_alpha(theme['warning'], 0.60)};
+        }}
+        QLabel#pipelineChipStatus[kind="running"] {{
+            color: {theme['warning']};
+        }}
+        QFrame#pipelineChip[kind="completed"] {{
+            background: {with_alpha(theme['success'], 0.16)};
+            border-color: {with_alpha(theme['success'], 0.55)};
+        }}
+        QLabel#pipelineChipStatus[kind="completed"] {{
+            color: {theme['success']};
+        }}
+        QFrame#pipelineChip[kind="cached"] {{
+            background: {with_alpha(theme['success'], 0.10)};
+            border-color: {with_alpha(theme['success'], 0.42)};
+        }}
+        QLabel#pipelineChipStatus[kind="cached"] {{
+            color: {theme['success']};
+        }}
+        QFrame#pipelineChip[kind="failed"] {{
+            background: {with_alpha(theme['error'], 0.18)};
+            border-color: {with_alpha(theme['error'], 0.60)};
+        }}
+        QLabel#pipelineChipStatus[kind="failed"] {{
+            color: {theme['error']};
+        }}
+        QFrame#pipelineChip[kind="skipped"] {{
+            background: {with_alpha(theme['fg_muted'], 0.06)};
+            border-color: {with_alpha(theme['fg_muted'], 0.20)};
+        }}
+        QLabel#pipelineChipStatus[kind="skipped"] {{
+            color: {theme['fg_muted']};
+        }}
+        /* Color-coded plain-language run summary banner. */
+        QLabel#resultBanner {{
+            color: {theme['fg_soft']};
+            background: {with_alpha(theme['fg_soft'], 0.12)};
+            border: 1px solid {with_alpha(theme['fg_soft'], 0.30)};
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QLabel#resultBanner[kind="success"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.14)};
+            border-color: {with_alpha(theme['success'], 0.45)};
+        }}
+        QLabel#resultBanner[kind="warning"] {{
+            color: {theme['warning']};
+            background: {with_alpha(theme['warning'], 0.14)};
+            border-color: {with_alpha(theme['warning'], 0.45)};
+        }}
+        QLabel#resultBanner[kind="error"] {{
+            color: {theme['error']};
+            background: {with_alpha(theme['error'], 0.16)};
+            border-color: {with_alpha(theme['error'], 0.50)};
+        }}
+
+        /* STUDIO SHARED WIDGETS — path validation, collapsible sections,
+           live-loss monitor card, plot cells and gallery placeholders. */
+        QLabel#fieldHint[kind="disabled"] {{
+            color: {theme['fg_disabled']};
+        }}
+        QLineEdit[pathState="valid"] {{
+            border: 1px solid {with_alpha(theme['success'], 0.70)};
+        }}
+        QLineEdit[pathState="invalid"] {{
+            border: 1px solid {with_alpha(theme['error'], 0.75)};
+            background-color: {with_alpha(theme['error'], 0.08)};
+        }}
+        QPushButton#collapsibleToggle {{
+            text-align: left;
+            padding: 8px 14px;
+            font-weight: {type_tokens.weight_semibold};
+            color: {theme['accent']};
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: {with_alpha(theme['accent'], 0.04)};
+        }}
+        QPushButton#collapsibleToggle:hover {{
+            color: {theme['fg_main']};
+            background: {with_alpha(theme['accent'], 0.08)};
+            border-color: {with_alpha(theme['accent'], 0.18)};
+        }}
+        QPushButton#collapsibleToggle:checked {{
+            color: {theme['fg_main']};
+            background: {with_alpha(theme['accent'], 0.10)};
+            border-color: {with_alpha(theme['accent'], 0.22)};
+        }}
+        /* Dataset introspection results: accent-edged inline info pill. */
+        QLabel#datasetInfo {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            padding: 3px 10px;
+            background: {with_alpha(theme['accent'], 0.06)};
+            border-left: 2px solid {with_alpha(theme['accent'], 0.35)};
+            border-radius: 0 6px 6px 0;
+        }}
+        QFrame#liveLossCard {{
+            background-color: {with_alpha(theme['bg_card'], 0.96)};
+            border: 1px solid {theme['border']};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QLabel#lossSubtitle {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        QPushButton[plotControl="true"] {{
+            background: {with_alpha(theme['bg_shell'], 0.5)};
+            border: 1px solid {theme['border']};
+            border-radius: 4px;
+            color: {theme['fg_main']};
+            padding: 4px 8px;
+        }}
+        QPushButton[plotControl="true"]:hover {{
+            background: {theme['border']};
+        }}
+        QFrame#plotCell {{
+            background: transparent;
+            border: none;
+        }}
+        QLabel#plotCellTitle {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+            padding-left: 4px;
+        }}
+        /* Missing-dependency / empty-content panes. */
+        QLabel#placeholderPane {{
+            color: {theme['fg_muted']};
+            background-color: {with_alpha(theme['bg_shell'], 0.72)};
+            border: 1px solid {with_alpha(theme['border'], 0.12)};
+            border-radius: 14px;
+            padding: 24px;
+            font-style: italic;
+        }}
+        QLabel#galleryPlaceholder {{
+            color: {theme['fg_muted']};
+            padding: 36px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            background: {with_alpha(theme['bg_log'], 0.45)};
+            border: 1px dashed {with_alpha(theme['border_strong'], 0.16)};
+            border-radius: {DESIGN_TOKENS.radii.shell}px;
+        }}
+        /* Result-plot gallery: many narrow tabs with scroll buttons. */
+        QTabWidget#galleryTabs QTabBar::tab {{
+            padding: 5px 10px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            max-width: 160px;
+        }}
+        QTabWidget#galleryTabs QTabBar::scroller {{
+            width: 22px;
+        }}
+        QCheckBox#captionCheck {{
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            color: {theme['fg_muted']};
+        }}
+        QFrame#hairline {{
+            background: {with_alpha(theme['border_strong'], 0.10)};
+            border: none;
+            margin: 2px 0;
+        }}
+        /* Action-first workspace card (studio Data pages). */
+        QFrame#dataActionCard {{
+            background: {with_alpha(theme['bg_card'], 0.84)};
+            border: 1px solid {with_alpha(theme['accent'], 0.18)};
+            border-radius: 14px;
+        }}
+        /* Selected-path readout: selectable, recessed pill. */
+        QLabel#pathPill {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            padding: 8px 10px;
+            background: {with_alpha(theme['bg_shell'], 0.55)};
+            border: 1px solid {with_alpha(theme['border'], 0.12)};
+            border-radius: 9px;
+        }}
+        /* Rich-text metadata summary pane. */
+        QLabel#metaSummary {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            padding: 12px;
+            background: {with_alpha(theme['bg_card'], 0.72)};
+            border: 1px solid {with_alpha(theme['border'], 0.12)};
+            border-radius: 10px;
+        }}
+        /* Studio workspace widgets: semantic status badge, inline notice,
+           workflow strip and readiness panel. The label text always names
+           the state; the kind property only recolors it. */
+        QLabel#studioStatusBadge {{
+            color: {theme['info']};
+            background: {with_alpha(theme['info'], 0.10)};
+            border: 1px solid {with_alpha(theme['info'], 0.35)};
+            border-radius: {DESIGN_TOKENS.radii.control}px;
+            padding: 3px 10px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#studioStatusBadge[kind="success"],
+        QLabel#studioStatusBadge[kind="done"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.10)};
+            border-color: {with_alpha(theme['success'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="warning"] {{
+            color: {theme['warning']};
+            background: {with_alpha(theme['warning'], 0.10)};
+            border-color: {with_alpha(theme['warning'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="error"],
+        QLabel#studioStatusBadge[kind="blocked"] {{
+            color: {theme['error']};
+            background: {with_alpha(theme['error'], 0.10)};
+            border-color: {with_alpha(theme['error'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="active"] {{
+            color: {theme['accent']};
+            background: {with_alpha(theme['accent'], 0.10)};
+            border-color: {with_alpha(theme['accent'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="pending"] {{
+            color: {theme['fg_muted']};
+            background: {with_alpha(theme['fg_muted'], 0.10)};
+            border-color: {with_alpha(theme['fg_muted'], 0.35)};
+        }}
+        QFrame#studioNotice {{
+            background: {with_alpha(theme['bg_card'], 0.78)};
+            border: 1px solid {with_alpha(theme['info'], 0.30)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QFrame#studioNotice[kind="success"] {{
+            border-color: {with_alpha(theme['success'], 0.30)};
+        }}
+        QFrame#studioNotice[kind="warning"] {{
+            border-color: {with_alpha(theme['warning'], 0.30)};
+        }}
+        QFrame#studioNotice[kind="error"],
+        QFrame#studioNotice[kind="blocked"] {{
+            border-color: {with_alpha(theme['error'], 0.30)};
+        }}
+        QLabel#studioNoticeTitle {{
+            color: {theme['info']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#studioNoticeTitle[kind="success"] {{
+            color: {theme['success']};
+        }}
+        QLabel#studioNoticeTitle[kind="warning"] {{
+            color: {theme['warning']};
+        }}
+        QLabel#studioNoticeTitle[kind="error"],
+        QLabel#studioNoticeTitle[kind="blocked"] {{
+            color: {theme['error']};
+        }}
+        QLabel#studioNoticeBody {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        QFrame#studioWorkflowOverview {{
+            background: {with_alpha(theme['bg_card'], 0.74)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.80)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QFrame#studioWorkflowCell {{
+            background: {with_alpha(theme['bg_inset'], 0.40)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.55)};
+            border-radius: {DESIGN_TOKENS.radii.control}px;
+        }}
+        QLabel#workflowStepNumber {{
+            color: {theme['fg_muted']};
+            background: {with_alpha(theme['fg_muted'], 0.12)};
+            border: 1px solid {with_alpha(theme['fg_muted'], 0.35)};
+            border-radius: {DESIGN_TOKENS.radii.compact}px;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#workflowStepNumber[kind="active"] {{
+            color: {theme['accent']};
+            background: {with_alpha(theme['accent'], 0.12)};
+            border-color: {with_alpha(theme['accent'], 0.35)};
+        }}
+        QLabel#workflowStepNumber[kind="done"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.12)};
+            border-color: {with_alpha(theme['success'], 0.35)};
+        }}
+        QLabel#workflowStepTitle {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#workflowStepTitle[reached="true"] {{
+            color: {theme['fg_main']};
+        }}
+        QLabel#workflowStepDetail {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        QFrame#studioReadinessPanel {{
+            background: {with_alpha(theme['bg_card'], 0.82)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.90)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QLabel#readinessTitle {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#readinessBody {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        /* Structured-log tables (studio training dashboard). */
+        QTableView#logTable {{
+            background-color: {theme['bg_shell']};
+            alternate-background-color: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            gridline-color: transparent;
+        }}
+        QTableView#logTable::item {{
+            padding: 4px 8px;
+        }}
+        QTableView#logTable::item:selected {{
+            background-color: {with_alpha(theme['accent'], 0.22)};
+        }}
+        QTableView#logTable QHeaderView::section {{
+            background-color: {theme['bg_card']};
+            color: {theme['fg_muted']};
+            border: none;
+            border-bottom: 1px solid {theme['border_soft']};
+            padding: 6px 8px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+            letter-spacing: 0.5px;
+        }}
+        /* Checkable severity counters ("3 Warnings" / "1 Errors"). */
+        QPushButton#severityFilter {{
+            background-color: transparent;
+            border: 1px solid transparent;
+            padding: 2px 8px;
+            border-radius: 10px;
+            color: {theme['warning']};
+        }}
+        QPushButton#severityFilter:checked {{
+            background-color: {with_alpha(theme['warning'], 0.20)};
+            border: 1px solid {theme['warning']};
+        }}
+        QPushButton#severityFilter[kind="error"] {{
+            color: {theme['error']};
+        }}
+        QPushButton#severityFilter[kind="error"]:checked {{
+            background-color: {with_alpha(theme['error'], 0.20)};
+            border-color: {theme['error']};
         }}
 
         /* NAVIGATION — flat shell; active = left border + tinted background */
@@ -461,10 +970,17 @@ def build_app_stylesheet(
             background: {theme['bg_inset']};
             border: 1px dashed {theme['border']};
         }}
-        QLineEdit[ghost="true"] {{
+        /* The :read-only:enabled variant outranks the generic read-only rule
+           above (two pseudo-classes vs. one attribute) — without it ghost
+           fields keep the dashed "editable but locked" border. */
+        QLineEdit[ghost="true"],
+        QLineEdit[ghost="true"]:read-only:enabled {{
             color: {theme['fg_muted']};
             background: {theme['bg_inset']};
-            border: 1px dashed {theme['border_soft']};
+            /* Transparent (not dashed) border: a derived, display-only value
+               must not read as an editable input; the 1px box is kept so the
+               field does not shift when input modes swap. */
+            border: 1px solid transparent;
             font-style: italic;
         }}
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,

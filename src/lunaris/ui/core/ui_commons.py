@@ -228,52 +228,15 @@ if not ASSETS_DIR.exists():
 
 def load_fonts() -> QtGui.QFont:
     """
-    Load fonts from assets/fonts and return a preferred app font.
+    Load fonts (bundled assets/fonts first) and return the preferred app font.
+
+    The registration/fallback logic lives in ``lunaris.ui_foundation.fonts``
+    so both desktop apps resolve identical typography; this wrapper only
+    supplies the mission app's bundled fonts directory.
     """
-    fonts_dir = ASSETS_DIR / "fonts"
-    preferred = ["Segoe UI", "Inter", "Noto Sans", "Roboto", "DejaVu Sans", "Arial"]
+    from lunaris.ui_foundation.fonts import load_app_font
 
-    loaded_families = []
-    if fonts_dir.exists():
-        for pattern in ("*.ttf", "*.otf", "*.ttc"):
-            for font_file in fonts_dir.glob(pattern):
-                font_id = QtGui.QFontDatabase.addApplicationFont(str(font_file))
-                if font_id != -1:
-                    loaded_families.extend(QtGui.QFontDatabase.applicationFontFamilies(font_id))
-
-    if os.name == "nt":
-        windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
-        for filename in (
-            "segoeui.ttf",
-            "segoeuib.ttf",
-            "segoeuii.ttf",
-            "segoeuil.ttf",
-            "consola.ttf",
-            "consolab.ttf",
-            "consolai.ttf",
-            "arial.ttf",
-        ):
-            font_file = windows_fonts / filename
-            if font_file.exists():
-                font_id = QtGui.QFontDatabase.addApplicationFont(str(font_file))
-                if font_id != -1:
-                    loaded_families.extend(QtGui.QFontDatabase.applicationFontFamilies(font_id))
-
-    # Build a set of available families after loading
-    available = set(QtGui.QFontDatabase.families())
-
-    # 1) Choose preferred if present
-    for fam in preferred:
-        if fam in available:
-            return QtGui.QFont(fam, 10)
-
-    # 2) Otherwise choose first newly-loaded family (if any)
-    for fam in loaded_families:
-        if fam in available:
-            return QtGui.QFont(fam, 10)
-
-    # 3) Fallback
-    return QtGui.QFont("Segoe UI", 10)
+    return load_app_font(ASSETS_DIR / "fonts")
 
 
 

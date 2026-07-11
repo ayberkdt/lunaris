@@ -184,6 +184,153 @@ def test_build_command_constant_albedo_skips_albedo_root() -> None:
     assert "--albedo-root" not in command
 
 
+def test_build_command_emits_albedo_require_provider_flag() -> None:
+    class _FailClosed(_DummyAlbedoConfig):
+        require_provider = True
+
+    command = _albedo_command(_FailClosed())
+    assert command[command.index("--albedo-require-provider") + 1] == "on"
+
+    command_default = _albedo_command(_DummyAlbedoConfig())
+    assert command_default[command_default.index("--albedo-require-provider") + 1] == "off"
+
+
+class _DummyThermalConfig:
+    mode = "equilibrium_temperature"
+    temperature_k = 260.0
+    night_temperature_k = 95.0
+    emissivity = 0.9
+    surface_albedo = 0.15
+    ir_coefficient = 1.2
+    floor_flux_w_m2 = 5.0
+    facet_lat_count = 20
+    facet_lon_count = 40
+
+
+def _minimal_mission_state() -> dict:
+    return {
+        "orbit": {"mode": "circular", "alt_km": 100.0, "inc_deg": 90.0,
+                  "raan_deg": 0.0, "argp_deg": 0.0, "ta_deg": 0.0},
+        "propagation": {"timeline": {"duration": "1", "unit": "Days"},
+                        "integrator": {"method": "DOP853"}},
+    }
+
+
+def test_build_command_emits_thermal_ir_flags() -> None:
+    state = _minimal_mission_state()
+    forces = {
+        "gravity": {"enabled": True},
+        "sun": True, "earth": True, "earth_j2": False,
+        "srp": False, "albedo": False, "thermal": True,
+        "tides_k2": False, "tides_k3": False, "relativity_1pn": False,
+    }
+    command = build_command(
+        python_executable="python",
+        main_script_path=Path("main.py"),
+        orbit=state["orbit"],
+        forces=forces,
+        propagation=state["propagation"],
+        output=OutputPageState(output_dir=r"C:\results", generate_3d_plots=False),
+        data_files=DataFilesState(),
+        gravity_cfg=_DummyGravityConfig(),
+        solver_cfg=_DummySolverConfig(),
+        spacecraft_cfg=_DummySpacecraftConfig(),
+        thermal_cfg=_DummyThermalConfig(),
+    )
+
+    def _val(flag: str) -> str:
+        return command[command.index(flag) + 1]
+
+    assert _val("--enable-thermal") == "on"
+    assert _val("--thermal-mode") == "equilibrium_temperature"
+    assert _val("--thermal-temperature-k") == "260"
+    assert _val("--thermal-night-temperature-k") == "95"
+    assert _val("--thermal-emissivity") == "0.9"
+    assert _val("--thermal-surface-albedo") == "0.15"
+    assert _val("--thermal-ir-coefficient") == "1.2"
+    assert _val("--thermal-floor-flux-w-m2") == "5"
+    assert _val("--thermal-facet-lat-count") == "20"
+    assert _val("--thermal-facet-lon-count") == "40"
+
+
+def test_build_command_thermal_flags_absent_when_disabled() -> None:
+    state = _minimal_mission_state()
+    forces = {
+        "gravity": {"enabled": True},
+        "sun": True, "earth": True, "earth_j2": False,
+        "srp": False, "albedo": False, "thermal": False,
+        "tides_k2": False, "tides_k3": False, "relativity_1pn": False,
+    }
+    command = build_command(
+        python_executable="python",
+        main_script_path=Path("main.py"),
+        orbit=state["orbit"],
+        forces=forces,
+        propagation=state["propagation"],
+        output=OutputPageState(output_dir=r"C:\results", generate_3d_plots=False),
+        data_files=DataFilesState(),
+        gravity_cfg=_DummyGravityConfig(),
+        solver_cfg=_DummySolverConfig(),
+        spacecraft_cfg=_DummySpacecraftConfig(),
+        thermal_cfg=_DummyThermalConfig(),
+    )
+    assert command[command.index("--enable-thermal") + 1] == "off"
+    assert "--thermal-mode" not in command
+
+
+def test_build_command_emits_tide_value_flags_only_when_set() -> None:
+    state = _minimal_mission_state()
+    forces = {
+        "gravity": {"enabled": True},
+        "sun": True, "earth": True, "earth_j2": False,
+        "srp": False, "albedo": False, "thermal": False,
+        "tides_k2": True, "tides_k3": True, "relativity_1pn": False,
+        "tide_k2_value": "0.025",
+        "tide_k3_value": "0.009",
+        "tide_r_ref_m": "1737400",
+        "tide_bodies": "earth,sun",
+    }
+    command = build_command(
+        python_executable="python",
+        main_script_path=Path("main.py"),
+        orbit=state["orbit"],
+        forces=forces,
+        propagation=state["propagation"],
+        output=OutputPageState(output_dir=r"C:\results", generate_3d_plots=False),
+        data_files=DataFilesState(),
+        gravity_cfg=_DummyGravityConfig(),
+        solver_cfg=_DummySolverConfig(),
+        spacecraft_cfg=_DummySpacecraftConfig(),
+    )
+
+    def _val(flag: str) -> str:
+        return command[command.index(flag) + 1]
+
+    assert _val("--tides-kind") == "k3"
+    assert _val("--tide-k2") == "0.025"
+    assert _val("--tide-k3") == "0.009"
+    assert _val("--tide-r-ref-m") == "1.7374e+06"
+    assert _val("--tide-bodies") == "earth,sun"
+
+    # Blank values keep engine defaults: no value flags emitted.
+    forces_blank = dict(forces, tide_k2_value="", tide_k3_value="",
+                        tide_r_ref_m="", tide_bodies="")
+    command_blank = build_command(
+        python_executable="python",
+        main_script_path=Path("main.py"),
+        orbit=state["orbit"],
+        forces=forces_blank,
+        propagation=state["propagation"],
+        output=OutputPageState(output_dir=r"C:\results", generate_3d_plots=False),
+        data_files=DataFilesState(),
+        gravity_cfg=_DummyGravityConfig(),
+        solver_cfg=_DummySolverConfig(),
+        spacecraft_cfg=_DummySpacecraftConfig(),
+    )
+    for flag in ("--tide-k2", "--tide-k3", "--tide-r-ref-m", "--tide-bodies"):
+        assert flag not in command_blank
+
+
 def test_autodetect_data_state_understands_repository_folder_names(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     topo_dir = data_root / "topography_models"
@@ -330,6 +477,99 @@ def test_build_batch_command_includes_solver_and_output_controls() -> None:
     assert "--use-gpu" in command
     assert "off" in command
     assert "2027-03-02T23:32:37Z" in command
+    # Torch tuning flags carry safe defaults; UQ report is opt-in only.
+    assert command[command.index("--torch-dtype") + 1] == "float64"
+    assert command[command.index("--torch-sh-chunk-size") + 1] == "0"
+    assert "--uq-report-dir" not in command
+
+
+def test_build_batch_command_emits_torch_and_uq_flags() -> None:
+    orbit = {"mode": "circular", "alt_km": 100.0, "inc_deg": 90.0,
+             "raan_deg": 0.0, "argp_deg": 0.0, "ta_deg": 0.0}
+    forces = {
+        "gravity": {"enabled": True},
+        "sun": False, "earth": False, "earth_j2": False,
+        "srp": False, "albedo": False, "thermal": False,
+        "tides_k2": False, "tides_k3": False, "relativity_1pn": False,
+    }
+    propagation = {"timeline": {"duration": "1", "unit": "Days"},
+                   "integrator": {"method": "DOP853"}}
+    batch_data = {
+        "n_samples": 8,
+        "torch_dtype": "float32",
+        "torch_sh_chunk_size": 4096,
+        "uq_report_dir": r"C:\results\uq_report",
+    }
+
+    command = build_batch_command(
+        python_executable="python",
+        batch_runner_path=Path("batch_runner.py"),
+        orbit=orbit,
+        forces=forces,
+        propagation=propagation,
+        batch_data=batch_data,
+        data_files=DataFilesState(),
+        gravity_cfg=_DummyGravityConfig(),
+        solver_cfg=_DummySolverConfig(),
+        spacecraft_cfg=_DummySpacecraftConfig(),
+    )
+
+    assert command[command.index("--torch-dtype") + 1] == "float32"
+    assert command[command.index("--torch-sh-chunk-size") + 1] == "4096"
+    assert command[command.index("--uq-report-dir") + 1] == r"C:\results\uq_report"
+
+
+def test_batch_runner_parser_accepts_ui_batch_command() -> None:
+    """CLI-parity contract: every flag the UI emits must parse in batch_runner.
+
+    argparse exits with 'unrecognized arguments' on any flag the runner does
+    not declare, so parsing the full UI-built command guards the UI→CLI seam
+    (the tide value flags were once emitted before the runner accepted them).
+    """
+    from lunaris.cli.batch_runner import _parse_args
+
+    orbit = {"mode": "circular", "alt_km": 100.0, "inc_deg": 90.0,
+             "raan_deg": 0.0, "argp_deg": 0.0, "ta_deg": 0.0}
+    forces = {
+        "gravity": {"enabled": True},
+        "sun": False, "earth": False, "earth_j2": False,
+        "srp": False, "albedo": False, "thermal": False,
+        "tides_k2": True, "tides_k3": True, "relativity_1pn": False,
+        "tide_k2_value": "0.025",
+        "tide_k3_value": "0.009",
+        "tide_r_ref_m": "1737400",
+        "tide_bodies": "earth,sun",
+    }
+    propagation = {"timeline": {"duration": "1", "unit": "Days"},
+                   "integrator": {"method": "DOP853"}}
+    batch_data = {
+        "n_samples": 8,
+        "torch_dtype": "float32",
+        "torch_sh_chunk_size": 4096,
+        "uq_report_dir": r"C:\results\uq_report",
+    }
+
+    command = build_batch_command(
+        python_executable="python",
+        batch_runner_path=Path("batch_runner.py"),
+        orbit=orbit,
+        forces=forces,
+        propagation=propagation,
+        batch_data=batch_data,
+        data_files=DataFilesState(),
+        gravity_cfg=_DummyGravityConfig(),
+        solver_cfg=_DummySolverConfig(),
+        spacecraft_cfg=_DummySpacecraftConfig(),
+    )
+
+    args = _parse_args(command[2:])  # skip interpreter + script path
+    assert args.tide_k2 == pytest.approx(0.025)
+    assert args.tide_k3 == pytest.approx(0.009)
+    assert args.tide_r_ref_m == pytest.approx(1_737_400.0)
+    assert args.tide_bodies == ("earth", "sun")
+    assert args.torch_dtype == "float32"
+    assert args.torch_sh_chunk_size == 4096
+    assert args.uq_report_dir == r"C:\results\uq_report"
 
 
 def test_build_command_uses_surrogate_gravity_flags_when_requested() -> None:

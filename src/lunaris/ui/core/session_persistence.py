@@ -164,6 +164,7 @@ def collect_session_snapshot(
     spacecraft_cfg: Any,
     app_version: str,
     batch_page: Any | None = None,
+    thermal_cfg: Any | None = None,
 ) -> dict[str, Any]:
     """
     Collect a full UI session payload suitable for JSON persistence.
@@ -231,6 +232,9 @@ def collect_session_snapshot(
             "csv": True,
         },
         "albedo_config": dataclasses.asdict(albedo_cfg),
+        "thermal_config": (
+            dataclasses.asdict(thermal_cfg) if thermal_cfg is not None else {}
+        ),
         "data_config": {
             "ldem_root": data_state.ldem_root,
             "albedo_root": data_state.albedo_root,
@@ -263,6 +267,7 @@ def apply_session_snapshot(
     project_root: Path,
     log_warning: Callable[[str], None] | None = None,
     batch_page: Any | None = None,
+    thermal_cfg: Any | None = None,
 ) -> None:
     """
     Restore a previously saved payload back into the modular UI.
@@ -343,9 +348,26 @@ def apply_session_snapshot(
         "facet_lat_count",
         "facet_lon_count",
         "enable_eclipse",
+        "require_provider",
     ):
         if field_name in albedo_payload and hasattr(albedo_cfg, field_name):
             setattr(albedo_cfg, field_name, albedo_payload[field_name])
+
+    if thermal_cfg is not None:
+        thermal_payload = payload.get("thermal_config", {}) or {}
+        for field_name in (
+            "mode",
+            "temperature_k",
+            "night_temperature_k",
+            "emissivity",
+            "surface_albedo",
+            "ir_coefficient",
+            "floor_flux_w_m2",
+            "facet_lat_count",
+            "facet_lon_count",
+        ):
+            if field_name in thermal_payload and hasattr(thermal_cfg, field_name):
+                setattr(thermal_cfg, field_name, thermal_payload[field_name])
 
     # Migrate older sessions: the legacy dialog stored free-text model names
     # ("Lambertian", "Lommel-Seeliger") and unrelated knobs. Coerce any unknown

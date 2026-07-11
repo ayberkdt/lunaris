@@ -51,3 +51,103 @@ def test_batch_page_selectors_have_accessible_names() -> None:
         assert page.toggle_gpu.accessibleName()
     finally:
         page.shutdown()
+
+
+# --- Whole-window accessible-identity sweep -------------------------------
+
+_INTERACTIVE = (
+    "QAbstractButton",
+    "QComboBox",
+    "QAbstractSpinBox",
+    "QLineEdit",
+    "QPlainTextEdit",
+    "QTextEdit",
+    "QAbstractSlider",
+    "QAbstractItemView",
+)
+
+_SKIP_OBJECT_NAMES = {"qt_spinbox_lineedit", "qt_toolbar_ext_button"}
+
+
+def _interactive_types() -> tuple[type, ...]:
+    return tuple(getattr(QtWidgets, name) for name in _INTERACTIVE)
+
+
+def _in_composite_control(w) -> bool:
+    """True for internal children of combos/spinboxes/views (Qt names those)."""
+    parent = w.parentWidget()
+    if isinstance(
+        parent,
+        (
+            QtWidgets.QComboBox,
+            QtWidgets.QAbstractSpinBox,
+            QtWidgets.QAbstractItemView,
+            QtWidgets.QCalendarWidget,
+        ),
+    ):
+        return True
+    cur = parent
+    while cur is not None:
+        if isinstance(cur, QtWidgets.QComboBox):
+            return True
+        if cur.metaObject().className() == "QComboBoxPrivateContainer":
+            return True
+        cur = cur.parentWidget()
+    return False
+
+
+def _widget_path(w) -> str:
+    parts = []
+    cur = w
+    while cur is not None:
+        parts.append(cur.objectName() or cur.metaObject().className())
+        cur = cur.parentWidget()
+    return "/".join(reversed(parts))
+
+
+@pytest.mark.slow
+def test_main_window_focusable_widgets_have_accessible_identity(tmp_path, monkeypatch) -> None:
+    """Every focusable interactive control must expose an accessible identity.
+
+    Identity means, in Qt's own name-resolution order: an explicit
+    ``accessibleName``, the control's visible text (buttons), or a buddy
+    label. Ghost/derived fields are exempt because they carry
+    ``Qt.NoFocus`` and never enter the keyboard path.
+    """
+    monkeypatch.setenv("LUNARIS_APP_DATA_DIR", str(tmp_path / "a11y_runtime"))
+    _app()
+    from lunaris.ui.app import MainWindow
+
+    window = MainWindow()
+    try:
+        interactive = _interactive_types()
+        buddies = {
+            id(lbl.buddy()): lbl
+            for lbl in window.findChildren(QtWidgets.QLabel)
+            if lbl.buddy() is not None
+        }
+        missing: list[str] = []
+        for w in window.findChildren(QtWidgets.QWidget):
+            if not isinstance(w, interactive):
+                continue
+            if isinstance(w, QtWidgets.QScrollBar):
+                continue
+            if w.objectName() in _SKIP_OBJECT_NAMES:
+                continue
+            if w.focusPolicy() == QtCore.Qt.NoFocus:
+                continue
+            if _in_composite_control(w):
+                continue
+            if w.accessibleName().strip():
+                continue
+            if isinstance(w, QtWidgets.QAbstractButton) and w.text().strip():
+                continue
+            buddy = buddies.get(id(w))
+            if buddy is not None and buddy.text().strip():
+                continue
+            missing.append(f"{type(w).__name__}: {_widget_path(w)}")
+        assert not missing, (
+            "Focusable widgets without an accessible identity:\n" + "\n".join(missing)
+        )
+    finally:
+        window.close()

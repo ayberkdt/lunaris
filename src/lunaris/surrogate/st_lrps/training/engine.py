@@ -849,15 +849,18 @@ class STLRPSTrainer:
                     group_size = min(total_batches_est, group_start + grad_accum) - group_start
                     scaled_loss = loss / float(max(1, group_size))
 
-                    # Add collocation laplacian to loss in "train" mode
+                    # Add collocation laplacian to loss in "train" mode.
+                    # Semantics: ONE full-weight penalty per optimizer step.
+                    # The penalty is computed once per accumulation group (at
+                    # the boundary), so it enters UNSCALED — dividing it by
+                    # group_size here would silently weaken the physics
+                    # constraint by a factor of grad_accumulation_steps.
                     if (
                         col_lap_loss_val is not None
                         and self.laplacian_mode == "train"
                         and col_lap_weight > 0.0
                     ):
-                        scaled_loss = scaled_loss + (
-                            col_lap_weight * col_lap_loss_val
-                        ) / float(max(1, group_size))
+                        scaled_loss = scaled_loss + col_lap_weight * col_lap_loss_val
                         # NaN/Inf guard for collocation Laplacian contribution
                         _cl_check = float(scaled_loss.item())
                         if math.isnan(_cl_check) or math.isinf(_cl_check):

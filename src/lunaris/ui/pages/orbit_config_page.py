@@ -72,7 +72,7 @@ except ImportError as e:
 
 
 try:
-    from lunaris.ui.components.primitives import EmptyState, Section
+    from lunaris.ui.components.primitives import Section
     from lunaris.ui.core.ui_commons import (
         MU_MOON_KM3_S2,
         ORBIT_THEME,
@@ -243,11 +243,15 @@ class OrbitSchematic2D(QtWidgets.QWidget):
 
         self._draw_marker(painter, to_screen(self._point_xy(0.0)), "P", ORBIT_THEME["periapsis"])
         self._draw_marker(painter, to_screen(self._point_xy(180.0)), "A", ORBIT_THEME["apoapsis"])
+        # Spacecraft label goes below its marker: at ta=0/180 the spacecraft
+        # coincides with an apsis marker and an above-right label would
+        # overprint "P"/"A" into an illegible glyph.
         self._draw_marker(
             painter,
             to_screen(self._point_xy(self._ta_deg)),
             "SC",
             ORBIT_THEME["spacecraft"],
+            below=True,
         )
 
         self._draw_axis_glyph(painter, rect)
@@ -259,13 +263,15 @@ class OrbitSchematic2D(QtWidgets.QWidget):
         point: QtCore.QPointF,
         label: str,
         token: str,
+        below: bool = False,
     ) -> None:
         color = self._qcolor(token)
         painter.setBrush(color)
         painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["space_bg"], 0.85), 1.0))
         painter.drawEllipse(point, 4.5, 4.5)
         painter.setPen(QtGui.QPen(color, 1.0))
-        painter.drawText(point + QtCore.QPointF(8, -8), label)
+        offset = QtCore.QPointF(8, 16) if below else QtCore.QPointF(8, -8)
+        painter.drawText(point + offset, label)
 
     def _draw_axis_glyph(self, painter: QtGui.QPainter, rect: QtCore.QRect) -> None:
         origin = QtCore.QPointF(rect.left() + 34, rect.bottom() - 30)
@@ -300,7 +306,10 @@ class OrbitViz3D(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(360, 340)
+        # A hard minimum the compact (stacked) layout cannot honor makes the
+        # section layout place the metric chips *over* the scene, so keep the
+        # floor low enough for a 900px-tall window with the form above.
+        self.setMinimumSize(360, 260)
 
         # Keplerian element storage
         self._a_km = 2000.0
@@ -494,16 +503,6 @@ class OrbitViz3D(QtWidgets.QWidget):
         """Install a deterministic engineering schematic when GL cannot paint."""
         self.schematic_widget = OrbitSchematic2D()
         layout.addWidget(self.schematic_widget, 1)
-        return
-
-        """Designed empty-state shown when OpenGL is unavailable."""
-        card = EmptyState(
-            "3D preview unavailable",
-            "The orbit can still be configured normally — only the interactive "
-            "3D preview needs OpenGL, which is not available on this system.\n\n"
-            "Install support:   pip install pyqtgraph PyOpenGL",
-        )
-        layout.addWidget(card)
 
     def _add_axes(self):
         """Add muted ECI reference axes — orientation hints, not the focus.
@@ -1115,6 +1114,14 @@ class OrbitPage(QtWidgets.QWidget):
         self._params_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self._params_scroll.setWidget(self.group_params)
         self._params_scroll.setMinimumWidth(360)
+        # A scroll area's own minimum-size hint is tiny (~2 scrollbar widths),
+        # so in the stacked compact layout the splitter could crush the whole
+        # form into an unusable sliver. Guarantee roughly six visible form
+        # rows in either orientation.
+        from lunaris.ui.theme.tokens import DESIGN_TOKENS
+        self._params_scroll.setMinimumHeight(
+            DESIGN_TOKENS.controls.minimum_height * 7
+        )
 
         # Right pane: the fixed 3D preview.
         self.group_viz = self._create_viz_group()
@@ -1123,7 +1130,7 @@ class OrbitPage(QtWidgets.QWidget):
         self._split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self._split.setObjectName("orbitSplit")
         self._split.setChildrenCollapsible(False)
-        self._split.setHandleWidth(12)
+        self._split.setHandleWidth(8)
         self._split.addWidget(self._params_scroll)
         self._split.addWidget(self.group_viz)
         self._split.setStretchFactor(0, 6)
@@ -1140,12 +1147,20 @@ class OrbitPage(QtWidgets.QWidget):
         """Stack the form above the preview only when the workspace is narrow."""
         if not hasattr(self, "_split"):
             return
-        compact = self.width() < 1000
+        # 900, not 1000: at the default 1280x860 window the page content is
+        # ~980 px wide, which must stay in the two-pane layout. Below 900 the
+        # side-by-side panes drop under their comfortable minimums (360+380px
+        # plus handle/margins) and stacking wins.
+        compact = self.width() < 900
         if compact == self._compact_layout:
             return
         self._compact_layout = compact
         if compact:
             self._split.setOrientation(QtCore.Qt.Vertical)
+            # Explicit sizes: without them the splitter leaves the form pane
+            # at its (tiny) hint and the preview swallows the page.
+            total = max(self.height(), 1)
+            self._split.setSizes([int(total * 0.55), int(total * 0.45)])
         else:
             self._split.setOrientation(QtCore.Qt.Horizontal)
             total = max(self.width(), 1)
@@ -1204,6 +1219,8 @@ class OrbitPage(QtWidgets.QWidget):
         # a right margin (stretch column 3) instead of an over-wide field.
         form_layout.setColumnStretch(3, 1)
 
+        self._param_labels: dict[QtWidgets.QWidget, tuple[QtWidgets.QLabel, str]] = {}
+
         def add_param(row, label, widget, unit=""):
             lbl = QtWidgets.QLabel(label)
             lbl.setObjectName("fieldLabel")
@@ -1211,7 +1228,9 @@ class OrbitPage(QtWidgets.QWidget):
             lbl.setBuddy(widget)
             if label and not widget.accessibleName():
                 widget.setAccessibleName(label.rstrip(": ").strip())
-            widget.setMaximumWidth(360)
+            from lunaris.ui.theme.tokens import DESIGN_TOKENS
+            widget.setMaximumWidth(DESIGN_TOKENS.controls.input_width_standard)
+            self._param_labels[widget] = (lbl, label)
             form_layout.addWidget(lbl, row, 0)
             form_layout.addWidget(widget, row, 1)
             if unit:
@@ -1364,23 +1383,40 @@ class OrbitPage(QtWidgets.QWidget):
             active_fields = [self.ent_a, self.ent_e]
             ghost_fields = [self.ent_hp, self.ent_ha, self.ent_alt_circular]
 
+        param_labels = getattr(self, "_param_labels", {})
+
         # Set active fields
         for field in active_fields:
             field.setReadOnly(False)
             field.setStyleSheet("")
             field.setProperty("ghost", False)
             field.setEnabled(True)
+            field.setFocusPolicy(QtCore.Qt.StrongFocus)
             field.style().unpolish(field)
             field.style().polish(field)
+            if field in param_labels:
+                lbl, base_text = param_labels[field]
+                lbl.setText(base_text)
+                lbl.setProperty("derived", False)
+                lbl.style().unpolish(lbl)
+                lbl.style().polish(lbl)
 
-        # Set ghost fields
+        # Set ghost fields — display-only: they leave the tab order so a
+        # keyboard walk visits editable inputs only.
         for field in ghost_fields:
             field.setReadOnly(True)
             field.setStyleSheet("")
             field.setProperty("ghost", True)
             field.setEnabled(True)
+            field.setFocusPolicy(QtCore.Qt.NoFocus)
             field.style().unpolish(field)
             field.style().polish(field)
+            if field in param_labels:
+                lbl, base_text = param_labels[field]
+                lbl.setText(f"{base_text} · derived")
+                lbl.setProperty("derived", True)
+                lbl.style().unpolish(lbl)
+                lbl.style().polish(lbl)
 
         # Trigger initial ghost calculation
         self._update_ghost_orbit()

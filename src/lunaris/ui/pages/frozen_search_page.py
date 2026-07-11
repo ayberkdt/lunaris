@@ -124,6 +124,9 @@ class FrozenSearchPage(QtWidgets.QWidget):
         )
         form = FormGrid()
         self.ent_out_dir = QtWidgets.QLineEdit(str(self.project_root / "outputs" / "frozen_search" / "ui_run"))
+        # The FormGrid caption labels the row container, not the edit itself,
+        # so the edit needs its own accessible name.
+        self.ent_out_dir.setAccessibleName("Frozen search output directory")
         self.ent_out_dir.setClearButtonEnabled(True)
         browse = QtWidgets.QPushButton("Browse")
         browse.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
@@ -136,6 +139,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
         form.add_row("Output directory", out_row, hint="Resumable stage files and report JSON are written here.")
 
         self.ent_gravity_file = QtWidgets.QLineEdit("")
+        self.ent_gravity_file.setAccessibleName("Gravity coefficient file")
         self.ent_gravity_file.setClearButtonEnabled(True)
         gravity_browse = QtWidgets.QPushButton("Browse")
         gravity_browse.setIcon(get_icon("fa6s.file", THEME["fg_muted"]))
@@ -147,15 +151,17 @@ class FrozenSearchPage(QtWidgets.QWidget):
         gravity_layout.addWidget(gravity_browse)
         form.add_row("Gravity file", gravity_row, hint="Optional. Leave blank to use the default config gravity model.")
 
+        # Checkbox rows carry their own sentence label; an additional left
+        # caption would duplicate it ("Resume | Resume existing stage files").
         self.chk_resume = QtWidgets.QCheckBox("Resume existing stage files")
         self.chk_resume.setChecked(True)
-        form.add_row("Resume", self.chk_resume)
+        form.add_row("", self.chk_resume)
         self.chk_figures = QtWidgets.QCheckBox("Generate report figures")
         self.chk_figures.setChecked(True)
-        form.add_row("Figures", self.chk_figures)
+        form.add_row("", self.chk_figures)
         self.chk_verbose = QtWidgets.QCheckBox("Verbose run log")
         self.chk_verbose.setChecked(True)
-        form.add_row("Log level", self.chk_verbose)
+        form.add_row("", self.chk_verbose)
         section.content_layout.addWidget(form)
         return section
 
@@ -267,7 +273,10 @@ class FrozenSearchPage(QtWidgets.QWidget):
         self.btn_open = QtWidgets.QPushButton("  Open Output")
         self.btn_open.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
         self.btn_open.clicked.connect(self._open_output_dir)
-        btn_row.addWidget(self.btn_run, 2)
+        # Primary action on its own full-width row, secondary actions below:
+        # three labeled buttons side by side exceed the rail's minimum width
+        # and the layout clipped their text ("Run Searc…" / "Open Outp…").
+        section.content_layout.addWidget(self.btn_run)
         btn_row.addWidget(self.btn_cancel, 1)
         btn_row.addWidget(self.btn_open, 1)
         section.content_layout.addLayout(btn_row)
@@ -457,7 +466,14 @@ class FrozenSearchPage(QtWidgets.QWidget):
         self.notice_validation.style().unpolish(self.notice_validation)
         self.notice_validation.style().polish(self.notice_validation)
         try:
-            self.txt_command.setPlainText(subprocess.list2cmdline(self.build_command()))
+            command = self.build_command()
+            # Lead with the informative part (module + flags): the interpreter's
+            # absolute path used to wrap over several lines and push the actual
+            # command out of view. The exact interpreter is in the tooltip and
+            # is still what the QProcess launches.
+            preview = subprocess.list2cmdline(["python", *command[1:]])
+            self.txt_command.setPlainText(preview)
+            self.txt_command.setToolTip(f"Interpreter used at launch: {command[0]}")
         except Exception as exc:
             self.txt_command.setPlainText(f"# PREVIEW ERROR\n{exc}")
 

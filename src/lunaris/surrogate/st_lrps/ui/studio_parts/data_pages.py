@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from lunaris.common.paths import project_root_from_file
-from lunaris.ui_foundation import DESIGN_TOKENS, THEME, with_alpha
+from lunaris.ui_foundation import THEME
 
 from .dataset_introspection import inspect_h5_metadata
 from .qt_common import (
@@ -85,6 +85,7 @@ from .qt_common import (
     QWidget,
     pyqtgraph_matches_qt,
     pyqtSignal,
+    repolish,
 )
 
 # pyqtgraph — optional, graceful fallback
@@ -303,18 +304,10 @@ def _data_action_card(
     secondary_buttons: list[QPushButton] | None = None,
     leading: QBoxLayout | QWidget | None = None,
     detail: QWidget | None = None,
-    object_name: str = "dataActionCard",
 ) -> QFrame:
     """Create a compact, action-first card for the Data workspace."""
     card = QFrame()
-    card.setObjectName(object_name)
-    card.setStyleSheet(
-        f"QFrame#{object_name} {{"
-        f"  background: {with_alpha(THEME['bg_card'], 0.84)};"
-        f"  border: 1px solid {with_alpha(THEME['accent'], 0.18)};"
-        f"  border-radius: 14px;"
-        f"}}"
-    )
+    card.setObjectName("dataActionCard")
     layout = QVBoxLayout(card)
     layout.setContentsMargins(16, 14, 16, 14)
     layout.setSpacing(12)
@@ -327,15 +320,11 @@ def _data_action_card(
     text_col.setContentsMargins(0, 0, 0, 0)
     text_col.setSpacing(3)
     title_lbl = QLabel(title)
-    title_lbl.setStyleSheet(
-        f"color: {THEME['fg_main']}; font-size: 16px; font-weight: 800; "
-        f"background: transparent; border: none;"
-    )
+    title_lbl.setObjectName("sectionTitle")
     subtitle_lbl = QLabel(subtitle)
     subtitle_lbl.setWordWrap(True)
-    subtitle_lbl.setStyleSheet(
-        f"color: {THEME['fg_soft']}; font-size: 12px; background: transparent; border: none;"
-    )
+    subtitle_lbl.setObjectName("fieldHint")
+    subtitle_lbl.setProperty("kind", "soft")
     text_col.addWidget(title_lbl)
     text_col.addWidget(subtitle_lbl)
 
@@ -375,12 +364,7 @@ def _compact_path_label(empty_text: str) -> QLabel:
     label = QLabel(empty_text)
     label.setWordWrap(True)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    label.setStyleSheet(
-        f"QLabel {{ color: {THEME['fg_muted']}; font-size: 11px; padding: 8px 10px;"
-        f" background: {with_alpha(THEME['bg_shell'], 0.55)};"
-        f" border: 1px solid {with_alpha(THEME['border'], 0.12)};"
-        f" border-radius: 9px; }}"
-    )
+    label.setObjectName("pathPill")
     return label
 
 
@@ -428,7 +412,7 @@ class CloudGenTab(QWidget):
         mode_bar.setContentsMargins(0, 0, 0, 4)
         mode_bar.setSpacing(8)
         mode_lbl = QLabel("Workflow")
-        mode_lbl.setStyleSheet(f"font-weight: 700; color: {THEME['fg_soft']};")
+        mode_lbl.setObjectName("statusValue")
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("Single Cloud", self._MODE_SINGLE)
         self._mode_combo.addItem("Dataset Suite", self._MODE_SUITE)
@@ -443,11 +427,8 @@ class CloudGenTab(QWidget):
         # ── Sync banner (shared) ─────────────────────────────────────────────
         self._sync_banner = QLabel("")
         self._sync_banner.setWordWrap(True)
-        self._sync_banner.setStyleSheet(
-            f"QLabel {{ color: {THEME['success']}; background: {with_alpha(THEME['success'], 0.08)}; "
-            f"border: 1px solid {with_alpha(THEME['success'], 0.3)}; border-radius: 8px; "
-            f"padding: 6px 12px; font-size: 11px; }}"
-        )
+        self._sync_banner.setObjectName("resultBanner")
+        self._sync_banner.setProperty("kind", "success")
         self._sync_banner.setVisible(False)
 
         # ── Single cloud page ────────────────────────────────────────────────
@@ -775,9 +756,7 @@ class CloudGenTab(QWidget):
         self.s_train_bb_n.setToolTip("Number of boundary-buffer points (lower/upper altitude edges).")
 
         self._suite_total_lbl = QLabel("")
-        self._suite_total_lbl.setStyleSheet(
-            f"color: {THEME['accent_hov']}; font-weight: bold;"
-        )
+        self._suite_total_lbl.setObjectName("accentGroupLabel")
 
         for sb in (self.s_train_su_n, self.s_train_ir2_n, self.s_train_rm_n, self.s_train_bb_n):
             sb.valueChanged.connect(self._update_suite_total_label)
@@ -1098,7 +1077,6 @@ class CloudGenTab(QWidget):
             btn_run,
             secondary_buttons=[btn_use_latest, btn_pick, btn_path, btn_suite],
             detail=detail,
-            object_name="quickAnalysisCard",
         )
         _tune_inputs(panel)
 
@@ -1546,9 +1524,8 @@ class CloudGenTab(QWidget):
                 t.applied_suite_manifest_path = str(manifest_path.resolve())
             if hasattr(t, "_suite_manifest_label"):
                 t._suite_manifest_label.setText(str(manifest_path.resolve()))
-                t._suite_manifest_label.setStyleSheet(
-                    f"color: {THEME['success']}; font-size: 10px;"
-                )
+                t._suite_manifest_label.setProperty("kind", "success")
+                repolish(t._suite_manifest_label)
             # -- Trigger dependent UI updates --
             if hasattr(t, "_on_dataset_mode_changed"):
                 t._on_dataset_mode_changed()
@@ -2337,10 +2314,7 @@ class DatasetInspectionPanel(QWidget):
         self._summary.setWordWrap(True)
         self._summary.setTextFormat(Qt.TextFormat.RichText)
         self._summary.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self._summary.setStyleSheet(
-            f"background: {with_alpha(THEME['bg_card'], 0.72)}; border: 1px solid {with_alpha(THEME['border'], 0.12)};"
-            f" border-radius: 10px; padding: 12px; color: {THEME['fg_main']}; font-size: 12px;"
-        )
+        self._summary.setObjectName("metaSummary")
         self._summary.setMinimumHeight(140)
 
         # Raw metadata panel
@@ -2378,19 +2352,21 @@ class DatasetInspectionPanel(QWidget):
             self.path_edit.setText(path)
             self._validate()
 
+    # Level -> (shared resultBanner kind, label). Colors live in the
+    # #resultBanner[kind=...] rules; the label text carries the state.
+    _STATUS_KINDS = {
+        "ready":   ("success", "Ready"),
+        "warning": ("warning", "Warning"),
+        "error":   ("error", "Error"),
+        "unknown": ("running", "Unknown"),
+    }
+
     def _set_status(self, level: str, text: str) -> None:
-        colors = {
-            "ready":   (THEME["success"], with_alpha(THEME["success"], 0.12), "Ready"),
-            "warning": (THEME["warning"], with_alpha(THEME["warning"], 0.12), "Warning"),
-            "error":   (THEME["error"], with_alpha(THEME["error"], 0.14), "Error"),
-            "unknown": (THEME["fg_muted"], with_alpha(THEME["fg_muted"], 0.12), "Unknown"),
-        }
-        color, bg, label = colors.get(level, colors["unknown"])
+        kind, label = self._STATUS_KINDS.get(level, self._STATUS_KINDS["unknown"])
         self.status_label.setText(f"{label}: {text}")
-        self.status_label.setStyleSheet(
-            f"color: {color}; background: {bg}; border: 1px solid {color};"
-            f" border-radius: 8px; padding: 6px 10px; font-weight: 600; font-size: 12px;"
-        )
+        self.status_label.setObjectName("resultBanner")
+        self.status_label.setProperty("kind", kind)
+        repolish(self.status_label)
 
     def _send(self) -> None:
         path = self.path_edit.text().strip()
@@ -2478,15 +2454,7 @@ class DataPage(QWidget):
         self._section_buttons: list[QPushButton] = []
 
         nav = QFrame()
-        nav.setObjectName("dataSectionNav")
         nav.setMaximumHeight(50)
-        nav.setStyleSheet(
-            f"QFrame#dataSectionNav {{"
-            f"  background: {with_alpha(THEME['bg_card'], 0.74)};"
-            f"  border: 1px solid {with_alpha(THEME['border'], 0.12)};"
-            f"  border-radius: {DESIGN_TOKENS.radii.section}px;"
-            f"}}"
-        )
         nav_l = QHBoxLayout()
         nav_l.setContentsMargins(8, 8, 8, 8)
         nav_l.setSpacing(6)
@@ -2499,20 +2467,7 @@ class DataPage(QWidget):
             # Content-width segmented control, left-aligned, rather than two
             # full-width slabs — reads as a compact tab bar, not two giant buttons.
             btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            btn.setStyleSheet(
-                f"QPushButton {{"
-                f"  text-align: center; padding: 0 24px;"
-                f"  border: 1px solid {with_alpha(THEME['border'], 0.10)};"
-                f"  border-radius: {DESIGN_TOKENS.radii.control}px; background: {with_alpha(THEME['fg_main'], 0.025)};"
-                f"  color: {THEME['fg_soft']}; font-weight: 700; font-size: 12px;"
-                f"}}"
-                f"QPushButton:hover {{ background: {with_alpha(THEME['accent'], 0.06)}; color: {THEME['fg_main']}; }}"
-                f"QPushButton:checked {{"
-                f"  background: {with_alpha(THEME['accent'], 0.12)};"
-                f"  border-color: {with_alpha(THEME['accent'], 0.35)};"
-                f"  color: {THEME['fg_main']};"
-                f"}}"
-            )
+            btn.setObjectName("segmentButton")
             btn.clicked.connect(lambda _c=False, i=idx: self._show_section(i))
             self._section_buttons.append(btn)
             return btn

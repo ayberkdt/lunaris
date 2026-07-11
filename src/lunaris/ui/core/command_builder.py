@@ -79,6 +79,37 @@ def _ui_telemetry_cadence_s(timeline: Mapping[str, Any], output_dt_s: str | None
     return max(5.0, min(600.0, float(cadence)))
 
 
+def _extend_tide_value_flags(
+    command: list[str],
+    forces: Mapping[str, Any],
+    log_warning: Callable[[str], None] | None,
+) -> None:
+    """Emit optional --tide-* value flags when the user entered explicit values.
+
+    Blank fields keep the engine defaults, so no flag is emitted for them.
+    Invalid numeric text is skipped with a warning instead of producing a
+    command the CLI would reject.
+    """
+
+    for key, flag in (
+        ("tide_k2_value", "--tide-k2"),
+        ("tide_k3_value", "--tide-k3"),
+        ("tide_r_ref_m", "--tide-r-ref-m"),
+    ):
+        raw = str(forces.get(key, "") or "").strip()
+        if not raw:
+            continue
+        value = coerce_positive_float(raw)
+        if value is None:
+            _warn(log_warning, f"[UI] Invalid {flag} value: '{raw}'. Engine default kept.")
+            continue
+        command.extend([flag, f"{value:g}"])
+
+    bodies = str(forces.get("tide_bodies", "") or "").strip()
+    if bodies:
+        command.extend(["--tide-bodies", bodies])
+
+
 def build_preflight_snapshot(
     *,
     orbit: Mapping[str, Any],
@@ -172,6 +203,7 @@ def build_command(
     solver_cfg: Any,
     spacecraft_cfg: Any,
     albedo_cfg: Any = None,
+    thermal_cfg: Any = None,
     log_warning: Callable[[str], None] | None = None,
 ) -> list[str]:
     """
@@ -287,8 +319,22 @@ def build_command(
         command.extend(["--albedo-facet-lat-count", str(int(getattr(albedo_cfg, "facet_lat_count", 18)))])
         command.extend(["--albedo-facet-lon-count", str(int(getattr(albedo_cfg, "facet_lon_count", 36)))])
         command.extend(["--albedo-enable-eclipse", bool_to_onoff(bool(getattr(albedo_cfg, "enable_eclipse", True)))])
+        command.extend(["--albedo-require-provider", bool_to_onoff(bool(getattr(albedo_cfg, "require_provider", False)))])
 
-    command.extend(["--enable-thermal", bool_to_onoff(bool(forces.get("thermal", False)))])
+    thermal_on = bool(forces.get("thermal", False))
+    command.extend(["--enable-thermal", bool_to_onoff(thermal_on)])
+
+    # Translate the thermal-IR dialog state into --thermal-* flags.
+    if thermal_on and thermal_cfg is not None:
+        command.extend(["--thermal-mode", str(getattr(thermal_cfg, "mode", "constant_temperature") or "constant_temperature")])
+        command.extend(["--thermal-temperature-k", f"{float(getattr(thermal_cfg, 'temperature_k', 250.0)):g}"])
+        command.extend(["--thermal-night-temperature-k", f"{float(getattr(thermal_cfg, 'night_temperature_k', 100.0)):g}"])
+        command.extend(["--thermal-emissivity", f"{float(getattr(thermal_cfg, 'emissivity', 0.95)):g}"])
+        command.extend(["--thermal-surface-albedo", f"{float(getattr(thermal_cfg, 'surface_albedo', 0.12)):g}"])
+        command.extend(["--thermal-ir-coefficient", f"{float(getattr(thermal_cfg, 'ir_coefficient', 1.0)):g}"])
+        command.extend(["--thermal-floor-flux-w-m2", f"{float(getattr(thermal_cfg, 'floor_flux_w_m2', 0.0)):g}"])
+        command.extend(["--thermal-facet-lat-count", str(int(getattr(thermal_cfg, "facet_lat_count", 18)))])
+        command.extend(["--thermal-facet-lon-count", str(int(getattr(thermal_cfg, "facet_lon_count", 36)))])
 
     # The surface raster (--albedo-root) is only needed in grid albedo modes. When
     # no albedo dialog state is supplied, fall back to the legacy "needed whenever
@@ -305,6 +351,8 @@ def build_command(
         command.extend(["--enable-tides", "on", "--tides-kind", "k2"])
     else:
         command.extend(["--enable-tides", "off"])
+    if tides_k2 or tides_k3:
+        _extend_tide_value_flags(command, forces, log_warning)
 
     command.extend(
         ["--enable-relativity-1pn", bool_to_onoff(bool(forces.get("relativity_1pn", False)))]
@@ -507,6 +555,8 @@ def build_batch_command(
         command.extend(["--enable-tides", "on", "--tides-kind", "k2"])
     else:
         command.extend(["--enable-tides", "off"])
+    if tides_k2 or tides_k3:
+        _extend_tide_value_flags(command, forces, log_warning)
 
     command.extend(["--enable-relativity-1pn",
                     bool_to_onoff(bool(forces.get("relativity_1pn", False)))])
@@ -567,6 +617,8 @@ def build_batch_command(
     command.extend(["--gpu-device-id",         str(batch_data.get("gpu_device_id",  0))])
     command.extend(["--sh-degree",         str(batch_data.get("sh_degree", 10))])
     command.extend(["--gpu-threads-per-block", str(batch_data.get("gpu_threads_per_block", 128))])
+    command.extend(["--torch-dtype",           str(batch_data.get("torch_dtype", "float64"))])
+    command.extend(["--torch-sh-chunk-size",   str(int(batch_data.get("torch_sh_chunk_size", 0) or 0))])
     command.extend(["--batch-gravity-mode",       gravity_mode_override])
     command.extend(["--batch-dt-s",               str(batch_data.get("dt_s",       60.0))])
     command.extend(["--max-vram-gb",           str(batch_data.get("max_vram_gb", 4.0))])
@@ -581,6 +633,10 @@ def build_batch_command(
         bool_to_onoff(bool(batch_data.get("compute_impact_statistics", True))),
     ])
     command.extend(["--impact-alt-km",         str(batch_data.get("impact_alt_km", 0.0))])
+
+    uq_report_dir = str(batch_data.get("uq_report_dir", "") or "").strip()
+    if uq_report_dir:
+        command.extend(["--uq-report-dir", uq_report_dir])
 
     return [str(item) for item in command]
 

@@ -148,3 +148,111 @@ def test_gravity_guard_reads_is_conservative_flag():
     assert symplectic_nonconservative_gravity("VV", grav)
     assert symplectic_nonconservative_gravity("DOP853", grav) == []
     assert symplectic_nonconservative_gravity("VV", None) == []
+
+
+# ---------------------------------------------------------------------------
+# Physics audit 2026-07-11 F1 — every acceleration-form method assumes
+# a = f(t, r). RKN4 is acceleration-form but NOT symplectic, so the symplectic
+# guard never fired for RKN4 + 1PN even though stage accelerations sample a
+# stale velocity. The dedicated accel-form guard must cover it; the VV path
+# keeps its original (symplectic) message and must not double-warn.
+# ---------------------------------------------------------------------------
+
+def test_rkn4_with_1pn_warns_stale_velocity_sampling():
+    dyn = _FakeDyn(enable_relativity_1pn=True)
+    with pytest.warns(RuntimeWarning, match="stale/inconsistent"):
+        propagate(dyn, _state(), _cfg("RKN4", False), time_cfg=_tc())
+
+
+def test_rkn4_with_1pn_strict_raises():
+    dyn = _FakeDyn(enable_relativity_1pn=True)
+    with pytest.raises(ValueError, match="strict_symplectic"):
+        propagate(dyn, _state(), _cfg("RKN4", True), time_cfg=_tc())
+
+
+def test_rkn4_without_velocity_dependent_force_is_silent():
+    # SRP is non-conservative but position/attitude-only in this taxonomy sense
+    # (not velocity-dependent); RKN4 carries no symplectic guarantee to void,
+    # so neither guard may fire.
+    import warnings as _warnings
+
+    dyn = _FakeDyn(enable_srp=True)
+    with _warnings.catch_warnings(record=True) as rec:
+        _warnings.simplefilter("always")
+        propagate(dyn, _state(), _cfg("RKN4", True), time_cfg=_tc())
+    guard_msgs = [
+        w for w in rec
+        if "Acceleration-form" in str(w.message) or "bounded-energy-drift" in str(w.message)
+    ]
+    assert guard_msgs == []
+
+
+def test_vv_with_1pn_keeps_single_symplectic_warning():
+    # The symplectic message already carries the inconsistent-velocity note for
+    # 1PN; the accel-form guard must not add a duplicate second warning.
+    dyn = _FakeDyn(enable_relativity_1pn=True)
+    with pytest.warns(RuntimeWarning, match="bounded-energy-drift") as rec:
+        propagate(dyn, _state(), _cfg("VV", False), time_cfg=_tc())
+    assert not [w for w in rec if "Acceleration-form" in str(w.message)]
+
+
+def test_accel_form_guard_unit_semantics():
+    from lunaris.core.propagation.integrators.fixed_step import (
+        accel_form_velocity_dependence_violations,
+    )
+
+    flags_1pn = SimpleNamespace(enable_relativity_1pn=True)
+    assert accel_form_velocity_dependence_violations("RKN4", flags_1pn) == ["1PN relativity"]
+    assert accel_form_velocity_dependence_violations("VV", flags_1pn) == ["1PN relativity"]
+    assert accel_form_velocity_dependence_violations("RK4", flags_1pn) == []
+    assert accel_form_velocity_dependence_violations("DOP853", flags_1pn) == []
+    assert accel_form_velocity_dependence_violations("RKN4", SimpleNamespace(enable_srp=True)) == []
+    assert accel_form_velocity_dependence_violations("RKN4", None) == []
+
+
+# ---------------------------------------------------------------------------
+# Physics audit 2026-07-11 F3 — adaptive-degree SH gravity switches degree at
+# discrete altitude thresholds, so the field is discontinuous in position; the
+# symplectic bounded-drift argument assumes a smooth Hamiltonian. The guard
+# reads the prepared gravity pack's ``adaptive_enabled`` flag.
+# ---------------------------------------------------------------------------
+
+def _adaptive_dyn():
+    dyn = _FakeDyn()
+    dyn._prep = {"grav": SimpleNamespace(adaptive_enabled=True)}
+    return dyn
+
+
+def test_symplectic_with_adaptive_degree_warns():
+    with pytest.warns(RuntimeWarning, match="discontinuous"):
+        propagate(_adaptive_dyn(), _state(), _cfg("VV", False), time_cfg=_tc())
+
+
+def test_symplectic_with_adaptive_degree_strict_raises():
+    with pytest.raises(ValueError, match="strict_symplectic"):
+        propagate(_adaptive_dyn(), _state(), _cfg("PEFRL", True), time_cfg=_tc())
+
+
+@pytest.mark.parametrize("method", ["RK4", "DOP853"])
+def test_nonsymplectic_with_adaptive_degree_is_silent(method):
+    import warnings as _warnings
+
+    with _warnings.catch_warnings(record=True) as rec:
+        _warnings.simplefilter("always")
+        propagate(_adaptive_dyn(), _state(), _cfg(method, True), time_cfg=_tc())
+    assert not [w for w in rec if "adaptive-degree" in str(w.message)]
+
+
+def test_adaptive_guard_unit_semantics():
+    from lunaris.core.propagation.integrators.fixed_step import (
+        symplectic_discontinuous_gravity,
+    )
+
+    pack_on = SimpleNamespace(adaptive_enabled=True)
+    pack_off = SimpleNamespace(adaptive_enabled=False)
+    assert symplectic_discontinuous_gravity("VV", pack_on)
+    assert symplectic_discontinuous_gravity("Y6", pack_on)
+    assert symplectic_discontinuous_gravity("RKN4", pack_on) == []  # not symplectic
+    assert symplectic_discontinuous_gravity("DOP853", pack_on) == []
+    assert symplectic_discontinuous_gravity("VV", pack_off) == []
+    assert symplectic_discontinuous_gravity("VV", None) == []

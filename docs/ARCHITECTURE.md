@@ -401,6 +401,20 @@ Analysis code imports from `lunaris.analysis.ensemble`.
   in the hot path.
 - Default integrator is DOP853 (8th-order Runge-Kutta); step size is bounded via
   a Nyquist criterion on the gravity-field degree.
+- Adaptive-degree SH gravity selects the evaluated degree from discrete altitude
+  thresholds, so the acceleration is a **discontinuous** function of position at
+  every threshold. This voids the smooth-Hamiltonian assumption behind the
+  symplectic bounded-energy-drift argument: the propagator warns when a
+  symplectic method (VV/Yoshida/PEFRL) runs with adaptive degree enabled, and
+  `strict_symplectic=True` escalates it to a hard error. Use a fixed degree with
+  symplectic methods, or RK4/an adaptive integrator with adaptive degree. (A
+  smooth-blend kernel exists but is not routed into the RHS; switching to it is
+  a physics-changing decision that needs parity benchmarks.)
+- Acceleration-form fixed-step methods (the symplectic set *and* RKN4) assume
+  `a = f(t, r)`; a velocity-dependent force (1PN relativity) is sampled at a
+  stale intermediate velocity. The propagator warns for every acceleration-form
+  method — RKN4 included, even though it is not symplectic — with the same
+  `strict_symplectic` escalation for paper/validation runs.
 
 ## ST-LRPS surrogate
 

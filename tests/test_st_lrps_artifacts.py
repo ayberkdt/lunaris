@@ -267,6 +267,40 @@ def test_checkpoint_payload_has_canonical_schema(canonical_run: dict) -> None:
     assert validated["scaler_hash"] == compute_payload_sha256(validated["scaler"])
 
 
+def test_load_checkpoint_uses_safe_weights_only_path(canonical_run: dict, caplog) -> None:
+    """Pipeline-produced checkpoints must load through torch.load(weights_only=True)
+    without triggering the unsafe full-unpickling fallback."""
+    layout = canonical_run["layout"]
+    with caplog.at_level("WARNING", logger="lunaris.surrogate.st_lrps.artifacts.manager"):
+        ckpt = load_checkpoint(layout.ckpt_best, torch.device("cpu"))
+    assert ckpt["model_state_dict"]
+    assert not any("falling back" in rec.message for rec in caplog.records), (
+        "canonical checkpoint should not need the weights_only=False fallback"
+    )
+
+
+def test_load_checkpoint_falls_back_for_legacy_pickled_objects(tmp_path: Path, caplog) -> None:
+    """Legacy checkpoints holding arbitrary pickled objects still load, but only
+    via the loudly-warned weights_only=False fallback."""
+    import argparse
+
+    payload = {
+        "model_state_dict": {"w": torch.zeros(2, 2)},
+        "scaler": {},
+        # argparse.Namespace is not allowed by the weights_only unpickler.
+        "legacy_args": argparse.Namespace(foo=1),
+    }
+    path = tmp_path / "legacy.pt"
+    torch.save(payload, path)
+
+    with caplog.at_level("WARNING", logger="lunaris.surrogate.st_lrps.artifacts.manager"):
+        ckpt = load_checkpoint(path, torch.device("cpu"))
+    assert torch.equal(ckpt["model_state_dict"]["w"], torch.zeros(2, 2))
+    assert any("falling back" in rec.message for rec in caplog.records), (
+        "unsafe fallback must warn that the checkpoint is fully unpickled"
+    )
+
+
 def test_ckpt_best_and_last_share_same_top_level_keys(canonical_run: dict) -> None:
     layout = canonical_run["layout"]
     best = load_checkpoint(layout.ckpt_best, torch.device("cpu"))

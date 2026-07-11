@@ -97,10 +97,22 @@ class NoScrollComboBox(QComboBox):
         event.ignore()
 
 
+def repolish(widget) -> None:
+    """Re-evaluate a widget's dynamic QSS properties after a state change."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
 def apply_premium_dark_theme(app: QApplication) -> None:
     """Apply the shared Lunaris palette and global stylesheet."""
+    # Same font pipeline as Mission Studio (registers platform font files, so
+    # offscreen capture renders real glyphs instead of tofu). ui_foundation is
+    # the sanctioned shared layer; lunaris.ui is contract-forbidden from here.
+    from lunaris.ui_foundation.fonts import load_app_font
+
     app.setStyle("Fusion")
-    app.setFont(QFont("Segoe UI", 10))
+    app.setFont(load_app_font())
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor(THEME["bg_space"]))
     palette.setColor(QPalette.ColorRole.WindowText, QColor(THEME["fg_main"]))
@@ -187,5 +199,6 @@ __all__ = [
     "build_app_stylesheet",
     "pyqtSignal",
     "pyqtgraph_matches_qt",
+    "repolish",
     "with_alpha",
 ]
