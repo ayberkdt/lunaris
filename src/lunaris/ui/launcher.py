@@ -90,12 +90,12 @@ class _LaunchCard(QtWidgets.QFrame):
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 22, 18)
+        layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)
 
         # --- Top row: icon badge + title + open affordance --------------------
         header = QtWidgets.QHBoxLayout()
-        header.setSpacing(14)
+        header.setSpacing(12)
 
         badge = QtWidgets.QLabel()
         badge.setObjectName("cardIconBadge")
@@ -201,7 +201,10 @@ class LauncherWindow(QtWidgets.QWidget):
     # ------------------------------------------------------------------ UI ---
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self._content)
-        root.setContentsMargins(40, 34, 40, 26)
+        # Splash hero: intentionally generous margins off the dense-data 4px
+        # scale (allow-listed in tools/ui/spacing_scan.py) so the wordmark
+        # breathes; this is a launcher, not a mission-analysis grid.
+        root.setContentsMargins(40, 32, 40, 24)
         root.setSpacing(0)
 
         # --- Masthead: kicker + wordmark + divider ---------------------------
@@ -270,7 +273,7 @@ class LauncherWindow(QtWidgets.QWidget):
 
         # Footer: just the external links, right-aligned.
         footer = QtWidgets.QHBoxLayout()
-        footer.setSpacing(18)
+        footer.setSpacing(16)
         footer.addStretch(1)
 
         self.btn_showcase = QtWidgets.QPushButton("Open Web Showcase")

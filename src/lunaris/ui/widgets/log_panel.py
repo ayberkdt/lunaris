@@ -164,7 +164,10 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
         self.header.setObjectName("logHeader")
         self.header.setFixedHeight(COLLAPSED_HEIGHT)
         hl = QtWidgets.QHBoxLayout(self.header)
-        hl.setContentsMargins(10, 5, 10, 5)
+        hl.setContentsMargins(
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xs,
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xs,
+        )
         hl.setSpacing(DESIGN_TOKENS.spacing.sm)
 
         self.btn_collapse = QtWidgets.QToolButton()

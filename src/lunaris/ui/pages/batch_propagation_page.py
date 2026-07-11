@@ -410,7 +410,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         gb = _card("Backend Command Preview")
         outer = gb.content_layout
-        outer.setSpacing(10)
+        outer.setSpacing(DESIGN_TOKENS.spacing.md)
 
         # Prominent preview-only notice
         notice = InlineNotice(
@@ -655,7 +655,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         gb = _card("Ensemble")
         grid = QtWidgets.QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setVerticalSpacing(10)
+        grid.setVerticalSpacing(DESIGN_TOKENS.spacing.md)
         grid.setHorizontalSpacing(12)
 
         grid.addWidget(_label("Number of Samples"), 0, 0)
@@ -696,7 +696,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
     def _card_state_uncertainty(self) -> QtWidgets.QGroupBox:
         gb = _card("Injection State Dispersion  (1-σ, Isotropic)")
         layout = gb.content_layout
-        layout.setSpacing(10)
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
 
         desc = _label(
             "Gaussian perturbations are applied to the nominal initial state\n"
@@ -750,7 +750,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
     def _card_spacecraft_uncertainty(self) -> QtWidgets.QGroupBox:
         gb = _card("Spacecraft Property Dispersion  (optional)")
         layout = gb.content_layout
-        layout.setSpacing(10)
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
 
         desc = _label("Zero σ = deterministic (no perturbation). Sampling uses truncated-normal (positive values only).", muted=True)
         desc.setWordWrap(True)
@@ -855,7 +855,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.st_lrps_config_frame.setObjectName("inlineNotice")
         self.st_lrps_config_frame.setProperty("kind", "warning")
         st_lrps_layout = QtWidgets.QVBoxLayout(self.st_lrps_config_frame)
-        st_lrps_layout.setContentsMargins(12, 10, 12, 12)
+        st_lrps_layout.setContentsMargins(12, 12, 12, 12)
         st_lrps_layout.setSpacing(8)
 
         st_lrps_title_row = QtWidgets.QHBoxLayout()
@@ -1068,7 +1068,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         gb = _card("Integration  (GPU RK4 and batching)")
         grid = QtWidgets.QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setVerticalSpacing(10)
+        grid.setVerticalSpacing(DESIGN_TOKENS.spacing.md)
         grid.setHorizontalSpacing(12)
 
         grid.addWidget(_label("RK4 Step  dt [s]"), 0, 0)
@@ -1101,7 +1101,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
     def _card_output(self) -> QtWidgets.QGroupBox:
         gb = _card("Output")
         layout = gb.content_layout
-        layout.setSpacing(10)
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
 
         # Format
         fmt_row = QtWidgets.QHBoxLayout()
@@ -1196,7 +1196,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         gb = _card("Impact Detection")
         grid = QtWidgets.QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setVerticalSpacing(10)
+        grid.setVerticalSpacing(DESIGN_TOKENS.spacing.md)
         grid.setHorizontalSpacing(12)
 
         grid.addWidget(_label("Impact Altitude Threshold"), 0, 0)
@@ -1221,7 +1221,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
     def _card_run_controls(self) -> QtWidgets.QGroupBox:
         gb = _card("Run Batch Propagation")
         layout = gb.content_layout
-        layout.setSpacing(10)
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
 
         # Status validation label — global inline-notice text style, kind-driven.
         self.lbl_validation = _label("Configuration looks ready.")
@@ -1236,7 +1236,10 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.badge_batch.setObjectName("statusBadge")
         self.badge_batch.setAlignment(QtCore.Qt.AlignCenter)
         self.badge_batch.setFixedHeight(DESIGN_TOKENS.controls.status_badge_height)
-        self.badge_batch.setContentsMargins(10, 4, 10, 4)
+        self.badge_batch.setContentsMargins(
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xxs,
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xxs,
+        )
         self.badge_batch.setProperty("kind", "info")
         status_row.addWidget(self.badge_batch)
         status_row.addStretch(1)

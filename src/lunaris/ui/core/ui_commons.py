@@ -34,6 +34,9 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui_foundation import (
+    DESIGN_TOKENS,
+)
+from lunaris.ui_foundation import (
     LOG_COLORS as FOUNDATION_LOG_COLORS,
 )
 from lunaris.ui_foundation import (
@@ -472,7 +475,10 @@ class StatusBadge(QtWidgets.QLabel):
         super().__init__(text, parent)
         self.setObjectName("statusBadge")
         self.setAlignment(QtCore.Qt.AlignCenter)
-        self.setContentsMargins(10, 4, 10, 4)
+        self.setContentsMargins(
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xxs,
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xxs,
+        )
         self.setFixedHeight(24)
         self.set_status(kind, text)
 
@@ -893,9 +899,12 @@ def create_metric_card(parent: QtWidgets.QWidget | None = None) -> tuple[QtWidge
     card = QtWidgets.QGroupBox(parent)
     card.setStyleSheet(card_stylesheet())
     grid = QtWidgets.QGridLayout(card)
-    grid.setContentsMargins(16, 22, 16, 16)
-    grid.setHorizontalSpacing(18)
-    grid.setVerticalSpacing(6)
+    grid.setContentsMargins(
+        DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.xxl,
+        DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.lg,
+    )
+    grid.setHorizontalSpacing(DESIGN_TOKENS.spacing.lg)
+    grid.setVerticalSpacing(DESIGN_TOKENS.spacing.xs)
     return card, grid
 
 
@@ -1160,7 +1169,10 @@ def create_metric_chip(
         f"}}"
     )
     lay = QtWidgets.QVBoxLayout(frame)
-    lay.setContentsMargins(10, 8, 10, 8)
+    lay.setContentsMargins(
+        DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.sm,
+        DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.sm,
+    )
     lay.setSpacing(2)
 
     lbl_title = QtWidgets.QLabel(title)

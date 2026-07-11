@@ -1679,7 +1679,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         grid = QtWidgets.QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(20)
-        grid.setVerticalSpacing(15)
+        grid.setVerticalSpacing(16)
         # Let the label column absorb the slack so the cost indicator and the
         # per-row settings button stay grouped at the right edge instead of the
         # four columns spreading apart (which left the lone gear button adrift).
