@@ -76,6 +76,8 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | Document | Contents |
 |----------|----------|
 | [docs/README.md](docs/README.md) | Documentation index, including development notes and subsystem guides |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Enterprise/offline deployment: air-gapped install, data mirroring, proxies, logging, privacy ("no telemetry"), security boundaries |
+| [docs/VERSIONING.md](docs/VERSIONING.md) | Version scheme, stable surfaces, artifact-schema compatibility, deprecation and support policy |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, batch/ensemble propagation internals, ST-LRPS surrogate |
 | [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
@@ -398,4 +400,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full quality gates (`ruff`,
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details. Third-party dependency and
+data-asset license obligations (including the PySide6 LGPL notice for UI
+deployments) are inventoried in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
