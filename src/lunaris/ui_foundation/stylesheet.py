@@ -654,6 +654,30 @@ def build_app_stylesheet(
             border: none;
             margin: 2px 0;
         }}
+        /* Action-first workspace card (studio Data pages). */
+        QFrame#dataActionCard {{
+            background: {with_alpha(theme['bg_card'], 0.84)};
+            border: 1px solid {with_alpha(theme['accent'], 0.18)};
+            border-radius: 14px;
+        }}
+        /* Selected-path readout: selectable, recessed pill. */
+        QLabel#pathPill {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            padding: 8px 10px;
+            background: {with_alpha(theme['bg_shell'], 0.55)};
+            border: 1px solid {with_alpha(theme['border'], 0.12)};
+            border-radius: 9px;
+        }}
+        /* Rich-text metadata summary pane. */
+        QLabel#metaSummary {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            padding: 12px;
+            background: {with_alpha(theme['bg_card'], 0.72)};
+            border: 1px solid {with_alpha(theme['border'], 0.12)};
+            border-radius: 10px;
+        }}
 
         /* NAVIGATION — flat shell; active = left border + tinted background */
         QListWidget#navDrawer {{
