@@ -95,7 +95,7 @@ from typing import Any
 from PySide6 import QtCore, QtWidgets
 
 try:
-    from lunaris.ui.components.primitives import InlineNotice, Section
+    from lunaris.ui.components.primitives import DataTable, InlineNotice, Section
     from lunaris.ui.core.gravity_artifact_utils import (
         ST_LRPS_RUNS_DIR as _ST_LRPS_RUNS_DIR_UTIL,
     )
@@ -495,12 +495,14 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         table_group = QtWidgets.QGroupBox("Altitude vs Degree Rules")
         table_layout = QtWidgets.QVBoxLayout(table_group)
 
-        self.table_preview = QtWidgets.QTableWidget()
-        self.table_preview.setColumnCount(2)
-        self.table_preview.setHorizontalHeaderLabels(["Altitude (km)", "Max Degree"])
+        # Read-only rule preview uses the shared DataTable so it inherits
+        # sorting, Ctrl+C copy, and monospace right-aligned numerics.
+        self.table_preview = DataTable(
+            [("Altitude", "km"), "Max Degree"],
+            numeric_columns=(0, 1),
+        )
+        self.table_preview.setAccessibleName("Adaptive gravity rules preview")
         self.table_preview.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
-        self.table_preview.verticalHeader().setVisible(False)
-        self.table_preview.setEditTriggers(QtWidgets.QTableWidget.NoEditTriggers)
 
         table_layout.addWidget(self.table_preview)
 
@@ -538,10 +540,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         """Update the table preview with current adaptive rules."""
         self.table_preview.setRowCount(0)
         for alt, deg in self._cfg.adaptive_table:
-            row = self.table_preview.rowCount()
-            self.table_preview.insertRow(row)
-            self.table_preview.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{alt:.1f}"))
-            self.table_preview.setItem(row, 1, QtWidgets.QTableWidgetItem(str(deg)))
+            self.table_preview.append_row([f"{alt:.1f}", str(deg)])
 
     def _on_degree_changed(self, value: int) -> None:
         """
