@@ -312,3 +312,16 @@ def test_verify_entry_present_without_hash(tmp_path):
     entry = {"name": "p", "filename": "p.bin", "target_subdir": "ephemeris_models",
              "url": "https://x/y", "sha256": None}
     assert data_cli.verify_entry(entry, root) == "present"
+
+
+def test_default_manifest_falls_back_to_packaged_copy(monkeypatch, tmp_path):
+    """Installed as a wheel there is no repository root: default_manifest_path
+    must resolve the manifest copy shipped inside the package instead of
+    requiring --manifest on a clean machine."""
+    # Simulate "no repo root found": the walk-up lands on a bare directory.
+    monkeypatch.setattr(data_cli, "find_project_root", lambda *_a, **_k: tmp_path)
+    resolved = data_cli.default_manifest_path()
+    assert resolved.name == "data_sources.json"
+    assert resolved.parent == Path(data_cli.__file__).resolve().parent
+    manifest = data_cli.load_manifest(resolved)
+    assert isinstance(manifest.get("datasets"), list) and manifest["datasets"]

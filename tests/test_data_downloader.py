@@ -293,3 +293,20 @@ def test_path_command_prints_subdirs(tmp_path, capsys):
     assert rc == 0
     for sub in data_cli.CANONICAL_SUBDIRS:
         assert sub in out
+
+
+def test_data_dir_fallback_never_lands_in_site_packages(monkeypatch, tmp_path):
+    """Wheel installs: the root walk-up ends inside site-packages, and mission
+    data must never be downloaded into the package installation - the fallback
+    is the per-user data directory instead."""
+    from lunaris.common import paths
+
+    monkeypatch.delenv("LUNARIS_DATA_DIR", raising=False)
+    monkeypatch.delenv("STLRPS_DATA_DIR", raising=False)
+    # tmp_path has no data/data_sources.json manifest -> not a repo checkout.
+    resolved = paths.data_dir_from_root(tmp_path)
+    assert resolved == paths.user_data_dir()
+    # A real checkout root (has the tracked manifest) keeps resolving to repo data/.
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "data_sources.json").write_text("{}", encoding="utf-8")
+    assert paths.data_dir_from_root(tmp_path) == tmp_path / "data"

@@ -25,10 +25,29 @@ def project_root_from_file(file: str | os.PathLike[str]) -> Path:
     return find_project_root(Path(file).resolve())
 
 
+def user_data_dir(app: str = "lunaris") -> Path:
+    """Per-user external-data directory for installed (non-checkout) layouts."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA", "").strip() or str(Path.home() / "AppData" / "Local")
+    else:
+        base = os.environ.get("XDG_DATA_HOME", "").strip() or str(Path.home() / ".local" / "share")
+    return Path(base) / app / "data"
+
+
 def data_dir_from_root(root: Path, env_names: Iterable[str] = ("LUNARIS_DATA_DIR", "STLRPS_DATA_DIR")) -> Path:
-    """Return external data directory, honoring environment overrides first."""
+    """Return external data directory, honoring environment overrides first.
+
+    Resolution order: environment override > repository ``data/`` (identified
+    by the tracked ``data_sources.json`` manifest) > per-user data directory.
+    The last step matters for wheel installs: their root walk-up lands inside
+    ``site-packages``, and mission data must never be downloaded into the
+    package installation.
+    """
     for name in env_names:
         value = os.environ.get(name, "").strip()
         if value:
             return Path(value).expanduser().resolve()
-    return root / "data"
+    repo_data = root / "data"
+    if (repo_data / "data_sources.json").exists():
+        return repo_data
+    return user_data_dir()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -319,11 +320,28 @@ class SurrogateGravityModel:
                     "which would skip strict contract validation. Fix the artifact "
                     f"or environment instead of degrading. Original error: {exc}"
                 ) from exc
+            # Fail-closed default: even for pre-contract artifacts the legacy
+            # path (which skips strict contract validation) must be an explicit
+            # research-mode choice, never a silent production degrade.
+            allow_legacy = os.environ.get(
+                "LUNARIS_ALLOW_LEGACY_ARTIFACT", ""
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            if not allow_legacy:
+                raise RuntimeError(
+                    "[ST-LRPS] Canonical runtime unavailable for pre-contract "
+                    f"artifact {run_dir}, and the legacy local runtime path is "
+                    "disabled by default because it skips strict "
+                    "checkpoint-contract validation. Fix the artifact or "
+                    "environment, or — for research use only — set "
+                    "LUNARIS_ALLOW_LEGACY_ARTIFACT=1 to opt into the "
+                    f"unvalidated legacy path. Original error: {exc}"
+                ) from exc
             warnings.warn(
                 "[ST-LRPS] Canonical runtime unavailable for pre-contract artifact "
                 f"{run_dir}; falling back to the legacy local runtime path "
-                "(potential_autograd only). Strict checkpoint-contract validation "
-                f"is SKIPPED on this path. Original error: {exc}",
+                "(potential_autograd only) because LUNARIS_ALLOW_LEGACY_ARTIFACT "
+                "is set. Strict checkpoint-contract validation is SKIPPED on "
+                f"this path. Original error: {exc}",
                 RuntimeWarning,
                 stacklevel=2,
             )

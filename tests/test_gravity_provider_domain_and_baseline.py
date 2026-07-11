@@ -132,7 +132,11 @@ def test_resolve_altitude_envelope_sources():
     assert R({"altitude_min_km": 1.0, "altitude_max_km": 2.0}, _FR()) == (60.0, 140.0)  # runtime wins
 
 
-def test_predict_total_accel_torch_strict_domain_end_to_end(tmp_path):
+def test_predict_total_accel_torch_strict_domain_end_to_end(tmp_path, monkeypatch):
+    # The synthetic run is pre-contract by construction; the domain guard under
+    # test lives on the legacy research loader, which needs the explicit opt-in
+    # (default refusal is covered in test_gravity_provider_fallback_policy.py).
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
     run = _make_tiny_run(tmp_path, "guard_run",
                          extra_config={"altitude_min_km": 50.0, "altitude_max_km": 150.0})
     model = SurrogateGravityModel.from_model_dir(

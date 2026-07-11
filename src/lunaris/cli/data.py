@@ -99,9 +99,19 @@ _FAIL_STATUSES = ("missing", "hash_mismatch", "manual_missing")
 # Manifest + path resolution
 # --------------------------------------------------------------------------- #
 def default_manifest_path() -> Path:
-    """Return the repository manifest path (``<project root>/data/data_sources.json``)."""
+    """Return the default asset-manifest path.
+
+    Inside an editable checkout the canonical ``<project root>/data/data_sources.json``
+    wins. Installed as a wheel there is no repository root, so the copy shipped
+    inside the package (``lunaris/cli/data_sources.json``; kept byte-identical
+    by a repo-hygiene test) is used instead — otherwise every ``lunaris-data``
+    command would require an explicit ``--manifest`` on a clean machine.
+    """
     root = find_project_root(Path(__file__).resolve())
-    return root / "data" / "data_sources.json"
+    repo_manifest = root / "data" / "data_sources.json"
+    if repo_manifest.exists():
+        return repo_manifest
+    return Path(__file__).resolve().parent / "data_sources.json"
 
 
 def find_manifest(explicit: str | None = None) -> Path:

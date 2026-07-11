@@ -20,6 +20,23 @@ neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a
 residual scalar potential above a lower-degree spherical-harmonic baseline, with its
 own training, evaluation, and Studio UI.
 
+> **ST-LRPS is a research preview.** No accuracy, speed, spatial-generalization,
+> or orbit-stability claim is made for surrogate results in this release: the
+> full paper-safe evidence chain (spatial-block split, low/high-altitude OOD,
+> A0–A6 ablations, curl/energy diagnostics, complete benchmark artifacts) has
+> not yet been produced, and the existing out-of-distribution report is a
+> *negative* extrapolation finding. Use the classical spherical-harmonic engine
+> for production numbers; treat surrogate output as experimental until a
+> validated evidence package accompanies it. See
+> [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) and
+> [docs/PAPER_SAFE_POLICY.md](docs/PAPER_SAFE_POLICY.md).
+>
+> **CUDA backends are experimental** in this release: there is currently no
+> recurring GPU CI (the nightly CUDA workflow requires a self-hosted GPU runner),
+> so GPU paths are re-validated manually per release rather than continuously.
+> CPU results are the reference; GPU runs record requested-vs-actual backend
+> provenance and fall back to CPU with a recorded reason.
+
 > **ST-LRPS is a high-throughput *batch* gravity backend, not a low-latency
 > single-trajectory CPU replacement.** A single trajectory run through
 > `propagate()` evaluates the surrogate as an interpreted PyTorch + autograd
@@ -59,6 +76,8 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | Document | Contents |
 |----------|----------|
 | [docs/README.md](docs/README.md) | Documentation index, including development notes and subsystem guides |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Enterprise/offline deployment: air-gapped install, data mirroring, proxies, logging, privacy ("no telemetry"), security boundaries |
+| [docs/VERSIONING.md](docs/VERSIONING.md) | Version scheme, stable surfaces, artifact-schema compatibility, deprecation and support policy |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, batch/ensemble propagation internals, ST-LRPS surrogate |
 | [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
@@ -97,6 +116,25 @@ lunaris --enable-albedo on --albedo-mode scaled_dn_grid --albedo-root data/albed
 ```
 
 ## Installation
+
+**Supported platforms.** The matrix below reflects where Lunaris is actually
+developed and tested, not aspiration:
+
+| Platform | Status |
+|---|---|
+| Windows 10/11 (x86-64) | Supported — primary development platform (engine + desktop UI) |
+| Ubuntu LTS (x86-64) | Supported — full CI (tests, lint, type, architecture gates) runs here headless |
+| Other Linux distros | Expected to work (pure-Python + wheels); not routinely tested |
+| macOS | **Untested** — no CI, no manual validation; try at your own risk |
+
+Python 3.10–3.12 (CI matrix). PyTorch installs as the **CPU wheel by default**;
+for CUDA use install the matching GPU build *before* the extras, e.g.:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+(CUDA backends are experimental in this release — see the note above.)
 
 Install in editable mode from the repository root to wire up the console entry
 points and pick up code changes without reinstalling:
@@ -362,4 +400,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full quality gates (`ruff`,
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details. Third-party dependency and
+data-asset license obligations (including the PySide6 LGPL notice for UI
+deployments) are inventoried in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
