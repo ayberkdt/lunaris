@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from lunaris.ui_foundation import DESIGN_TOKENS, with_alpha
+from lunaris.ui_foundation import DESIGN_TOKENS
 
 from .qt_common import (
     THEME,
@@ -20,6 +20,7 @@ from .qt_common import (
     Qt,
     QVBoxLayout,
     QWidget,
+    repolish,
 )
 
 _KIND_COLOR = {
@@ -50,21 +51,10 @@ class StudioStatusBadge(QLabel):
         self.set_status(kind, text)
 
     def set_status(self, kind: str, text: str) -> None:
-        color = _kind_color(kind)
-        label = kind.upper() if kind not in {"active", "done", "pending"} else kind.upper()
-        self.setText(f"{label}: {text}")
+        # Colors live in the shared #studioStatusBadge[kind=...] rules.
+        self.setText(f"{kind.upper()}: {text}")
         self.setProperty("kind", kind)
-        self.setStyleSheet(
-            "QLabel#studioStatusBadge {"
-            f" color: {color};"
-            f" background: {with_alpha(color, 0.10)};"
-            f" border: 1px solid {with_alpha(color, 0.35)};"
-            f" border-radius: {DESIGN_TOKENS.radii.control}px;"
-            " padding: 3px 10px;"
-            " font-size: 11px;"
-            " font-weight: 700;"
-            "}"
-        )
+        repolish(self)
 
 
 class StudioNotice(QFrame):
@@ -95,26 +85,12 @@ class StudioNotice(QFrame):
         self.set_notice(title, body, kind=kind)
 
     def set_notice(self, title: str, body: str, *, kind: str = "info") -> None:
-        color = _kind_color(kind)
-        prefix = kind.upper()
-        self._title.setText(f"{prefix} - {title}")
+        # Frame border and title color follow the shared [kind=...] rules.
+        self._title.setText(f"{kind.upper()} - {title}")
         self._body.setText(body)
-        self.setStyleSheet(
-            "QFrame#studioNotice {"
-            f" background: {with_alpha(THEME['bg_card'], 0.78)};"
-            f" border: 1px solid {with_alpha(color, 0.30)};"
-            f" border-radius: {DESIGN_TOKENS.radii.section}px;"
-            "}"
-            "QLabel#studioNoticeTitle {"
-            f" color: {color};"
-            " font-size: 11px;"
-            " font-weight: 800;"
-            "}"
-            "QLabel#studioNoticeBody {"
-            f" color: {THEME['fg_soft']};"
-            " font-size: 11px;"
-            "}"
-        )
+        for widget in (self, self._title):
+            widget.setProperty("kind", kind)
+            repolish(widget)
 
 
 class StudioWorkflowOverview(QFrame):
@@ -169,7 +145,7 @@ class StudioWorkflowOverview(QFrame):
         self.set_current(current_index)
 
     def set_current(self, current_index: int) -> None:
-        for index, (number, title, detail) in enumerate(self._cells):
+        for index, (number, title, _detail) in enumerate(self._cells):
             if index < current_index:
                 kind = "done"
                 state = "DONE"
@@ -179,44 +155,12 @@ class StudioWorkflowOverview(QFrame):
             else:
                 kind = "pending"
                 state = "NEXT"
-            color = _kind_color(kind)
             number.setText(str(index + 1))
             number.setToolTip(state)
-            number.setStyleSheet(
-                "QLabel#workflowStepNumber {"
-                f" color: {color};"
-                f" background: {with_alpha(color, 0.12)};"
-                f" border: 1px solid {with_alpha(color, 0.35)};"
-                f" border-radius: {DESIGN_TOKENS.radii.compact}px;"
-                " font-weight: 800;"
-                "}"
-            )
-            title.setStyleSheet(
-                "QLabel#workflowStepTitle {"
-                f" color: {THEME['fg_main'] if index <= current_index else THEME['fg_soft']};"
-                " font-size: 12px;"
-                " font-weight: 800;"
-                "}"
-            )
-            detail.setStyleSheet(
-                "QLabel#workflowStepDetail {"
-                f" color: {THEME['fg_muted']};"
-                " font-size: 10px;"
-                "}"
-            )
-
-        self.setStyleSheet(
-            "QFrame#studioWorkflowOverview {"
-            f" background: {with_alpha(THEME['bg_card'], 0.74)};"
-            f" border: 1px solid {with_alpha(THEME['border_soft'], 0.80)};"
-            f" border-radius: {DESIGN_TOKENS.radii.section}px;"
-            "}"
-            "QFrame#studioWorkflowCell {"
-            f" background: {with_alpha(THEME['bg_inset'], 0.40)};"
-            f" border: 1px solid {with_alpha(THEME['border_soft'], 0.55)};"
-            f" border-radius: {DESIGN_TOKENS.radii.control}px;"
-            "}"
-        )
+            number.setProperty("kind", kind)
+            title.setProperty("reached", "true" if index <= current_index else "false")
+            for widget in (number, title):
+                repolish(widget)
 
 
 class StudioReadinessPanel(QFrame):
@@ -274,19 +218,3 @@ class StudioReadinessPanel(QFrame):
             lines.append(f'<span style="color:{color}; font-weight:700">{label}</span> {text}')
         self._body.setText("<br>".join(lines) if lines else "Checks appear after fields are available.")
         self.setVisible(bool(items))
-        self.setStyleSheet(
-            "QFrame#studioReadinessPanel {"
-            f" background: {with_alpha(THEME['bg_card'], 0.82)};"
-            f" border: 1px solid {with_alpha(THEME['border_soft'], 0.90)};"
-            f" border-radius: {DESIGN_TOKENS.radii.section}px;"
-            "}"
-            "QLabel#readinessTitle {"
-            f" color: {THEME['fg_main']};"
-            " font-size: 12px;"
-            " font-weight: 800;"
-            "}"
-            "QLabel#readinessBody {"
-            f" color: {THEME['fg_soft']};"
-            " font-size: 11px;"
-            "}"
-        )

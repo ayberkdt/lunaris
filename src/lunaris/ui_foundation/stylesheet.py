@@ -678,6 +678,177 @@ def build_app_stylesheet(
             border: 1px solid {with_alpha(theme['border'], 0.12)};
             border-radius: 10px;
         }}
+        /* Studio workspace widgets: semantic status badge, inline notice,
+           workflow strip and readiness panel. The label text always names
+           the state; the kind property only recolors it. */
+        QLabel#studioStatusBadge {{
+            color: {theme['info']};
+            background: {with_alpha(theme['info'], 0.10)};
+            border: 1px solid {with_alpha(theme['info'], 0.35)};
+            border-radius: {DESIGN_TOKENS.radii.control}px;
+            padding: 3px 10px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#studioStatusBadge[kind="success"],
+        QLabel#studioStatusBadge[kind="done"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.10)};
+            border-color: {with_alpha(theme['success'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="warning"] {{
+            color: {theme['warning']};
+            background: {with_alpha(theme['warning'], 0.10)};
+            border-color: {with_alpha(theme['warning'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="error"],
+        QLabel#studioStatusBadge[kind="blocked"] {{
+            color: {theme['error']};
+            background: {with_alpha(theme['error'], 0.10)};
+            border-color: {with_alpha(theme['error'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="active"] {{
+            color: {theme['accent']};
+            background: {with_alpha(theme['accent'], 0.10)};
+            border-color: {with_alpha(theme['accent'], 0.35)};
+        }}
+        QLabel#studioStatusBadge[kind="pending"] {{
+            color: {theme['fg_muted']};
+            background: {with_alpha(theme['fg_muted'], 0.10)};
+            border-color: {with_alpha(theme['fg_muted'], 0.35)};
+        }}
+        QFrame#studioNotice {{
+            background: {with_alpha(theme['bg_card'], 0.78)};
+            border: 1px solid {with_alpha(theme['info'], 0.30)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QFrame#studioNotice[kind="success"] {{
+            border-color: {with_alpha(theme['success'], 0.30)};
+        }}
+        QFrame#studioNotice[kind="warning"] {{
+            border-color: {with_alpha(theme['warning'], 0.30)};
+        }}
+        QFrame#studioNotice[kind="error"],
+        QFrame#studioNotice[kind="blocked"] {{
+            border-color: {with_alpha(theme['error'], 0.30)};
+        }}
+        QLabel#studioNoticeTitle {{
+            color: {theme['info']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#studioNoticeTitle[kind="success"] {{
+            color: {theme['success']};
+        }}
+        QLabel#studioNoticeTitle[kind="warning"] {{
+            color: {theme['warning']};
+        }}
+        QLabel#studioNoticeTitle[kind="error"],
+        QLabel#studioNoticeTitle[kind="blocked"] {{
+            color: {theme['error']};
+        }}
+        QLabel#studioNoticeBody {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        QFrame#studioWorkflowOverview {{
+            background: {with_alpha(theme['bg_card'], 0.74)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.80)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QFrame#studioWorkflowCell {{
+            background: {with_alpha(theme['bg_inset'], 0.40)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.55)};
+            border-radius: {DESIGN_TOKENS.radii.control}px;
+        }}
+        QLabel#workflowStepNumber {{
+            color: {theme['fg_muted']};
+            background: {with_alpha(theme['fg_muted'], 0.12)};
+            border: 1px solid {with_alpha(theme['fg_muted'], 0.35)};
+            border-radius: {DESIGN_TOKENS.radii.compact}px;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#workflowStepNumber[kind="active"] {{
+            color: {theme['accent']};
+            background: {with_alpha(theme['accent'], 0.12)};
+            border-color: {with_alpha(theme['accent'], 0.35)};
+        }}
+        QLabel#workflowStepNumber[kind="done"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.12)};
+            border-color: {with_alpha(theme['success'], 0.35)};
+        }}
+        QLabel#workflowStepTitle {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#workflowStepTitle[reached="true"] {{
+            color: {theme['fg_main']};
+        }}
+        QLabel#workflowStepDetail {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        QFrame#studioReadinessPanel {{
+            background: {with_alpha(theme['bg_card'], 0.82)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.90)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QLabel#readinessTitle {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#readinessBody {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        /* Structured-log tables (studio training dashboard). */
+        QTableView#logTable {{
+            background-color: {theme['bg_shell']};
+            alternate-background-color: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            gridline-color: transparent;
+        }}
+        QTableView#logTable::item {{
+            padding: 4px 8px;
+        }}
+        QTableView#logTable::item:selected {{
+            background-color: {with_alpha(theme['accent'], 0.22)};
+        }}
+        QTableView#logTable QHeaderView::section {{
+            background-color: {theme['bg_card']};
+            color: {theme['fg_muted']};
+            border: none;
+            border-bottom: 1px solid {theme['border_soft']};
+            padding: 6px 8px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+            letter-spacing: 0.5px;
+        }}
+        /* Checkable severity counters ("3 Warnings" / "1 Errors"). */
+        QPushButton#severityFilter {{
+            background-color: transparent;
+            border: 1px solid transparent;
+            padding: 2px 8px;
+            border-radius: 10px;
+            color: {theme['warning']};
+        }}
+        QPushButton#severityFilter:checked {{
+            background-color: {with_alpha(theme['warning'], 0.20)};
+            border: 1px solid {theme['warning']};
+        }}
+        QPushButton#severityFilter[kind="error"] {{
+            color: {theme['error']};
+        }}
+        QPushButton#severityFilter[kind="error"]:checked {{
+            background-color: {with_alpha(theme['error'], 0.20)};
+            border-color: {theme['error']};
+        }}
 
         /* NAVIGATION — flat shell; active = left border + tinted background */
         QListWidget#navDrawer {{

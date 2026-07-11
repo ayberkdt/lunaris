@@ -761,7 +761,7 @@ if _HAS_QT:
             filter_layout.setSpacing(8)
 
             self._lbl_title = QLabel("Progress & Logs")
-            self._lbl_title.setStyleSheet(f"color: {_COLORS['text_muted']}; font-weight: bold;")
+            self._lbl_title.setObjectName("dashCaption")
             filter_layout.addWidget(self._lbl_title)
             filter_layout.addStretch()
 
@@ -773,21 +773,9 @@ if _HAS_QT:
             self.btn_filter_err.setCheckable(True)
             self.btn_filter_err.setCursor(Qt.CursorShape.PointingHandCursor)
 
-            filter_style = """
-                QPushButton {
-                    background-color: transparent;
-                    border: 1px solid transparent;
-                    padding: 2px 8px;
-                    border-radius: 10px;
-                    color: %s;
-                }
-                QPushButton:checked {
-                    background-color: %s;
-                    border: 1px solid %s;
-                }
-            """
-            self.btn_filter_warn.setStyleSheet(filter_style % (_COLORS["warning"], _qt_color_alpha(_COLORS["warning"], 0.2).name(), _COLORS["warning"]))
-            self.btn_filter_err.setStyleSheet(filter_style % (_COLORS["danger"], _qt_color_alpha(_COLORS["danger"], 0.2).name(), _COLORS["danger"]))
+            self.btn_filter_warn.setObjectName("severityFilter")
+            self.btn_filter_err.setObjectName("severityFilter")
+            self.btn_filter_err.setProperty("kind", "error")
 
             filter_layout.addWidget(self.btn_filter_warn)
             filter_layout.addWidget(self.btn_filter_err)
@@ -824,31 +812,7 @@ if _HAS_QT:
             self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
             self._table.verticalHeader().setVisible(False)
             self._table.setShowGrid(False)
-            self._table.setStyleSheet(
-                "QTableView {"
-                f"  background-color: {_COLORS['panel_bg_alt']};"
-                f"  alternate-background-color: {_COLORS['panel_bg']};"
-                f"  border: 1px solid {_COLORS['border_soft']};"
-                "  border-radius: 10px;"
-                f"  color: {_COLORS['text_main']};"
-                "  font-size: 12px;"
-                "  gridline-color: transparent;"
-                "}"
-                "QTableView::item { padding: 4px 8px; }"
-                "QTableView::item:selected {"
-                f"  background-color: {with_alpha(_C.accent, 0.22)};"
-                "}"
-                "QHeaderView::section {"
-                f"  background-color: {_COLORS['panel_bg']};"
-                f"  color: {_COLORS['text_muted']};"
-                f"  border: none;"
-                f"  border-bottom: 1px solid {_COLORS['border_soft']};"
-                "  padding: 6px 8px;"
-                "  font-size: 11px;"
-                "  font-weight: 600;"
-                "  letter-spacing: 0.5px;"
-                "}"
-            )
+            self._table.setObjectName("logTable")
 
             header = self._table.horizontalHeader()
             header.setStretchLastSection(True)
@@ -865,7 +829,7 @@ if _HAS_QT:
             self._history_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
             self._history_table.verticalHeader().setVisible(False)
             self._history_table.setShowGrid(False)
-            self._history_table.setStyleSheet(self._table.styleSheet())
+            self._history_table.setObjectName("logTable")
             h_header = self._history_table.horizontalHeader()
             h_header.setStretchLastSection(True)
             h_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -878,9 +842,7 @@ if _HAS_QT:
                 "aligned like a table — as soon as the first epoch completes."
             )
             self._history_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._history_placeholder.setStyleSheet(
-                f"color: {_COLORS['text_muted']}; font-size: 12px;"
-            )
+            self._history_placeholder.setObjectName("fieldHint")
             self._history_stack = QWidget()
             _hist_l = QVBoxLayout(self._history_stack)
             _hist_l.setContentsMargins(0, 0, 0, 0)
@@ -897,9 +859,7 @@ if _HAS_QT:
                 "Waiting for training logs...\nMetrics will appear after the first parsed training line."
             )
             self._raw_log_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._raw_log_placeholder.setStyleSheet(
-                f"color: {_COLORS['text_muted']}; font-size: 12px;"
-            )
+            self._raw_log_placeholder.setObjectName("fieldHint")
             self._raw_tab_idx = self._tabs.addTab(self._raw_log_placeholder, "Raw Log")
 
             layout.addWidget(self._tabs)
