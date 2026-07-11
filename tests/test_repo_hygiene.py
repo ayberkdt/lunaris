@@ -364,3 +364,38 @@ def test_console_scripts_documented_in_public_api():
         "Console scripts missing from docs/PUBLIC_API.md (add them to the "
         "Stable Entry Points table with a stability note): " + ", ".join(missing)
     )
+
+
+def test_packaged_data_manifest_matches_repo_manifest():
+    """Wheel installs resolve the asset manifest from the packaged copy
+    (lunaris/cli/data_sources.json); it must never drift from the canonical
+    data/data_sources.json."""
+    root = get_project_root()
+    repo = (root / "data" / "data_sources.json").read_text(encoding="utf-8")
+    packaged = (root / "src" / "lunaris" / "cli" / "data_sources.json").read_text(
+        encoding="utf-8"
+    )
+    assert repo.replace("\r\n", "\n") == packaged.replace("\r\n", "\n"), (
+        "src/lunaris/cli/data_sources.json is out of sync with "
+        "data/data_sources.json — copy the canonical file over the packaged one."
+    )
+
+
+def test_wheel_package_discovery_excludes_node_modules():
+    """The optional web preview keeps node_modules inside the source tree;
+    package discovery must never pick those third-party files up (a stray
+    flatted.py leaked into the wheel before this guard)."""
+    from setuptools import find_packages
+
+    root = get_project_root()
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'exclude = ["lunaris.ui.web.node_modules*"]' in pyproject, (
+        "pyproject.toml lost the packages.find node_modules exclude"
+    )
+    found = find_packages(
+        where=str(root / "src"),
+        include=["lunaris*"],
+        exclude=["lunaris.ui.web.node_modules*"],
+    )
+    offenders = [p for p in found if "node_modules" in p]
+    assert not offenders, f"node_modules packages discovered: {offenders}"

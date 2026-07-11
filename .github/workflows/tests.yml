@@ -207,6 +207,50 @@ jobs:
           --include="src/lunaris/batch/backend_policy.py,src/lunaris/common/state_vector.py,src/lunaris/common/time_grid_contract.py,src/lunaris/core/dynamics/contracts.py,src/lunaris/core/propagation/diagnostics.py,src/lunaris/core/propagation/fixed_step_runner.py,src/lunaris/core/propagation/time_grid.py,src/lunaris/surrogate/runtime/artifact.py,src/lunaris/surrogate/runtime/device.py,src/lunaris/surrogate/runtime/metadata.py,src/lunaris/surrogate/runtime/scalers.py"
           --fail-under=80
 
+  wheel-install-smoke:
+    # Clean-machine contract: the built wheel must install into a bare venv and
+    # the headless entry points must work OUTSIDE the repository checkout
+    # (exercises the packaged data_sources.json fallback and the asset-free
+    # config bootstrap — the class of bug that once crashed `lunaris` on a
+    # machine without the repo's data/ folder).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install the wheel into a bare venv and smoke the CLIs from /tmp
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install --upgrade pip
+          /tmp/smoke-venv/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/smoke-venv/bin/lunaris --help > /dev/null
+          /tmp/smoke-venv/bin/lunaris-data list
+          /tmp/smoke-venv/bin/lunaris-data download --all --dry-run
+          /tmp/smoke-venv/bin/python -c "import lunaris; print('lunaris', lunaris.__version__)"
+
+      - name: Assert no third-party node_modules files leaked into the wheel
+        run: |
+          python - <<'EOF'
+          import glob, sys, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          bad = [n for n in zipfile.ZipFile(wheel).namelist() if "node_modules" in n]
+          if bad:
+              print("::error::node_modules files leaked into the wheel:", bad)
+              sys.exit(1)
+          print("wheel content clean:", wheel)
+          EOF
+
   locks:
     # Dependency-lock freshness gate. The committed locks/ files are hash-pinned
     # resolutions of pyproject.toml for Linux + CPython 3.11 (paper-evidence / HPC

@@ -137,6 +137,16 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["lunaris*"]
+# The optional Next.js web preview keeps its node_modules inside the source
+# tree when built locally; without this exclude, stray third-party .py files
+# from npm packages leak into the wheel (tests/test_repo_hygiene.py guards it).
+exclude = ["lunaris.ui.web.node_modules*"]
+
+[tool.setuptools.package-data]
+# Wheel installs have no repository root: lunaris-data falls back to this
+# packaged manifest copy (kept byte-identical to data/data_sources.json by a
+# repo-hygiene test).
+"lunaris.cli" = ["data_sources.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
