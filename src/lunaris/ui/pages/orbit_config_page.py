@@ -72,7 +72,7 @@ except ImportError as e:
 
 
 try:
-    from lunaris.ui.components.primitives import EmptyState, Section
+    from lunaris.ui.components.primitives import Section
     from lunaris.ui.core.ui_commons import (
         MU_MOON_KM3_S2,
         ORBIT_THEME,

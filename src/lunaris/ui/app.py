@@ -153,7 +153,11 @@ from lunaris.ui.core.ui_commons import StatusBadge
 # =============================================================================
 # 15.                       ALBEDO CONFIGURATION
 # =============================================================================
-from lunaris.ui.pages.force_models_page import UIAlbedoConfig, UIGravityConfig
+from lunaris.ui.pages.force_models_page import (
+    UIAlbedoConfig,
+    UIGravityConfig,
+    UIThermalConfig,
+)
 
 # =============================================================================
 # 11.                       SOLVER SETTINGS DIALOG
@@ -262,6 +266,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sim_state = SimulationState()
         self.gravity_cfg = UIGravityConfig()
         self.albedo_cfg = UIAlbedoConfig()
+        self.thermal_cfg = UIThermalConfig()
         self.solver_cfg = UISolverConfig()
         normalize_solver_config_object(self.solver_cfg)
         self.spacecraft_cfg = UISpacecraftConfig()
@@ -848,6 +853,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_forces = ForceModelsPage(
             gravity_cfg=self.gravity_cfg,
             albedo_cfg=self.albedo_cfg,
+            thermal_cfg=self.thermal_cfg,
         )
         return self.page_forces
 
@@ -1544,6 +1550,7 @@ class MainWindow(QtWidgets.QMainWindow):
             solver_cfg=self.solver_cfg,
             spacecraft_cfg=self.spacecraft_cfg,
             albedo_cfg=self.albedo_cfg,
+            thermal_cfg=self.thermal_cfg,
             log_warning=lambda msg: self._log_message(msg, severity="warning"),
         )
 
@@ -2027,6 +2034,7 @@ class MainWindow(QtWidgets.QMainWindow):
             data_page=self.page_data,
             gravity_cfg=self.gravity_cfg,
             albedo_cfg=self.albedo_cfg,
+            thermal_cfg=self.thermal_cfg,
             solver_cfg=self.solver_cfg,
             spacecraft_cfg=self.spacecraft_cfg,
             app_version=APP_VERSION,
@@ -2105,6 +2113,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 data_page=self.page_data,
                 gravity_cfg=self.gravity_cfg,
                 albedo_cfg=self.albedo_cfg,
+                thermal_cfg=self.thermal_cfg,
                 solver_cfg=self.solver_cfg,
                 spacecraft_cfg=self.spacecraft_cfg,
                 project_root=PROJECT_ROOT,

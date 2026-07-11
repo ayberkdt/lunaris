@@ -106,6 +106,10 @@ class UIBatchPropagationConfig:
     gravity_mode_override: str = "follow_mission"
     st_lrps_model_dir: str = ""
 
+    # GPU torch-path tuning (torch_cuda_sh / GPU ST-LRPS)
+    torch_dtype: str = "float64"       # "float32" or "float64"
+    torch_sh_chunk_size: int = 0       # samples per GPU chunk; 0 = auto
+
     # Integration (GPU RK4 fixed-step)
     dt_s: float = 60.0             # RK4 step [s]
     max_vram_gb: float = 4.0
@@ -120,6 +124,9 @@ class UIBatchPropagationConfig:
     detect_impact: bool = True
     compute_impact_statistics: bool = True
     impact_alt_km: float = 0.0
+
+    # UQ covariance report (empty = skip report generation)
+    uq_report_dir: str = ""
 
 
 # =============================================================================
@@ -929,6 +936,32 @@ class BatchPropagationPage(QtWidgets.QWidget):
         )
         gpu_grid.addWidget(self.ent_gpu_dev, 2, 1)
 
+        # Torch-path tuning (torch_cuda_sh / GPU ST-LRPS) — CLI parity for
+        # --torch-dtype and --torch-sh-chunk-size.
+        gpu_grid.addWidget(_label("Torch dtype"), 3, 0)
+        self.cb_torch_dtype = NoWheelComboBox()
+        self.cb_torch_dtype.setAccessibleName("Torch floating-point precision")
+        self.cb_torch_dtype.addItem("float64 (reference precision)", "float64")
+        self.cb_torch_dtype.addItem("float32 (faster, lower precision)", "float32")
+        dtype_idx = self.cb_torch_dtype.findData(self.batch_cfg.torch_dtype)
+        self.cb_torch_dtype.setCurrentIndex(dtype_idx if dtype_idx >= 0 else 0)
+        self.cb_torch_dtype.setToolTip(
+            "Floating-point dtype for the torch_cuda_sh and GPU ST-LRPS paths."
+        )
+        gpu_grid.addWidget(self.cb_torch_dtype, 3, 1)
+
+        gpu_grid.addWidget(_label("Torch SH Chunk"), 4, 0)
+        self.ent_torch_chunk = NumericDragLineEdit(
+            str(self.batch_cfg.torch_sh_chunk_size),
+            step=1024, min_value=0, max_value=10_000_000, decimals=0,
+        )
+        self.ent_torch_chunk.setAccessibleName("Torch SH chunk size")
+        self.ent_torch_chunk.setToolTip(
+            "Samples per GPU chunk on the torch_cuda_sh path. 0 = automatic "
+            "(VRAM-aware) chunking."
+        )
+        gpu_grid.addWidget(self.ent_torch_chunk, 4, 1)
+
         # GPU-only warning banner
         warn_lbl = _label(
             "- Classic-SH GPU uses Numba CUDA and supports true SH through degree 24.\n"
@@ -937,7 +970,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
             muted=True,
         )
         warn_lbl.setWordWrap(True)
-        gpu_grid.addWidget(warn_lbl, 3, 0, 1, 2)
+        gpu_grid.addWidget(warn_lbl, 5, 0, 1, 2)
 
         layout.addWidget(self.gpu_frame)
         gravity_mode_index = self.cb_batch_gravity_mode.findData(self.batch_cfg.gravity_mode_override)
@@ -1094,9 +1127,47 @@ class BatchPropagationPage(QtWidgets.QWidget):
         path_row.addWidget(btn_browse)
         layout.addLayout(path_row)
 
+        # UQ covariance report (CLI parity for --uq-report-dir)
+        uq_row = QtWidgets.QHBoxLayout()
+        uq_row.addWidget(_label("UQ Covariance Report"))
+        self.toggle_uq_report = ToggleSwitch()
+        self.toggle_uq_report.setAccessibleName("Generate UQ covariance report")
+        self.toggle_uq_report.setChecked(bool(self.batch_cfg.uq_report_dir))
+        self.toggle_uq_report.setToolTip(
+            "Write a provenance-stamped UQ report (covariance history, RIC "
+            "sigmas, error-ellipsoid figures, manifest) after the run."
+        )
+        self.toggle_uq_report.toggled.connect(self._on_uq_report_toggled)
+        uq_row.addWidget(self.toggle_uq_report)
+        uq_row.addStretch(1)
+        layout.addLayout(uq_row)
+
+        uq_path_row = QtWidgets.QHBoxLayout()
+        self.ent_uq_report_dir = QtWidgets.QLineEdit(self.batch_cfg.uq_report_dir)
+        self.ent_uq_report_dir.setAccessibleName("UQ report directory")
+        self.ent_uq_report_dir.setPlaceholderText("outputs/ensemble/uq_report")
+        self.btn_uq_browse = QtWidgets.QPushButton("Browse…")
+        self.btn_uq_browse.setFixedHeight(DESIGN_TOKENS.controls.compact_height)
+        self.btn_uq_browse.clicked.connect(self._browse_uq_report_dir)
+        uq_path_row.addWidget(self.ent_uq_report_dir, 1)
+        uq_path_row.addWidget(self.btn_uq_browse)
+        layout.addLayout(uq_path_row)
+        self._on_uq_report_toggled(self.toggle_uq_report.isChecked())
+
         self._on_output_format_changed(self.cb_format.currentText())
 
         return gb
+
+    def _on_uq_report_toggled(self, enabled: bool) -> None:
+        self.ent_uq_report_dir.setVisible(enabled)
+        self.btn_uq_browse.setVisible(enabled)
+
+    def _browse_uq_report_dir(self) -> None:
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "UQ Report Directory", self.ent_uq_report_dir.text() or "outputs/ensemble"
+        )
+        if path:
+            self.ent_uq_report_dir.setText(path)
 
     def _browse_output(self) -> None:
         fmt = self.cb_format.currentText()
@@ -1613,6 +1684,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
             "gpu_threads_per_block": self._parse_int(self.ent_tpb.text(), 128),
             "gravity_mode_override": str(self.cb_batch_gravity_mode.currentData() or "follow_mission"),
             "st_lrps_model_dir":     self.ent_batch_st_lrps_model_dir.text().strip(),
+            "torch_dtype":           str(self.cb_torch_dtype.currentData() or "float64"),
+            "torch_sh_chunk_size":   self._parse_int(self.ent_torch_chunk.text(), 0),
             "dt_s":                  self._parse_float(self.ent_dt.text(), 60.0),
             "max_vram_gb":           self._parse_float(self.ent_vram.text(), 4.0),
             "output_format":         self.cb_format.currentText(),
@@ -1625,6 +1698,11 @@ class BatchPropagationPage(QtWidgets.QWidget):
             "detect_impact":         self.batch_cfg.detect_impact,
             "compute_impact_statistics": self.batch_cfg.compute_impact_statistics,
             "impact_alt_km":         self._parse_float(self.ent_impact_alt.text(), 0.0),
+            "uq_report_dir":         (
+                self.ent_uq_report_dir.text().strip()
+                if self.toggle_uq_report.isChecked()
+                else ""
+            ),
         }
 
     def load_data(self, data: dict[str, Any]) -> None:
@@ -1657,6 +1735,10 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_batch_gravity_mode.setCurrentIndex(gravity_idx)
         self.ent_batch_st_lrps_model_dir.setText(str(data.get("st_lrps_model_dir", "") or ""))
         self._on_gravity_mode_changed()
+        torch_dtype = str(data.get("torch_dtype", "float64") or "float64")
+        dtype_idx = self.cb_torch_dtype.findData(torch_dtype)
+        self.cb_torch_dtype.setCurrentIndex(dtype_idx if dtype_idx >= 0 else 0)
+        self.ent_torch_chunk.setText(_s("torch_sh_chunk_size", 0))
         self.ent_dt.setText(_s("dt_s", 60.0))
         self.ent_vram.setText(_s("max_vram_gb", 4.0))
         fmt = str(data.get("output_format", "hdf5"))
@@ -1680,6 +1762,10 @@ class BatchPropagationPage(QtWidgets.QWidget):
             data.get("compute_impact_statistics", True)
         )
         self.ent_impact_alt.setText(_s("impact_alt_km", 0.0))
+        uq_dir = str(data.get("uq_report_dir", "") or "")
+        self.ent_uq_report_dir.setText(uq_dir)
+        self.toggle_uq_report.setChecked(bool(uq_dir))
+        self._on_uq_report_toggled(bool(uq_dir))
         self._update_sigma_summary()
 
     # -------------------------------------------------------------------------

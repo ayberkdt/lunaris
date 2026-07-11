@@ -43,6 +43,7 @@ from lunaris.cli.common_args import (  # noqa: E402
     apply_args_to_config,
     init_surface_provider,
     parse_adaptive_table,
+    parse_tide_bodies,
     resolve_orbit_elements,
     str2bool,
 )
@@ -111,6 +112,10 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--enable-thermal",         type=str2bool)
     g.add_argument("--enable-tides",           type=str2bool)
     g.add_argument("--tides-kind",             choices=("k2", "k3"))
+    g.add_argument("--tide-bodies",            type=parse_tide_bodies)
+    g.add_argument("--tide-k2",                type=float)
+    g.add_argument("--tide-k3",                type=float)
+    g.add_argument("--tide-r-ref-m",           type=float)
     g.add_argument("--enable-relativity-1pn",  type=str2bool)
 
     # ---- Gravity ------------------------------------------------------------

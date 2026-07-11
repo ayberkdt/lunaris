@@ -972,6 +972,7 @@ class UIAlbedoConfig:
     facet_lat_count: int = 18
     facet_lon_count: int = 36
     enable_eclipse: bool = True         # lunar-eclipse (Earth-umbra) dimming
+    require_provider: bool = False      # fail-closed: demand a real surface provider
 
 
 class AlbedoSettingsDialog(QtWidgets.QDialog):
@@ -1053,6 +1054,13 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         self.chk_eclipse = QtWidgets.QCheckBox("Apply lunar-eclipse (Earth-umbra) dimming")
         form.addRow("", self.chk_eclipse)
 
+        self.chk_require_provider = QtWidgets.QCheckBox("Require real provider (fail-closed)")
+        self.chk_require_provider.setToolTip(
+            "Refuse to run with the constant-albedo fallback: the run fails "
+            "unless a real surface provider (Albedo Root grid) is available."
+        )
+        form.addRow("", self.chk_require_provider)
+
         layout.addWidget(form_frame)
 
         self.lbl_note = QtWidgets.QLabel()
@@ -1092,6 +1100,7 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         self.sp_lat.setValue(int(getattr(self._cfg, "facet_lat_count", 18)))
         self.sp_lon.setValue(int(getattr(self._cfg, "facet_lon_count", 36)))
         self.chk_eclipse.setChecked(bool(getattr(self._cfg, "enable_eclipse", True)))
+        self.chk_require_provider.setChecked(bool(getattr(self._cfg, "require_provider", False)))
         self._sync_enabled()
 
     def _sync_enabled(self) -> None:
@@ -1120,6 +1129,182 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         self._cfg.facet_lat_count = int(self.sp_lat.value())
         self._cfg.facet_lon_count = int(self.sp_lon.value())
         self._cfg.enable_eclipse = bool(self.chk_eclipse.isChecked())
+        self._cfg.require_provider = bool(self.chk_require_provider.isChecked())
+        self.accept()
+
+
+# =============================================================================
+# 2b.                              THERMAL IR
+# =============================================================================
+
+@dataclass
+class UIThermalConfig:
+    """UI buffer for the lunar thermal-IR (re-radiation) physics model.
+
+    Mirrors the backend ``lunaris.physics.surface_effects.ThermalConfig`` knobs
+    exposed through the CLI ``--thermal-*`` flags. Defaults match the backend
+    dataclass so an untouched dialog reproduces engine behavior exactly.
+    """
+
+    mode: str = "constant_temperature"  # constant_temperature | equilibrium_temperature | temperature_grid
+    temperature_k: float = 250.0        # constant-mode surface temperature [K]
+    night_temperature_k: float = 100.0  # equilibrium-mode night/floor temperature [K]
+    emissivity: float = 0.95            # surface emissivity [0,1]
+    surface_albedo: float = 0.12        # equilibrium-mode absorbed-solar albedo [0,1]
+    ir_coefficient: float = 1.0         # spacecraft IR pressure coefficient [-]
+    floor_flux_w_m2: float = 0.0        # minimum thermal exitance floor [W/m^2]
+    facet_lat_count: int = 18
+    facet_lon_count: int = 36
+
+
+class ThermalSettingsDialog(QtWidgets.QDialog):
+    """Configuration dialog for the lunar thermal-IR re-radiation model.
+
+    Follows the Albedo dialog pattern: the dialog edits the shared
+    ``UIThermalConfig`` in place on Apply, and ``command_builder`` translates
+    the fields into ``--thermal-*`` CLI flags.
+    """
+
+    def __init__(self, parent: QtWidgets.QWidget, cfg: UIThermalConfig):
+        super().__init__(parent)
+        self.setWindowTitle("Thermal IR Model Configuration")
+        self.setObjectName("settingsDialog")
+        self.setModal(True)
+        self.resize(620, 560)
+        self.setMinimumSize(560, 520)
+        self._cfg = cfg
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        header = QtWidgets.QLabel("Lunar Thermal IR (Re-radiation) Model")
+        header.setObjectName("dialogTitle")
+        layout.addWidget(header)
+
+        desc = QtWidgets.QLabel(
+            "Radiation pressure from the Moon's own thermal emission. Facets "
+            "radiate by their surface temperature: a constant value, a "
+            "day/night equilibrium model, or a temperature grid."
+        )
+        desc.setWordWrap(True)
+        desc.setObjectName("dialogDescription")
+        layout.addWidget(desc)
+
+        form_frame = QtWidgets.QFrame()
+        form_frame.setObjectName("section")
+        form = QtWidgets.QFormLayout(form_frame)
+        form.setContentsMargins(16, 16, 16, 16)
+        form.setSpacing(12)
+
+        self.cb_mode = NoWheelComboBox()
+        self.cb_mode.addItem("Constant temperature", "constant_temperature")
+        self.cb_mode.addItem("Day/night equilibrium", "equilibrium_temperature")
+        self.cb_mode.addItem("Temperature grid", "temperature_grid")
+        form.addRow("Mode:", self.cb_mode)
+
+        self.sp_temperature = NoWheelDoubleSpinBox()
+        self.sp_temperature.setRange(0.0, 500.0)
+        self.sp_temperature.setDecimals(1)
+        self.sp_temperature.setSuffix(" K")
+        form.addRow("Surface temperature:", self.sp_temperature)
+
+        self.sp_night_temperature = NoWheelDoubleSpinBox()
+        self.sp_night_temperature.setRange(0.0, 500.0)
+        self.sp_night_temperature.setDecimals(1)
+        self.sp_night_temperature.setSuffix(" K")
+        form.addRow("Night temperature:", self.sp_night_temperature)
+
+        self.sp_emissivity = NoWheelDoubleSpinBox()
+        self.sp_emissivity.setRange(0.0, 1.0)
+        self.sp_emissivity.setSingleStep(0.01)
+        self.sp_emissivity.setDecimals(3)
+        form.addRow("Emissivity:", self.sp_emissivity)
+
+        self.sp_surface_albedo = NoWheelDoubleSpinBox()
+        self.sp_surface_albedo.setRange(0.0, 1.0)
+        self.sp_surface_albedo.setSingleStep(0.01)
+        self.sp_surface_albedo.setDecimals(3)
+        form.addRow("Absorbed-solar albedo:", self.sp_surface_albedo)
+
+        self.sp_ir_coefficient = NoWheelDoubleSpinBox()
+        self.sp_ir_coefficient.setRange(0.0, 5.0)
+        self.sp_ir_coefficient.setSingleStep(0.1)
+        self.sp_ir_coefficient.setDecimals(2)
+        form.addRow("IR pressure coefficient:", self.sp_ir_coefficient)
+
+        self.sp_floor_flux = NoWheelDoubleSpinBox()
+        self.sp_floor_flux.setRange(0.0, 2000.0)
+        self.sp_floor_flux.setDecimals(1)
+        self.sp_floor_flux.setSuffix(" W/m²")
+        form.addRow("Exitance floor:", self.sp_floor_flux)
+
+        facet_row = QtWidgets.QHBoxLayout()
+        self.sp_lat = NoWheelSpinBox()
+        self.sp_lat.setRange(1, 180)
+        self.sp_lon = NoWheelSpinBox()
+        self.sp_lon.setRange(1, 360)
+        facet_row.addWidget(self.sp_lat)
+        facet_row.addWidget(QtWidgets.QLabel("x"))
+        facet_row.addWidget(self.sp_lon)
+        facet_row.addWidget(QtWidgets.QLabel("(lat x lon)"))
+        facet_row.addStretch()
+        facet_holder = QtWidgets.QWidget()
+        facet_holder.setLayout(facet_row)
+        form.addRow("Facet resolution:", facet_holder)
+
+        layout.addWidget(form_frame)
+        layout.addStretch(1)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch()
+        self.btn_cancel = QtWidgets.QPushButton("Cancel")
+        self.btn_save = QtWidgets.QPushButton("Apply Settings")
+        for btn in (self.btn_cancel, self.btn_save):
+            btn.setCursor(QtCore.Qt.PointingHandCursor)
+            btn.setMinimumHeight(34)
+        self.btn_cancel.setProperty("kind", "ghost")
+        self.btn_save.setProperty("kind", "primary")
+        btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_save)
+        layout.addLayout(btn_layout)
+
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_save.clicked.connect(self._on_save)
+        self.cb_mode.currentIndexChanged.connect(self._sync_enabled)
+
+        self._load_current_config()
+
+    def _load_current_config(self) -> None:
+        idx = self.cb_mode.findData(str(getattr(self._cfg, "mode", "constant_temperature")))
+        self.cb_mode.setCurrentIndex(idx if idx >= 0 else 0)
+        self.sp_temperature.setValue(float(getattr(self._cfg, "temperature_k", 250.0)))
+        self.sp_night_temperature.setValue(float(getattr(self._cfg, "night_temperature_k", 100.0)))
+        self.sp_emissivity.setValue(float(getattr(self._cfg, "emissivity", 0.95)))
+        self.sp_surface_albedo.setValue(float(getattr(self._cfg, "surface_albedo", 0.12)))
+        self.sp_ir_coefficient.setValue(float(getattr(self._cfg, "ir_coefficient", 1.0)))
+        self.sp_floor_flux.setValue(float(getattr(self._cfg, "floor_flux_w_m2", 0.0)))
+        self.sp_lat.setValue(int(getattr(self._cfg, "facet_lat_count", 18)))
+        self.sp_lon.setValue(int(getattr(self._cfg, "facet_lon_count", 36)))
+        self._sync_enabled()
+
+    def _sync_enabled(self) -> None:
+        mode = str(self.cb_mode.currentData() or "constant_temperature")
+        # Constant temperature only matters in constant mode; night floor and
+        # absorbed-solar albedo only matter in equilibrium mode.
+        self.sp_temperature.setEnabled(mode == "constant_temperature")
+        self.sp_night_temperature.setEnabled(mode == "equilibrium_temperature")
+        self.sp_surface_albedo.setEnabled(mode == "equilibrium_temperature")
+
+    def _on_save(self, _checked: bool = False) -> None:
+        self._cfg.mode = str(self.cb_mode.currentData() or "constant_temperature")
+        self._cfg.temperature_k = float(self.sp_temperature.value())
+        self._cfg.night_temperature_k = float(self.sp_night_temperature.value())
+        self._cfg.emissivity = float(self.sp_emissivity.value())
+        self._cfg.surface_albedo = float(self.sp_surface_albedo.value())
+        self._cfg.ir_coefficient = float(self.sp_ir_coefficient.value())
+        self._cfg.floor_flux_w_m2 = float(self.sp_floor_flux.value())
+        self._cfg.facet_lat_count = int(self.sp_lat.value())
+        self._cfg.facet_lon_count = int(self.sp_lon.value())
         self.accept()
 
 
@@ -1143,6 +1328,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self,
         gravity_cfg: UIGravityConfig | None = None,
         albedo_cfg: UIAlbedoConfig | None = None,
+        thermal_cfg: UIThermalConfig | None = None,
         parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
@@ -1150,6 +1336,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         # Keep references so dialogs update the SAME objects MainWindow uses
         self.gravity_cfg: UIGravityConfig = gravity_cfg if gravity_cfg is not None else UIGravityConfig()
         self.albedo_cfg: UIAlbedoConfig = albedo_cfg if albedo_cfg is not None else UIAlbedoConfig()
+        self.thermal_cfg: UIThermalConfig = thermal_cfg if thermal_cfg is not None else UIThermalConfig()
 
         # Build UI into self
         self._build_page_forces()
@@ -1181,6 +1368,10 @@ class ForceModelsPage(QtWidgets.QWidget):
             "thermal": bool(self.sw_thermal.isChecked()),
             "tides_k2": bool(self.sw_tides_k2.isChecked()),
             "tides_k3": bool(self.sw_tides_k3.isChecked()),
+            "tide_k2_value": self.ent_tide_k2.text().strip(),
+            "tide_k3_value": self.ent_tide_k3.text().strip(),
+            "tide_r_ref_m": self.ent_tide_r_ref.text().strip(),
+            "tide_bodies": str(self.cb_tide_bodies.currentData() or ""),
             "relativity_1pn": bool(self.sw_relativity_1pn.isChecked()),
         }
 
@@ -1212,6 +1403,11 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_thermal.setChecked(bool(data.get("thermal", False)))
         self.sw_tides_k2.setChecked(bool(data.get("tides_k2", True)))
         self.sw_tides_k3.setChecked(bool(data.get("tides_k3", False)))
+        self.ent_tide_k2.setText(str(data.get("tide_k2_value", "") or ""))
+        self.ent_tide_k3.setText(str(data.get("tide_k3_value", "") or ""))
+        self.ent_tide_r_ref.setText(str(data.get("tide_r_ref_m", "") or ""))
+        bodies_idx = self.cb_tide_bodies.findData(str(data.get("tide_bodies", "") or ""))
+        self.cb_tide_bodies.setCurrentIndex(bodies_idx if bodies_idx >= 0 else 0)
         self.sw_relativity_1pn.setChecked(bool(data.get("relativity_1pn", False)))
 
         self._update_gravity_summary_ui()
@@ -1533,6 +1729,19 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.ind_thermal_cost = CostIndicator("medium")
         grid.addWidget(self.ind_thermal_cost, 2, 2)
 
+        # Thermal settings button (Albedo dialog pattern)
+        self.btn_thermal_settings = QtWidgets.QPushButton()
+        self.btn_thermal_settings.setObjectName("iconButton")
+        self.btn_thermal_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
+        self.btn_thermal_settings.setToolTip("Configure Thermal IR Model")
+        self.btn_thermal_settings.setAccessibleName("Configure thermal IR model")
+        self.btn_thermal_settings.clicked.connect(self._on_thermal_settings)
+        grid.addWidget(self.btn_thermal_settings, 2, 3)
+        self.sw_thermal.toggled.connect(
+            lambda on: self.btn_thermal_settings.setEnabled(bool(on))
+        )
+        self.btn_thermal_settings.setEnabled(self.sw_thermal.isChecked())
+
         gb.content_layout.addLayout(grid)
 
         # Warning: SRP/Albedo/Thermal require Sun position
@@ -1622,6 +1831,51 @@ class ForceModelsPage(QtWidgets.QWidget):
         note.setWordWrap(True)
         layout.addWidget(note)
 
+        # Advanced values (CLI parity: --tide-k2/--tide-k3/--tide-bodies/
+        # --tide-r-ref-m). Blank fields keep the engine defaults; the command
+        # builder emits a flag only when a value is entered.
+        adv_grid = QtWidgets.QGridLayout()
+        adv_grid.setHorizontalSpacing(12)
+        adv_grid.setVerticalSpacing(8)
+
+        def _tide_value_row(row: int, caption: str, placeholder: str, tooltip: str) -> QtWidgets.QLineEdit:
+            lbl = QtWidgets.QLabel(caption)
+            lbl.setObjectName("fieldLabel")
+            edit = QtWidgets.QLineEdit()
+            edit.setPlaceholderText(placeholder)
+            edit.setAccessibleName(caption)
+            edit.setToolTip(tooltip)
+            edit.setMaximumWidth(220)
+            adv_grid.addWidget(lbl, row, 0)
+            adv_grid.addWidget(edit, row, 1)
+            return edit
+
+        self.ent_tide_k2 = _tide_value_row(
+            0, "k2 value", "engine default (0.02416)",
+            "Degree-2 lunar potential Love number. Blank keeps the engine default.",
+        )
+        self.ent_tide_k3 = _tide_value_row(
+            1, "k3 value", "engine default",
+            "Degree-3 lunar potential Love number (used when the k3 row is on).",
+        )
+        self.ent_tide_r_ref = _tide_value_row(
+            2, "Reference radius [m]", "engine default",
+            "Lunar tide reference radius in meters. Blank keeps the engine default.",
+        )
+
+        bodies_lbl = QtWidgets.QLabel("Tide bodies")
+        bodies_lbl.setObjectName("fieldLabel")
+        self.cb_tide_bodies = NoWheelComboBox()
+        self.cb_tide_bodies.setAccessibleName("Tide-raising bodies")
+        self.cb_tide_bodies.addItem("Engine default", "")
+        self.cb_tide_bodies.addItem("Earth", "earth")
+        self.cb_tide_bodies.addItem("Earth + Sun", "earth,sun")
+        self.cb_tide_bodies.addItem("Sun", "sun")
+        adv_grid.addWidget(bodies_lbl, 3, 0)
+        adv_grid.addWidget(self.cb_tide_bodies, 3, 1)
+        adv_grid.setColumnStretch(2, 1)
+        layout.addLayout(adv_grid)
+
         return gb
 
     def _group_relativity_force(self) -> Section:
@@ -1670,6 +1924,16 @@ class ForceModelsPage(QtWidgets.QWidget):
             dlg.exec()  # config object is updated in-place by dialog on save
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Albedo Settings", f"Could not open albedo settings:\n\n{e}")
+
+    def _on_thermal_settings(self, _checked: bool = False):
+        """Open ThermalSettingsDialog and apply changes to bound thermal_cfg."""
+        try:
+            dlg = ThermalSettingsDialog(self.window() or self, self.thermal_cfg)
+            dlg.exec()  # config object is updated in-place by dialog on save
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Thermal Settings", f"Could not open thermal settings:\n\n{e}"
+            )
 
     def _sync_srp_requirement(self, _checked: bool = False):
         """Ensure Sun is enabled if SRP or Albedo is enabled."""
