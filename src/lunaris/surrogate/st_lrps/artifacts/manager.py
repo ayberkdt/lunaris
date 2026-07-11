@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import json
 import logging
 import os
+import pickle
 import platform
 import random
 import subprocess
@@ -350,7 +352,9 @@ def build_run_provenance(
         "git_commit": resolve_git_commit(),
         "python_version": sys.version.replace("\n", " "),
         "platform": platform.platform(),
-        "torch_version": getattr(torch, "__version__", "unknown"),
+        # str() so checkpoints stay loadable via weights_only=True: the raw
+        # torch.__version__ is a TorchVersion object the safe unpickler rejects.
+        "torch_version": str(getattr(torch, "__version__", "unknown")),
         "cuda_available": cuda["cuda_available"],
         "cuda_version": cuda["cuda_version"],
         "cudnn_version": cuda["cudnn_version"],
@@ -871,11 +875,39 @@ def save_checkpoint(
 
 
 def load_checkpoint(path: Path, device: torch.device) -> dict:
+    """Load and normalize a checkpoint payload.
+
+    Security: the safe ``weights_only=True`` loader is tried first — every
+    checkpoint written by this pipeline (tensors + JSON-safe metadata) loads
+    through it. Only when that fails (older payloads with arbitrary pickled
+    objects) do we fall back to full unpickling, which executes code embedded
+    in the file. Never load checkpoints from untrusted sources: the fallback
+    is equivalent to running the file's contents.
+    """
     path = Path(path).expanduser().resolve()
     try:
-        obj = torch.load(path, map_location=device, weights_only=False)
+        # Older checkpoints embed torch.__version__ as a TorchVersion object
+        # (a plain str subclass, safe to allowlist); new ones store str.
+        try:
+            from torch.torch_version import TorchVersion
+
+            safe_ctx = torch.serialization.safe_globals([TorchVersion])
+        except (ImportError, AttributeError):
+            safe_ctx = contextlib.nullcontext()
+        with safe_ctx:
+            obj = torch.load(path, map_location=device, weights_only=True)
     except TypeError:
+        # torch too old to know the weights_only kwarg: plain load (unpickle).
         obj = torch.load(path, map_location=device)
+    except (pickle.UnpicklingError, RuntimeError) as safe_load_error:
+        logger.warning(
+            "Safe (weights_only=True) load of %s failed (%s); falling back to "
+            "full unpickling. This executes code embedded in the checkpoint — "
+            "only load checkpoints from trusted sources.",
+            path,
+            safe_load_error,
+        )
+        obj = torch.load(path, map_location=device, weights_only=False)
     ckpt = normalize_checkpoint_payload(obj if isinstance(obj, dict) else {"model_state_dict": obj})
     if ckpt.get("kind") not in {"best", "last", "epoch"}:
         ckpt["kind"] = _infer_checkpoint_kind_from_path(path)
@@ -1627,7 +1659,7 @@ def capture_environment_snapshot(layout: RunLayout, *, extra: Mapping[str, Any] 
         "platform": platform.platform(),
         "cwd": str(Path.cwd()),
         "argv": list(sys.argv),
-        "torch_version": getattr(torch, "__version__", "unknown"),
+        "torch_version": str(getattr(torch, "__version__", "unknown")),
         "cuda_available": bool(torch.cuda.is_available()),
         "pip_freeze": pip_freeze,
     }

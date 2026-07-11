@@ -485,7 +485,11 @@ def test_adaptive_preflight_respects_max_internal_steps() -> None:
     )
     tc = TimeConfig(duration_s=101.0, output_dt_s=101.0, samples_per_period=2)
 
-    with pytest.raises(ValueError, match="requires at least 101 internal steps"):
+    # The message must make clear this is a preflight feasibility guard, not a
+    # hard cap on solve_ivp's actual internal step count.
+    with pytest.raises(
+        ValueError, match=r"requires at least 101 internal steps.*preflight"
+    ):
         propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
 
 

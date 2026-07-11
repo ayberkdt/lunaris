@@ -87,6 +87,85 @@ def test_collocation_three_dimensional_laplacian_is_exact_trace() -> None:
     assert float(result) == pytest.approx(0.0, abs=1e-10)
 
 
+def test_collocation_penalty_invariant_under_grad_accumulation(monkeypatch) -> None:
+    """One full-weight collocation penalty per optimizer step: the collocation-only
+    gradient contribution must not shrink by 1/grad_accumulation_steps."""
+    import copy
+
+    from torch.utils.data import DataLoader, TensorDataset
+
+    from lunaris.surrogate.st_lrps.training import engine as engine_mod
+    from lunaris.surrogate.st_lrps.training.config import TrainConfig
+    from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
+    from lunaris.surrogate.st_lrps.training.losses import GradNormWeights
+
+    # Deterministic stand-in for the (randomly sampled) collocation loss so the
+    # accum=1 vs accum=4 runs are exactly comparable.
+    def fake_collocation_loss(model, loss_fn, **kwargs):
+        return (model[0].weight ** 2).sum()
+
+    monkeypatch.setattr(engine_mod, "collocation_laplacian_loss", fake_collocation_loss)
+
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+
+    base_model = torch.nn.Sequential(
+        torch.nn.Linear(3, 16), torch.nn.Tanh(), torch.nn.Linear(16, 1)
+    )
+    gen = torch.Generator().manual_seed(0)
+    x_raw = torch.randn(16, 3, generator=gen) * 1.85e6
+    u_raw = torch.randn(16, 1, generator=gen)
+    a_raw = torch.randn(16, 3, generator=gen) * 1e-3
+
+    def epoch_grads(grad_accum: int, laplacian_on: bool) -> list:
+        model = copy.deepcopy(base_model)
+        cfg = TrainConfig(
+            data="/tmp/fake.h5", out="/tmp/fake_out",
+            epochs=1, batch_size=4,
+            grad_accumulation_steps=grad_accum,
+            laplacian_mode="train" if laplacian_on else "off",
+            collocation_laplacian_weight=0.5 if laplacian_on else 0.0,
+            collocation_laplacian_every=1,
+            collocation_laplacian_samples=8,
+            collocation_laplacian_hutchinson_samples=2,
+            max_grad_norm=0.0,  # no clipping: gradients must stay comparable
+            amp=False,
+        )
+        opt = torch.optim.SGD(model.parameters(), lr=0.0)  # lr=0 -> params never move
+        trainer = STLRPSTrainer(
+            model, SobolevLoss(sp, a_sign=1.0), opt, GradNormWeights(mode="fixed"),
+            torch.device("cpu"), cfg,
+            collocation_r_min_m=1.837e6, collocation_r_max_m=1.937e6,
+        )
+        loader = DataLoader(TensorDataset(x_raw, u_raw, a_raw), batch_size=4)
+        trainer.run_epoch(loader, is_train=True, epoch=0)
+        return [p.grad.detach().clone() for p in model.parameters()]
+
+    # The gradient left on the model after the epoch belongs to the LAST
+    # accumulation group; differencing laplacian-on vs laplacian-off isolates
+    # the collocation contribution added to that optimizer step.
+    col_only_1 = [
+        a - b for a, b in zip(epoch_grads(1, True), epoch_grads(1, False), strict=True)
+    ]
+    col_only_4 = [
+        a - b for a, b in zip(epoch_grads(4, True), epoch_grads(4, False), strict=True)
+    ]
+
+    norm_1 = float(torch.sqrt(sum((g ** 2).sum() for g in col_only_1)))
+    norm_4 = float(torch.sqrt(sum((g ** 2).sum() for g in col_only_4)))
+    assert norm_1 > 0.0, "collocation penalty must contribute a gradient"
+    # A regression back to per-group scaling would give norm_4 ~= norm_1 / 4;
+    # the tolerance only needs to absorb float32 cancellation noise in the
+    # base-gradient differencing.
+    assert norm_4 == pytest.approx(norm_1, rel=1e-2), (
+        "collocation-only gradient must not scale with grad_accumulation_steps "
+        f"(accum=1 -> {norm_1:.6e}, accum=4 -> {norm_4:.6e})"
+    )
+
+
 def test_direction_loss_ramp_starts_on_configured_epoch() -> None:
     cfg = type(
         "Cfg",

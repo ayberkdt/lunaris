@@ -556,8 +556,12 @@ class PropagatorConfig:
     nyquist_safety_div: float = 4.0
     nyquist_v_margin: float = 1.10
 
-    # Safety guard: hard cap for fixed-step integration; conservative
-    # duration/max_step feasibility check for SciPy adaptive integration.
+    # Safety guard with backend-dependent strength:
+    #  - fixed-step backend: hard cap, enforced during integration;
+    #  - SciPy adaptive backend: PREFLIGHT-ONLY feasibility check on the
+    #    minimum step count implied by duration/max_step. solve_ivp exposes
+    #    no accepted-step limit, so once integration starts the actual
+    #    internal step count is NOT bounded by this value.
     max_internal_steps: int = 1_000_000
 
     # Runtime / logging

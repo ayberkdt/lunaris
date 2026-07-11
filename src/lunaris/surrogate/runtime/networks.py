@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import pickle
 import warnings
 from pathlib import Path
 from typing import Any
@@ -236,12 +237,27 @@ def _extract_state_dict(checkpoint_obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_checkpoint(path: Path, device: torch.device) -> dict[str, Any]:
-    """Load a checkpoint with compatibility across PyTorch versions."""
+    """Load a checkpoint with compatibility across PyTorch versions.
+
+    The safe ``weights_only=True`` loader is tried first; only legacy payloads
+    holding arbitrary pickled objects fall back to full unpickling, which
+    executes code embedded in the file — never load untrusted checkpoints.
+    """
 
     try:
-        obj = torch.load(path, map_location=device, weights_only=False)
+        obj = torch.load(path, map_location=device, weights_only=True)
     except TypeError:
+        # torch too old to know the weights_only kwarg: plain load (unpickle).
         obj = torch.load(path, map_location=device)
+    except (pickle.UnpicklingError, RuntimeError):
+        warnings.warn(
+            f"Safe (weights_only=True) load of {path} failed; falling back to "
+            "full unpickling. This executes code embedded in the checkpoint — "
+            "only load checkpoints from trusted sources.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        obj = torch.load(path, map_location=device, weights_only=False)
     if not isinstance(obj, dict):
         raise TypeError(f"Unsupported checkpoint payload: {type(obj)!r}")
     return obj

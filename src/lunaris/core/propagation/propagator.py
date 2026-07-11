@@ -258,7 +258,11 @@ def propagate(
                 "Adaptive propagation requires at least "
                 f"{minimum_internal_steps} internal steps from duration/max_step, "
                 f"exceeding max_internal_steps={max_internal_steps}. "
-                "Increase the limit or use a larger max_step."
+                "Note: for the adaptive (SciPy) backend this is a preflight "
+                "feasibility guard on the minimum implied step count only — "
+                "solve_ivp itself has no hard cap on accepted steps, so the "
+                "actual step count during integration is not limited by "
+                "max_internal_steps. Increase the limit or use a larger max_step."
             )
     checkpoint_meta = _checkpoint_metadata(method=integration_plan.method, config=cfg)
 
