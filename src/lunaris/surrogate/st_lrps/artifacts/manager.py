@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import dataclasses
 import hashlib
 import json
 import logging
 import os
-import pickle
 import platform
 import random
 import subprocess
@@ -25,6 +23,7 @@ import torch
 
 from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
 from lunaris.common.provenance import sha256_file, utc_now_iso
+from lunaris.surrogate.serialization import safe_torch_load
 from lunaris.surrogate.st_lrps.networks.models import (
     ARCH_SIGNATURE_FIELDS,
     MODEL_BUILDER_VERSION,
@@ -34,6 +33,7 @@ from lunaris.surrogate.st_lrps.networks.models import (
 from lunaris.surrogate.st_lrps.shared.contracts import (
     ArtifactContract,
     ArtifactContractError,
+    resolve_dataset_hash,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
@@ -874,40 +874,31 @@ def save_checkpoint(
     return target
 
 
-def load_checkpoint(path: Path, device: torch.device) -> dict:
+def load_checkpoint(path: Path, device: torch.device, *, trust_artifact: bool = False) -> dict:
     """Load and normalize a checkpoint payload.
 
-    Security: the safe ``weights_only=True`` loader is tried first — every
+    Security: the safe ``weights_only=True`` loader is always used — every
     checkpoint written by this pipeline (tensors + JSON-safe metadata) loads
-    through it. Only when that fails (older payloads with arbitrary pickled
-    objects) do we fall back to full unpickling, which executes code embedded
-    in the file. Never load checkpoints from untrusted sources: the fallback
-    is equivalent to running the file's contents.
+    through it. Legacy payloads holding arbitrary pickled objects only load
+    when explicitly trusted (``trust_artifact=True`` or
+    ``LUNARIS_TRUST_ARTIFACT=1``): full unpickling executes code embedded in
+    the file, so without the opt-in ``UntrustedArtifactError`` is raised.
     """
     path = Path(path).expanduser().resolve()
+    # Older checkpoints embed torch.__version__ as a TorchVersion object
+    # (a plain str subclass, safe to allowlist); new ones store str.
     try:
-        # Older checkpoints embed torch.__version__ as a TorchVersion object
-        # (a plain str subclass, safe to allowlist); new ones store str.
-        try:
-            from torch.torch_version import TorchVersion
+        from torch.torch_version import TorchVersion
 
-            safe_ctx = torch.serialization.safe_globals([TorchVersion])
-        except (ImportError, AttributeError):
-            safe_ctx = contextlib.nullcontext()
-        with safe_ctx:
-            obj = torch.load(path, map_location=device, weights_only=True)
-    except TypeError:
-        # torch too old to know the weights_only kwarg: plain load (unpickle).
-        obj = torch.load(path, map_location=device)
-    except (pickle.UnpicklingError, RuntimeError) as safe_load_error:
-        logger.warning(
-            "Safe (weights_only=True) load of %s failed (%s); falling back to "
-            "full unpickling. This executes code embedded in the checkpoint — "
-            "only load checkpoints from trusted sources.",
-            path,
-            safe_load_error,
-        )
-        obj = torch.load(path, map_location=device, weights_only=False)
+        safe_globals: tuple[type, ...] = (TorchVersion,)
+    except ImportError:
+        safe_globals = ()
+    obj = safe_torch_load(
+        path,
+        map_location=device,
+        trust_artifact=trust_artifact,
+        safe_globals=safe_globals,
+    )
     ckpt = normalize_checkpoint_payload(obj if isinstance(obj, dict) else {"model_state_dict": obj})
     if ckpt.get("kind") not in {"best", "last", "epoch"}:
         ckpt["kind"] = _infer_checkpoint_kind_from_path(path)
@@ -996,6 +987,7 @@ def resolve_resume_checkpoint(
     *,
     prefer: str = "last",
     device: torch.device | None = None,
+    trust_artifact: bool = False,
 ) -> tuple[RunLayout, Path, dict]:
     """Resolve a resume target into ``(layout, checkpoint_path, checkpoint_payload)``.
 
@@ -1036,7 +1028,7 @@ def resolve_resume_checkpoint(
                 f"Expected {layout.ckpt_last.name} or {layout.ckpt_best.name}."
             )
 
-    payload = load_checkpoint(ckpt_path, dev)
+    payload = load_checkpoint(ckpt_path, dev, trust_artifact=trust_artifact)
     return layout, ckpt_path, payload
 
 
@@ -1592,9 +1584,7 @@ def build_checkpoint_payload(
         ),
         "resolved_config": dict(cfg_dict),
         "training_config_hash": cfg_dict.get("training_config_hash") or _compute_payload_sha256(cfg_dict),
-        "dataset_hash": (cfg_dict.get("dataset_contract") or dataset).get("dataset_sha256")
-        if isinstance((cfg_dict.get("dataset_contract") or dataset), Mapping)
-        else None,
+        "dataset_hash": resolve_dataset_hash(cfg_dict.get("dataset_contract"), dataset),
         "model_builder_version": cfg_dict.get("model_builder_version", MODEL_BUILDER_VERSION),
         "parameter_count": _coerce_int_or_none(cfg_dict.get("parameter_count"))
         or int(sum(p.numel() for p in model.parameters())),

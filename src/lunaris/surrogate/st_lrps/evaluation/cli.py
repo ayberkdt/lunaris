@@ -334,6 +334,7 @@ def _sync(device: torch.device) -> None:
 
 
 # --- Shared model/scaler implementation ---
+from lunaris.surrogate.serialization import safe_torch_load
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     append_run_evaluation,
     default_eval_output_dir,
@@ -507,7 +508,7 @@ def iter_pt_batches(
     exclude_indices: np.ndarray | None = None,
     limit_rows: int | None = None,
 ) -> Iterator[np.ndarray]:
-    obj = torch.load(path, map_location="cpu")
+    obj = safe_torch_load(path, map_location="cpu")
     if isinstance(obj, dict):
         for key in ("data", "array", "samples"):
             if key in obj:
@@ -2779,7 +2780,7 @@ def evaluate(
             dsn = _discover_h5_dataset_name(data_path, preferred=dataset_name)
             x_for_bench = np.asarray(f[dsn][0:bench_n, 0:3], dtype=np.float32, order="C")
     else:
-        obj = torch.load(data_path, map_location="cpu")
+        obj = safe_torch_load(data_path, map_location="cpu")
         t = obj["data"] if isinstance(obj, dict) and "data" in obj else obj
         x_for_bench = t[0:bench_n, 0:3].float().contiguous().numpy()
 

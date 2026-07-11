@@ -72,6 +72,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
+      - name: Torch import health check
+        # A partial/namespace torch package imports "successfully" but lacks
+        # core symbols, which turns every ML test into a confusing failure
+        # instead of a clean skip. Fail fast here instead.
+        run: python -c "import torch, torch.nn; print('torch', torch.__version__)"
+
       - name: Install Lunaris (CPU stack + dev/test deps)
         run: pip install -e ".[all]"
 
@@ -159,6 +165,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[all]"
+
+      - name: Torch import health check
+        run: python -c "import torch, torch.nn; print('torch', torch.__version__)"
 
       - name: Critical contract/runtime coverage gate
         run: >-

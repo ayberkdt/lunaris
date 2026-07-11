@@ -318,6 +318,35 @@ def _scaler_contract_from_payload(value: Any) -> dict[str, Any]:
     }
 
 
+#: Dataset digest keys across schema generations, canonical name first. The
+#: canonical ``DatasetContract`` records the HDF5 content digest as
+#: ``content_sha256``; older manifests/configs used ``dataset_sha256``,
+#: ``sha256`` or ``dataset_hash``.
+_DATASET_HASH_KEYS: tuple[str, ...] = ("content_sha256", "dataset_sha256", "sha256", "dataset_hash")
+
+
+def resolve_dataset_hash(*sources: Any) -> str | None:
+    """Resolve the dataset digest from mappings that may use legacy key names.
+
+    Sources are consulted in order; within each, the canonical
+    ``content_sha256`` wins over the legacy names. Readers must go through this
+    helper so a schema rename never reads as a missing hash (a real absent
+    digest and a key-name mismatch would otherwise be indistinguishable).
+    """
+    for source in sources:
+        mapping = _mapping(source)
+        if not mapping:
+            continue
+        for key in _DATASET_HASH_KEYS:
+            value = mapping.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+    return None
+
+
 def _dataset_contract_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
     meta = _mapping(config.get("dataset_meta") or config.get("dataset_contract") or config.get("dataset"))
     if not meta:
@@ -326,7 +355,7 @@ def _dataset_contract_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
         "schema_version": int(meta.get("schema_version", 1) or 1),
         "dataset_kind": meta.get("dataset_kind", "st_lrps_spatial_cloud"),
         "dataset_name": meta.get("dataset_name") or config.get("dataset_name"),
-        "dataset_sha256": meta.get("dataset_sha256") or meta.get("sha256") or config.get("dataset_hash"),
+        "dataset_sha256": resolve_dataset_hash(meta, config),
         "target_mode": meta.get("target_mode") or config.get("target_mode"),
         "baseline_kind": meta.get("baseline_kind") or config.get("baseline_kind"),
         "degree_min": meta.get("degree_min") if meta.get("degree_min") is not None else config.get("degree_min"),
@@ -678,9 +707,10 @@ class ArtifactContract:
                 else:
                     warn(msg)
 
-        for key in ("dataset_sha256", "source_gravity_file_sha256"):
-            if not self.dataset_contract.get(key):
-                warn(f"artifact dataset_contract.{key} is unavailable")
+        if not resolve_dataset_hash(self.dataset_contract):
+            warn("artifact dataset_contract.content_sha256/dataset_sha256 is unavailable")
+        if not self.dataset_contract.get("source_gravity_file_sha256"):
+            warn("artifact dataset_contract.source_gravity_file_sha256 is unavailable")
 
         return {
             "compatible": not errors,
@@ -732,7 +762,7 @@ PAPER_SAFE_REQUIRED_METADATA: dict[str, str] = {
     "dtype": "resolved config dtype (training/inference precision)",
     "architecture": "artifact_contract.architecture_signature",
     "parameter_count": "resolved config parameter_count",
-    "training_data_hash": "dataset_contract.dataset_sha256",
+    "training_data_hash": "dataset_contract.content_sha256 (legacy: dataset_sha256)",
     "validation_data_hash": "run_provenance.split_manifest_sha256",
     "git_commit": "run_provenance.git_commit",
     "created_at": "run_provenance.created_at_utc",
@@ -819,7 +849,7 @@ def collect_paper_safe_metadata(
         "dtype": _nonempty_str(cfg.get("dtype") or cfg.get("torch_dtype")),
         "architecture": _nonempty_str(art.architecture_signature),
         "parameter_count": parameter_count,
-        "training_data_hash": _nonempty_str(dataset.get("dataset_sha256") or cfg.get("dataset_hash")),
+        "training_data_hash": _nonempty_str(resolve_dataset_hash(dataset, cfg)),
         "validation_data_hash": _nonempty_str(
             prov.get("split_manifest_sha256") or cfg.get("validation_data_hash")
         ),
@@ -910,4 +940,5 @@ __all__ = [
     "collect_paper_safe_metadata",
     "paper_safe_metadata_report",
     "require_paper_safe_metadata",
+    "resolve_dataset_hash",
 ]

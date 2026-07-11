@@ -78,12 +78,10 @@ def _in_composite_control(w) -> bool:
     parent = w.parentWidget()
     if isinstance(
         parent,
-        (
-            QtWidgets.QComboBox,
-            QtWidgets.QAbstractSpinBox,
-            QtWidgets.QAbstractItemView,
-            QtWidgets.QCalendarWidget,
-        ),
+        QtWidgets.QComboBox
+        | QtWidgets.QAbstractSpinBox
+        | QtWidgets.QAbstractItemView
+        | QtWidgets.QCalendarWidget,
     ):
         return True
     cur = parent
