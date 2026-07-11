@@ -46,7 +46,6 @@ compile-time constant shapes.  The module-level constant ``_GPU_WS = 26``
 gives workspace arrays of shape (26, 26), supporting SH degree ≤ 24.
 """
 
-
 from __future__ import annotations
 
 import math
@@ -89,6 +88,7 @@ try:
         njit,  # noqa: F401 – used in CPU helpers
     )
     from numba import float64 as nb_f64
+
     _CUDA_AVAILABLE = bool(cuda.is_available())
 except ImportError:
     cuda = None
@@ -120,7 +120,9 @@ def gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
         unsupported.append("albedo")
     if bool(getattr(flags, "enable_thermal", False)):
         unsupported.append("thermal IR")
-    if bool(getattr(flags, "enable_tides_k2", False)) or bool(getattr(flags, "enable_tides_k3", False)):
+    if bool(getattr(flags, "enable_tides_k2", False)) or bool(
+        getattr(flags, "enable_tides_k3", False)
+    ):
         unsupported.append("solid tides")
     return tuple(unsupported)
 
@@ -200,7 +202,9 @@ if _CUDA_AVAILABLE:
         """Point-mass gravitational acceleration (body-fixed or inertial)."""
         r2 = rx * rx + ry * ry + rz * rz
         if r2 < 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
         inv_r3 = 1.0 / (r2 * math.sqrt(r2))
         out[0] = -mu * rx * inv_r3
@@ -218,11 +222,15 @@ if _CUDA_AVAILABLE:
         which otherwise costs ~4-5 significant digits on the Sun term. Keeping the
         two backends on the same formula is required for CPU/GPU parity.
         """
-        dx = bx - rx; dy = by - ry; dz = bz - rz
+        dx = bx - rx
+        dy = by - ry
+        dz = bz - rz
         d2 = dx * dx + dy * dy + dz * dz
         b2 = bx * bx + by * by + bz * bz
         if d2 < 1.0 or b2 < 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
         r2 = rx * rx + ry * ry + rz * rz
         r_dot_b = rx * bx + ry * by + rz * bz
@@ -249,17 +257,23 @@ if _CUDA_AVAILABLE:
         """
         # Degenerate / single-row table -> constant (matches interp_vec3_safe).
         if n_tab <= 1 or dt_s <= 0.0:
-            result[0] = tab[0, 0]; result[1] = tab[0, 1]; result[2] = tab[0, 2]
+            result[0] = tab[0, 0]
+            result[1] = tab[0, 1]
+            result[2] = tab[0, 2]
             return
 
         # Endpoint clamp (matches _table_endpoint_index).
         tmax = dt_s * (n_tab - 1)
         if t <= 0.0:
-            result[0] = tab[0, 0]; result[1] = tab[0, 1]; result[2] = tab[0, 2]
+            result[0] = tab[0, 0]
+            result[1] = tab[0, 1]
+            result[2] = tab[0, 2]
             return
         if t >= tmax:
             j = n_tab - 1
-            result[0] = tab[j, 0]; result[1] = tab[j, 1]; result[2] = tab[j, 2]
+            result[0] = tab[j, 0]
+            result[1] = tab[j, 1]
+            result[2] = tab[j, 2]
             return
 
         # Base segment index + fraction (matches _table_index_frac: i in [0,n-2]).
@@ -297,45 +311,52 @@ if _CUDA_AVAILABLE:
 
     @cuda.jit(device=True, inline=True)
     def _interp3_derivative_cuda(t, dt_s, tab, n_tab, result):
-        """Finite-difference derivative for a uniformly sampled vec3 table."""
+        """Analytic derivative of the matching `_interp3_cuda` polynomial."""
         if n_tab <= 1 or dt_s <= 0.0:
-            result[0] = 0.0; result[1] = 0.0; result[2] = 0.0
-            return
-
-        if n_tab == 2:
-            inv_dt = 1.0 / dt_s
-            result[0] = (tab[1, 0] - tab[0, 0]) * inv_dt
-            result[1] = (tab[1, 1] - tab[0, 1]) * inv_dt
-            result[2] = (tab[1, 2] - tab[0, 2]) * inv_dt
+            result[0] = 0.0
+            result[1] = 0.0
+            result[2] = 0.0
             return
 
         u = t / dt_s
         if u <= 0.0:
-            inv_dt = 1.0 / dt_s
-            result[0] = (tab[1, 0] - tab[0, 0]) * inv_dt
-            result[1] = (tab[1, 1] - tab[0, 1]) * inv_dt
-            result[2] = (tab[1, 2] - tab[0, 2]) * inv_dt
-            return
-
-        if u >= float(n_tab - 1):
-            inv_dt = 1.0 / dt_s
-            j0 = n_tab - 2
-            j1 = n_tab - 1
-            result[0] = (tab[j1, 0] - tab[j0, 0]) * inv_dt
-            result[1] = (tab[j1, 1] - tab[j0, 1]) * inv_dt
-            result[2] = (tab[j1, 2] - tab[j0, 2]) * inv_dt
-            return
-
-        i = int(u)
-        if i < 1:
-            i = 1
-        elif i > n_tab - 2:
+            i = 0
+            f = 0.0
+        elif u >= float(n_tab - 1):
             i = n_tab - 2
+            f = 1.0
+        else:
+            i = int(u)
+            if i > n_tab - 2:
+                i = n_tab - 2
+                f = 1.0
+            else:
+                f = u - float(i)
 
-        inv_2dt = 0.5 / dt_s
-        result[0] = (tab[i + 1, 0] - tab[i - 1, 0]) * inv_2dt
-        result[1] = (tab[i + 1, 1] - tab[i - 1, 1]) * inv_2dt
-        result[2] = (tab[i + 1, 2] - tab[i - 1, 2]) * inv_2dt
+        inv_dt = 1.0 / dt_s
+        if n_tab < 4:
+            result[0] = (tab[i + 1, 0] - tab[i, 0]) * inv_dt
+            result[1] = (tab[i + 1, 1] - tab[i, 1]) * inv_dt
+            result[2] = (tab[i + 1, 2] - tab[i, 2]) * inv_dt
+            return
+
+        i0 = i - 1 if i > 0 else 0
+        i3 = i + 2 if i < n_tab - 2 else n_tab - 1
+        f2 = f * f
+        dw0 = -1.0 + 4.0 * f - 3.0 * f2
+        dw1 = -10.0 * f + 9.0 * f2
+        dw2 = 1.0 + 8.0 * f - 9.0 * f2
+        dw3 = -2.0 * f + 3.0 * f2
+        scale = 0.5 * inv_dt
+        result[0] = scale * (
+            tab[i0, 0] * dw0 + tab[i, 0] * dw1 + tab[i + 1, 0] * dw2 + tab[i3, 0] * dw3
+        )
+        result[1] = scale * (
+            tab[i0, 1] * dw0 + tab[i, 1] * dw1 + tab[i + 1, 1] * dw2 + tab[i3, 1] * dw3
+        )
+        result[2] = scale * (
+            tab[i0, 2] * dw0 + tab[i, 2] * dw1 + tab[i + 1, 2] * dw2 + tab[i3, 2] * dw3
+        )
 
     @cuda.jit(device=True, inline=True)
     def _interp4_cuda(t, dt_s, tab, n_tab, result):
@@ -353,13 +374,21 @@ if _CUDA_AVAILABLE:
         if i >= n_tab - 1:
             i = n_tab - 2
         a = u - float(i)
-        a0 = tab[i, 0]; a1 = tab[i, 1]; a2 = tab[i, 2]; a3 = tab[i, 3]
-        b0 = tab[i + 1, 0]; b1 = tab[i + 1, 1]
-        b2 = tab[i + 1, 2]; b3 = tab[i + 1, 3]
+        a0 = tab[i, 0]
+        a1 = tab[i, 1]
+        a2 = tab[i, 2]
+        a3 = tab[i, 3]
+        b0 = tab[i + 1, 0]
+        b1 = tab[i + 1, 1]
+        b2 = tab[i + 1, 2]
+        b3 = tab[i + 1, 3]
         # Shortest path: take the endpoint hemisphere with non-negative dot.
         dot = a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3
         if dot < 0.0:
-            b0 = -b0; b1 = -b1; b2 = -b2; b3 = -b3
+            b0 = -b0
+            b1 = -b1
+            b2 = -b2
+            b3 = -b3
             dot = -dot
         if dot > 1.0:
             dot = 1.0
@@ -383,11 +412,15 @@ if _CUDA_AVAILABLE:
         nrm = math.sqrt(r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3)
         if nrm > EPS_1E15:
             inv_n = 1.0 / nrm
-            result[0] = r0 * inv_n; result[1] = r1 * inv_n
-            result[2] = r2 * inv_n; result[3] = r3 * inv_n
+            result[0] = r0 * inv_n
+            result[1] = r1 * inv_n
+            result[2] = r2 * inv_n
+            result[3] = r3 * inv_n
         else:
-            result[0] = a0; result[1] = a1
-            result[2] = a2; result[3] = a3
+            result[0] = a0
+            result[1] = a1
+            result[2] = a2
+            result[3] = a3
 
     @cuda.jit(device=True, inline=True)
     def _quat_rot_cuda(q0, q1, q2, q3, vx, vy, vz, out):
@@ -492,11 +525,19 @@ if _CUDA_AVAILABLE:
 
     @cuda.jit(device=True)
     def _sh_accel_cuda(
-        rx, ry, rz,
+        rx,
+        ry,
+        rz,
         n_eval,
-        r_ref, gm,
-        Cnm, Snm,
-        diag, subdiag, A_coef, B_coef, scale_m,
+        r_ref,
+        gm,
+        Cnm,
+        Snm,
+        diag,
+        subdiag,
+        A_coef,
+        B_coef,
+        scale_m,
         out,
     ):
         """
@@ -513,8 +554,8 @@ if _CUDA_AVAILABLE:
         # ----------------------------------------------------------------
         # Thread-local workspace: fixed at compile time
         # ----------------------------------------------------------------
-        P     = cuda.local.array((_GPU_WS, _GPU_WS), numba.float64)
-        dP    = cuda.local.array((_GPU_WS, _GPU_WS), numba.float64)
+        P = cuda.local.array((_GPU_WS, _GPU_WS), numba.float64)
+        dP = cuda.local.array((_GPU_WS, _GPU_WS), numba.float64)
         cos_m = cuda.local.array(_GPU_WS, numba.float64)
         sin_m = cuda.local.array(_GPU_WS, numba.float64)
 
@@ -522,14 +563,16 @@ if _CUDA_AVAILABLE:
         # Coordinate transform → spherical
         # ----------------------------------------------------------------
         rho2 = rx * rx + ry * ry
-        r2   = rho2 + rz * rz
+        r2 = rho2 + rz * rz
         if r2 < 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
-        r      = math.sqrt(r2)
-        inv_r  = 1.0 / r
-        rho    = math.sqrt(rho2)
+        r = math.sqrt(r2)
+        inv_r = 1.0 / r
+        rho = math.sqrt(rho2)
         sin_ph = rz * inv_r
         cos_ph = rho * inv_r
 
@@ -549,27 +592,24 @@ if _CUDA_AVAILABLE:
         # ----------------------------------------------------------------
         # ALF recurrence: P[n,m] and dP[n,m]
         # ----------------------------------------------------------------
-        P[0][0]  = 1.0
+        P[0][0] = 1.0
         dP[0][0] = 0.0
 
         n_eff = n_eval if n_eval < _GPU_WS - 1 else _GPU_WS - 2
 
         for n in range(1, n_eff + 1):
             # Sectoral: P[n,n]
-            P[n][n]  = diag[n] * cos_ph * P[n - 1][n - 1]
-            dP[n][n] = 0.0   # filled below via derivative recurrence
+            P[n][n] = diag[n] * cos_ph * P[n - 1][n - 1]
+            dP[n][n] = 0.0  # filled below via derivative recurrence
 
             # Sub-sectoral: P[n,n-1]
-            P[n][n - 1]  = subdiag[n] * sin_ph * P[n - 1][n - 1]
+            P[n][n - 1] = subdiag[n] * sin_ph * P[n - 1][n - 1]
             dP[n][n - 1] = 0.0
 
             # Zonal/tesseral: P[n,m] for m = 0..n-2
             if n >= 2:
                 for m in range(n - 1):
-                    P[n][m] = (
-                        A_coef[n][m] * sin_ph * P[n - 1][m]
-                        - B_coef[n][m] * P[n - 2][m]
-                    )
+                    P[n][m] = A_coef[n][m] * sin_ph * P[n - 1][m] - B_coef[n][m] * P[n - 2][m]
 
             # Derivative dP[n,0] = sqrt(n(n+1)) * P[n,1]
             if n_eff >= 1 and n >= 1:
@@ -589,7 +629,7 @@ if _CUDA_AVAILABLE:
         # Apply scale_m (sqrt(2) for m>0; no Condon-Shortley phase).
         for n in range(n_eff + 1):
             for m in range(n + 1):
-                P[n][m]  *= scale_m[m]
+                P[n][m] *= scale_m[m]
                 dP[n][m] *= scale_m[m]
 
         # ----------------------------------------------------------------
@@ -607,56 +647,62 @@ if _CUDA_AVAILABLE:
         # ----------------------------------------------------------------
         # Gradient summation (spherical components)
         # ----------------------------------------------------------------
-        dv_dr     = -gm / r2                  # central term
-        dv_dphi   = 0.0
-        dv_dlambda= 0.0
+        dv_dr = -gm / r2  # central term
+        dv_dphi = 0.0
+        dv_dlambda = 0.0
 
         r_ratio = r_ref * inv_r
-        r_ratio_n = r_ratio                   # (r_ref/r)^1 for n=1
+        r_ratio_n = r_ratio  # (r_ref/r)^1 for n=1
 
-        mu_inv_r   = gm * inv_r
-        mu_inv_r2  = gm / r2
+        mu_inv_r = gm * inv_r
+        mu_inv_r2 = gm / r2
 
         for n in range(1, n_eff + 1):
-            s_r = 0.0; s_p = 0.0; s_l = 0.0
+            s_r = 0.0
+            s_p = 0.0
+            s_l = 0.0
             for m in range(n + 1):
                 c_lon = cos_m[m]
                 s_lon = sin_m[m]
-                H    =  Cnm[n][m] * c_lon + Snm[n][m] * s_lon
-                dH_dl= -Cnm[n][m] * s_lon + Snm[n][m] * c_lon
-                pnm  = P[n][m]
+                H = Cnm[n][m] * c_lon + Snm[n][m] * s_lon
+                dH_dl = -Cnm[n][m] * s_lon + Snm[n][m] * c_lon
+                pnm = P[n][m]
                 dpnm = dP[n][m]
-                s_r  += pnm  * H
-                s_p  += dpnm * H
-                s_l  += float(m) * pnm * dH_dl
+                s_r += pnm * H
+                s_p += dpnm * H
+                s_l += float(m) * pnm * dH_dl
 
-            dv_dr      += -mu_inv_r2 * float(n + 1) * r_ratio_n * s_r
-            dv_dphi    +=  mu_inv_r  * r_ratio_n * s_p
-            dv_dlambda +=  mu_inv_r  * r_ratio_n * s_l
+            dv_dr += -mu_inv_r2 * float(n + 1) * r_ratio_n * s_r
+            dv_dphi += mu_inv_r * r_ratio_n * s_p
+            dv_dlambda += mu_inv_r * r_ratio_n * s_l
 
             r_ratio_n *= r_ratio
 
         # ----------------------------------------------------------------
         # Gradient → Cartesian acceleration
         # ----------------------------------------------------------------
-        phi_fac   = dv_dphi * inv_r
-        inv_rho2  = 1.0 / (rho2 + EPS_1E24)
+        phi_fac = dv_dphi * inv_r
+        inv_rho2 = 1.0 / (rho2 + EPS_1E24)
 
-        out[0] = (dv_dr * rx * inv_r
-                  + phi_fac * u_phi_x
-                  - dv_dlambda * ry * inv_rho2)
-        out[1] = (dv_dr * ry * inv_r
-                  + phi_fac * u_phi_y
-                  + dv_dlambda * rx * inv_rho2)
-        out[2] = (dv_dr * rz * inv_r
-                  + phi_fac * u_phi_z)
+        out[0] = dv_dr * rx * inv_r + phi_fac * u_phi_x - dv_dlambda * ry * inv_rho2
+        out[1] = dv_dr * ry * inv_r + phi_fac * u_phi_y + dv_dlambda * rx * inv_rho2
+        out[2] = dv_dr * rz * inv_r + phi_fac * u_phi_z
 
     @cuda.jit(device=True, inline=True)
     def _srp_accel_cuda(
-        rx, ry, rz,
-        sun_x, sun_y, sun_z,
-        r_moon, r_earth_aux, au, p_1au,
-        cr, area, mass,
+        rx,
+        ry,
+        rz,
+        sun_x,
+        sun_y,
+        sun_z,
+        r_moon,
+        r_earth_aux,
+        au,
+        p_1au,
+        cr,
+        area,
+        mass,
         out,
     ):
         """
@@ -672,16 +718,20 @@ if _CUDA_AVAILABLE:
         s2sc_z = rz - sun_z
         r2_sc_sun = s2sc_x * s2sc_x + s2sc_y * s2sc_y + s2sc_z * s2sc_z
         if r2_sc_sun < 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
         r_sc_sun = math.sqrt(r2_sc_sun)
-        inv_rss  = 1.0 / r_sc_sun
+        inv_rss = 1.0 / r_sc_sun
 
         # Moon shadow: project Sun→SC line onto Sun→Moon direction
         sun_mag2 = sun_x * sun_x + sun_y * sun_y + sun_z * sun_z
         if sun_mag2 < 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
         inv_sm = 1.0 / math.sqrt(sun_mag2)
@@ -696,12 +746,14 @@ if _CUDA_AVAILABLE:
         # Shadow cylinder check (reduced-fidelity lunar umbra)
         in_shadow = 0
         if proj > 0.0:
-            perp2 = (r2_sc_sun - proj * proj)
+            perp2 = r2_sc_sun - proj * proj
             if perp2 < r_moon * r_moon:
                 in_shadow = 1
 
         if in_shadow:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
         # SRP magnitude: F/m = (P_1AU * CR * A/m) * (AU/r)²
@@ -720,11 +772,13 @@ if _CUDA_AVAILABLE:
         c2 = c_light * c_light
         r2 = rx * rx + ry * ry + rz * rz
         if r2 < 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
-        r     = math.sqrt(r2)
+        r = math.sqrt(r2)
         inv_r = 1.0 / r
-        v2    = vx * vx + vy * vy + vz * vz
+        v2 = vx * vx + vy * vy + vz * vz
         rdotv = rx * vx + ry * vy + rz * vz
         inv_r3 = inv_r / r2
         fac = mu * inv_r3 / c2
@@ -736,11 +790,15 @@ if _CUDA_AVAILABLE:
         out[2] = fac * (A * rz + B * vz)
 
     @cuda.jit(device=True, inline=True)
-    def _external_schwarzschild_diff_cuda(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out):
+    def _external_schwarzschild_diff_cuda(
+        rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out
+    ):
         """Differential external-body Schwarzschild term in Moon-centered coordinates."""
         b2 = bx * bx + by * by + bz * bz
         if b2 <= 1.0 or mu_body <= 0.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
         sc = cuda.local.array(3, numba.float64)
@@ -755,7 +813,9 @@ if _CUDA_AVAILABLE:
     def _de_sitter_cuda(vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out):
         """de Sitter/geodetic precession term in Moon-centered coordinates."""
         if mu_body <= 0.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
         rx_b = -bx
@@ -766,7 +826,9 @@ if _CUDA_AVAILABLE:
         vz_b = -bvz
         r2 = rx_b * rx_b + ry_b * ry_b + rz_b * rz_b
         if r2 <= 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
         c_light = C_LIGHT
@@ -787,7 +849,9 @@ if _CUDA_AVAILABLE:
     def _external_1pn_cuda(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out):
         """External-body Schwarzschild differential plus de Sitter term."""
         tmp = cuda.local.array(3, numba.float64)
-        _external_schwarzschild_diff_cuda(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out)
+        _external_schwarzschild_diff_cuda(
+            rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out
+        )
         _de_sitter_cuda(vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, tmp)
         out[0] += tmp[0]
         out[1] += tmp[1]
@@ -798,7 +862,9 @@ if _CUDA_AVAILABLE:
         """J2 acceleration for an oblate body in its inertial frame."""
         r2 = x * x + y * y + z * z
         if r2 <= 1.0:
-            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            out[0] = 0.0
+            out[1] = 0.0
+            out[2] = 0.0
             return
 
         rk = x * kx + y * ky + z * kz
@@ -834,18 +900,48 @@ if _CUDA_AVAILABLE:
 
     @cuda.jit(device=True)
     def _rhs_cuda(
-        t, y,
+        t,
+        y,
         # Ephemeris tables
-        ephem_dt, sun_tab, earth_tab, q_tab, n_ephem,
+        ephem_dt,
+        sun_tab,
+        earth_tab,
+        q_tab,
+        n_ephem,
         # Gravity
-        n_sh, r_ref, gm,
-        Cnm, Snm, diag_sh, subdiag_sh, A_sh, B_sh, scale_sh,
+        n_sh,
+        r_ref,
+        gm,
+        Cnm,
+        Snm,
+        diag_sh,
+        subdiag_sh,
+        A_sh,
+        B_sh,
+        scale_sh,
         # Physics flags (0/1 int)
-        use_sh, use_sun, use_earth, use_ej2, use_srp, use_rel,
+        use_sh,
+        use_sun,
+        use_earth,
+        use_ej2,
+        use_srp,
+        use_rel,
         # Spacecraft
-        mass, area, cr,
+        mass,
+        area,
+        cr,
         # Constants
-        mu_sun, mu_earth, earth_j2_r_ref, earth_j2_j2, earth_j2_kx, earth_j2_ky, earth_j2_kz, r_moon, r_earth, au, p1au,
+        mu_sun,
+        mu_earth,
+        earth_j2_r_ref,
+        earth_j2_j2,
+        earth_j2_kx,
+        earth_j2_ky,
+        earth_j2_kz,
+        r_moon,
+        r_earth,
+        au,
+        p1au,
         # Output
         dydt,
     ):
@@ -858,56 +954,82 @@ if _CUDA_AVAILABLE:
         rx, ry, rz = y[0], y[1], y[2]
         vx, vy, vz = y[3], y[4], y[5]
 
-        dydt[0] = vx; dydt[1] = vy; dydt[2] = vz
+        dydt[0] = vx
+        dydt[1] = vy
+        dydt[2] = vz
 
         # Thread-local temporaries
         accel = cuda.local.array(3, numba.float64)
-        sun   = cuda.local.array(3, numba.float64)
+        sun = cuda.local.array(3, numba.float64)
         earth = cuda.local.array(3, numba.float64)
         sun_vel = cuda.local.array(3, numba.float64)
         earth_vel = cuda.local.array(3, numba.float64)
-        quat  = cuda.local.array(4, numba.float64)
-        rf    = cuda.local.array(3, numba.float64)   # body-fixed position
+        quat = cuda.local.array(4, numba.float64)
+        rf = cuda.local.array(3, numba.float64)  # body-fixed position
 
-        ax = 0.0; ay = 0.0; az = 0.0
+        ax = 0.0
+        ay = 0.0
+        az = 0.0
 
         # Ephemeris interpolation
-        _interp3_cuda(t, ephem_dt, sun_tab,   n_ephem, sun)
+        _interp3_cuda(t, ephem_dt, sun_tab, n_ephem, sun)
         _interp3_cuda(t, ephem_dt, earth_tab, n_ephem, earth)
-        _interp4_cuda(t, ephem_dt, q_tab,     n_ephem, quat)
+        _interp4_cuda(t, ephem_dt, q_tab, n_ephem, quat)
 
         # A) Gravity (SH or PM)
         if use_sh == 1 and n_sh >= 2:
             # Rotate inertial → body-fixed
             _quat_rot_cuda(quat[0], quat[1], quat[2], quat[3], rx, ry, rz, rf)
             _sh_accel_cuda(
-                rf[0], rf[1], rf[2],
-                n_sh, r_ref, gm,
-                Cnm, Snm, diag_sh, subdiag_sh, A_sh, B_sh, scale_sh,
+                rf[0],
+                rf[1],
+                rf[2],
+                n_sh,
+                r_ref,
+                gm,
+                Cnm,
+                Snm,
+                diag_sh,
+                subdiag_sh,
+                A_sh,
+                B_sh,
+                scale_sh,
                 accel,
             )
             # Rotate body-fixed acceleration → inertial (conjugate quaternion)
-            _quat_rot_cuda(quat[0], -quat[1], -quat[2], -quat[3], accel[0], accel[1], accel[2], accel)
+            _quat_rot_cuda(
+                quat[0], -quat[1], -quat[2], -quat[3], accel[0], accel[1], accel[2], accel
+            )
         else:
             _pm_accel_cuda(rx, ry, rz, gm, accel)
 
-        ax += accel[0]; ay += accel[1]; az += accel[2]
+        ax += accel[0]
+        ay += accel[1]
+        az += accel[2]
 
         # B) Third-body Sun
         if use_sun == 1:
             _third_body_cuda(rx, ry, rz, sun[0], sun[1], sun[2], mu_sun, accel)
-            ax += accel[0]; ay += accel[1]; az += accel[2]
+            ax += accel[0]
+            ay += accel[1]
+            az += accel[2]
 
         # C) Third-body Earth
         if use_earth == 1:
             _third_body_cuda(rx, ry, rz, earth[0], earth[1], earth[2], mu_earth, accel)
-            ax += accel[0]; ay += accel[1]; az += accel[2]
+            ax += accel[0]
+            ay += accel[1]
+            az += accel[2]
 
         # D) Earth J2
         if use_ej2 == 1:
             _earth_j2_diff_cuda(
-                rx, ry, rz,
-                earth[0], earth[1], earth[2],
+                rx,
+                ry,
+                rz,
+                earth[0],
+                earth[1],
+                earth[2],
                 mu_earth,
                 earth_j2_r_ref,
                 earth_j2_j2,
@@ -916,43 +1038,82 @@ if _CUDA_AVAILABLE:
                 earth_j2_kz,
                 accel,
             )
-            ax += accel[0]; ay += accel[1]; az += accel[2]
+            ax += accel[0]
+            ay += accel[1]
+            az += accel[2]
 
         # E) SRP
         if use_srp == 1:
             _srp_accel_cuda(
-                rx, ry, rz,
-                sun[0], sun[1], sun[2],
-                r_moon, r_earth, au, p1au,
-                cr, area, mass,
+                rx,
+                ry,
+                rz,
+                sun[0],
+                sun[1],
+                sun[2],
+                r_moon,
+                r_earth,
+                au,
+                p1au,
+                cr,
+                area,
+                mass,
                 accel,
             )
-            ax += accel[0]; ay += accel[1]; az += accel[2]
+            ax += accel[0]
+            ay += accel[1]
+            az += accel[2]
 
         # F) 1PN Relativity
         if use_rel == 1:
             _relativity_1pn_cuda(rx, ry, rz, vx, vy, vz, gm, accel)
-            ax += accel[0]; ay += accel[1]; az += accel[2]
+            ax += accel[0]
+            ay += accel[1]
+            az += accel[2]
             _interp3_derivative_cuda(t, ephem_dt, sun_tab, n_ephem, sun_vel)
             _external_1pn_cuda(
-                rx, ry, rz, vx, vy, vz,
-                sun[0], sun[1], sun[2],
-                sun_vel[0], sun_vel[1], sun_vel[2],
+                rx,
+                ry,
+                rz,
+                vx,
+                vy,
+                vz,
+                sun[0],
+                sun[1],
+                sun[2],
+                sun_vel[0],
+                sun_vel[1],
+                sun_vel[2],
                 mu_sun,
                 accel,
             )
-            ax += accel[0]; ay += accel[1]; az += accel[2]
+            ax += accel[0]
+            ay += accel[1]
+            az += accel[2]
             _interp3_derivative_cuda(t, ephem_dt, earth_tab, n_ephem, earth_vel)
             _external_1pn_cuda(
-                rx, ry, rz, vx, vy, vz,
-                earth[0], earth[1], earth[2],
-                earth_vel[0], earth_vel[1], earth_vel[2],
+                rx,
+                ry,
+                rz,
+                vx,
+                vy,
+                vz,
+                earth[0],
+                earth[1],
+                earth[2],
+                earth_vel[0],
+                earth_vel[1],
+                earth_vel[2],
                 mu_earth,
                 accel,
             )
-            ax += accel[0]; ay += accel[1]; az += accel[2]
+            ax += accel[0]
+            ay += accel[1]
+            az += accel[2]
 
-        dydt[3] = ax; dydt[4] = ay; dydt[5] = az
+        dydt[3] = ax
+        dydt[4] = ay
+        dydt[5] = az
 
     # ------------------------------------------------------------------
     # CUDA RK4 batch kernel
@@ -960,31 +1121,60 @@ if _CUDA_AVAILABLE:
 
     @cuda.jit
     def _rk4_batch_kernel(
-        Y,              # (N, 6) current state [in-place updated]
-        t_val,          # scalar: current simulation time
-        dt,             # scalar: RK4 step size
+        Y,  # (N, 6) current state [in-place updated]
+        t_val,  # scalar: current simulation time
+        dt,  # scalar: RK4 step size
         # Ephemeris
-        ephem_dt, sun_tab, earth_tab, q_tab, n_ephem,
+        ephem_dt,
+        sun_tab,
+        earth_tab,
+        q_tab,
+        n_ephem,
         # Gravity
-        n_sh, r_ref, gm,
-        Cnm, Snm, diag_sh, subdiag_sh, A_sh, B_sh, scale_sh,
+        n_sh,
+        r_ref,
+        gm,
+        Cnm,
+        Snm,
+        diag_sh,
+        subdiag_sh,
+        A_sh,
+        B_sh,
+        scale_sh,
         # Flags
-        use_sh, use_sun, use_earth, use_ej2, use_srp, use_rel,
+        use_sh,
+        use_sun,
+        use_earth,
+        use_ej2,
+        use_srp,
+        use_rel,
         # Spacecraft (per-sample)
-        masses, areas, crs,
+        masses,
+        areas,
+        crs,
         # Constants
-        mu_sun, mu_earth, earth_j2_r_ref, earth_j2_j2, earth_j2_kx, earth_j2_ky, earth_j2_kz, r_moon, r_earth, au, p1au,
+        mu_sun,
+        mu_earth,
+        earth_j2_r_ref,
+        earth_j2_j2,
+        earth_j2_kx,
+        earth_j2_ky,
+        earth_j2_kz,
+        r_moon,
+        r_earth,
+        au,
+        p1au,
         # Impact detection
-        impact_flags,      # (N,) int32 – set to 1 on impact
-        impact_times,      # (N,) float64 – interpolated crossing time, NaN if untouched
+        impact_flags,  # (N,) int32 – set to 1 on impact
+        impact_times,  # (N,) float64 – interpolated crossing time, NaN if untouched
         impact_positions,  # (N, 3) float64 – interpolated crossing position, NaN if untouched
-        detect_impact,     # int32 boolean
-        r_impact,          # impact radius [m]
+        detect_impact,  # int32 boolean
+        r_impact,  # impact radius [m]
         # Terrain-aware impact freeze
-        topo_dn,           # (L, S) float64 device array (1x1 dummy when unused)
-        topo_meta,         # (13,) float64 device array (payload scalars)
-        impact_alt_m,      # float64 altitude threshold [m]
-        use_terrain,       # int32 boolean
+        topo_dn,  # (L, S) float64 device array (1x1 dummy when unused)
+        topo_meta,  # (13,) float64 device array (payload scalars)
+        impact_alt_m,  # float64 altitude threshold [m]
+        use_terrain,  # int32 boolean
     ):
         """
         One RK4 step for all N samples in parallel.
@@ -996,10 +1186,10 @@ if _CUDA_AVAILABLE:
         if i >= Y.shape[0]:
             return
         if detect_impact == 1 and impact_flags[i] != 0:
-            return   # this sample already impacted
+            return  # this sample already impacted
 
         # Load state
-        y  = cuda.local.array(6, numba.float64)
+        y = cuda.local.array(6, numba.float64)
         k1 = cuda.local.array(6, numba.float64)
         k2 = cuda.local.array(6, numba.float64)
         k3 = cuda.local.array(6, numba.float64)
@@ -1011,16 +1201,47 @@ if _CUDA_AVAILABLE:
 
         sc_mass = masses[i]
         sc_area = areas[i]
-        sc_cr   = crs[i]
+        sc_cr = crs[i]
 
         # k1 = f(t, y)
         _rhs_cuda(
-            t_val, y,
-            ephem_dt, sun_tab, earth_tab, q_tab, n_ephem,
-            n_sh, r_ref, gm, Cnm, Snm, diag_sh, subdiag_sh, A_sh, B_sh, scale_sh,
-            use_sh, use_sun, use_earth, use_ej2, use_srp, use_rel,
-            sc_mass, sc_area, sc_cr,
-            mu_sun, mu_earth, earth_j2_r_ref, earth_j2_j2, earth_j2_kx, earth_j2_ky, earth_j2_kz, r_moon, r_earth, au, p1au,
+            t_val,
+            y,
+            ephem_dt,
+            sun_tab,
+            earth_tab,
+            q_tab,
+            n_ephem,
+            n_sh,
+            r_ref,
+            gm,
+            Cnm,
+            Snm,
+            diag_sh,
+            subdiag_sh,
+            A_sh,
+            B_sh,
+            scale_sh,
+            use_sh,
+            use_sun,
+            use_earth,
+            use_ej2,
+            use_srp,
+            use_rel,
+            sc_mass,
+            sc_area,
+            sc_cr,
+            mu_sun,
+            mu_earth,
+            earth_j2_r_ref,
+            earth_j2_j2,
+            earth_j2_kx,
+            earth_j2_ky,
+            earth_j2_kz,
+            r_moon,
+            r_earth,
+            au,
+            p1au,
             k1,
         )
 
@@ -1029,12 +1250,43 @@ if _CUDA_AVAILABLE:
         for j in range(6):
             ytmp[j] = y[j] + h2 * k1[j]
         _rhs_cuda(
-            t_val + h2, ytmp,
-            ephem_dt, sun_tab, earth_tab, q_tab, n_ephem,
-            n_sh, r_ref, gm, Cnm, Snm, diag_sh, subdiag_sh, A_sh, B_sh, scale_sh,
-            use_sh, use_sun, use_earth, use_ej2, use_srp, use_rel,
-            sc_mass, sc_area, sc_cr,
-            mu_sun, mu_earth, earth_j2_r_ref, earth_j2_j2, earth_j2_kx, earth_j2_ky, earth_j2_kz, r_moon, r_earth, au, p1au,
+            t_val + h2,
+            ytmp,
+            ephem_dt,
+            sun_tab,
+            earth_tab,
+            q_tab,
+            n_ephem,
+            n_sh,
+            r_ref,
+            gm,
+            Cnm,
+            Snm,
+            diag_sh,
+            subdiag_sh,
+            A_sh,
+            B_sh,
+            scale_sh,
+            use_sh,
+            use_sun,
+            use_earth,
+            use_ej2,
+            use_srp,
+            use_rel,
+            sc_mass,
+            sc_area,
+            sc_cr,
+            mu_sun,
+            mu_earth,
+            earth_j2_r_ref,
+            earth_j2_j2,
+            earth_j2_kx,
+            earth_j2_ky,
+            earth_j2_kz,
+            r_moon,
+            r_earth,
+            au,
+            p1au,
             k2,
         )
 
@@ -1042,12 +1294,43 @@ if _CUDA_AVAILABLE:
         for j in range(6):
             ytmp[j] = y[j] + h2 * k2[j]
         _rhs_cuda(
-            t_val + h2, ytmp,
-            ephem_dt, sun_tab, earth_tab, q_tab, n_ephem,
-            n_sh, r_ref, gm, Cnm, Snm, diag_sh, subdiag_sh, A_sh, B_sh, scale_sh,
-            use_sh, use_sun, use_earth, use_ej2, use_srp, use_rel,
-            sc_mass, sc_area, sc_cr,
-            mu_sun, mu_earth, earth_j2_r_ref, earth_j2_j2, earth_j2_kx, earth_j2_ky, earth_j2_kz, r_moon, r_earth, au, p1au,
+            t_val + h2,
+            ytmp,
+            ephem_dt,
+            sun_tab,
+            earth_tab,
+            q_tab,
+            n_ephem,
+            n_sh,
+            r_ref,
+            gm,
+            Cnm,
+            Snm,
+            diag_sh,
+            subdiag_sh,
+            A_sh,
+            B_sh,
+            scale_sh,
+            use_sh,
+            use_sun,
+            use_earth,
+            use_ej2,
+            use_srp,
+            use_rel,
+            sc_mass,
+            sc_area,
+            sc_cr,
+            mu_sun,
+            mu_earth,
+            earth_j2_r_ref,
+            earth_j2_j2,
+            earth_j2_kx,
+            earth_j2_ky,
+            earth_j2_kz,
+            r_moon,
+            r_earth,
+            au,
+            p1au,
             k3,
         )
 
@@ -1055,12 +1338,43 @@ if _CUDA_AVAILABLE:
         for j in range(6):
             ytmp[j] = y[j] + dt * k3[j]
         _rhs_cuda(
-            t_val + dt, ytmp,
-            ephem_dt, sun_tab, earth_tab, q_tab, n_ephem,
-            n_sh, r_ref, gm, Cnm, Snm, diag_sh, subdiag_sh, A_sh, B_sh, scale_sh,
-            use_sh, use_sun, use_earth, use_ej2, use_srp, use_rel,
-            sc_mass, sc_area, sc_cr,
-            mu_sun, mu_earth, earth_j2_r_ref, earth_j2_j2, earth_j2_kx, earth_j2_ky, earth_j2_kz, r_moon, r_earth, au, p1au,
+            t_val + dt,
+            ytmp,
+            ephem_dt,
+            sun_tab,
+            earth_tab,
+            q_tab,
+            n_ephem,
+            n_sh,
+            r_ref,
+            gm,
+            Cnm,
+            Snm,
+            diag_sh,
+            subdiag_sh,
+            A_sh,
+            B_sh,
+            scale_sh,
+            use_sh,
+            use_sun,
+            use_earth,
+            use_ej2,
+            use_srp,
+            use_rel,
+            sc_mass,
+            sc_area,
+            sc_cr,
+            mu_sun,
+            mu_earth,
+            earth_j2_r_ref,
+            earth_j2_j2,
+            earth_j2_kx,
+            earth_j2_ky,
+            earth_j2_kz,
+            r_moon,
+            r_earth,
+            au,
+            p1au,
             k4,
         )
 
@@ -1124,15 +1438,39 @@ if _CUDA_AVAILABLE:
                 a_lo = alpha
                 a_hi = 1.0
                 f_hi = _terrain_residual_cuda(
-                    a_hi, px0, py0, pz0, dx, dy, dz,
-                    qi0, qi1, qi2, qi3, topo_dn, topo_meta, impact_alt_m,
+                    a_hi,
+                    px0,
+                    py0,
+                    pz0,
+                    dx,
+                    dy,
+                    dz,
+                    qi0,
+                    qi1,
+                    qi2,
+                    qi3,
+                    topo_dn,
+                    topo_meta,
+                    impact_alt_m,
                 )
                 if f_hi <= 0.0:
                     for _bi in range(40):
                         a_mid = 0.5 * (a_lo + a_hi)
                         f_mid = _terrain_residual_cuda(
-                            a_mid, px0, py0, pz0, dx, dy, dz,
-                            qi0, qi1, qi2, qi3, topo_dn, topo_meta, impact_alt_m,
+                            a_mid,
+                            px0,
+                            py0,
+                            pz0,
+                            dx,
+                            dy,
+                            dz,
+                            qi0,
+                            qi1,
+                            qi2,
+                            qi3,
+                            topo_dn,
+                            topo_meta,
+                            impact_alt_m,
                         )
                         if f_mid > 0.0:
                             a_lo = a_mid
@@ -1163,29 +1501,32 @@ if _CUDA_AVAILABLE:
 # 2.              GPU BATCH PROPAGATOR
 # =============================================================================
 
+
 @dataclass
 class _EphemGPUPack:
     """Pre-validated ephemeris data transferred to GPU device memory."""
+
     dt_s: float
-    d_sun:   Any   # device array (N, 3)
-    d_earth: Any   # device array (N, 3)
-    d_quat:  Any   # device array (N, 4)
-    n_rows:  int
+    d_sun: Any  # device array (N, 3)
+    d_earth: Any  # device array (N, 3)
+    d_quat: Any  # device array (N, 4)
+    n_rows: int
 
 
 @dataclass
 class _GravGPUPack:
     """Gravity model arrays transferred to GPU device memory."""
-    n_sh:       int
-    r_ref:      float
-    gm:         float
-    d_Cnm:      Any
-    d_Snm:      Any
-    d_diag:     Any
-    d_subdiag:  Any
-    d_A:        Any
-    d_B:        Any
-    d_scale_m:  Any
+
+    n_sh: int
+    r_ref: float
+    gm: float
+    d_Cnm: Any
+    d_Snm: Any
+    d_diag: Any
+    d_subdiag: Any
+    d_A: Any
+    d_B: Any
+    d_scale_m: Any
 
 
 class GPUBatchPropagator:
@@ -1204,9 +1545,9 @@ class GPUBatchPropagator:
 
     def __init__(
         self,
-        dynamics_engine: Any,          # core.dynamics.DynamicsEngine
-        batch_cfg: Any,                   # BatchPropagationConfig
-        flags: Any,                    # PerturbationFlags
+        dynamics_engine: Any,  # core.dynamics.DynamicsEngine
+        batch_cfg: Any,  # BatchPropagationConfig
+        flags: Any,  # PerturbationFlags
         topo_payload: dict[str, Any] | None = None,  # terrain-aware impact freeze
     ) -> None:
         """
@@ -1238,35 +1579,40 @@ class GPUBatchPropagator:
                 max_threads_per_block=self._max_threads_per_block,
             )
             try:
-                self._free_mem_bytes, self._total_mem_bytes = cuda.current_context().get_memory_info()
+                self._free_mem_bytes, self._total_mem_bytes = (
+                    cuda.current_context().get_memory_info()
+                )
             except Exception:
                 self._free_mem_bytes, self._total_mem_bytes = (0, 0)
 
         self._ephem_pack = self._build_ephem_pack(dynamics_engine)
-        self._grav_pack  = self._build_grav_pack(dynamics_engine)
+        self._grav_pack = self._build_grav_pack(dynamics_engine)
         self._earth_j2_pack = self._build_earth_j2_pack(dynamics_engine)
         self._recommended_max_batch = self._estimate_recommended_max_batch()
 
         # Physics flags → integers (branchless in CUDA)
         f = flags
-        self._use_sh    = int(bool(getattr(f, "enable_sh", True)))
-        self._use_sun   = int(bool(getattr(f, "enable_3rd_body_sun", False)))
+        self._use_sh = int(bool(getattr(f, "enable_sh", True)))
+        self._use_sun = int(bool(getattr(f, "enable_3rd_body_sun", False)))
         self._use_earth = int(bool(getattr(f, "enable_3rd_body_earth", False)))
-        self._use_ej2   = int(bool(getattr(f, "enable_earth_j2", False)) and bool(self._earth_j2_pack["enabled"]))
-        self._use_srp   = int(bool(getattr(f, "enable_srp", False)))
-        self._use_rel   = int(bool(getattr(f, "enable_relativity_1pn", False)))
+        self._use_ej2 = int(
+            bool(getattr(f, "enable_earth_j2", False)) and bool(self._earth_j2_pack["enabled"])
+        )
+        self._use_srp = int(bool(getattr(f, "enable_srp", False)))
+        self._use_rel = int(bool(getattr(f, "enable_relativity_1pn", False)))
         self._last_time_grid_metrics: dict[str, Any] = {}
 
         # Physical constants
         from lunaris.core.dynamics.preparation import _provider_get
+
         ep = getattr(dynamics_engine, "ephem", None)
         prov: Any = getattr(ep, "get_data_provider", lambda: {})() if ep is not None else {}
-        self._mu_sun   = float(_provider_get(prov, "mu_sun_m3s2", MU_SUN))
+        self._mu_sun = float(_provider_get(prov, "mu_sun_m3s2", MU_SUN))
         self._mu_earth = float(_provider_get(prov, "mu_earth_m3s2", MU_EARTH))
-        self._r_moon   = float(R_MOON)
-        self._r_earth  = float(R_EARTH_MEAN)
-        self._au       = float(AU)
-        self._p1au     = float(P_SUN_1AU)
+        self._r_moon = float(R_MOON)
+        self._r_earth = float(R_EARTH_MEAN)
+        self._au = float(AU)
+        self._p1au = float(P_SUN_1AU)
         self._detect_impact = bool(getattr(batch_cfg, "impact_detection_enabled", True))
         self._impact_alt_m = float(getattr(batch_cfg, "impact_alt_km", 0.0)) * 1_000.0
 
@@ -1275,12 +1621,11 @@ class GPUBatchPropagator:
         terrain_requested = self._detect_impact and (
             str(getattr(batch_cfg, "impact_surface_mode", "sphere")) == "terrain"
         )
-        self._topo_pack = self._build_topo_pack(
-            topo_payload if terrain_requested else None
-        )
+        self._topo_pack = self._build_topo_pack(topo_payload if terrain_requested else None)
         self._terrain_enabled = bool(self._topo_pack["use_terrain"])
         if terrain_requested and not self._terrain_enabled:
             import warnings
+
             warnings.warn(
                 "impact_surface_mode='terrain' requested but no usable topography "
                 "payload was provided; numba CUDA backend keeps constant-sphere "
@@ -1304,14 +1649,15 @@ class GPUBatchPropagator:
         to the quaternion timeline length here.
         """
         from lunaris.core.dynamics import extract_ephem_tables_strict
+
         ep = getattr(dyn, "ephem", None)
         if ep is None:
             # Minimal stub: 2-row tables at t=0
             rows = 2
-            sun_h: np.ndarray   = np.zeros((rows, 3), dtype=np.float64)
+            sun_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
             earth_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
-            q_h     = np.tile([1.0, 0.0, 0.0, 0.0], (rows, 1)).astype(np.float64)
-            dt_s    = 1.0
+            q_h = np.tile([1.0, 0.0, 0.0, 0.0], (rows, 1)).astype(np.float64)
+            dt_s = 1.0
         else:
             dt_s, sun_h, earth_h, q_h = extract_ephem_tables_strict(ep)
             q_rows = int(q_h.shape[0])
@@ -1325,9 +1671,9 @@ class GPUBatchPropagator:
                     q_h = np.repeat(q_h, max_rows, axis=0)
 
         with cuda.gpus[self._device_id]:
-            d_sun   = cuda.to_device(np.ascontiguousarray(sun_h,   dtype=np.float64))
+            d_sun = cuda.to_device(np.ascontiguousarray(sun_h, dtype=np.float64))
             d_earth = cuda.to_device(np.ascontiguousarray(earth_h, dtype=np.float64))
-            d_q     = cuda.to_device(np.ascontiguousarray(q_h,     dtype=np.float64))
+            d_q = cuda.to_device(np.ascontiguousarray(q_h, dtype=np.float64))
 
         return _EphemGPUPack(
             dt_s=float(dt_s),
@@ -1352,7 +1698,9 @@ class GPUBatchPropagator:
             dummy_1d = np.zeros(2, dtype=np.float64)
             with cuda.gpus[self._device_id]:
                 return _GravGPUPack(
-                    n_sh=0, r_ref=float(R_MOON), gm=float(MU_MOON),
+                    n_sh=0,
+                    r_ref=float(R_MOON),
+                    gm=float(MU_MOON),
                     d_Cnm=cuda.to_device(dummy1),
                     d_Snm=cuda.to_device(dummy1),
                     d_diag=cuda.to_device(dummy_1d),
@@ -1374,8 +1722,8 @@ class GPUBatchPropagator:
         n_use = min(int(nmax), n_sh_req)
 
         # Slice coefficients to n_use
-        Cnm_s = np.ascontiguousarray(Cnm[:n_use + 1, :n_use + 1], dtype=np.float64)
-        Snm_s = np.ascontiguousarray(Snm[:n_use + 1, :n_use + 1], dtype=np.float64)
+        Cnm_s = np.ascontiguousarray(Cnm[: n_use + 1, : n_use + 1], dtype=np.float64)
+        Snm_s = np.ascontiguousarray(Snm[: n_use + 1, : n_use + 1], dtype=np.float64)
 
         diag, subdiag, A, B, scale_m = build_legendre_coeffs(n_use)
 
@@ -1386,7 +1734,7 @@ class GPUBatchPropagator:
                 gm=float(gm),
                 d_Cnm=cuda.to_device(Cnm_s),
                 d_Snm=cuda.to_device(Snm_s),
-                d_diag=cuda.to_device(np.ascontiguousarray(diag,    dtype=np.float64)),
+                d_diag=cuda.to_device(np.ascontiguousarray(diag, dtype=np.float64)),
                 d_subdiag=cuda.to_device(np.ascontiguousarray(subdiag, dtype=np.float64)),
                 d_A=cuda.to_device(np.ascontiguousarray(A, dtype=np.float64)),
                 d_B=cuda.to_device(np.ascontiguousarray(B, dtype=np.float64)),
@@ -1483,14 +1831,14 @@ class GPUBatchPropagator:
         """
 
         bytes_per_sample = (
-            6 * 8    # state vector
+            6 * 8  # state vector
             + 3 * 8  # mass / area / cr
-            + 4      # impact flag
-            + 8      # impact time
+            + 4  # impact flag
+            + 8  # impact time
             + 3 * 8  # interpolated impact position
-            + 32     # launch / scratch safety margin
+            + 32  # launch / scratch safety margin
         )
-        cfg_budget = float(getattr(self._cfg, "max_vram_gb", 4.0)) * (1024.0 ** 3) * 0.80
+        cfg_budget = float(getattr(self._cfg, "max_vram_gb", 4.0)) * (1024.0**3) * 0.80
         live_budget = float(self._free_mem_bytes) * 0.70 if self._free_mem_bytes else cfg_budget
         budget = max(1.0, min(cfg_budget, live_budget))
         return max(1, int(budget / max(1, bytes_per_sample)))
@@ -1498,7 +1846,11 @@ class GPUBatchPropagator:
     def recommended_max_batch(self, requested_max_batch: int | None = None) -> int:
         """Return the backend-specific batch cap after device-memory tuning."""
 
-        requested = int(requested_max_batch) if requested_max_batch is not None else int(self._recommended_max_batch)
+        requested = (
+            int(requested_max_batch)
+            if requested_max_batch is not None
+            else int(self._recommended_max_batch)
+        )
         return max(1, min(requested, int(self._recommended_max_batch)))
 
     def diagnostics_snapshot(self) -> dict[str, Any]:
@@ -1556,7 +1908,9 @@ class GPUBatchPropagator:
                 if getattr(self, "_terrain_enabled", False)
                 else "line_sphere_quadratic"
             ),
-            "impact_surface_mode": "terrain" if getattr(self, "_terrain_enabled", False) else "sphere",
+            "impact_surface_mode": "terrain"
+            if getattr(self, "_terrain_enabled", False)
+            else "sphere",
             "frame_interpolation": "slerp_shortest_path",
         }
         diagnostics.update(getattr(self, "_last_time_grid_metrics", {}) or {})
@@ -1568,11 +1922,11 @@ class GPUBatchPropagator:
 
     def propagate(
         self,
-        Y0: F64Array,               # (N, 6) initial states
-        masses: F64Array,           # (N,)
-        areas: F64Array,            # (N,)
-        cds: F64Array,              # (N,) — ignored on GPU path (no drag term in kernel)
-        crs: F64Array,              # (N,)
+        Y0: F64Array,  # (N, 6) initial states
+        masses: F64Array,  # (N,)
+        areas: F64Array,  # (N,)
+        cds: F64Array,  # (N,) — ignored on GPU path (no drag term in kernel)
+        crs: F64Array,  # (N,)
         duration_s: float,
         output_dt_s: float,
         callback: Callable[[float], None] | None = None,
@@ -1601,8 +1955,8 @@ class GPUBatchPropagator:
         impact_flags : (N,) float64 – 1.0 if impacted, else 0.0
         t_impact : (N,) float64 – linearly interpolated crossing time (NaN if no impact)
         """
-        N   = int(Y0.shape[0])
-        dt  = float(self._cfg.dt_s)
+        N = int(Y0.shape[0])
+        dt = float(self._cfg.dt_s)
 
         # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform. Steps
         # use dt_eff (grid-aligned) so snapshots land exactly on grid points and
@@ -1630,8 +1984,8 @@ class GPUBatchPropagator:
             stream = cuda.stream()
             d_Y = cuda.to_device(np.ascontiguousarray(Y0, dtype=np.float64), stream=stream)
             d_masses = cuda.to_device(np.ascontiguousarray(masses, dtype=np.float64), stream=stream)
-            d_areas  = cuda.to_device(np.ascontiguousarray(areas,  dtype=np.float64), stream=stream)
-            d_crs    = cuda.to_device(np.ascontiguousarray(crs,    dtype=np.float64), stream=stream)
+            d_areas = cuda.to_device(np.ascontiguousarray(areas, dtype=np.float64), stream=stream)
+            d_crs = cuda.to_device(np.ascontiguousarray(crs, dtype=np.float64), stream=stream)
             impact_init, t_impact_init, impact_pos_init = _initial_impact_bookkeeping(
                 Y0,
                 r_impact,
@@ -1649,21 +2003,29 @@ class GPUBatchPropagator:
                         np.float64(t_curr),
                         np.float64(dt_eff),
                         np.float64(ep.dt_s),
-                        ep.d_sun, ep.d_earth, ep.d_quat,
+                        ep.d_sun,
+                        ep.d_earth,
+                        ep.d_quat,
                         np.int32(ep.n_rows),
                         np.int32(gp.n_sh),
                         np.float64(gp.r_ref),
                         np.float64(gp.gm),
-                        gp.d_Cnm, gp.d_Snm,
-                        gp.d_diag, gp.d_subdiag,
-                        gp.d_A, gp.d_B, gp.d_scale_m,
+                        gp.d_Cnm,
+                        gp.d_Snm,
+                        gp.d_diag,
+                        gp.d_subdiag,
+                        gp.d_A,
+                        gp.d_B,
+                        gp.d_scale_m,
                         np.int32(self._use_sh),
                         np.int32(self._use_sun),
                         np.int32(self._use_earth),
                         np.int32(self._use_ej2),
                         np.int32(self._use_srp),
                         np.int32(self._use_rel),
-                        d_masses, d_areas, d_crs,
+                        d_masses,
+                        d_areas,
+                        d_crs,
                         np.float64(self._mu_sun),
                         np.float64(self._mu_earth),
                         np.float64(self._earth_j2_pack["r_ref_m"]),
@@ -1715,7 +2077,10 @@ class GPUBatchPropagator:
 # 3.              CPU BATCH PROPAGATOR (full-fidelity multiprocessing)
 # =============================================================================
 
-def _build_cpu_time_and_solver_config(sim_cfg: Any, batch_cfg: Any, duration_s: float, output_dt_s: float) -> tuple[Any, Any]:
+
+def _build_cpu_time_and_solver_config(
+    sim_cfg: Any, batch_cfg: Any, duration_s: float, output_dt_s: float
+) -> tuple[Any, Any]:
     """
     Clone the nominal run configs with batch-specific time and impact settings applied.
 
@@ -1815,13 +2180,31 @@ class CPUBatchPropagator:
 
         template = self._dyn_template
         grav_model = getattr(template, "grav", None) if template is not None else None
-        gravity_adaptive = getattr(template, "gravity_adaptive", None) if template is not None else None
+        gravity_adaptive = (
+            getattr(template, "gravity_adaptive", None) if template is not None else None
+        )
         ephem_manager = getattr(template, "ephem", None) if template is not None else None
         earth_j2 = getattr(template, "earth_j2", None) if template is not None else None
-        srp = getattr(template, "srp", None) if template is not None else getattr(self._sim_cfg, "srp", None)
-        albedo = getattr(template, "albedo", None) if template is not None else getattr(self._sim_cfg, "albedo", None)
-        thermal = getattr(template, "thermal", None) if template is not None else getattr(self._sim_cfg, "thermal", None)
-        solid_tides = getattr(template, "solid_tides", None) if template is not None else getattr(self._sim_cfg, "solid_tides", None)
+        srp = (
+            getattr(template, "srp", None)
+            if template is not None
+            else getattr(self._sim_cfg, "srp", None)
+        )
+        albedo = (
+            getattr(template, "albedo", None)
+            if template is not None
+            else getattr(self._sim_cfg, "albedo", None)
+        )
+        thermal = (
+            getattr(template, "thermal", None)
+            if template is not None
+            else getattr(self._sim_cfg, "thermal", None)
+        )
+        solid_tides = (
+            getattr(template, "solid_tides", None)
+            if template is not None
+            else getattr(self._sim_cfg, "solid_tides", None)
+        )
 
         return DynamicsEngine(
             sc_props=sc,
@@ -1874,11 +2257,11 @@ class CPUBatchPropagator:
 
     def propagate(
         self,
-        Y0: F64Array,           # (N, 6)
-        masses: F64Array,       # (N,)
-        areas: F64Array,        # (N,)
-        cds: F64Array,          # (N,) — sampled drag coefficients
-        crs: F64Array,          # (N,)
+        Y0: F64Array,  # (N, 6)
+        masses: F64Array,  # (N,)
+        areas: F64Array,  # (N,)
+        cds: F64Array,  # (N,) — sampled drag coefficients
+        crs: F64Array,  # (N,)
         duration_s: float,
         output_dt_s: float,
         callback: Callable[[float], None] | None = None,
@@ -1940,7 +2323,9 @@ class CPUBatchPropagator:
             except Exception as exc:
                 if not getattr(self._cfg, "allow_sample_failures", False):
                     raise RuntimeError(f"Batch CPU sample {i} failed: {exc}") from exc
-                warnings.warn(f"[BATCH][CPU] Sample {i} failed: {exc}", RuntimeWarning, stacklevel=2)
+                warnings.warn(
+                    f"[BATCH][CPU] Sample {i} failed: {exc}", RuntimeWarning, stacklevel=2
+                )
                 results_by_idx[i] = (None, None, False, float("nan"), None)
 
             if callback is not None:
@@ -1962,9 +2347,7 @@ class CPUBatchPropagator:
         impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
 
         for i in range(N):
-            t_i, y_i, imp, t_imp, y_imp = results_by_idx.get(
-                i, (None, None, False, np.nan, None)
-            )
+            t_i, y_i, imp, t_imp, y_imp = results_by_idx.get(i, (None, None, False, np.nan, None))
             if t_i is None or y_i is None:
                 # Failed sample: NaN-fill the whole trajectory so it cannot enter
                 # ensemble statistics as a spurious all-zero state. The engine

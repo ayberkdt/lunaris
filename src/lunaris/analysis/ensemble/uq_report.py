@@ -16,12 +16,13 @@ directory containing:
   3-D ellipsoid tubes, altitude envelope (skipped, and recorded as skipped,
   when matplotlib is unavailable).
 
-Scientific definition (stated verbatim in the manifest): the covariance is the
-unbiased sample covariance (``ddof=1``) of the ensemble state in the
-Moon-centred inertial integration frame at the shared output epochs, induced by
-the declared initial-state / spacecraft-parameter dispersion under
-deterministic dynamics. It contains no process noise and no measurement
-updates, and it is **not** an orbit-determination covariance.
+Scientific definition (stated in the manifest): the covariance is the
+``ddof=1`` ensemble covariance of the state in the Moon-centred inertial
+integration frame at shared output epochs. For classical random Monte Carlo it
+is reported as a sample-covariance estimator; for LHS and Sobol designs it is
+reported as an empirical design covariance, not an unbiased IID estimator.
+It contains no process noise or measurement updates and is **not** an
+orbit-determination covariance.
 """
 
 from __future__ import annotations
@@ -53,10 +54,10 @@ from .statistics import (
     compute_ric_uncertainty,
 )
 
-UQ_REPORT_SCHEMA_VERSION = 1
+UQ_REPORT_SCHEMA_VERSION = 2
 
 COVARIANCE_DEFINITION = (
-    "Unbiased sample covariance (ddof=1) of the ensemble state in the "
+    "Empirical ensemble covariance (ddof=1) of the ensemble state in the "
     "Moon-centred inertial integration frame at the shared output epochs, "
     "induced by the declared initial-state/spacecraft-parameter dispersion "
     "under deterministic dynamics. No process noise, no measurement updates; "
@@ -67,6 +68,31 @@ COVARIANCE_DEFINITION = (
 _NPZ_NAME = "uq_covariance.npz"
 _CSV_NAME = "uq_summary.csv"
 _MANIFEST_NAME = "uq_manifest.json"
+
+
+def _covariance_definition_for_sampling(sampling_method: Any) -> tuple[str, str]:
+    """Return a scientifically accurate covariance label for the draw design."""
+    method = str(sampling_method or "").strip().lower()
+    shared = (
+        "of the ensemble state in the Moon-centred inertial integration frame at "
+        "the shared output epochs, induced by the declared initial-state/"
+        "spacecraft-parameter dispersion under deterministic dynamics. No process "
+        "noise or measurement updates; this is not an orbit-determination covariance "
+        "and does not represent navigation performance."
+    )
+    if method == "random":
+        return (
+            "sample_covariance_estimator",
+            "Sample covariance estimator (ddof=1) " + shared,
+        )
+    if method in {"lhs", "sobol", "sobol_scrambled"}:
+        return (
+            "empirical_ensemble_covariance",
+            f"Empirical ensemble covariance (ddof=1) for the non-IID {method} "
+            "space-filling design " + shared + " The ddof=1 normalization does not "
+            "make this an unbiased IID Monte Carlo covariance estimator.",
+        )
+    return "empirical_ensemble_covariance", COVARIANCE_DEFINITION
 
 
 def ensemble_content_sha256(arrays: Mapping[str, np.ndarray]) -> str:
@@ -124,7 +150,11 @@ def _archive_record(path: str | Path | None) -> dict[str, Any]:
         return {"path": None, "sha256": None, "missing_reason": "source archive not configured"}
     p = Path(path)
     if not p.is_file():
-        return {"path": str(p), "sha256": None, "missing_reason": "source archive not found locally"}
+        return {
+            "path": str(p),
+            "sha256": None,
+            "missing_reason": "source archive not found locally",
+        }
     return {"path": str(p), "sha256": sha256_file(p), "missing_reason": None}
 
 
@@ -305,10 +335,20 @@ def build_uq_report(
         files[rel] = {"sha256": sha256_file(out / rel)}
 
     run_config_payload = _jsonable(dict(run_config)) if run_config is not None else None
+    sampling_method = None
+    if isinstance(run_config_payload, Mapping):
+        sampling_method = run_config_payload.get("sampling_method")
+    if sampling_method is None:
+        sampling_method = (result.diagnostics or {}).get("sampling_method")
+    covariance_estimator_kind, covariance_definition = _covariance_definition_for_sampling(
+        sampling_method
+    )
     manifest: dict[str, Any] = {
         "schema_version": UQ_REPORT_SCHEMA_VERSION,
         "created_at_utc": utc_now_iso(),
-        "covariance_definition": COVARIANCE_DEFINITION,
+        "covariance_definition": covariance_definition,
+        "covariance_estimator_kind": covariance_estimator_kind,
+        "sampling_method": str(sampling_method) if sampling_method is not None else None,
         "frame": "moon_centred_inertial",
         "units": {"position": "m", "velocity": "m/s", "time": "s", "altitude": "km"},
         "ensemble": {
@@ -342,10 +382,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Build a provenance-stamped ensemble UQ report from a batch archive (HDF5/NPZ)."
     )
-    parser.add_argument("--archive", required=True, help="Path to the batch ensemble archive (.h5/.npz)")
+    parser.add_argument(
+        "--archive", required=True, help="Path to the batch ensemble archive (.h5/.npz)"
+    )
     parser.add_argument("--out", required=True, help="Output report directory")
-    parser.add_argument("--survived-only", action="store_true",
-                        help="Exclude impacted samples from the statistics")
+    parser.add_argument(
+        "--survived-only", action="store_true", help="Exclude impacted samples from the statistics"
+    )
     parser.add_argument("--no-figures", action="store_true", help="Skip figure rendering")
     args = parser.parse_args(argv)
 

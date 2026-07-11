@@ -94,15 +94,33 @@ class VisualizationTokens:
     orbit_line: str = "#7DB7FF"
     orbit_glow: str = "#3B82F6"
     spacecraft: str = "#F8FAFC"
+    # Apsis markers separate by value as well as hue so they survive grayscale
+    # and color-vision deficiency. The prior apoapsis #22D3B6 was iso-luminant
+    # with both periapsis (Y 0.50 vs 0.52) and comparison_plot (0.51), was the
+    # exact same color as axis_y, and collapsed into comparison_plot under
+    # deutan/tritan simulation (redmean d 6-25). #7DEEDD keeps the cool
+    # "far = cold" teal family but lifts luminance to Y 0.71 (worst simulated
+    # pair distance 81 vs the 60 confusion threshold).
     periapsis: str = "#E7B86A"
-    apoapsis: str = "#22D3B6"
+    apoapsis: str = "#7DEEDD"
+    # Ascending/descending node geometry previously borrowed the apoapsis
+    # color, so three different meanings (apoapsis marker, node markers, line
+    # of nodes) shared one hue. Nodes are secondary context geometry: a violet
+    # at Y 0.29 sits below both apsis markers in value (periapsis 0.52,
+    # apoapsis 0.71) so the hierarchy holds in grayscale; the existing AN/DN
+    # text labels carry identity where hue alone would not (CVD).
+    orbit_node: str = "#9F7CFF"
     orbit_plane: str = "rgba(79,140,255,0.10)"
     terrain: str = "#A0A7B0"
     gravity: str = "#A78BFA"
     srp: str = "#F59E0B"
     sun: str = "#FACC15"
     earth: str = "#3B86FF"
-    selected_plot: str = "#3B86FF"
+    # The selected series follows the chrome accent family so "selected" means
+    # the same color in a plot as in the navigation/controls. It was #3B86FF,
+    # which duplicated ``earth`` exactly (indistinguishable in any vision);
+    # #6AA9FF restores a >=89 redmean separation under all CVD simulations.
+    selected_plot: str = "#6AA9FF"
     comparison_plot: str = "#15D6A6"
     grid: str = "rgba(100,116,139,0.42)"
     axis_text: str = "#94A3B8"
@@ -179,6 +197,20 @@ class ControlMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class MotionTokens:
+    """Durations for the few state transitions that animate.
+
+    Motion is reserved for changes that need spatial continuity (the console
+    drawer, large panel reveals); decorative animation is not part of the
+    design language. Consumers must check ``prefers_reduced_motion()`` and
+    fall back to instant transitions when it is set.
+    """
+
+    duration_fast_ms: int = 150
+    duration_standard_ms: int = 200
+
+
+@dataclass(frozen=True, slots=True)
 class LayoutTokens:
     shell_margin: int = 16
     shell_gap: int = 12
@@ -203,6 +235,7 @@ class DesignTokens:
     radii: RadiusTokens = RadiusTokens()
     controls: ControlMetrics = ControlMetrics()
     layout: LayoutTokens = LayoutTokens()
+    motion: MotionTokens = MotionTokens()
 
 
 DESIGN_TOKENS = DesignTokens()
@@ -216,6 +249,7 @@ __all__ = [
     "RadiusTokens",
     "ControlMetrics",
     "LayoutTokens",
+    "MotionTokens",
     "DesignTokens",
     "DESIGN_TOKENS",
 ]

@@ -442,7 +442,7 @@ class OrbitViz3D(QtWidgets.QWidget):
 
         # --- Row 2: annotation layer toggles ---
         layers = QtWidgets.QHBoxLayout()
-        layers.setSpacing(10)
+        layers.setSpacing(DESIGN_TOKENS.spacing.md)
         layer_lbl = QtWidgets.QLabel("Layers")
         layer_lbl.setObjectName("orbitControlLabel")
         layers.addWidget(layer_lbl)
@@ -900,10 +900,10 @@ class OrbitViz3D(QtWidgets.QWidget):
         # Line of nodes (through the focus, ascending <-> descending).
         self._ensure_line(
             'nodes_line', np.array([desc, asc]),
-            ORBIT_THEME['apoapsis'], 0.5, 1.6,
+            ORBIT_THEME['orbit_node'], 0.5, 1.6,
         )
-        self._update_marker('asc_node_marker', asc, ORBIT_THEME['apoapsis'], r_marker * 0.6)
-        self._update_marker('desc_node_marker', desc, ORBIT_THEME['apoapsis'], r_marker * 0.6)
+        self._update_marker('asc_node_marker', asc, ORBIT_THEME['orbit_node'], r_marker * 0.6)
+        self._update_marker('desc_node_marker', desc, ORBIT_THEME['orbit_node'], r_marker * 0.6)
 
         # Velocity arrow at the spacecraft — line + cone tip in the direction of
         # motion, scaled to the current orbital radius.
@@ -948,9 +948,9 @@ class OrbitViz3D(QtWidgets.QWidget):
         self._ensure_label('apo', np.asarray(apo, float) + _unit(apo) * off,
                            "Apoapsis", ORBIT_THEME['apoapsis'])
         self._ensure_label('asc', np.asarray(asc, float) + h_hat * off,
-                           "AN", ORBIT_THEME['apoapsis'])
+                           "AN", ORBIT_THEME['orbit_node'])
         self._ensure_label('desc', np.asarray(desc, float) - h_hat * off,
-                           "DN", ORBIT_THEME['apoapsis'])
+                           "DN", ORBIT_THEME['orbit_node'])
         self._ensure_label('sc', np.asarray(sc, dtype=float) + v_dir * (arrow_len * 1.15),
                            "S/C", ORBIT_THEME['spacecraft'])
 
@@ -1075,10 +1075,16 @@ class OrbitPage(QtWidgets.QWidget):
 
     def _metric_chip(self, title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QLabel]:
         """Return a compact ``(frame, value_label)`` metric chip for the info strip."""
+        from lunaris.ui.theme.tokens import DESIGN_TOKENS
+
         frame = QtWidgets.QFrame()
         frame.setObjectName("orbitMetric")
         v = QtWidgets.QVBoxLayout(frame)
-        v.setContentsMargins(10, 6, 10, 6)
+        v.setContentsMargins(
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xs,
+            DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xs,
+        )
+        # 1px inner gap keeps the value tight under its label (deliberate, off-scale).
         v.setSpacing(1)
 
         title_lbl = QtWidgets.QLabel(title)
@@ -1324,12 +1330,14 @@ class OrbitPage(QtWidgets.QWidget):
 
     def _create_viz_group(self) -> Section:
         """3D orbit preview card."""
+        from lunaris.ui.theme.tokens import DESIGN_TOKENS
+
         gb = self._create_card(
             "Orbit Preview",
             "Two-body preview. The mission run adds the selected perturbations.",
         )
         layout = gb.content_layout
-        layout.setSpacing(14)
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
 
         self.orbit_viz_3d = OrbitViz3D()
         self.orbit_viz_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)

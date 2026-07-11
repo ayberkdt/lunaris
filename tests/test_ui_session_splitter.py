@@ -15,6 +15,8 @@ import json
 import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
+QtTest = pytest.importorskip("PySide6.QtTest")
+
 from lunaris.ui.core.session_persistence import (
     SESSION_SCHEMA_VERSION,
     apply_visual_state,
@@ -102,20 +104,28 @@ def main_window(tmp_path, monkeypatch):
     app.processEvents()
 
 
+def _finish_log_drawer_animation(win, app) -> None:
+    """Wait for the interruptible console drawer to commit its final state."""
+    animation = getattr(win, "_log_splitter_anim", None)
+    if animation is not None and animation.state() == QtCore.QAbstractAnimation.Running:
+        QtTest.QTest.qWait(animation.duration() + 25)
+    app.processEvents()
+
+
 def test_collapse_expand_resize_restore_sequence(main_window) -> None:
     win, app = main_window
 
     # Establish an expanded baseline with a known geometry.
     if win.log_panel.is_collapsed:
         win._toggle_log_collapsed()
-        app.processEvents()
+        _finish_log_drawer_animation(win, app)
     assert win.log_panel.is_collapsed is False
     win.main_splitter.setSizes([520, 260])
     app.processEvents()
 
     # Collapse: console shrinks to the header height (never zero).
     win._toggle_log_collapsed()
-    app.processEvents()
+    _finish_log_drawer_animation(win, app)
     assert win.log_panel.is_collapsed is True
     collapsed = win.main_splitter.sizes()
     assert 0 < collapsed[1] <= COLLAPSED_HEIGHT + 4
@@ -129,7 +139,7 @@ def test_collapse_expand_resize_restore_sequence(main_window) -> None:
 
     # Expanding restores a usable (non-trivial) console height.
     win._toggle_log_collapsed()
-    app.processEvents()
+    _finish_log_drawer_animation(win, app)
     assert win.log_panel.is_collapsed is False
     restored = win.main_splitter.sizes()
     assert restored[1] >= EXPANDED_MIN_HEIGHT
@@ -193,7 +203,7 @@ def test_expanded_visual_state_restores_splitter_size(main_window) -> None:
         {"log_collapsed": False, "splitter_sizes": [620, 260]},
         main_window=win,
     )
-    app.processEvents()
+    _finish_log_drawer_animation(win, app)
     sizes = win.main_splitter.sizes()
     assert win.log_panel.is_collapsed is False
     assert sizes[1] >= EXPANDED_MIN_HEIGHT

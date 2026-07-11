@@ -83,13 +83,19 @@ Numba CUDA SRP is intentionally lower fidelity for screening: cylindrical Moon
 umbra and no Earth eclipse. Batch archives record this under `srp_shadow_model`
 and `srp_shadow_model_fidelity`; CPU/GPU SRP parity claims must account for it.
 
-### 2.4 Selected 1PN relativity scope — reviewed, **no change**
+### 2.4 Selected 1PN relativity scope and ephemeris state consistency
 The relativity flag enables selected 1PN corrections: central-body
 Schwarzschild, external-body differential Schwarzschild, and de Sitter/geodetic
 terms when ephemeris tables are available. It is not full relativistic N-body
 dynamics: EIH terms, Lense-Thirring frame dragging, J2-relativistic coupling,
 and clock/time-dilation models are outside the current scope. Batch manifests
 record this as `relativity_model=selected_1pn_corrections`.
+
+For the external terms, Sun/Earth velocity is now the analytic derivative of
+the same clamped Catmull-Rom position interpolant used at that integration
+epoch. The CPU and CUDA paths implement the same polynomial derivative, so the
+external 1PN state is C1 within an ephemeris cell instead of mixing a smooth
+position with a piecewise-constant finite-difference velocity.
 
 ### 2.5 Surface-radiation eclipse fidelity — reviewed, **no change**
 Albedo and equilibrium thermal-IR facet sums use one Moon-center Earth-shadow

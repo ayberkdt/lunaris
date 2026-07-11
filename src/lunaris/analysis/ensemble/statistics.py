@@ -45,11 +45,15 @@ from lunaris.core.state import cartesian_to_keplerian
 # 1.              HELPER FUNCTIONS
 # =============================================================================
 
+
 def _cov6(Y_t: F64Array) -> F64Array:
     """
-    Compute 6×6 sample covariance matrix of Y_t of shape (N, 6).
+    Compute the 6×6 empirical ensemble covariance of Y_t, shape ``(N, 6)``.
 
-    Uses ddof=1 (unbiased estimator).
+    The numerical normalization uses ``ddof=1``. It is the usual sample
+    covariance estimator for independent random Monte Carlo draws, but LHS and
+    Sobol designs are non-IID; for those designs this remains an empirical
+    ensemble covariance rather than an unbiased Monte Carlo estimator.
     """
     N = int(Y_t.shape[0])
     if N < 2:
@@ -91,11 +95,9 @@ def _position_ellipsoid_axes(P_pos: F64Array) -> tuple[F64Array, F64Array]:
     # Symmetrize to guard against floating-point asymmetry
     P_sym = 0.5 * (P_pos + P_pos.T)
     eigvals, eigvecs = np.linalg.eigh(P_sym)
-    eigvals = np.maximum(eigvals, 0.0)    # numerical positivity
-    semi_axes = 3.0 * np.sqrt(eigvals)   # 3-σ ellipsoid
+    eigvals = np.maximum(eigvals, 0.0)  # numerical positivity
+    semi_axes = 3.0 * np.sqrt(eigvals)  # 3-σ ellipsoid
     return semi_axes, eigvecs
-
-
 
 
 def _binomial_ci_wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -107,16 +109,17 @@ def _binomial_ci_wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     if n == 0:
         return 0.0, 1.0
     p_hat = k / n
-    z2    = z * z
+    z2 = z * z
     denom = 1.0 + z2 / n
     centre = (p_hat + z2 / (2.0 * n)) / denom
-    half   = z * math.sqrt(p_hat * (1.0 - p_hat) / n + z2 / (4.0 * n * n)) / denom
+    half = z * math.sqrt(p_hat * (1.0 - p_hat) / n + z2 / (4.0 * n * n)) / denom
     return max(0.0, centre - half), min(1.0, centre + half)
 
 
 # =============================================================================
 # 2.              RESULT CONTAINERS
 # =============================================================================
+
 
 @dataclass
 class EnsembleStatistics:
@@ -132,12 +135,13 @@ class EnsembleStatistics:
     alt_mean   : (T,)      mean altitude [km]
     alt_std    : (T,)      altitude 1-sigma [km]
     """
-    t:          F64Array
-    mean:       F64Array
-    cov:        F64Array
-    std:        F64Array
-    alt_mean:   F64Array
-    alt_std:    F64Array
+
+    t: F64Array
+    mean: F64Array
+    cov: F64Array
+    std: F64Array
+    alt_mean: F64Array
+    alt_std: F64Array
 
     def sigma_bounds(self, n: float = 3.0) -> tuple[F64Array, F64Array]:
         """Return (mean - n*std, mean + n*std) bounds for all 6 state components."""
@@ -164,14 +168,15 @@ class ErrorEllipsoids:
     eigvecs    : (T, 3, 3) columns = principal-axis unit vectors
     centres    : (T, 3)    ellipsoid centres (= ensemble mean position) [m]
     """
-    t:          F64Array
-    semi_axes:  F64Array
-    eigvecs:    F64Array
-    centres:    F64Array
+
+    t: F64Array
+    semi_axes: F64Array
+    eigvecs: F64Array
+    centres: F64Array
 
     def tube_radii(self) -> F64Array:
         """RMS of the three semi-axes – a scalar 'tube radius' at each epoch."""
-        return np.sqrt(np.mean(self.semi_axes ** 2, axis=1))
+        return np.sqrt(np.mean(self.semi_axes**2, axis=1))
 
 
 @dataclass
@@ -190,14 +195,15 @@ class ImpactStatistics:
     lat_deg       : (K,) geodetic latitudes of impact sites [deg]
     lon_deg       : (K,) longitudes of impact sites [deg]
     """
-    n_total:        int
-    n_impacts:      int
-    p_impact:       float
-    p_impact_ci95:  tuple[float, float]
-    t_impact_mean:  float
-    t_impact_std:   float
-    lat_deg:        F64Array
-    lon_deg:        F64Array
+
+    n_total: int
+    n_impacts: int
+    p_impact: float
+    p_impact_ci95: tuple[float, float]
+    t_impact_mean: float
+    t_impact_std: float
+    lat_deg: F64Array
+    lon_deg: F64Array
 
 
 @dataclass
@@ -207,13 +213,14 @@ class OEDispersion:
 
     Shapes: all arrays (T,).
     """
-    t:          F64Array
-    a_mean_km:  F64Array
-    a_std_km:   F64Array
-    e_mean:     F64Array
-    e_std:      F64Array
+
+    t: F64Array
+    a_mean_km: F64Array
+    a_std_km: F64Array
+    e_mean: F64Array
+    e_std: F64Array
     inc_mean_deg: F64Array
-    inc_std_deg:  F64Array
+    inc_std_deg: F64Array
 
 
 # Impact-statistics contract states (2B). These distinguish a genuine
@@ -238,11 +245,12 @@ class EnsembleReport:
     ``impact_status`` before reading impact probability so a run that never
     measured impacts is not silently reported as 0 %.
     """
-    ensemble:   EnsembleStatistics
+
+    ensemble: EnsembleStatistics
     ellipsoids: ErrorEllipsoids
-    impacts:    ImpactStatistics | None = None
+    impacts: ImpactStatistics | None = None
     impact_status: str = IMPACT_EVALUATED
-    oe_disp:    OEDispersion | None = None
+    oe_disp: OEDispersion | None = None
 
     # Raw result reference (not serialised by default)
     _raw: BatchPropagationResult | None = field(default=None, repr=False)
@@ -251,6 +259,7 @@ class EnsembleReport:
 # =============================================================================
 # 3.              ANALYSIS FUNCTIONS
 # =============================================================================
+
 
 def compute_ensemble_statistics(
     result: BatchPropagationResult,
@@ -273,20 +282,18 @@ def compute_ensemble_statistics(
     -------
     EnsembleStatistics
     """
-    t = result.t          # (T,)
+    t = result.t  # (T,)
     mask = result.valid_sample_mask()
     if use_survived_only:
         mask &= result.impact_mask < 0.5
     indices = np.where(mask)[0]
     if indices.size < 2:
-        raise ValueError(
-            "insufficient valid samples for ensemble statistics: need at least 2"
-        )
+        raise ValueError("insufficient valid samples for ensemble statistics: need at least 2")
 
     T = int(result.Y.shape[0])
     mean = np.zeros((T, 6), dtype=np.float64)
     std = np.zeros((T, 6), dtype=np.float64)
-    cov   = np.zeros((T, 6, 6), dtype=np.float64)
+    cov = np.zeros((T, 6, 6), dtype=np.float64)
     alt_mean = np.zeros(T, dtype=np.float64)
     alt_std = np.zeros(T, dtype=np.float64)
 
@@ -324,13 +331,13 @@ def compute_error_ellipsoids(
     """
     T = int(ens.t.shape[0])
     semi_axes_all = np.zeros((T, 3), dtype=np.float64)
-    eigvecs_all   = np.zeros((T, 3, 3), dtype=np.float64)
+    eigvecs_all = np.zeros((T, 3, 3), dtype=np.float64)
 
     for k in range(T):
         P_pos = ens.cov[k, :3, :3]
         axes, vecs = _position_ellipsoid_axes(P_pos)
         semi_axes_all[k] = axes
-        eigvecs_all[k]   = vecs
+        eigvecs_all[k] = vecs
 
     return ErrorEllipsoids(
         t=ens.t.copy(),
@@ -362,15 +369,15 @@ def compute_impact_statistics(
     N = int(np.sum(valid))
     if N == 0:
         raise ValueError("impact statistics are undefined: no valid samples")
-    mask  = valid & (result.impact_mask > 0.5)
+    mask = valid & (result.impact_mask > 0.5)
     n_hit = int(mask.sum())
     p_mle = float(n_hit) / max(1, N)
-    ci95  = _binomial_ci_wilson(n_hit, N)
+    ci95 = _binomial_ci_wilson(n_hit, N)
 
     t_hit = result.t_impact[mask]
     t_hit = t_hit[np.isfinite(t_hit)]
     t_mean = float(np.mean(t_hit)) if len(t_hit) > 0 else math.nan
-    t_std  = float(np.std(t_hit, ddof=1)) if len(t_hit) > 1 else 0.0
+    t_std = float(np.std(t_hit, ddof=1)) if len(t_hit) > 1 else 0.0
 
     lat_arr = np.empty(0, dtype=np.float64)
     lon_arr = np.empty(0, dtype=np.float64)
@@ -396,9 +403,7 @@ def compute_impact_statistics(
             nonzero = radii > 0.0
             positions = positions[nonzero]
             radii = radii[nonzero]
-            lat_arr = np.degrees(
-                np.arcsin(np.clip(positions[:, 2] / radii, -1.0, 1.0))
-            )
+            lat_arr = np.degrees(np.arcsin(np.clip(positions[:, 2] / radii, -1.0, 1.0)))
             lon_arr = np.degrees(np.arctan2(positions[:, 1], positions[:, 0]))
 
     return ImpactStatistics(
@@ -415,9 +420,9 @@ def compute_impact_statistics(
 
 def compute_oe_dispersion(
     result: BatchPropagationResult,
-    mu: float = 4.9048695e12,     # μ_Moon [m³/s²]
+    mu: float = 4.9048695e12,  # μ_Moon [m³/s²]
     *,
-    max_samples: int = 500,       # cap for Keplerian conversion (expensive)
+    max_samples: int = 500,  # cap for Keplerian conversion (expensive)
 ) -> OEDispersion:
     """
     Compute osculating Keplerian element dispersion at each output epoch.
@@ -434,7 +439,7 @@ def compute_oe_dispersion(
     -------
     OEDispersion
     """
-    t = result.t     # (T,)
+    t = result.t  # (T,)
     T = int(t.shape[0])
     valid_idx = np.where(result.valid_sample_mask())[0]
     if valid_idx.size < 2:
@@ -448,43 +453,44 @@ def compute_oe_dispersion(
     # element. Order does not affect the per-epoch mean/std dispersion statistics.
     idx = np.sort(idx)
 
-    a_mean  = np.zeros(T)
-    a_std  = np.zeros(T)
-    e_mean  = np.zeros(T)
-    e_std  = np.zeros(T)
-    inc_mean= np.zeros(T)
-    inc_std= np.zeros(T)
+    a_mean = np.zeros(T)
+    a_std = np.zeros(T)
+    e_mean = np.zeros(T)
+    e_std = np.zeros(T)
+    inc_mean = np.zeros(T)
+    inc_std = np.zeros(T)
 
     for k, block in enumerate(_iter_epoch_state_blocks(result.Y, idx)):
-        a_arr   = np.zeros(sub)
-        e_arr   = np.zeros(sub)
+        a_arr = np.zeros(sub)
+        e_arr = np.zeros(sub)
         inc_arr = np.zeros(sub)
         for j in range(sub):
             try:
                 state = block[j]
-                a_m, e_val, inc_rad, _, _, _ = cartesian_to_keplerian(
-                    state[:3], state[3:], mu=mu
-                )
-                a_arr[j]   = (a_m / 1000.0) if math.isfinite(a_m) else math.nan
-                e_arr[j]   = e_val          if math.isfinite(e_val) else math.nan
+                a_m, e_val, inc_rad, _, _, _ = cartesian_to_keplerian(state[:3], state[3:], mu=mu)
+                a_arr[j] = (a_m / 1000.0) if math.isfinite(a_m) else math.nan
+                e_arr[j] = e_val if math.isfinite(e_val) else math.nan
                 inc_arr[j] = math.degrees(inc_rad) if math.isfinite(inc_rad) else math.nan
             except Exception:
-                a_arr[j]   = math.nan
-                e_arr[j]   = math.nan
+                a_arr[j] = math.nan
+                e_arr[j] = math.nan
                 inc_arr[j] = math.nan
 
-        a_mean[k]   = float(np.nanmean(a_arr))
-        a_std[k]    = float(np.nanstd(a_arr,  ddof=1))
-        e_mean[k]   = float(np.nanmean(e_arr))
-        e_std[k]    = float(np.nanstd(e_arr,  ddof=1))
+        a_mean[k] = float(np.nanmean(a_arr))
+        a_std[k] = float(np.nanstd(a_arr, ddof=1))
+        e_mean[k] = float(np.nanmean(e_arr))
+        e_std[k] = float(np.nanstd(e_arr, ddof=1))
         inc_mean[k] = float(np.nanmean(inc_arr))
-        inc_std[k]  = float(np.nanstd(inc_arr, ddof=1))
+        inc_std[k] = float(np.nanstd(inc_arr, ddof=1))
 
     return OEDispersion(
         t=np.ascontiguousarray(t, dtype=np.float64),
-        a_mean_km=a_mean, a_std_km=a_std,
-        e_mean=e_mean, e_std=e_std,
-        inc_mean_deg=inc_mean, inc_std_deg=inc_std,
+        a_mean_km=a_mean,
+        a_std_km=a_std,
+        e_mean=e_mean,
+        e_std=e_std,
+        inc_mean_deg=inc_mean,
+        inc_std_deg=inc_std,
     )
 
 
@@ -540,8 +546,8 @@ def compute_ensemble_report(
     -------
     EnsembleReport
     """
-    ens   = compute_ensemble_statistics(result, use_survived_only=use_survived_only, r_ref_m=r_ref_m)
-    ell   = compute_error_ellipsoids(ens)
+    ens = compute_ensemble_statistics(result, use_survived_only=use_survived_only, r_ref_m=r_ref_m)
+    ell = compute_error_ellipsoids(ens)
 
     if compute_impacts is None:
         enabled = _impact_detection_was_enabled(result)
@@ -560,7 +566,7 @@ def compute_ensemble_report(
             # statistics (e.g. no valid samples): "not evaluated", not "0 %".
             impact_status = IMPACT_NOT_EVALUATED
 
-    oe    = compute_oe_dispersion(result, mu=mu) if compute_oe else None
+    oe = compute_oe_dispersion(result, mu=mu) if compute_oe else None
 
     return EnsembleReport(
         ensemble=ens,
@@ -575,6 +581,7 @@ def compute_ensemble_report(
 # =============================================================================
 # 3b.             RIC (RADIAL / IN-TRACK / CROSS-TRACK) UNCERTAINTY
 # =============================================================================
+
 
 @dataclass
 class RICUncertainty:
@@ -591,8 +598,9 @@ class RICUncertainty:
     cov_ric     : (T, 3, 3) position covariance rotated into the RIC frame [m²]
     sigma_ric_m : (T, 3)    1-σ [radial, along, cross] uncertainty [m]
     """
-    t:           F64Array
-    cov_ric:     F64Array
+
+    t: F64Array
+    cov_ric: F64Array
     sigma_ric_m: F64Array
 
 
@@ -666,9 +674,10 @@ def compute_ric_uncertainty(ens: EnsembleStatistics) -> RICUncertainty:
 # 4.              COVARIANCE PROPAGATION HELPERS (linear theory)
 # =============================================================================
 
+
 def propagate_covariance_linear(
-    P0: F64Array,       # (6, 6) initial covariance
-    Phi: F64Array,      # (T, 6, 6) state transition matrices
+    P0: F64Array,  # (6, 6) initial covariance
+    Phi: F64Array,  # (T, 6, 6) state transition matrices
 ) -> F64Array:
     """
     Propagate covariance via linear (STM) theory:
@@ -692,9 +701,9 @@ def propagate_covariance_linear(
 
 
 def mahalanobis_distance(
-    y: F64Array,        # (6,) query state
-    mean: F64Array,     # (6,) ensemble mean
-    P: F64Array,        # (6, 6) covariance
+    y: F64Array,  # (6,) query state
+    mean: F64Array,  # (6,) ensemble mean
+    P: F64Array,  # (6, 6) covariance
 ) -> float:
     """
     Compute Mahalanobis distance: d² = (y - μ)ᵀ P⁻¹ (y - μ).
@@ -737,4 +746,3 @@ __all__ = [
     "propagate_covariance_linear",
     "mahalanobis_distance",
 ]
-

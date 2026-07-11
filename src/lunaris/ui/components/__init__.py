@@ -18,6 +18,7 @@ from lunaris.ui.components.primitives import (
     Subsection,
     Toolbar,
     UnitField,
+    apply_tab_order,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "Subsection",
     "Toolbar",
     "UnitField",
+    "apply_tab_order",
 ]

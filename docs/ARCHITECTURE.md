@@ -318,7 +318,14 @@ model and backend. Execution uses `BatchPropagation*` names; statistics and
 reporting live in `lunaris.analysis.ensemble`. `sampling_method="random"` is
 the classical Monte Carlo sampling design; `lhs`, `sobol`, and
 `sobol_scrambled` provide space-filling designs for validation and benchmark
-coverage.
+coverage. `sobol_scrambled` is the preferred QMC design when randomized
+replicates are useful. The deterministic `sobol` option discards its all-zero
+first point before inverse-normal transformation, preventing a synthetic joint
+negative-tail draw. Positive spacecraft properties use a lower-truncated
+Gaussian transform (not clipping), so no probability mass is manufactured at
+the positive safety floor. Covariance products use `ddof=1`; only random draws
+are described as sample-covariance estimators, while LHS/Sobol products are
+reported as empirical ensemble covariances.
 
 | Module | Purpose |
 |--------|---------|

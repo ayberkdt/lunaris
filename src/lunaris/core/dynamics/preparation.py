@@ -70,15 +70,16 @@ def _provider_get(provider: Any, key: str, default: Any) -> Any:
         return provider.get(key, default)
     return getattr(provider, key, default)
 
+
 def _provider_has(provider: Any, key: str) -> bool:
     if isinstance(provider, dict):
         return key in provider
     return hasattr(provider, key)
 
+
 # =============================================================================
 # 1.                     Requirements / dependency validation
 # =============================================================================
-
 
 
 def compute_requirements(
@@ -103,10 +104,10 @@ def compute_requirements(
     # states are available. So they auto-enable whenever 1PN relativity is on
     # AND an ephemeris is present, and silently degrade to the central-body
     # Schwarzschild term alone otherwise. The body velocities they require are
-    # a central finite difference of the ephemeris position table
-    # (interp_vec3_derivative_safe, O(dt^2), the same scheme used on the GPU
-    # via _interp3_derivative_cuda) rather than the Catmull-Rom position
-    # interpolant's analytic derivative — adequate for the ~1e-11 m/s^2 term.
+    # the analytic derivatives of the same Catmull-Rom ephemeris interpolant
+    # used for body positions (interp_vec3_derivative_safe; mirrored by the
+    # GPU _interp3_derivative_cuda), so each external 1PN state is kinematically
+    # consistent within an ephemeris cell.
     req = force_requirements(
         flags,
         gravity_uses_st_lrps=_is_surrogate_gravity_provider(gravity_model),
@@ -157,7 +158,9 @@ def validate_dependencies(
         if sc_props.mass_kg <= 0.0:
             raise ValueError(f"mass_kg must be > 0, got {sc_props.mass_kg}")
         if sc_props.area_m2 <= 0.0:
-            raise ValueError(f"area_m2 must be > 0 for SRP/Albedo/Thermal IR, got {sc_props.area_m2}")
+            raise ValueError(
+                f"area_m2 must be > 0 for SRP/Albedo/Thermal IR, got {sc_props.area_m2}"
+            )
     # The SRP and simple/legacy albedo backends reuse the spacecraft SRP
     # coefficient cr; the lambert_facets albedo backend does not (it uses
     # albedo_pressure_coefficient), so cr is only enforced when actually used.
@@ -169,9 +172,13 @@ def validate_dependencies(
         reasons: list[str] = []
         if req.need_vectors:
             if req.need_sun:
-                reasons.append("Sun vector (SRP / 3rd-body Sun / Albedo / Thermal IR equilibrium / solid tides)")
+                reasons.append(
+                    "Sun vector (SRP / 3rd-body Sun / Albedo / Thermal IR equilibrium / solid tides)"
+                )
             if req.need_earth:
-                reasons.append("Earth vector (3rd-body Earth / Earth J2 / Thermal IR eclipse / solid tides)")
+                reasons.append(
+                    "Earth vector (3rd-body Earth / Earth J2 / Thermal IR eclipse / solid tides)"
+                )
         if req.need_quat_from_ephem:
             reasons.append("q_i2f (SH / Albedo / Thermal IR / solid tides)")
 
@@ -189,14 +196,13 @@ def validate_dependencies(
         )
 
     if bool(getattr(flags, "enable_earth_j2", False)) and (earth_j2 is None):
-        raise ValueError(
-            "enable_earth_j2=True but earth_j2 params are None."
-        )
+        raise ValueError("enable_earth_j2=True but earth_j2 params are None.")
 
 
 # =============================================================================
 # 2.                     Providers -> prepared packs (strict)
 # =============================================================================
+
 
 def prepare_adaptive_gravity_policy(
     nmax: int,
@@ -330,8 +336,12 @@ def prepare_gravity(gravity_model: Any, *, gravity_adaptive: Any = None) -> _Gra
         z1 = np.zeros(1, dtype=np.float64)
         return _GravPack(
             nmax=0,
-            r_ref_m=float(getattr(gravity_model, "R_ref_m", getattr(gravity_model, "r_ref_m", R_MOON))),
-            gm_m3s2=float(getattr(gravity_model, "GM_m3s2", getattr(gravity_model, "gm_m3s2", MU_MOON))),
+            r_ref_m=float(
+                getattr(gravity_model, "R_ref_m", getattr(gravity_model, "r_ref_m", R_MOON))
+            ),
+            gm_m3s2=float(
+                getattr(gravity_model, "GM_m3s2", getattr(gravity_model, "gm_m3s2", MU_MOON))
+            ),
             Cnm=z11,
             Snm=z11,
             diag=z1,
@@ -353,8 +363,8 @@ def prepare_gravity(gravity_model: Any, *, gravity_adaptive: Any = None) -> _Gra
             adaptive_table_len=0,
         )
 
-    nmax, r_ref, gm, Cnm, Snm, diag, subdiag, A, B, scale_m, ws_P, ws_dP, ws_cos, ws_sin = extract_gravity_strict(
-        gravity_model
+    nmax, r_ref, gm, Cnm, Snm, diag, subdiag, A, B, scale_m, ws_P, ws_dP, ws_cos, ws_sin = (
+        extract_gravity_strict(gravity_model)
     )
     adaptive_policy = prepare_adaptive_gravity_policy(
         int(nmax), gravity_model=gravity_model, gravity_adaptive=gravity_adaptive
@@ -427,10 +437,7 @@ def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
         or req.use_thermal_equilibrium
     )
     explicit_earth = bool(
-        req.use_3rd_earth
-        or req.use_earth_j2
-        or req.use_tide_earth
-        or req.use_thermal_eclipse
+        req.use_3rd_earth or req.use_earth_j2 or req.use_tide_earth or req.use_thermal_eclipse
     )
     sun_degenerate = not np.any(sun_tab)
     earth_degenerate = not np.any(earth_tab)
@@ -460,7 +467,9 @@ def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
     )
 
 
-def resolve_effective_requirements(req: DynamicsRequirements, ep: _EphemPack) -> DynamicsRequirements:
+def resolve_effective_requirements(
+    req: DynamicsRequirements, ep: _EphemPack
+) -> DynamicsRequirements:
     """Derive the effective runtime requirements from the raw config-derived ones.
 
     The external-1PN relativity terms are documented to silently degrade to
@@ -519,9 +528,7 @@ def prepare_albedo(
                 "supplying an albedo grid, but none was provided."
             )
         surf = extract_surface_provider_strict(surface_provider)
-        facet_albedo = _sample_facet_albedo_from_provider(
-            surf, source, lat_c, lon_c, fallback
-        )
+        facet_albedo = _sample_facet_albedo_from_provider(surf, source, lat_c, lon_c, fallback)
 
     np.clip(facet_albedo, 0.0, 1.0, out=facet_albedo)
 
@@ -561,22 +568,41 @@ def _prepare_albedo_simple(cfg: AlbedoConfig, surface_provider: Any) -> _AlbedoP
 
     if "albedo_grid" in surf:
         return _AlbedoPack(
-            backend=0, mode=0, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert,
+            backend=0,
+            mode=0,
+            alb_const=alb_const,
+            alb_scale=alb_scale,
+            k_lambert=k_lambert,
             grid_alb=surf["albedo_grid"],
-            n_lines=int(surf["n_lines"]), n_samples=int(surf["n_samples"]),
-            res_deg=float(surf["res_deg"]), lon0_deg=float(surf["lon0_deg"]), lat0_deg=float(surf["lat0_deg"]),
+            n_lines=int(surf["n_lines"]),
+            n_samples=int(surf["n_samples"]),
+            res_deg=float(surf["res_deg"]),
+            lon0_deg=float(surf["lon0_deg"]),
+            lat0_deg=float(surf["lat0_deg"]),
         )
     if "dn" in surf:
         return _AlbedoPack(
-            backend=0, mode=1, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert,
+            backend=0,
+            mode=1,
+            alb_const=alb_const,
+            alb_scale=alb_scale,
+            k_lambert=k_lambert,
             dn=surf["dn"],
-            n_lines=int(surf["n_lines"]), n_samples=int(surf["n_samples"]),
-            res_deg=float(surf["res_deg"]), lon0_deg=float(surf["lon0_deg"]), lat0_deg=float(surf["lat0_deg"]),
-            sf=float(surf.get("scale_factor", 1.0)), off=float(surf.get("offset", 0.0)),
-            missing=float(surf.get("missing_dn", -1.0)), flip=int(surf.get("flip_lat", 0)),
-            latmin=float(surf.get("lat_min_deg", -90.0)), latmax=float(surf.get("lat_max_deg", 90.0)),
+            n_lines=int(surf["n_lines"]),
+            n_samples=int(surf["n_samples"]),
+            res_deg=float(surf["res_deg"]),
+            lon0_deg=float(surf["lon0_deg"]),
+            lat0_deg=float(surf["lat0_deg"]),
+            sf=float(surf.get("scale_factor", 1.0)),
+            off=float(surf.get("offset", 0.0)),
+            missing=float(surf.get("missing_dn", -1.0)),
+            flip=int(surf.get("flip_lat", 0)),
+            latmin=float(surf.get("lat_min_deg", -90.0)),
+            latmax=float(surf.get("lat_max_deg", 90.0)),
         )
-    return _AlbedoPack(backend=0, mode=2, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert)
+    return _AlbedoPack(
+        backend=0, mode=2, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert
+    )
 
 
 def _sample_facet_albedo_from_provider(
@@ -633,8 +659,20 @@ def _sample_facet_albedo_from_provider(
             lon_deg = math.degrees(float(lon_c_rad[i]))
             a = float(
                 _sample_albedo_dn_scaled(
-                    lat_deg, lon_deg, dn, nl, ns, res, lon0, lat0,
-                    flip, sf, off, missing, latmin, latmax,
+                    lat_deg,
+                    lon_deg,
+                    dn,
+                    nl,
+                    ns,
+                    res,
+                    lon0,
+                    lat0,
+                    flip,
+                    sf,
+                    off,
+                    missing,
+                    latmin,
+                    latmax,
                 )
             )
             out[i] = fallback if not math.isfinite(a) else a
@@ -719,7 +757,9 @@ def prepare_thermal(
     mode = normalize_thermal_mode(getattr(cfg, "thermal_mode", "constant_temperature"))
     lat_count = int(getattr(cfg, "facet_lat_count", 18))
     lon_count = int(getattr(cfg, "facet_lon_count", 36))
-    pos, normals, areas, _lat, _lon = build_latlon_facets(lat_count, lon_count, radius_m=float(R_MOON))
+    pos, normals, areas, _lat, _lon = build_latlon_facets(
+        lat_count, lon_count, radius_m=float(R_MOON)
+    )
 
     temps: np.ndarray = np.zeros(1, dtype=np.float64)
     if mode == THERMAL_MODE_TEMPERATURE_GRID:
@@ -763,7 +803,9 @@ def prepare_thermal(
         temperature_K=float(getattr(cfg, "temperature_K", 250.0)),
         night_temperature_K=float(getattr(cfg, "night_temperature_K", 100.0)),
         thermal_floor_flux_W_m2=float(getattr(cfg, "thermal_floor_flux_W_m2", 0.0)),
-        ir_pressure_coefficient=float(getattr(cfg, "ir_pressure_coefficient", getattr(cfg, "k_thermal", 1.0))),
+        ir_pressure_coefficient=float(
+            getattr(cfg, "ir_pressure_coefficient", getattr(cfg, "k_thermal", 1.0))
+        ),
         solar_flux_1au_W_m2=float(getattr(cfg, "solar_flux_1au_W_m2", SOLAR_FLUX_1AU)),
         au_m=float(getattr(cfg, "AU_m", AU)),
         c_light_m_s=float(getattr(cfg, "c_light_m_s", C_LIGHT)),

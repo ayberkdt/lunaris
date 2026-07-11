@@ -20,6 +20,7 @@ import sys
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -729,12 +730,16 @@ def _make_tiny_surrogate(tmp_path: Path) -> Any:  # noqa: F821
     torch.save({"model": model_net.state_dict(), "config": config, "scaler": scaler},
                ckpt_dir / "ckpt_best.pt")
 
-    return SurrogateGravityModel.from_model_dir(
-        run_dir,
-        mu_override=float(MU_MOON),
-        r_ref_override=float(R_MOON),
-        device_preference="cpu",
-    )
+    # This deliberately synthetic, pre-contract artifact exercises only the
+    # tensor inference API. Make its research-only legacy opt-in explicit so
+    # the test remains compatible with production's fail-closed loader policy.
+    with patch.dict("os.environ", {"LUNARIS_ALLOW_LEGACY_ARTIFACT": "1"}):
+        return SurrogateGravityModel.from_model_dir(
+            run_dir,
+            mu_override=float(MU_MOON),
+            r_ref_override=float(R_MOON),
+            device_preference="cpu",
+        )
 
 
 def test_torch_batch_warmup_uses_chunk_size_not_full_batch(monkeypatch) -> None:

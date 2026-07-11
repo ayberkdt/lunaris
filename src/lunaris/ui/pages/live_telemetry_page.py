@@ -188,7 +188,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         toolbar.setObjectName("telemetryToolbar")
         bar = QtWidgets.QHBoxLayout(toolbar)
         bar.setContentsMargins(12, 8, 12, 8)
-        bar.setSpacing(10)
+        bar.setSpacing(DESIGN_TOKENS.spacing.md)
 
         self.plot_segment = SegmentedControl(
             ["Altitude", "Velocity", "Eccentricity", "Ground Track"]
@@ -298,8 +298,8 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         panel.setObjectName("telemetryScalePanel")
         grid = QtWidgets.QGridLayout(panel)
         grid.setContentsMargins(12, 12, 12, 12)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(8)
+        grid.setHorizontalSpacing(DESIGN_TOKENS.spacing.md)
+        grid.setVerticalSpacing(DESIGN_TOKENS.spacing.sm)
 
         # Mouse-zoom axes.
         grid.addWidget(QtWidgets.QLabel("Mouse zoom"), 0, 0)

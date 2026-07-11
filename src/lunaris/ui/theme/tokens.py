@@ -11,6 +11,7 @@ from lunaris.ui_foundation.tokens import (
     ControlMetrics,
     DesignTokens,
     LayoutTokens,
+    MotionTokens,
     RadiusTokens,
     SpacingTokens,
     TypographyTokens,
@@ -25,6 +26,7 @@ __all__ = [
     "RadiusTokens",
     "ControlMetrics",
     "LayoutTokens",
+    "MotionTokens",
     "DesignTokens",
     "DESIGN_TOKENS",
 ]

@@ -251,8 +251,8 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
 
         self.content_widget = QtWidgets.QWidget()
         self.content_layout = QtWidgets.QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(12, 10, 12, 18)
-        self.content_layout.setSpacing(18)
+        self.content_layout.setContentsMargins(DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.lg)
+        self.content_layout.setSpacing(DESIGN_TOKENS.spacing.lg)
 
         controls_card = self._build_controls_card()
         self.content_layout.addWidget(controls_card)
@@ -300,8 +300,8 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
     def _build_controls_card(self) -> QtWidgets.QGroupBox:
         gb = _card("Analysis Workspace")
         layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(18, 22, 18, 18)
-        layout.setSpacing(14)
+        layout.setContentsMargins(DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.xxl, DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.lg)
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
 
         intro = _label(
             "Load a completed ensemble result archive to compute ensemble "
@@ -337,7 +337,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         layout.addLayout(path_row)
 
         option_row = QtWidgets.QHBoxLayout()
-        option_row.setSpacing(18)
+        option_row.setSpacing(DESIGN_TOKENS.spacing.lg)
         self.chk_compute_oe = QtWidgets.QCheckBox("Compute orbital-element dispersion")
         self.chk_compute_oe.setChecked(False)
         self.chk_compute_oe.setToolTip(
@@ -358,7 +358,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         self.badge_status = QtWidgets.QLabel("READY")
         self.badge_status.setAlignment(QtCore.Qt.AlignCenter)
         self.badge_status.setFixedHeight(DESIGN_TOKENS.controls.status_badge_height)
-        self.badge_status.setContentsMargins(10, 4, 10, 4)
+        self.badge_status.setContentsMargins(DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xxs, DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.xxs)
         status_row.addWidget(self.badge_status)
 
         self.lbl_status = _label("Choose an archive to begin analysis.", muted=True)
@@ -400,9 +400,9 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
     def _build_summary_card(self) -> QtWidgets.QGroupBox:
         gb = _card("Analysis Summary")
         grid = QtWidgets.QGridLayout(gb)
-        grid.setContentsMargins(18, 22, 18, 18)
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(14)
+        grid.setContentsMargins(DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.xxl, DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.lg)
+        grid.setHorizontalSpacing(DESIGN_TOKENS.spacing.md)
+        grid.setVerticalSpacing(DESIGN_TOKENS.spacing.md)
 
         self._summary_labels: dict[str, QtWidgets.QLabel] = {}
 
@@ -419,7 +419,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
             )
             tile.setMinimumHeight(72)
             tile_layout = QtWidgets.QVBoxLayout(tile)
-            tile_layout.setContentsMargins(12, 10, 12, 10)
+            tile_layout.setContentsMargins(DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md)
             tile_layout.setSpacing(4)
 
             key_lbl = _label(title, muted=True)
@@ -461,9 +461,9 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
 
         gb = _card("Analysis Summary")
         grid = QtWidgets.QGridLayout(gb)
-        grid.setContentsMargins(18, 22, 18, 18)
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(14)
+        grid.setContentsMargins(DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.xxl, DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.lg)
+        grid.setHorizontalSpacing(DESIGN_TOKENS.spacing.md)
+        grid.setVerticalSpacing(DESIGN_TOKENS.spacing.md)
 
         self._summary_labels = {}
 
@@ -480,7 +480,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
             )
             tile.setMinimumHeight(76)
             tile_layout = QtWidgets.QVBoxLayout(tile)
-            tile_layout.setContentsMargins(12, 10, 12, 10)
+            tile_layout.setContentsMargins(DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md, DESIGN_TOKENS.spacing.md)
             tile_layout.setSpacing(4)
 
             key_lbl = _label(title, muted=True)
@@ -514,8 +514,8 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
     def _build_plot_card(self) -> QtWidgets.QGroupBox:
         gb = _card("Plot Preview")
         layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(18, 22, 18, 18)
-        layout.setSpacing(14)
+        layout.setContentsMargins(DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.xxl, DESIGN_TOKENS.spacing.lg, DESIGN_TOKENS.spacing.lg)
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
 
         top_row = QtWidgets.QHBoxLayout()
         top_row.setSpacing(12)

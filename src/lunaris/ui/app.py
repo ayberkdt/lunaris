@@ -1150,6 +1150,9 @@ class MainWindow(QtWidgets.QMainWindow):
         panel = ExecutionConsoleDock(output_dir_provider=self._current_output_dir)
         panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
         panel.collapsed_changed.connect(self._on_log_collapsed_changed)
+        # The header button routes through the animated host toggle so every
+        # collapse path (button, menu, shortcut) shares the same drawer motion.
+        panel.set_toggle_handler(self._toggle_log_collapsed)
         return panel
 
     def _current_output_dir(self) -> str:
@@ -1191,6 +1194,59 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.main_splitter.setSizes([top_size, bottom_size])
 
+    def _log_drawer_animations_enabled(self) -> bool:
+        """Console drawer motion is skipped for reduced motion and pre-show layout."""
+        return not prefers_reduced_motion() and self.isVisible()
+
+    def _animate_log_splitter(self, target_bottom: int, on_finished=None) -> None:
+        """Slide the console band of the main splitter to *target_bottom* px.
+
+        One interruptible animation at a time: starting a new slide silently
+        drops the previous one (including its pending ``on_finished`` commit),
+        so a mid-flight toggle simply changes direction instead of queueing
+        conflicting state changes.
+        """
+        previous = getattr(self, "_log_splitter_anim", None)
+        if previous is not None:
+            try:
+                previous.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            previous.stop()
+
+        sizes = self.main_splitter.sizes()
+        if len(sizes) != 2:
+            self.main_splitter.setSizes([max(1, self.height()), target_bottom])
+            if on_finished is not None:
+                on_finished()
+            return
+
+        total = sizes[0] + sizes[1]
+        anim = QtCore.QVariantAnimation(self)
+        anim.setStartValue(float(sizes[1]))
+        anim.setEndValue(float(target_bottom))
+        anim.setDuration(DESIGN_TOKENS.motion.duration_standard_ms)
+        anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        anim.valueChanged.connect(
+            lambda value: self.main_splitter.setSizes(
+                [max(1, total - int(value)), int(value)]
+            )
+        )
+        if on_finished is not None:
+            anim.finished.connect(on_finished)
+        self._log_splitter_anim = anim
+        anim.start()
+
+    def _expanded_log_target(self) -> int:
+        """Bottom-band height an expanded console should land on."""
+        sizes = getattr(self, "_log_expanded_sizes", None)
+        if sizes and len(sizes) == 2 and sizes[1] >= EXPANDED_MIN_LOG_HEIGHT:
+            return sizes[1]
+        total = sum(max(0, size) for size in self.main_splitter.sizes())
+        if total <= 0:
+            total = max(self.main_splitter.height(), 480)
+        return max(EXPANDED_MIN_LOG_HEIGHT, int(total * 0.32))
+
     def _on_log_collapsed_changed(self, collapsed: bool) -> None:
         """React to the console collapse toggle by resizing the splitter.
 
@@ -1198,6 +1254,11 @@ class MainWindow(QtWidgets.QMainWindow):
         it; a window resize while collapsed cannot clobber that memory because we
         only capture sizes that look expanded. Expanding always lands on a usable
         height, falling back to a sensible default when no memory exists.
+
+        Expanding animates the drawer open (the widget has already shown its
+        body, so the content is progressively revealed); the collapse direction
+        is animated *before* the state commit in :meth:`_toggle_log_collapsed`,
+        so the collapsed branch here just asserts the final geometry.
         """
         self.is_log_collapsed = bool(collapsed)
         if collapsed:
@@ -1210,6 +1271,17 @@ class MainWindow(QtWidgets.QMainWindow):
             # A large top value is clamped by Qt to the available space, leaving
             # the console at exactly the collapsed header height (never zero).
             self.main_splitter.setSizes([max(1, self.height()), LOG_COLLAPSED_HEIGHT])
+        elif self._log_drawer_animations_enabled():
+            # Keep the minimum height low while the drawer slides open (a 210 px
+            # minimum applied up front would snap the splitter past the motion),
+            # then restore it so manual splitter drags cannot crush the console.
+            target = self._expanded_log_target()
+            self._animate_log_splitter(
+                target,
+                on_finished=lambda: self.log_panel.setMinimumHeight(
+                    EXPANDED_MIN_LOG_HEIGHT
+                ),
+            )
         else:
             self.log_panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
             sizes = getattr(self, "_log_expanded_sizes", None)
@@ -1464,8 +1536,43 @@ class MainWindow(QtWidgets.QMainWindow):
             self.badge_page.set_status("info", display_name)
 
     def _toggle_log_collapsed(self, _checked: bool = False):
-        """Collapse or expand the Execution Console (splitter handled via signal)."""
-        self.log_panel.toggle_collapsed()
+        """Collapse or expand the Execution Console.
+
+        Expanding commits the widget state immediately (its body must be
+        visible for the drawer-open animation to reveal anything); collapsing
+        animates the drawer shut with the content still visible and commits the
+        collapsed state only when the slide finishes. A toggle during the
+        collapse slide reverses direction without committing (the drop of the
+        pending ``on_finished`` in ``_animate_log_splitter`` cancels the
+        commit), keeping the animation interruptible.
+        """
+        panel = self.log_panel
+        if panel.is_collapsed or not self._log_drawer_animations_enabled():
+            panel.toggle_collapsed()
+            return
+
+        anim = getattr(self, "_log_splitter_anim", None)
+        closing = (
+            anim is not None
+            and anim.state() == QtCore.QAbstractAnimation.Running
+            and int(anim.endValue()) == LOG_COLLAPSED_HEIGHT
+        )
+        if closing:
+            # Mid-collapse reversal: the collapsed state was never committed,
+            # so just slide back open and restore the minimum height after.
+            self._animate_log_splitter(
+                self._expanded_log_target(),
+                on_finished=lambda: panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT),
+            )
+            return
+
+        sizes = self.main_splitter.sizes()
+        if len(sizes) == 2 and sizes[1] > LOG_COLLAPSED_HEIGHT + 4:
+            self._log_expanded_sizes = sizes
+        panel.setMinimumHeight(LOG_COLLAPSED_HEIGHT)
+        self._animate_log_splitter(
+            LOG_COLLAPSED_HEIGHT, on_finished=panel.toggle_collapsed
+        )
 
     # =========================================================================
     # 29. ORBIT & FORCE MODEL LOGIC

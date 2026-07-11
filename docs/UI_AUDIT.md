@@ -141,3 +141,33 @@ one title/description/action hierarchy, and visualization colors have a
 separate typed role group. Focus, read-only, disabled, status, warning, error,
 success, and primary-action states are represented by semantic selectors rather
 than page-specific accent colors.
+
+## Color-Theory / Best-Practice Pass (2026-07-11)
+
+A measurement-driven pass (WCAG contrast matrix, grayscale-luminance ordering,
+protan/deutan/tritan simulation over every token pair) produced these durable
+outcomes:
+
+- **Visualization token fixes.** `selected_plot` duplicated `earth` exactly
+  (#3B86FF, indistinguishable in any vision) — moved to the accent family
+  (#6AA9FF). `apoapsis` (#22D3B6) was iso-luminant with `periapsis` and
+  `comparison_plot`, identical to `axis_y`, and collapsed into
+  `comparison_plot` under CVD simulation — lifted to #7DEEDD (same cool hue
+  family, value-separated). Node geometry got its own `orbit_node` role
+  (#9F7CFF) instead of borrowing the apoapsis color for three meanings.
+- **Verified-clean results.** The severity ladder is luminance-ordered
+  (warning 0.52 > error 0.30 > critical 0.24) and survives grayscale. Text
+  contrast passes AA on every surface pairing except intentionally-muted
+  `fg_disabled` (WCAG-exempt). Segoe UI digits measured tabular-by-default on
+  Windows, so no numeric font role is needed. Known latent CVD confusions
+  (`selected_plot`~`gravity` deutan, `periapsis`~`sun` tritan) require
+  linestyle/marker redundancy if those series ever co-plot.
+- **Doc drift guard.** `UI_THEME.md`'s palette table is now enforced against
+  the live tokens by `tests/test_ui_theme.py::test_ui_theme_doc_palette_matches_tokens`.
+- **Motion.** `MotionTokens` (150/200 ms) joined the foundation; the execution
+  console collapse/expand is now an interruptible 200 ms OutCubic drawer slide
+  that honors the reduced-motion preference and stays instant pre-show.
+- **Glyph discipline.** Color-emoji status icons (job queue, preset combo) were
+  replaced with theme-colorable monochrome glyphs or explicit text suffixes;
+  redundant "⚠" prefixes were dropped where the component kind already carries
+  the state.

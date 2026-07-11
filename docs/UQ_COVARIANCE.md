@@ -14,22 +14,28 @@ is orbit determination, navigation covariance, or process-noise estimation;
 
 ## What the covariance is (and is not)
 
-> The reported covariance is the **unbiased sample covariance** (`ddof=1`) of
-> the ensemble state in the **Moon-centred inertial integration frame** at the
-> shared output epochs, induced by the **declared initial-state and
-> spacecraft-parameter dispersion** propagated through **deterministic
-> dynamics**.
+> The reported covariance is the `ddof=1` covariance of the ensemble state in
+> the **Moon-centred inertial integration frame** at the shared output epochs,
+> induced by the **declared initial-state and spacecraft-parameter dispersion**
+> propagated through **deterministic dynamics**. For independent random Monte
+> Carlo draws it is reported as a sample-covariance estimator. For Latin
+> Hypercube and Sobol designs it is reported as an empirical ensemble covariance:
+> those design points are non-IID, so `ddof=1` does not make it an unbiased
+> Monte Carlo covariance estimator.
 
 It contains **no process noise** and **no measurement updates**. It is a
 forward-propagated dispersion analysis, **not** an orbit-determination
-covariance, and it must never be presented as navigation performance. This
-definition is embedded verbatim in every `uq_manifest.json`.
+covariance, and it must never be presented as navigation performance. The
+sampling-method-specific definition is embedded in every `uq_manifest.json`.
 
 Initial uncertainty is currently a diagonal Gaussian (`StateUncertainty` /
 `SpacecraftUncertainty` per-component σ) mapped through a standard-normal
 design; the design can be classical Monte Carlo, Latin Hypercube, or (scrambled)
 Sobol (`--sampling-method`). The distribution family, σ values, method, seed,
-and sample count are all recorded in the manifest.
+and sample count are all recorded in the manifest. The manifest also records
+`covariance_estimator_kind` and a sampling-method-specific covariance
+definition, so an archived QMC/LHS design cannot be mislabelled as IID Monte
+Carlo after the fact.
 
 ## Producing a UQ report
 
@@ -60,7 +66,7 @@ evidence product is never silently skipped.
 |---|---|
 | `uq_covariance.npz` | `t_s (T,)`, `mean_state (T,6)`, `cov (T,6,6)`, `cov_ric (T,3,3)`, `sigma_ric_m (T,3)`, `ellipsoid_semi_axes_3sigma_m (T,3)`, `ellipsoid_eigvecs (T,3,3)`, `alt_mean_km`, `alt_std_km` |
 | `uq_summary.csv` | per-epoch scalars: total position/velocity 1-σ, RIC 1-σ components, max 3-σ ellipsoid semi-axis, altitude mean/σ |
-| `uq_manifest.json` | canonical JSON: covariance definition, ensemble counts, run-config echo + hash, source-archive path + SHA-256, archive metadata, per-file SHA-256, **covariance content hash**, git commit/dirty state, environment |
+| `uq_manifest.json` | canonical JSON: sampling-specific covariance definition and estimator kind, ensemble counts, run-config echo + hash, source-archive path + SHA-256, archive metadata, per-file SHA-256, **covariance content hash**, git commit/dirty state, environment |
 | `figures/` | σ/correlation history, RIC 1-σ history, covariance eigenvalue spectrum, 3-D ensemble with 3-σ ellipsoids, altitude envelope |
 
 The **covariance content hash** is a SHA-256 over the numerical arrays

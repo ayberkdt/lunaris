@@ -291,7 +291,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         # Main Layout
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(16)
 
         # --- HEADER ---
         header = QtWidgets.QLabel("Lunar Gravity Field Configuration")
@@ -769,7 +769,7 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         # Main Layout
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(16)
 
         # --- Header ---
         header = QtWidgets.QLabel("Adaptive Gravity Logic")
@@ -788,7 +788,7 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         form_frame = QtWidgets.QFrame()
         form_frame.setObjectName("section")
         form_layout = QtWidgets.QGridLayout(form_frame)
-        form_layout.setContentsMargins(15, 15, 15, 15)
+        form_layout.setContentsMargins(16, 16, 16, 16)
         form_layout.setVerticalSpacing(12)
 
         # Preset Selector
@@ -995,7 +995,7 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(16)
         header = QtWidgets.QLabel("Lunar Albedo (Reflected Solar) Model")
         header.setObjectName("dialogTitle")
         layout.addWidget(header)
@@ -1176,7 +1176,7 @@ class ThermalSettingsDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(16)
         header = QtWidgets.QLabel("Lunar Thermal IR (Re-radiation) Model")
         header.setObjectName("dialogTitle")
         layout.addWidget(header)
@@ -1679,7 +1679,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         grid = QtWidgets.QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(20)
-        grid.setVerticalSpacing(15)
+        grid.setVerticalSpacing(16)
         # Let the label column absorb the slack so the cost indicator and the
         # per-row settings button stay grouped at the right edge instead of the
         # four columns spreading apart (which left the lone gear button adrift).

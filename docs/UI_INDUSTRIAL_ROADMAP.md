@@ -22,21 +22,32 @@ Solid foundation already in place:
 - Global QSS covers component states (focus / disabled / tables / scrollbars /
   tooltips / tabs).
 
-Core industrial gaps:
+Core industrial gaps (re-measured 2026-07-11; the original counts below were a
+generation stale):
 
-- **Pages bypass the component system with ad-hoc inline styling.** Inline
-  `setStyleSheet` counts per page: `force_models_page` 36, `batch_propagation_page`
-  23, `orbit_config_page` 15, `data_files_page` 12, `result_exports_page` 11.
-  `docs/UI_DESIGN_SYSTEM.md` mandates object-names/properties over inline QSS;
-  pages violate this heavily → visual drift + maintenance burden.
-- **Keyboard / accessibility is thin.** Shortcuts only in `ui/app.py`;
-  `setTabOrder` effectively absent; `setAccessibleName/Description` in ~6 files.
+- **Inline styling in pages is largely retired.** Per-page `setStyleSheet`
+  counts are now 0–3 (`orbit_config_page` 3, `data_files_page` 2,
+  `result_exports_page` 2, `batch_propagation_page` 1, `force_models_page` 1);
+  the ~50 remaining call sites are shared infrastructure in `ui_commons`. The
+  original Phase 0 driver (36/23/15/12/11 per page) is effectively done; page
+  code routes through `primitives.py` + object-name selectors. Residual work is
+  the shared-infra sites, not the pages.
+- **Keyboard / accessibility is the real gap.** `setTabOrder` is used **0**
+  times across `ui/` — tab order is entirely Qt-default. `setAccessibleName`
+  is broader than first measured (76 call sites across 13 files) but uneven;
+  focus rings on the custom `ToggleSwitch` / `SegmentedControl` are unverified.
 - **States/feedback uneven**, custom widgets (`ToggleSwitch`, `CostIndicator`)
   are paint-only (no keyboard/focus), and data tables appear on only 2 pages.
+- **Spacing rhythm** is now normalized to the 4px scale and gated by
+  `tools/ui/spacing_scan.py`; a snapshot-diff harness
+  (`tools/ui/snapshot_suite.py`) guards further visual changes.
 
 ## Verification (applies to every phase)
 
-- Before/after screenshots via `tools/ui/capture_main_window.py`.
+- Snapshot-diff regression check via `tools/ui/snapshot_suite.py`
+  (`--baseline` on a known-good tree, then `--compare`); before/after single
+  captures still available through `tools/ui/capture_main_window.py`.
+- `python tools/ui/spacing_scan.py` → clean (on-scale or allow-listed).
 - `python .claude/skills/lunaris-pyside6-ui/scripts/scan_hardcoded_colors.py` → 0.
 - `python .claude/skills/accessibility-audit/scripts/contrast_check.py` for any
   new text/control pairing.
@@ -44,18 +55,17 @@ Core industrial gaps:
 
 ---
 
-## Phase 0 — Consistency lock (highest leverage; start here)
+## Phase 0 — Consistency lock (DONE 2026-07-11)
 
 Problem: two competing "right ways" (component system vs inline styling) cause
 drift.
 
-1. Migrate pages onto the `primitives.py` components + object-names, busiest
-   first: `force_models_page` (36) → `batch_propagation_page` (23) →
-   `orbit_config_page` (15) → `data_files_page` (12) → `result_exports_page`
-   (11). Replace inline `setStyleSheet` with `Section` / `FormGrid` /
-   `InlineNotice` / object-name selectors.
-2. Acceptance: inline `setStyleSheet` in pages ≈ 0; `scan_hardcoded_colors` = 0;
-   before/after captures at visual parity.
+Outcome: page-level inline `setStyleSheet` is down to 0–3 per page (from
+36/23/15/12/11); pages route through `primitives.py` + object-names;
+`scan_hardcoded_colors` = 0. Remaining inline sites are shared `ui_commons`
+infrastructure, tracked separately. Spacing is normalized to the 4px scale and
+gated. The next-highest leverage has shifted to **Phase 1 (keyboard)**, where
+`setTabOrder` coverage is still zero.
 
 ## Phase 1 — Keyboard & interaction (daily professional use)
 
