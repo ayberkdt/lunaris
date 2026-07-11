@@ -215,6 +215,55 @@ def test_roundtrip_to_dict_from_dict():
 
 
 # ---------------------------------------------------------------------------
+# Dataset hash normalization (AUD-002): the canonical DatasetContract writes
+# content_sha256; readers must not treat the rename as a missing hash.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_dataset_hash_prefers_canonical_content_sha256():
+    from lunaris.surrogate.st_lrps.shared.contracts import resolve_dataset_hash
+
+    canonical = {"content_sha256": "c" * 64, "dataset_sha256": "d" * 64}
+    assert resolve_dataset_hash(canonical) == "c" * 64
+    assert resolve_dataset_hash({"dataset_sha256": "d" * 64}) == "d" * 64
+    assert resolve_dataset_hash({"sha256": "e" * 64}) == "e" * 64
+    # Source order: the first mapping that carries any hash key wins.
+    assert resolve_dataset_hash({}, {"dataset_hash": "f" * 64}) == "f" * 64
+    assert resolve_dataset_hash(None, {"content_sha256": ""}) is None
+
+
+def test_paper_safe_training_data_hash_resolves_from_content_sha256():
+    contract, config, provenance = _paper_safe_sources()
+    canonical_only = _contract(
+        scaler_contract={**_scaler(), "provenance": {"fit_rows": 16, "alt_min_km": 100.0, "alt_max_km": 1000.0}},
+        dataset_contract={
+            **_dataset(),
+            # Canonical DatasetContract key only — no legacy dataset_sha256.
+            "content_sha256": "a" * 64,
+            "source_gravity_model": "gggrx_1200a",
+            "source_gravity_file_sha256": "1" * 64,
+        },
+    )
+    report = paper_safe_metadata_report(contract=canonical_only, config=config, run_provenance=provenance)
+    assert report["fields"]["training_data_hash"] == "a" * 64
+    assert "training_data_hash" not in report["missing"]
+
+
+def test_compatibility_report_accepts_content_sha256_as_dataset_hash():
+    canonical_only = _contract(
+        dataset_contract={
+            **_dataset(),
+            "content_sha256": "a" * 64,
+            "source_gravity_file_sha256": "1" * 64,
+        },
+    )
+    report = canonical_only.compatibility_report(canonical_only.to_dict())
+    assert not any("dataset_contract.content_sha256" in w for w in report["warnings"]), (
+        "content_sha256-only contract must not warn about a missing dataset hash"
+    )
+
+
+# ---------------------------------------------------------------------------
 # validate(): every rejection branch (mutate one field of a valid contract).
 # ---------------------------------------------------------------------------
 

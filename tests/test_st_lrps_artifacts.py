@@ -279,9 +279,7 @@ def test_load_checkpoint_uses_safe_weights_only_path(canonical_run: dict, caplog
     )
 
 
-def test_load_checkpoint_falls_back_for_legacy_pickled_objects(tmp_path: Path, caplog) -> None:
-    """Legacy checkpoints holding arbitrary pickled objects still load, but only
-    via the loudly-warned weights_only=False fallback."""
+def _legacy_pickled_checkpoint(tmp_path: Path) -> Path:
     import argparse
 
     payload = {
@@ -292,13 +290,50 @@ def test_load_checkpoint_falls_back_for_legacy_pickled_objects(tmp_path: Path, c
     }
     path = tmp_path / "legacy.pt"
     torch.save(payload, path)
+    return path
 
-    with caplog.at_level("WARNING", logger="lunaris.surrogate.st_lrps.artifacts.manager"):
+
+def test_load_checkpoint_refuses_legacy_pickled_objects_by_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Untrusted legacy checkpoints must NOT be fully unpickled: full unpickling
+    executes code embedded in the file, so without an explicit trust opt-in the
+    load raises instead of falling back."""
+    from lunaris.surrogate.serialization import (
+        TRUST_ARTIFACT_ENV_VAR,
+        UntrustedArtifactError,
+    )
+
+    monkeypatch.delenv(TRUST_ARTIFACT_ENV_VAR, raising=False)
+    path = _legacy_pickled_checkpoint(tmp_path)
+    with pytest.raises(UntrustedArtifactError, match="trust"):
+        load_checkpoint(path, torch.device("cpu"))
+
+
+def test_load_checkpoint_trust_opt_in_allows_legacy_pickled_objects(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """With the explicit trust opt-in the legacy payload still loads, and the
+    fallback stays loudly warned."""
+    from lunaris.surrogate.serialization import TRUST_ARTIFACT_ENV_VAR
+
+    monkeypatch.delenv(TRUST_ARTIFACT_ENV_VAR, raising=False)
+    path = _legacy_pickled_checkpoint(tmp_path)
+    with pytest.warns(RuntimeWarning, match="full unpickling"):
+        ckpt = load_checkpoint(path, torch.device("cpu"), trust_artifact=True)
+    assert torch.equal(ckpt["model_state_dict"]["w"], torch.zeros(2, 2))
+
+
+def test_load_checkpoint_trust_env_var_allows_legacy_pickled_objects(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lunaris.surrogate.serialization import TRUST_ARTIFACT_ENV_VAR
+
+    monkeypatch.setenv(TRUST_ARTIFACT_ENV_VAR, "1")
+    path = _legacy_pickled_checkpoint(tmp_path)
+    with pytest.warns(RuntimeWarning, match="full unpickling"):
         ckpt = load_checkpoint(path, torch.device("cpu"))
     assert torch.equal(ckpt["model_state_dict"]["w"], torch.zeros(2, 2))
-    assert any("falling back" in rec.message for rec in caplog.records), (
-        "unsafe fallback must warn that the checkpoint is fully unpickled"
-    )
 
 
 def test_ckpt_best_and_last_share_same_top_level_keys(canonical_run: dict) -> None:

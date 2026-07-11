@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import pickle
 import warnings
 from pathlib import Path
 from typing import Any
@@ -11,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.surrogate.runtime.device import _require_torch, nn, torch
+from lunaris.surrogate.serialization import safe_torch_load
 
 if torch is not None and nn is not None:
 
@@ -236,28 +236,18 @@ def _extract_state_dict(checkpoint_obj: dict[str, Any]) -> dict[str, Any]:
     raise KeyError("Checkpoint does not contain a model state dictionary.")
 
 
-def _load_checkpoint(path: Path, device: torch.device) -> dict[str, Any]:
-    """Load a checkpoint with compatibility across PyTorch versions.
+def _load_checkpoint(
+    path: Path, device: torch.device, *, trust_artifact: bool = False
+) -> dict[str, Any]:
+    """Load a checkpoint tensor-only (``weights_only=True``).
 
-    The safe ``weights_only=True`` loader is tried first; only legacy payloads
-    holding arbitrary pickled objects fall back to full unpickling, which
-    executes code embedded in the file — never load untrusted checkpoints.
+    Legacy payloads holding arbitrary pickled objects require an explicit
+    trust opt-in (``trust_artifact=True`` or ``LUNARIS_TRUST_ARTIFACT=1``);
+    without it the load raises ``UntrustedArtifactError`` instead of
+    executing code embedded in the file.
     """
 
-    try:
-        obj = torch.load(path, map_location=device, weights_only=True)
-    except TypeError:
-        # torch too old to know the weights_only kwarg: plain load (unpickle).
-        obj = torch.load(path, map_location=device)
-    except (pickle.UnpicklingError, RuntimeError):
-        warnings.warn(
-            f"Safe (weights_only=True) load of {path} failed; falling back to "
-            "full unpickling. This executes code embedded in the checkpoint — "
-            "only load checkpoints from trusted sources.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        obj = torch.load(path, map_location=device, weights_only=False)
+    obj = safe_torch_load(path, map_location=device, trust_artifact=trust_artifact)
     if not isinstance(obj, dict):
         raise TypeError(f"Unsupported checkpoint payload: {type(obj)!r}")
     return obj

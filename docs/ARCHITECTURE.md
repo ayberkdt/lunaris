@@ -491,6 +491,15 @@ divergence is surfaced as a `RuntimeWarning` before the checkpoint values take
 precedence. An artifact that does not declare its coordinate frame loads with a
 `RuntimeWarning` (the Moon-fixed assumption is made visible, not silent).
 
+**Deserialization trust boundary.** Every `.pt` artifact (checkpoints and
+tensor payloads) loads through `lunaris.surrogate.serialization.safe_torch_load`,
+which is tensor-only (`torch.load(..., weights_only=True)`). Full unpickling
+executes code embedded in the file, so it never runs automatically: legacy
+payloads holding arbitrary pickled objects load only behind an explicit opt-in
+— `--trust-artifact` on the training CLI (resume), `trust_artifact=True`
+programmatically, or `LUNARIS_TRUST_ARTIFACT=1` in the environment. Without the
+opt-in the load raises `UntrustedArtifactError` instead of falling back.
+
 **Frame.** ST-LRPS is a **Moon-fixed / body-fixed Cartesian** surrogate
 (`moon_fixed_cartesian`). The runtime exposes explicit `predict_*_fixed`
 (body-fixed inputs) and `predict_*_inertial(q_i2f)` (rotate in → evaluate fixed →

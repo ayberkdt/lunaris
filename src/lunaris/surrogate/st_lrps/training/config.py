@@ -349,6 +349,10 @@ class TrainConfig:
     resume_strict: bool = True               # fail on architecture/dataset/scaler-critical mismatch
     resume_allow_longer_epochs: bool = True  # allow extending the epoch target on resume
     resume_append_history: bool = True       # preserve/append previous history by default
+    # Security boundary: legacy checkpoints holding arbitrary pickled objects can
+    # only be resumed with this explicit opt-in (or LUNARIS_TRUST_ARTIFACT=1);
+    # full unpickling executes code embedded in the file.
+    trust_artifact: bool = False
 
     # Periodic Evaluation During Training (monitoring only; OFF by default).
     # At selected epochs, AFTER the epoch's validation and ckpt_last save, the
@@ -1189,6 +1193,14 @@ def parse_args() -> TrainConfig:
         help="Allow limited non-critical config differences when resuming. "
              "Architecture/dataset/scaler-critical mismatches still fail.",
     )
+    group_resume.add_argument(
+        "--trust-artifact", action="store_true", default=False,
+        help="Explicitly trust the resume checkpoint: allow full unpickling of "
+             "legacy payloads that the safe tensor-only loader rejects. Full "
+             "unpickling EXECUTES code embedded in the file — only use for "
+             "artifacts you produced or verified. Equivalent to setting "
+             "LUNARIS_TRUST_ARTIFACT=1.",
+    )
     resume_hist_group = group_resume.add_mutually_exclusive_group()
     resume_hist_group.add_argument(
         "--resume-append-history", action="store_true", dest="resume_append_history",
@@ -1585,6 +1597,7 @@ def parse_args() -> TrainConfig:
         resume_strict=(not bool(getattr(a, "resume_nonstrict", False))),
         resume_allow_longer_epochs=True,
         resume_append_history=bool(getattr(a, "resume_append_history", True)),
+        trust_artifact=bool(getattr(a, "trust_artifact", False)),
         periodic_eval_count=(int(a.periodic_eval_count) if a.periodic_eval_count is not None else None),
         periodic_eval_every_epochs=(
             int(a.periodic_eval_every_epochs) if a.periodic_eval_every_epochs is not None else None

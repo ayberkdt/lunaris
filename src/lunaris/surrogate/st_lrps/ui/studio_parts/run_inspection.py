@@ -260,8 +260,12 @@ def provenance_items(run_dir: Path) -> list[tuple[str, str, str]]:
     ) or _first(config, "scaler_fit_scope") or "—"
     preflight_ok = _first(preflight, "status", "result", "decision") or _first(manifest, "preflight_status") or "—"
     preflight_kind = "success" if str(preflight_ok).lower() in {"ok", "pass", "passed", "go", "ready"} else "warning"
-    dataset_hash = _first(manifest, "dataset_sha256", "dataset_hash") or _nested(
-        manifest, ("dataset_meta", "sha256"), ("dataset_meta", "dataset_sha256")
+    dataset_hash = _first(manifest, "content_sha256", "dataset_sha256", "dataset_hash") or _nested(
+        manifest,
+        ("dataset_contract", "content_sha256"),
+        ("dataset_meta", "content_sha256"),
+        ("dataset_meta", "sha256"),
+        ("dataset_meta", "dataset_sha256"),
     ) or "—"
     if dataset_hash != "—":
         dataset_hash = str(dataset_hash)[:16]
