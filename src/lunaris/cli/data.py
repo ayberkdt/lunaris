@@ -151,6 +151,8 @@ def resolve_data_root(cli_data_dir: str | None = None) -> Path:
     return data_dir_from_root(root)
 
 
+from pathlib import Path, PureWindowsPath
+
 def _validated_manifest_filename(name: Any) -> str:
     """Return ``name`` as a safe single-component file name.
 
@@ -164,8 +166,9 @@ def _validated_manifest_filename(name: Any) -> str:
         or text in (".", "..")
         or "/" in text
         or "\\" in text
-        or Path(text).drive
-        or Path(text).is_absolute()
+        or PureWindowsPath(text).drive
+        or PureWindowsPath(text).is_absolute()
+        or text.startswith("/")
     ):
         raise ValueError(f"Manifest file name must be a plain file name, got {text!r}")
     return text
@@ -177,7 +180,7 @@ def _validated_manifest_subdir(subdir: Any) -> str:
     if not text:
         return ""
     norm = text.replace("\\", "/")
-    if Path(text).drive or Path(text).is_absolute() or norm.startswith("/"):
+    if PureWindowsPath(text).drive or PureWindowsPath(text).is_absolute() or norm.startswith("/"):
         raise ValueError(f"Manifest target_subdir must be relative, got {text!r}")
     if any(part == ".." for part in norm.split("/")):
         raise ValueError(f"Manifest target_subdir must not contain '..', got {text!r}")
