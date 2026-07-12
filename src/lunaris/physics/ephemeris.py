@@ -291,7 +291,6 @@ class EphemerisTables:
         if not np.all(np.isfinite(self.r_sun_tab_m)):
             raise ValueError("r_sun_tab_m must contain only finite values.")
 
-
 # =============================================================================
 # 3.                PRIVATE SPICE POOL QUERIES (GM, ETC)
 # =============================================================================
