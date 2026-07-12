@@ -318,6 +318,55 @@ def test_propagator_config_defaults_and_validation():
         PropagatorConfig(hybrid_switch_alt_m=-1.0)
 
 
+# -----------------------------------------------------------------------------
+# NaN/inf rejection: IEEE-754 makes ``NaN < 0`` and ``NaN <= 0`` both False, so
+# every numeric field must be finiteness-checked, not just sign-checked.
+# -----------------------------------------------------------------------------
+_NON_FINITE = (float("nan"), float("inf"), float("-inf"))
+
+
+@pytest.mark.parametrize("bad", _NON_FINITE)
+@pytest.mark.parametrize(
+    "kwargs_name",
+    [
+        "rtol", "atol", "atol_pos", "atol_vel", "nyquist_safety_div",
+        "nyquist_v_margin", "heartbeat_hours", "chunk_s", "hybrid_switch_alt_m",
+    ],
+)
+def test_propagator_config_rejects_non_finite_numeric_fields(kwargs_name, bad):
+    with pytest.raises(ValueError, match="finite"):
+        PropagatorConfig(**{kwargs_name: bad})
+
+
+@pytest.mark.parametrize("bad", _NON_FINITE)
+def test_propagator_config_rejects_non_finite_baseline_tolerances(bad):
+    with pytest.raises(ValueError, match="finite"):
+        PropagatorConfig(compute_2body_baseline=True, baseline_rtol=bad)
+    with pytest.raises(ValueError, match="finite"):
+        PropagatorConfig(compute_2body_baseline=True, baseline_atol=bad)
+
+
+@pytest.mark.parametrize("bad", _NON_FINITE)
+@pytest.mark.parametrize("field_name", ["duration_s", "output_dt_s", "t0_s"])
+def test_time_config_rejects_non_finite_numeric_fields(field_name, bad):
+    with pytest.raises(ValueError, match="finite"):
+        TimeConfig(**{field_name: bad})
+
+
+@pytest.mark.parametrize("bad", _NON_FINITE)
+def test_event_config_rejects_non_finite_impact_alt(bad):
+    with pytest.raises(ValueError, match="finite"):
+        EventConfig(impact_alt_km=bad)
+
+
+@pytest.mark.parametrize("bad", _NON_FINITE)
+def test_adaptive_degree_config_rejects_non_finite_values(bad):
+    with pytest.raises(ValueError, match="finite"):
+        AdaptiveDegreeConfig(power=bad)
+    with pytest.raises(ValueError, match="finite"):
+        AdaptiveDegreeConfig(altitude_table=((bad, 8),))
+
+
 # =============================================================================
 # 9) SimulationHistory
 # =============================================================================

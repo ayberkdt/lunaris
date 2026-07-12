@@ -24,6 +24,7 @@ Units
 
 from __future__ import annotations
 
+import math
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -184,10 +185,13 @@ class StateUncertainty:
     covariance_6x6: F64Array | None = None  # Overrides diagonal if set
 
     def __post_init__(self) -> None:
-        if self.sigma_r_m < 0.0:
-            raise ValueError(f"sigma_r_m must be >= 0, got {self.sigma_r_m}")
-        if self.sigma_v_m_s < 0.0:
-            raise ValueError(f"sigma_v_m_s must be >= 0, got {self.sigma_v_m_s}")
+        # NaN passes plain ``< 0`` comparisons (IEEE-754), so finiteness must be
+        # checked explicitly before sign; otherwise NaN sigmas reach sampling
+        # and Cholesky as silently "valid" values.
+        if not math.isfinite(self.sigma_r_m) or self.sigma_r_m < 0.0:
+            raise ValueError(f"sigma_r_m must be finite and >= 0, got {self.sigma_r_m}")
+        if not math.isfinite(self.sigma_v_m_s) or self.sigma_v_m_s < 0.0:
+            raise ValueError(f"sigma_v_m_s must be finite and >= 0, got {self.sigma_v_m_s}")
 
         if self.covariance_6x6 is not None:
             cov = np.asarray(self.covariance_6x6, dtype=np.float64)
@@ -195,6 +199,8 @@ class StateUncertainty:
                 raise ValueError(
                     f"covariance_6x6 must be shape (6, 6), got {cov.shape}"
                 )
+            if not np.all(np.isfinite(cov)):
+                raise ValueError("covariance_6x6 must contain only finite values.")
             if not np.allclose(cov, cov.T, atol=1e-10):
                 raise ValueError("covariance_6x6 must be symmetric.")
             eigvals = np.linalg.eigvalsh(cov)
@@ -255,8 +261,8 @@ class SpacecraftUncertainty:
     def __post_init__(self) -> None:
         for attr in ("sigma_mass_kg", "sigma_cd", "sigma_cr", "sigma_area_m2"):
             v = getattr(self, attr)
-            if v < 0.0:
-                raise ValueError(f"SpacecraftUncertainty.{attr} must be >= 0, got {v}")
+            if not math.isfinite(v) or v < 0.0:
+                raise ValueError(f"SpacecraftUncertainty.{attr} must be finite and >= 0, got {v}")
 
     @property
     def any_active(self) -> bool:
@@ -401,8 +407,8 @@ class BatchPropagationConfig:
                 f"sampling_method must be one of: {_choice_list(BATCH_SAMPLING_METHODS)}. "
                 f"Got {self.sampling_method!r}"
             )
-        if self.dt_s <= 0.0:
-            raise ValueError(f"dt_s must be > 0, got {self.dt_s}")
+        if not math.isfinite(self.dt_s) or self.dt_s <= 0.0:
+            raise ValueError(f"dt_s must be finite and > 0, got {self.dt_s}")
         if self.gravity_mode_override not in GRAVITY_MODE_OVERRIDES:
             raise ValueError(
                 f"gravity_mode_override must be one of: {_choice_list(GRAVITY_MODE_OVERRIDES)}. "
@@ -464,14 +470,14 @@ class BatchPropagationConfig:
             )
         if int(self.summary_top_k) < 1:
             raise ValueError(f"summary_top_k must be >= 1, got {self.summary_top_k}")
-        if self.max_result_memory_gb <= 0.0:
+        if not math.isfinite(self.max_result_memory_gb) or self.max_result_memory_gb <= 0.0:
             raise ValueError(
-                f"max_result_memory_gb must be > 0, got {self.max_result_memory_gb}"
+                f"max_result_memory_gb must be finite and > 0, got {self.max_result_memory_gb}"
             )
-        if self.max_vram_gb <= 0.0:
-            raise ValueError(f"max_vram_gb must be > 0, got {self.max_vram_gb}")
-        if self.impact_alt_km < 0.0:
-            raise ValueError(f"impact_alt_km must be >= 0, got {self.impact_alt_km}")
+        if not math.isfinite(self.max_vram_gb) or self.max_vram_gb <= 0.0:
+            raise ValueError(f"max_vram_gb must be finite and > 0, got {self.max_vram_gb}")
+        if not math.isfinite(self.impact_alt_km) or self.impact_alt_km < 0.0:
+            raise ValueError(f"impact_alt_km must be finite and >= 0, got {self.impact_alt_km}")
         if self.impact_surface_mode not in IMPACT_SURFACE_MODES:
             raise ValueError(
                 f"impact_surface_mode must be one of: {_choice_list(IMPACT_SURFACE_MODES)}. "

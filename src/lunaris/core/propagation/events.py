@@ -122,8 +122,15 @@ def event_outcome_from_solver_events(
     stop_reason: str | None,
     stop_file: str | None,
     stop_event_in_scipy: bool,
+    t_last_s: float | None = None,
 ) -> EventOutcome:
-    """Normalize SciPy/fake-SciPy event payloads into a stable outcome object."""
+    """Normalize SciPy/fake-SciPy event payloads into a stable outcome object.
+
+    ``t_last_s`` is the last committed sample time of the solve. It dates a
+    stop-file halt that has no solver event to pin it (the chunked runner's
+    between-chunk poll), keeping ``t_stop_s`` populated across backends —
+    fixed-step already reports its actual stopping time.
+    """
     impacted = False
     t_imp: float | None = None
     y_imp: np.ndarray | None = None
@@ -177,6 +184,11 @@ def event_outcome_from_solver_events(
 
     if t_stop is None and reason == "event":
         t_stop = _earliest_terminal_event_time(events, t_events)
+
+    if t_stop is None and reason == "stop file" and t_last_s is not None:
+        # Between-chunk stop-file halt: no solver event carries its time, but
+        # the last committed sample is exactly where integration stopped.
+        t_stop = float(t_last_s)
 
     return EventOutcome(
         impacted=False,

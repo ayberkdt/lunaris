@@ -18,7 +18,7 @@ import json
 import sys
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -93,6 +93,8 @@ DATA_PRESETS: dict[str, list[str]] = {
 _ALLOWED_SCHEMES = ("http", "https", "file")
 _CHUNK = 1 << 16
 _FAIL_STATUSES = ("missing", "hash_mismatch", "manual_missing")
+#: Socket timeout for downloads: a stalled server must not hang the CLI forever.
+_DOWNLOAD_TIMEOUT_S = 60.0
 
 
 # --------------------------------------------------------------------------- #
@@ -129,6 +131,15 @@ def load_manifest(path: Path) -> dict[str, Any]:
         manifest = json.load(fh)
     if not isinstance(manifest, dict) or not isinstance(manifest.get("datasets"), list):
         raise ValueError(f"Malformed manifest (expected a 'datasets' list): {path}")
+    for i, entry in enumerate(manifest["datasets"]):
+        if not isinstance(entry, dict) or not isinstance(entry.get("filename"), str) \
+                or not entry["filename"].strip():
+            name = entry.get("name") if isinstance(entry, dict) else None
+            raise ValueError(
+                f"Malformed manifest entry #{i}"
+                f"{f' ({name!r})' if name else ''}: every dataset needs a "
+                f"non-empty string 'filename'. Manifest: {path}"
+            )
     return manifest
 
 
@@ -140,10 +151,59 @@ def resolve_data_root(cli_data_dir: str | None = None) -> Path:
     return data_dir_from_root(root)
 
 
+def _validated_manifest_filename(name: Any) -> str:
+    """Return ``name`` as a safe single-component file name.
+
+    Manifests can be user-supplied via ``--manifest``, so a file name must never
+    smuggle directory separators, ``..``, drive prefixes, or absolute paths into
+    the write target.
+    """
+    text = str(name)
+    if (
+        not text
+        or text in (".", "..")
+        or "/" in text
+        or "\\" in text
+        or PureWindowsPath(text).drive
+        or PureWindowsPath(text).is_absolute()
+        or text.startswith("/")
+    ):
+        raise ValueError(f"Manifest file name must be a plain file name, got {text!r}")
+    return text
+
+
+def _validated_manifest_subdir(subdir: Any) -> str:
+    """Return ``subdir`` as a safe data-root-relative directory path."""
+    text = str(subdir or "")
+    if not text:
+        return ""
+    norm = text.replace("\\", "/")
+    if PureWindowsPath(text).drive or PureWindowsPath(text).is_absolute() or norm.startswith("/"):
+        raise ValueError(f"Manifest target_subdir must be relative, got {text!r}")
+    if any(part == ".." for part in norm.split("/")):
+        raise ValueError(f"Manifest target_subdir must not contain '..', got {text!r}")
+    return text
+
+
+def _contained_target(data_root: Path, subdir: Any, filename: Any) -> Path:
+    """Join a manifest-declared location under ``data_root``, fail-closed.
+
+    Component validation above already rejects the known escape vectors; the
+    resolved containment check is the backstop that guarantees no target ever
+    lands outside the configured data root.
+    """
+    root = data_root.resolve()
+    target = root / _validated_manifest_subdir(subdir) / _validated_manifest_filename(filename)
+    if not target.resolve().is_relative_to(root):
+        raise ValueError(
+            f"Dataset target escapes the configured data root: {target} (root: {root})"
+        )
+    return target
+
+
 def dataset_target_path(data_root: Path, entry: dict[str, Any]) -> Path:
     """Absolute path where ``entry`` is expected to live on disk."""
-    subdir = entry.get("target_subdir") or ""
-    return data_root / subdir / entry["filename"]
+    return _contained_target(data_root, entry.get("target_subdir"), entry["filename"])
 
 
 def dataset_candidate_paths(data_root: Path, entry: dict[str, Any]) -> list[Path]:
@@ -153,8 +213,8 @@ def dataset_candidate_paths(data_root: Path, entry: dict[str, Any]) -> list[Path
         alias_s = str(alias)
         if alias_s not in names:
             names.append(alias_s)
-    subdir = entry.get("target_subdir") or ""
-    return [data_root / subdir / name for name in names]
+    subdir = entry.get("target_subdir")
+    return [_contained_target(data_root, subdir, name) for name in names]
 
 
 def resolve_dataset_path(data_root: Path, entry: dict[str, Any]) -> Path | None:
@@ -265,7 +325,7 @@ def _stream_to_file(url: str, dest: Path) -> None:
         raise ValueError(f"Refusing URL with unsupported scheme {scheme!r}")
     request = urllib.request.Request(url, headers={"User-Agent": "lunaris-data"})
     # URLs come exclusively from the project-controlled manifest.
-    with urllib.request.urlopen(request) as resp:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=_DOWNLOAD_TIMEOUT_S) as resp:  # noqa: S310
         total = int(resp.headers.get("Content-Length") or 0)
         with open(dest, "wb") as fh:
             bar = tqdm(total=total, unit="B", unit_scale=True, desc=dest.name) \
@@ -360,7 +420,7 @@ def _companion_target_paths(data_root: Path, entry: dict[str, Any], spec: dict[s
         if alias_s not in names:
             names.append(alias_s)
     subdir = spec.get("target_subdir") or entry.get("target_subdir") or ""
-    return [data_root / subdir / name for name in names]
+    return [_contained_target(data_root, subdir, name) for name in names]
 
 
 def verify_entry_detail(entry: dict[str, Any], data_root: Path) -> dict[str, Any]:

@@ -297,6 +297,106 @@ def test_ephemeris_case_d_high_level_vs_kernel_random_regression() -> None:
         _assert_same_rotation(quat_h, quat_k, atol=1e-9)
 
 
+# -----------------------------------------------------------------------------
+# Strict contract validation (EphemerisTables.__post_init__)
+# -----------------------------------------------------------------------------
+def _valid_table_kwargs(n: int = 4, dt: float = 60.0) -> dict:
+    q = np.zeros((n, 4), dtype=np.float64)
+    q[:, 0] = 1.0
+    return {
+        "dt_s": dt,
+        "t_tab_s": np.arange(n, dtype=np.float64) * dt,
+        "et0": 0.0,
+        "q_i2f_tab": q,
+        "r_earth_tab_m": np.ones((n, 3), dtype=np.float64),
+        "r_sun_tab_m": np.ones((n, 3), dtype=np.float64),
+        "mu_earth_m3s2": 3.986004418e14,
+        "mu_sun_m3s2": 1.32712440018e20,
+    }
+
+
+def test_tables_valid_construction_passes():
+    EphemerisTables(**_valid_table_kwargs())
+
+
+def test_tables_reject_empty_time_grid():
+    kwargs = _valid_table_kwargs()
+    kwargs["t_tab_s"] = np.zeros((0,), dtype=np.float64)
+    kwargs["q_i2f_tab"] = np.zeros((0, 4), dtype=np.float64)
+    kwargs["r_earth_tab_m"] = np.zeros((1, 3), dtype=np.float64)
+    kwargs["r_sun_tab_m"] = np.zeros((1, 3), dtype=np.float64)
+    with pytest.raises(ValueError, match="N >= 1"):
+        EphemerisTables(**kwargs)
+
+
+@pytest.mark.parametrize("bad_dt", [float("nan"), float("inf"), 0.0, -1.0])
+def test_tables_reject_bad_dt(bad_dt):
+    kwargs = _valid_table_kwargs()
+    kwargs["dt_s"] = bad_dt
+    with pytest.raises(ValueError, match="dt_s"):
+        EphemerisTables(**kwargs)
+
+
+def test_tables_reject_non_finite_time_grid():
+    kwargs = _valid_table_kwargs()
+    kwargs["t_tab_s"] = np.array([0.0, 60.0, np.nan, 180.0])
+    with pytest.raises(ValueError, match="finite"):
+        EphemerisTables(**kwargs)
+
+
+def test_tables_reject_time_grid_not_starting_at_zero():
+    kwargs = _valid_table_kwargs()
+    kwargs["t_tab_s"] = kwargs["t_tab_s"] + 60.0
+    with pytest.raises(ValueError, match="start at 0.0"):
+        EphemerisTables(**kwargs)
+
+
+def test_tables_reject_non_uniform_time_grid():
+    kwargs = _valid_table_kwargs()
+    t = kwargs["t_tab_s"].copy()
+    t[2] += 1.0  # break uniform dt_s spacing
+    kwargs["t_tab_s"] = t
+    with pytest.raises(ValueError, match="uniformly spaced"):
+        EphemerisTables(**kwargs)
+
+
+def test_tables_reject_zero_quaternion_rows():
+    kwargs = _valid_table_kwargs()
+    q = kwargs["q_i2f_tab"].copy()
+    q[1] = 0.0
+    kwargs["q_i2f_tab"] = q
+    with pytest.raises(ValueError, match="nonzero quaternions"):
+        EphemerisTables(**kwargs)
+
+
+def test_tables_reject_non_finite_quaternions():
+    kwargs = _valid_table_kwargs()
+    q = kwargs["q_i2f_tab"].copy()
+    q[1, 2] = np.inf
+    kwargs["q_i2f_tab"] = q
+    with pytest.raises(ValueError, match="finite"):
+        EphemerisTables(**kwargs)
+
+
+@pytest.mark.parametrize("field", ["r_earth_tab_m", "r_sun_tab_m"])
+def test_tables_reject_non_finite_position_tables(field):
+    kwargs = _valid_table_kwargs()
+    arr = kwargs[field].copy()
+    arr[0, 1] = np.nan
+    kwargs[field] = arr
+    with pytest.raises(ValueError, match="finite"):
+        EphemerisTables(**kwargs)
+
+
+@pytest.mark.parametrize("field", ["mu_earth_m3s2", "mu_sun_m3s2"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1.0])
+def test_tables_reject_bad_gm(field, bad):
+    kwargs = _valid_table_kwargs()
+    kwargs[field] = bad
+    with pytest.raises(ValueError, match=field):
+        EphemerisTables(**kwargs)
+
+
 if __name__ == "__main__":
     import sys
 

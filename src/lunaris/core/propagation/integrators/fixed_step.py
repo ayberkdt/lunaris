@@ -333,6 +333,8 @@ def _integrate_fixed_step(
     stop_reason: str | None = None
     t_stop: float | None = None
 
+    executed_internal_steps = 0
+
     last_hb_hr = 0.0
     alt_min_km = float("inf")
     alt_max_km = float("-inf")
@@ -366,6 +368,7 @@ def _integrate_fixed_step(
             tj = t_seg0 + j * h
             y_next = step(tj, y_curr, h)
             t_next = tj + h
+            executed_internal_steps += 1
 
             # Phase 1: collect every refined crossing in this substep as a
             # candidate. Nothing is committed yet — a terminal root may
@@ -411,6 +414,21 @@ def _integrate_fixed_step(
                         )
 
                     crossings.append((i, float(t_ev), np.asarray(y_ev, dtype=np.float64), terminal))
+                elif terminal and g0 == 0.0 and (
+                    direction == 0.0
+                    or (direction < 0.0 and g1 <= 0.0)
+                    or (direction > 0.0 and g1 >= 0.0)
+                ):
+                    # SciPy parity: ``solve_ivp`` treats g(t_prev)=0 followed by a
+                    # value on (or at) the triggering side as an event at t_prev
+                    # itself. The exact-zero suppression in ``_event_crossed`` only
+                    # protects *non-terminal* events (peri/apo) from re-detecting
+                    # the same root; a terminal event cannot recur because
+                    # integration stops at its first root, so a zero prior value
+                    # here means the trajectory starts on the terminal boundary
+                    # (surface starts, checkpoint restarts, exact rounding) and
+                    # must be reported instead of silently skipped.
+                    crossings.append((i, float(tj), y_curr.copy(), True))
 
                 # Update previous value for next substep
                 g_prev[i] = g1
@@ -433,8 +451,11 @@ def _integrate_fixed_step(
                 t_ev, i_ev, y_ev = earliest_terminal
                 ev_role = getattr(ev_list[i_ev], "_event_role", None)
 
-                t_list.append(float(t_ev))
-                y_list.append(np.asarray(y_ev, dtype=np.float64))
+                # A root exactly at the last committed output time (t0-boundary
+                # terminal events) must not duplicate that grid point.
+                if float(t_ev) > float(t_list[-1]):
+                    t_list.append(float(t_ev))
+                    y_list.append(np.asarray(y_ev, dtype=np.float64))
 
                 stopped_early = True
                 if ev_role == "impact":
@@ -451,8 +472,13 @@ def _integrate_fixed_step(
             # No terminal event: accept full step
             y_curr = np.asarray(y_next, dtype=np.float64)
 
-            # Periodic stop-file polling
+            # Periodic stop-file polling. The substep just accepted must be
+            # committed before breaking: otherwise the final physical state is
+            # lost, t_stop falls back to the previous output-grid time, and the
+            # checkpoint resumes from stale arrays.
             if (j % 50) == 0 and _stop_requested(stop_file):
+                t_list.append(float(t_next))
+                y_list.append(y_curr.copy())
                 stopped_early = True
                 stop_reason = "stop file"
                 break
@@ -500,7 +526,13 @@ def _integrate_fixed_step(
         status=(1 if (impacted or stopped_early) else 0),
         message=("fixed-step ok" if not stopped_early else "stopped early"),
         nfev=np.nan,
-        internal_step_count=int(planned_internal_steps),
+        # ``internal_step_count`` reports the steps actually executed so an
+        # early-terminated run (impact / terminal event / stop file) is never
+        # accounted as if the whole mission had been integrated. The planned
+        # total is kept alongside for capacity/provenance comparisons.
+        internal_step_count=int(executed_internal_steps),
+        executed_internal_step_count=int(executed_internal_steps),
+        planned_internal_step_count=int(planned_internal_steps),
         max_internal_steps=(None if max_internal_steps is None else int(max_internal_steps)),
         t_events=t_events,
         y_events=y_events,

@@ -510,6 +510,159 @@ def test_fixed_step_event_refinement_failure_is_not_silenced(monkeypatch) -> Non
         )
 
 
+def test_fixed_step_stop_file_keeps_last_accepted_substep(tmp_path) -> None:
+    # The stop-file poll runs after a substep has been accepted; that substep
+    # must be committed to the output arrays, t_stop, and the checkpoint —
+    # otherwise the final physical state is lost and a resume restarts from a
+    # stale output-grid time.
+    stop_path = tmp_path / "stop.flag"
+    checkpoint_path = tmp_path / "ckpt.npz"
+
+    def rhs(_t: float, _y: np.ndarray) -> np.ndarray:
+        stop_path.touch()
+        return np.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
+
+    ode_like, impacted, _t_imp, _y_imp, stopped, reason, t_stop = (
+        fixed_step_module._integrate_fixed_step(
+            rhs,
+            np.asarray([0.0, 100.0]),
+            np.zeros(6),
+            max_step=1.0,
+            method="RK4",
+            events=None,
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=str(stop_path),
+            checkpoint_path=str(checkpoint_path),
+        )
+    )
+    assert stopped and reason == "stop file" and not impacted
+    # The first substep (t: 0 -> 1, dx/dt = 1) was accepted before the stop
+    # was detected, so it must be visible in every output surface.
+    assert ode_like.t[-1] == pytest.approx(1.0)
+    assert t_stop == pytest.approx(1.0)
+    assert ode_like.y[0, -1] == pytest.approx(1.0)
+    ckpt = np.load(checkpoint_path)
+    assert ckpt["t"][-1] == pytest.approx(1.0)
+    assert ckpt["y_row"][-1, 0] == pytest.approx(1.0)
+
+
+def test_fixed_step_reports_executed_not_planned_steps_on_early_stop() -> None:
+    # An early-terminated run must report the substeps actually executed, not
+    # the whole-mission plan (benchmark/provenance honesty).
+    ode_like, impacted, _t_imp, _y_imp, _stopped, _reason, _t_stop = (
+        fixed_step_module._integrate_fixed_step(
+            _linear_crossing_rhs,
+            np.asarray([0.0, 1.0]),
+            np.zeros(6),
+            max_step=0.1,
+            method="RK4",
+            events=[_terminal_linear_event],
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=None,
+            checkpoint_path=None,
+        )
+    )
+    assert impacted
+    assert ode_like.planned_internal_step_count == 10
+    assert ode_like.executed_internal_step_count == 5
+    assert ode_like.internal_step_count == 5
+
+
+def test_fixed_step_full_run_reports_executed_equals_planned() -> None:
+    ode_like, _imp, _t_imp, _y_imp, stopped, _reason, _t_stop = (
+        fixed_step_module._integrate_fixed_step(
+            _linear_crossing_rhs,
+            np.asarray([0.0, 1.0]),
+            np.zeros(6),
+            max_step=0.1,
+            method="RK4",
+            events=None,
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=None,
+            checkpoint_path=None,
+        )
+    )
+    assert not stopped
+    assert ode_like.executed_internal_step_count == ode_like.planned_internal_step_count == 10
+    assert ode_like.internal_step_count == 10
+
+
+def _surface_boundary_event(_t: float, y: np.ndarray) -> float:
+    return float(y[0])
+
+
+_surface_boundary_event.terminal = True
+_surface_boundary_event.direction = -1.0
+_surface_boundary_event._event_role = "impact"
+
+
+def test_fixed_step_terminal_event_on_start_boundary_fires_at_t0() -> None:
+    # SciPy parity: g(t0) == 0 with the trajectory moving into the triggering
+    # side is a t=0 terminal event (surface starts, checkpoint restarts, exact
+    # rounding), not a root to be silently skipped by the exact-zero guard.
+    def descending_rhs(_t: float, _y: np.ndarray) -> np.ndarray:
+        return np.asarray([-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
+
+    ode_like, impacted, t_imp, y_imp, stopped, reason, t_stop = (
+        fixed_step_module._integrate_fixed_step(
+            descending_rhs,
+            np.asarray([0.0, 1.0]),
+            np.zeros(6),
+            max_step=0.1,
+            method="RK4",
+            events=[_surface_boundary_event],
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=None,
+            checkpoint_path=None,
+        )
+    )
+    assert impacted and stopped and reason == "impact"
+    assert t_imp == 0.0
+    assert t_stop == 0.0
+    np.testing.assert_allclose(y_imp, np.zeros(6))
+    assert ode_like.t_events[0].tolist() == [0.0]
+    # The boundary root coincides with the committed t0 grid point and must
+    # not duplicate it.
+    assert ode_like.t.tolist() == [0.0]
+
+
+def test_fixed_step_terminal_event_on_start_boundary_moving_away_does_not_fire() -> None:
+    def ascending_rhs(_t: float, _y: np.ndarray) -> np.ndarray:
+        return np.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
+
+    ode_like, impacted, _t_imp, _y_imp, stopped, _reason, _t_stop = (
+        fixed_step_module._integrate_fixed_step(
+            ascending_rhs,
+            np.asarray([0.0, 1.0]),
+            np.zeros(6),
+            max_step=0.1,
+            method="RK4",
+            events=[_surface_boundary_event],
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=None,
+            checkpoint_path=None,
+        )
+    )
+    assert not impacted and not stopped
+    assert ode_like.t_events[0].size == 0
+    assert ode_like.t[-1] == pytest.approx(1.0)
+
+
 def test_fixed_step_respects_max_internal_steps() -> None:
     y0, _period_s = _state_from_coe(alt_peri_m=100e3, e=0.0)
     cfg = _cfg("RK4", h=1.0)
