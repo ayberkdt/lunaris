@@ -236,25 +236,60 @@ class EphemerisTables:
     third_body_sampling_fallback_reason: str | None = None
 
     def __post_init__(self) -> None:
-        # Basic numeric sanity
-        if not (self.dt_s > 0.0):
-            raise ValueError("EphemerisTables.dt_s must be > 0.")
+        # Strict contract validation. Runtime interpolation indexes tables by
+        # ``t_s / dt_s`` (it never re-reads ``t_tab_s``), so a table that is
+        # empty, non-uniform, offset, or non-finite would silently produce
+        # wrong physics. Externally loaded artifacts pass through here too, so
+        # every invariant the samplers rely on is enforced at construction.
+        if not (np.isfinite(self.dt_s) and self.dt_s > 0.0):
+            raise ValueError("EphemerisTables.dt_s must be finite and > 0.")
+        if not np.isfinite(self.et0):
+            raise ValueError("EphemerisTables.et0 must be finite.")
+        for gm_name in ("mu_earth_m3s2", "mu_sun_m3s2"):
+            gm = float(getattr(self, gm_name))
+            if not (np.isfinite(gm) and gm > 0.0):
+                raise ValueError(f"EphemerisTables.{gm_name} must be finite and > 0; got {gm!r}.")
 
-        # Shape sanity (cheap checks)
-        if self.t_tab_s.ndim != 1:
-            raise ValueError("EphemerisTables.t_tab_s must be 1D (N,).")
+        if self.t_tab_s.ndim != 1 or self.t_tab_s.shape[0] < 1:
+            raise ValueError("EphemerisTables.t_tab_s must be 1D (N,) with N >= 1.")
+        if not np.all(np.isfinite(self.t_tab_s)):
+            raise ValueError("EphemerisTables.t_tab_s must contain only finite values.")
         n = int(self.t_tab_s.shape[0])
+
+        # Table time is relative to the table start and uniformly spaced by
+        # dt_s — exactly the grid the ``t_s / dt_s`` samplers assume.
+        tol = 1.0e-9 * max(float(self.dt_s), abs(float(self.t_tab_s[-1])), 1.0)
+        if abs(float(self.t_tab_s[0])) > tol:
+            raise ValueError(
+                f"EphemerisTables.t_tab_s must start at 0.0 (table-relative time); got {float(self.t_tab_s[0])!r}."
+            )
+        if n >= 2:
+            dt_err = float(np.max(np.abs(np.diff(self.t_tab_s) - float(self.dt_s))))
+            if dt_err > tol:
+                raise ValueError(
+                    "EphemerisTables.t_tab_s must be uniformly spaced by dt_s "
+                    f"(max spacing error {dt_err:.6g} s exceeds tolerance {tol:.6g} s)."
+                )
 
         if self.q_i2f_tab.shape != (n, 4):
             raise ValueError(f"q_i2f_tab must have shape (N,4); got {self.q_i2f_tab.shape}.")
+        if not np.all(np.isfinite(self.q_i2f_tab)):
+            raise ValueError("q_i2f_tab must contain only finite values.")
+        q_norms = np.linalg.norm(np.asarray(self.q_i2f_tab, dtype=np.float64), axis=1)
+        if float(np.min(q_norms)) <= 0.0:
+            raise ValueError("q_i2f_tab rows must be nonzero quaternions.")
 
         if self.r_earth_tab_m.shape not in ((n, 3), (1, 3)):
             raise ValueError(
                 f"r_earth_tab_m must be (N,3) or (1,3); got {self.r_earth_tab_m.shape}."
             )
+        if not np.all(np.isfinite(self.r_earth_tab_m)):
+            raise ValueError("r_earth_tab_m must contain only finite values.")
 
         if self.r_sun_tab_m.shape not in ((n, 3), (1, 3)):
             raise ValueError(f"r_sun_tab_m must be (N,3) or (1,3); got {self.r_sun_tab_m.shape}.")
+        if not np.all(np.isfinite(self.r_sun_tab_m)):
+            raise ValueError("r_sun_tab_m must contain only finite values.")
 
 
 # =============================================================================

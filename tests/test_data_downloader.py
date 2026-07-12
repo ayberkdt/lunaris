@@ -10,6 +10,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from lunaris.cli import data as data_cli
 
 
@@ -66,6 +68,64 @@ def test_resolve_data_root_default_fallback(monkeypatch):
 def test_target_path_construction(tmp_path):
     entry = {"filename": "x.bsp", "target_subdir": "ephemeris_models"}
     assert data_cli.dataset_target_path(tmp_path, entry) == tmp_path / "ephemeris_models" / "x.bsp"
+
+
+def test_target_path_allows_nested_relative_subdir(tmp_path):
+    entry = {"filename": "x.h5", "target_subdir": "datasets/st_lrps"}
+    expected = tmp_path.resolve() / "datasets" / "st_lrps" / "x.h5"
+    assert data_cli.dataset_target_path(tmp_path, entry) == expected
+
+
+# --------------------------------------------------------------------------- #
+# Path containment (untrusted --manifest input must not escape the data root)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"filename": "../evil.bin", "target_subdir": "ephemeris_models"},
+        {"filename": "..", "target_subdir": "ephemeris_models"},
+        {"filename": "sub/evil.bin", "target_subdir": "ephemeris_models"},
+        {"filename": "sub\\evil.bin", "target_subdir": "ephemeris_models"},
+        {"filename": "C:\\evil.bin", "target_subdir": "ephemeris_models"},
+        {"filename": "evil.bin", "target_subdir": "../outside"},
+        {"filename": "evil.bin", "target_subdir": "a/../../outside"},
+        {"filename": "evil.bin", "target_subdir": "/abs"},
+        {"filename": "evil.bin", "target_subdir": "C:\\abs"},
+    ],
+)
+def test_dataset_target_path_rejects_escaping_manifest_entries(tmp_path, entry):
+    with pytest.raises(ValueError):
+        data_cli.dataset_target_path(tmp_path, entry)
+
+
+def test_dataset_alias_paths_reject_traversal(tmp_path):
+    entry = {
+        "filename": "ok.bin",
+        "target_subdir": "gravity_models",
+        "aliases": ["..\\escape.bin"],
+    }
+    with pytest.raises(ValueError):
+        data_cli.dataset_candidate_paths(tmp_path, entry)
+
+
+def test_companion_paths_reject_traversal(tmp_path):
+    entry = {"filename": "ok.bin", "target_subdir": "gravity_models"}
+    spec = {"filename": "../companion.lbl", "aliases": (), "required": True}
+    with pytest.raises(ValueError):
+        data_cli._companion_target_paths(tmp_path, entry, spec)
+
+
+def test_download_entry_traversal_manifest_cannot_escape_data_root(tmp_path):
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"payload")
+    root = tmp_path / "root"
+    entry = {
+        "name": "evil", "group": "assets", "filename": "../escaped.bin",
+        "target_subdir": "assets", "url": src.as_uri(),
+    }
+    with pytest.raises(ValueError):
+        data_cli.download_entry(entry, root)
+    assert not (tmp_path / "escaped.bin").exists()
 
 
 # --------------------------------------------------------------------------- #
