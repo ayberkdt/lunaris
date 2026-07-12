@@ -18,7 +18,7 @@ import json
 import sys
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -150,8 +150,6 @@ def resolve_data_root(cli_data_dir: str | None = None) -> Path:
     root = find_project_root(Path(__file__).resolve())
     return data_dir_from_root(root)
 
-
-from pathlib import Path, PureWindowsPath
 
 def _validated_manifest_filename(name: Any) -> str:
     """Return ``name`` as a safe single-component file name.
