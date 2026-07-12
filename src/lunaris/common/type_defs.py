@@ -151,8 +151,8 @@ class AdaptiveDegreeConfig:
     altitude_table: tuple[tuple[float, int], ...] | None = None
 
     def __post_init__(self) -> None:
-        if self.power <= 0.0:
-            raise ValueError(f"power must be > 0, got {self.power!r}")
+        if not np.isfinite(self.power) or self.power <= 0.0:
+            raise ValueError(f"power must be finite and > 0, got {self.power!r}")
 
         if self.min_degree < 0:
             raise ValueError(f"min_degree must be >= 0, got {self.min_degree!r}")
@@ -177,9 +177,9 @@ class AdaptiveDegreeConfig:
                 )
             alt_km, deg = row
 
-            if alt_km < 0.0:
+            if not np.isfinite(alt_km) or alt_km < 0.0:
                 raise ValueError(
-                    f"Row {i}: altitude_threshold_km must be >= 0, got {alt_km!r}"
+                    f"Row {i}: altitude_threshold_km must be finite and >= 0, got {alt_km!r}"
                 )
             if deg < 0:
                 raise ValueError(f"Row {i}: degree must be >= 0, got {deg!r}")
@@ -409,12 +409,19 @@ class TimeConfig:
     t0_s: float = 0.0
 
     def __post_init__(self) -> None:
-        # Defensive checks for obvious misconfiguration.
-        if self.duration_s <= 0.0:
-            raise ValueError(f"duration_s must be positive. Got {self.duration_s!r}")
+        # Defensive checks for obvious misconfiguration. NaN passes plain
+        # ``< 0`` / ``<= 0`` comparisons (IEEE-754), so finiteness is checked
+        # explicitly everywhere a numeric field is validated.
+        if not np.isfinite(self.duration_s) or self.duration_s <= 0.0:
+            raise ValueError(f"duration_s must be finite and positive. Got {self.duration_s!r}")
 
-        if self.output_dt_s is not None and self.output_dt_s <= 0.0:
-            raise ValueError(f"output_dt_s must be positive if set. Got {self.output_dt_s!r}")
+        if self.output_dt_s is not None and (
+            not np.isfinite(self.output_dt_s) or self.output_dt_s <= 0.0
+        ):
+            raise ValueError(f"output_dt_s must be finite and positive if set. Got {self.output_dt_s!r}")
+
+        if not np.isfinite(self.t0_s):
+            raise ValueError(f"t0_s must be finite. Got {self.t0_s!r}")
 
         if self.samples_per_period < 2:
             raise ValueError(f"samples_per_period must be >= 2. Got {self.samples_per_period!r}")
@@ -511,8 +518,8 @@ class EventConfig:
     stop_on_capture: bool = False
 
     def __post_init__(self) -> None:
-        if self.impact_alt_km < 0.0:
-            raise ValueError(f"impact_alt_km must be >= 0, got {self.impact_alt_km!r}")
+        if not np.isfinite(self.impact_alt_km) or self.impact_alt_km < 0.0:
+            raise ValueError(f"impact_alt_km must be finite and >= 0, got {self.impact_alt_km!r}")
         if not self.detect_impact and self.impact_alt_km != 0.0:
             raise ValueError(
                 "impact_alt_km is only meaningful when detect_impact=True "
@@ -602,19 +609,25 @@ class PropagatorConfig:
             )
         object.__setattr__(self, "method", method)
 
-        if self.rtol <= 0.0 or self.atol <= 0.0:
-            raise ValueError(f"rtol/atol must be > 0 (rtol={self.rtol!r}, atol={self.atol!r})")
+        # NaN passes plain sign comparisons (IEEE-754); every numeric solver
+        # parameter must also be finite or it silently reaches solve_ivp's
+        # step-size control (same contract as user_max_step_s/telem_cadence_s).
+        if (not np.isfinite(self.rtol) or self.rtol <= 0.0
+                or not np.isfinite(self.atol) or self.atol <= 0.0):
+            raise ValueError(
+                f"rtol/atol must be finite and > 0 (rtol={self.rtol!r}, atol={self.atol!r})"
+            )
 
-        if self.atol_pos is not None and self.atol_pos <= 0.0:
-            raise ValueError(f"atol_pos must be > 0 if set, got {self.atol_pos!r}")
-        if self.atol_vel is not None and self.atol_vel <= 0.0:
-            raise ValueError(f"atol_vel must be > 0 if set, got {self.atol_vel!r}")
+        if self.atol_pos is not None and (not np.isfinite(self.atol_pos) or self.atol_pos <= 0.0):
+            raise ValueError(f"atol_pos must be finite and > 0 if set, got {self.atol_pos!r}")
+        if self.atol_vel is not None and (not np.isfinite(self.atol_vel) or self.atol_vel <= 0.0):
+            raise ValueError(f"atol_vel must be finite and > 0 if set, got {self.atol_vel!r}")
 
-        if self.nyquist_safety_div <= 0.0:
-            raise ValueError(f"nyquist_safety_div must be > 0, got {self.nyquist_safety_div!r}")
+        if not np.isfinite(self.nyquist_safety_div) or self.nyquist_safety_div <= 0.0:
+            raise ValueError(f"nyquist_safety_div must be finite and > 0, got {self.nyquist_safety_div!r}")
 
-        if self.nyquist_v_margin <= 0.0:
-            raise ValueError(f"nyquist_v_margin must be > 0, got {self.nyquist_v_margin!r}")
+        if not np.isfinite(self.nyquist_v_margin) or self.nyquist_v_margin <= 0.0:
+            raise ValueError(f"nyquist_v_margin must be finite and > 0, got {self.nyquist_v_margin!r}")
 
         if self.user_max_step_s is not None:
             try:
@@ -631,27 +644,30 @@ class PropagatorConfig:
         if self.max_internal_steps < 100:
             raise ValueError(f"max_internal_steps too small, got {self.max_internal_steps!r}")
 
-        if self.heartbeat_hours <= 0.0:
-            raise ValueError(f"heartbeat_hours must be > 0, got {self.heartbeat_hours!r}")
+        if not np.isfinite(self.heartbeat_hours) or self.heartbeat_hours <= 0.0:
+            raise ValueError(f"heartbeat_hours must be finite and > 0, got {self.heartbeat_hours!r}")
 
         if self.telem_cadence_s < 0.0 or not np.isfinite(self.telem_cadence_s):
             raise ValueError(f"telem_cadence_s must be finite and >= 0, got {self.telem_cadence_s!r}")
 
-        if self.chunk_s is not None and self.chunk_s <= 0.0:
-            raise ValueError(f"chunk_s must be > 0 if set, got {self.chunk_s!r}")
+        if self.chunk_s is not None and (not np.isfinite(self.chunk_s) or self.chunk_s <= 0.0):
+            raise ValueError(f"chunk_s must be finite and > 0 if set, got {self.chunk_s!r}")
 
         checkpoint_mode = str(self.checkpoint_mode).strip().lower()
         if checkpoint_mode not in {"full", "latest", "state", "last", "chunks", "chunk"}:
             raise ValueError(f"Unsupported checkpoint_mode: {self.checkpoint_mode!r}")
 
-        if self.compute_2body_baseline and (self.baseline_rtol <= 0.0 or self.baseline_atol <= 0.0):
+        if self.compute_2body_baseline and (
+            not np.isfinite(self.baseline_rtol) or self.baseline_rtol <= 0.0
+            or not np.isfinite(self.baseline_atol) or self.baseline_atol <= 0.0
+        ):
             raise ValueError(
-                "baseline_rtol/baseline_atol must be > 0 when compute_2body_baseline=True "
+                "baseline_rtol/baseline_atol must be finite and > 0 when compute_2body_baseline=True "
                 f"(baseline_rtol={self.baseline_rtol!r}, baseline_atol={self.baseline_atol!r})"
             )
 
-        if self.hybrid_switch_alt_m < 0.0:
-            raise ValueError(f"hybrid_switch_alt_m must be >= 0, got {self.hybrid_switch_alt_m!r}")
+        if not np.isfinite(self.hybrid_switch_alt_m) or self.hybrid_switch_alt_m < 0.0:
+            raise ValueError(f"hybrid_switch_alt_m must be finite and >= 0, got {self.hybrid_switch_alt_m!r}")
 
 
 

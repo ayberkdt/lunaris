@@ -46,6 +46,47 @@ def test_load_manifest_rejects_malformed(tmp_path):
     raise AssertionError("malformed manifest should raise ValueError")
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"name": "no-filename", "group": "assets"},
+        {"name": "empty-filename", "group": "assets", "filename": "  "},
+        {"name": "non-string-filename", "group": "assets", "filename": 42},
+        "not-a-dict",
+    ],
+)
+def test_load_manifest_rejects_entry_without_usable_filename(tmp_path, entry):
+    path = _write_manifest(tmp_path, [entry])
+    with pytest.raises(ValueError, match="filename"):
+        data_cli.load_manifest(path)
+
+
+def test_stream_to_file_passes_socket_timeout(tmp_path, monkeypatch):
+    # A stalled server must not hang the CLI: every download opens the URL
+    # with the module-level socket timeout.
+    captured = {}
+
+    class _EmptyResponse:
+        headers = {"Content-Length": "0"}
+
+        def read(self, _n):
+            return b""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["timeout"] = timeout
+        return _EmptyResponse()
+
+    monkeypatch.setattr(data_cli.urllib.request, "urlopen", fake_urlopen)
+    data_cli._stream_to_file("https://example.invalid/x.bin", tmp_path / "out.bin")
+    assert captured["timeout"] == data_cli._DOWNLOAD_TIMEOUT_S
+
+
 # --------------------------------------------------------------------------- #
 # Data-root resolution
 # --------------------------------------------------------------------------- #

@@ -93,6 +93,8 @@ DATA_PRESETS: dict[str, list[str]] = {
 _ALLOWED_SCHEMES = ("http", "https", "file")
 _CHUNK = 1 << 16
 _FAIL_STATUSES = ("missing", "hash_mismatch", "manual_missing")
+#: Socket timeout for downloads: a stalled server must not hang the CLI forever.
+_DOWNLOAD_TIMEOUT_S = 60.0
 
 
 # --------------------------------------------------------------------------- #
@@ -129,6 +131,15 @@ def load_manifest(path: Path) -> dict[str, Any]:
         manifest = json.load(fh)
     if not isinstance(manifest, dict) or not isinstance(manifest.get("datasets"), list):
         raise ValueError(f"Malformed manifest (expected a 'datasets' list): {path}")
+    for i, entry in enumerate(manifest["datasets"]):
+        if not isinstance(entry, dict) or not isinstance(entry.get("filename"), str) \
+                or not entry["filename"].strip():
+            name = entry.get("name") if isinstance(entry, dict) else None
+            raise ValueError(
+                f"Malformed manifest entry #{i}"
+                f"{f' ({name!r})' if name else ''}: every dataset needs a "
+                f"non-empty string 'filename'. Manifest: {path}"
+            )
     return manifest
 
 
@@ -313,7 +324,7 @@ def _stream_to_file(url: str, dest: Path) -> None:
         raise ValueError(f"Refusing URL with unsupported scheme {scheme!r}")
     request = urllib.request.Request(url, headers={"User-Agent": "lunaris-data"})
     # URLs come exclusively from the project-controlled manifest.
-    with urllib.request.urlopen(request) as resp:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=_DOWNLOAD_TIMEOUT_S) as resp:  # noqa: S310
         total = int(resp.headers.get("Content-Length") or 0)
         with open(dest, "wb") as fh:
             bar = tqdm(total=total, unit="B", unit_scale=True, desc=dest.name) \

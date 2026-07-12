@@ -372,6 +372,41 @@ def test_stop_file_halts_fixed_step_integration(tmp_path):
     assert res.stop_reason == "stop file"
 
 
+def test_chunked_stop_file_reports_t_stop_at_last_committed_time(tmp_path):
+    # A between-chunk stop-file halt has no solver event carrying its time;
+    # t_stop_s must still be populated with the last committed sample time
+    # (parity with the fixed-step backend), not left as None.
+    stop_file = tmp_path / "STOP"
+
+    class StopWritingDynamics(FakePointMassDynamics):
+        def build_rhs(self):
+            base_rhs = super().build_rhs()
+
+            def rhs(t, y):
+                if not stop_file.exists():
+                    stop_file.write_text("stop", encoding="utf-8")
+                return base_rhs(t, y)
+
+            return rhs
+
+    y0, _, _ = _circular_state(150e3)
+    tc = TimeConfig(duration_s=40.0, output_dt_s=10.0, samples_per_period=4)
+    cfg = _cfg(
+        events=EventConfig(detect_impact=False, enable_peri_apo_events=False),
+        chunk_s=20.0,
+        stop_file=str(stop_file),
+        stop_event_in_scipy=False,
+    )
+
+    res = propagate(StopWritingDynamics(), y0, cfg, time_cfg=tc)
+    assert res.stopped_early is True
+    assert res.stop_reason == "stop file"
+    # The stop file appears during chunk 1 ([0, 20] s) and is honored before
+    # chunk 2, so the run stops at the chunk-1 end.
+    assert res.t_stop_s == pytest.approx(20.0)
+    assert res.t_stop_s == pytest.approx(float(res.t[-1]))
+
+
 def test_checkpoint_npz_is_written(tmp_path):
     ckpt = tmp_path / "ckpt.npz"
     y0, r0, _ = _circular_state(150e3)

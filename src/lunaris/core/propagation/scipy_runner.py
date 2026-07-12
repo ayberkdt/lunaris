@@ -288,6 +288,7 @@ def run_scipy_propagation(
         stop_reason=stop_reason,
         stop_file=stop_file,
         stop_event_in_scipy=bool(getattr(cfg, "stop_event_in_scipy", False)),
+        t_last_s=(float(t_cat[-1]) if np.asarray(t_cat).size else None),
     )
 
     if checkpoint_path and (not integration_failed) and not (chunk_s is not None and checkpoint_every_chunk):
