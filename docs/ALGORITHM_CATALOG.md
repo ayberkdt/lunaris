@@ -157,10 +157,12 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - coefficients supplied in the same normalization convention
 - **Limitations**:
   - Condon-Shortley phase must be excluded by the coefficient provider
+  - Reliable in IEEE-754 float64 only to degree ~1900 (Holmes & Featherstone 2002): above that, the sectoral seed cos(phi)^m can underflow before the recursion re-enters the oscillatory region (n >= m / cos(phi)), silently zeroing physically recovering columns; the Holmes-Featherstone global 1e-280 scaling would then be required. At the GRAIL maximum N=1800 the measured margin between the underflow cut and the oscillatory boundary is >= ~50 orders at every latitude (worst near cos(phi) ~ 0.4), verified against pyshtools at N=1800 (2026-07-14).
 - **Validated by**:
   - `tests/test_spherical_harmonics.py`
   - `tests/test_independent_sh_validation.py`
   - `tests/test_sh_convention_lock.py`
+  - `tests/test_sh_high_degree_stability.py`
 - **See also**: [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
 - **Notes**: The absence of the Condon-Shortley phase is a convention, not a bug: applying (-1)^m would corrupt tesseral/sectoral terms while leaving zonal (J2) tests unaffected.
 
@@ -199,6 +201,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - `tests/test_gravity_propagation_parity.py`
   - `tests/test_sh_frame_invariants.py`
   - `tests/test_independent_sh_validation.py`
+  - `tests/test_sh_high_degree_stability.py`
 - **See also**: [`LUNARIS-ALG-SH-001`](#lunarisalgsh001), [`LUNARIS-ALG-SUM-001`](#lunarisalgsum001), [`LUNARIS-HEUR-SH-001`](#lunarisheursh001), [`LUNARIS-HEUR-SH-002`](#lunarisheursh002)
 
 <a id="lunarisheursh001"></a>
@@ -222,9 +225,11 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - underflowed high-order sectoral terms contribute negligibly
 - **Limitations**:
   - performance/stability policy, not a change to the physical field
+  - The negligibility assumption holds only while the underflow cut stays below the oscillatory-region boundary m ~ N cos(phi), i.e. for N <= ~1900 in float64. Measured at N=1800 (2026-07-14): full-m and stable-m kernels agree to 3.6e-14 worst-case across latitudes, pyshtools cross-check 1e-9 class. For N > ~1900 the cut would drop physically recovering columns and Holmes-Featherstone scaling is needed instead.
 - **Validated by**:
   - `tests/test_spherical_harmonics.py`
   - `tests/test_sh_frame_invariants.py`
+  - `tests/test_sh_high_degree_stability.py`
 - **See also**: [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
 - **Notes**: Project-specific heuristic; no external primary source. Justified by the float64 underflow floor rather than a published algorithm.
 

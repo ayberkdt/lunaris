@@ -87,6 +87,14 @@ def acceleration(
     cilm[0, : lmax + 1, : lmax + 1] = c[: lmax + 1, : lmax + 1]
     cilm[1, : lmax + 1, : lmax + 1] = s[: lmax + 1, : lmax + 1]
 
+    # Structural-monopole parity (SHADR C00 trap): the Lunaris kernels add the
+    # mu/r monopole unconditionally and IGNORE the stored C[0,0], because GRAIL
+    # SHADR tables start at degree 1 (loaded C00 = 0) while ICGEM .gfc stores
+    # C00 = 1. pyshtools honours the stored value, so a SHADR-derived array
+    # would silently lose the central term here (~1.57 m/s^2 at the Moon) and
+    # the cross-check would compare against a perturbation-only field.
+    cilm[0, 0, 0] = 1.0
+
     # Geocentric latitude/longitude in degrees, as pyshtools expects.
     lat_deg = float(np.degrees(np.arcsin(z / r)))
     lon_deg = float(np.degrees(np.arctan2(y, x)))
