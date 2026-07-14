@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ayberkdt/lunaris/schemas/algorithm_registry.schema.json",
+  "title": "Lunaris algorithm registry",
+  "description": "Structural schema for docs/algorithms/algorithm_registry.yaml after YAML-to-JSON loading. Cross-field rules that JSON Schema cannot express (e.g. non-HEUR entries require a primary reference) are enforced by tools/algorithm_registry.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registry_version", "entries"],
+  "properties": {
+    "registry_version": {
+      "const": 1,
+      "description": "Registry format version. Bump only on a breaking schema change."
+    },
+    "generated_catalog": {
+      "type": "string",
+      "description": "Repository-relative path of the generated human-readable catalogue."
+    },
+    "unreferenced_bib_allowlist": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "BibTeX keys allowed to exist in references.bib without being cited by any entry (e.g. background references). Default empty.",
+      "default": []
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "slug",
+        "canonical_name",
+        "category",
+        "domain",
+        "status",
+        "added",
+        "implementation_class",
+        "verification_status",
+        "scientific_status",
+        "citation_keys",
+        "symbols",
+        "validation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^LUNARIS-(ALG|MODEL|HEUR|DATA|STD)-[A-Z0-9]{2,4}-[0-9]{3}$",
+          "description": "Permanent Lunaris identifier. Never renumbered, reused, or deleted."
+        },
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "canonical_name": {
+          "type": "string",
+          "minLength": 8
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "numerical_algorithm",
+            "physical_model",
+            "empirical_model",
+            "interpolation",
+            "integrator",
+            "sampling",
+            "neural_architecture",
+            "optimization",
+            "frame_time_convention",
+            "data_product",
+            "standard",
+            "heuristic",
+            "diagnostic"
+          ]
+        },
+        "domain": {
+          "type": "string",
+          "enum": [
+            "TB", "SH", "J2E", "TID", "REL", "RAD", "EPH", "FRM", "TIME",
+            "INT", "EVT", "SUM", "INTP", "OE", "SAMP", "UQ", "PHZ", "FRZ",
+            "IMP", "ML", "OPT", "NUM", "DATA", "STD"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "retired"]
+        },
+        "added": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "implementation_class": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "exact_reformulation",
+            "adaptation",
+            "inspired",
+            "heuristic",
+            "delegated_library",
+            "standard_implementation"
+          ]
+        },
+        "verification_status": {
+          "type": "string",
+          "enum": [
+            "verified_primary_source",
+            "verified_secondary_source",
+            "identifier_verified_content_pending",
+            "pending_verification",
+            "unverifiable"
+          ]
+        },
+        "scientific_status": {
+          "type": "string",
+          "enum": [
+            "implemented_and_tested",
+            "implemented_untested",
+            "experimental",
+            "retired"
+          ]
+        },
+        "citation_keys": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "primary_reference": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/primary_reference" }
+          ]
+        },
+        "symbols": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/symbol" }
+        },
+        "mathematical_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "inputs": { "type": "string" },
+            "outputs": { "type": "string" },
+            "exact_or_approximate": { "type": "string" },
+            "preserved_properties": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "lunaris_modifications": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "validation": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "see_also": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^LUNARIS-(ALG|MODEL|HEUR|DATA|STD)-[A-Z0-9]{2,4}-[0-9]{3}$"
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "primary_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "citation_key", "identifier_kind", "verification_notes"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "book",
+            "article",
+            "inproceedings",
+            "techreport",
+            "standard",
+            "dataset",
+            "software",
+            "online"
+          ]
+        },
+        "citation_key": { "type": "string" },
+        "identifier_kind": {
+          "type": "string",
+          "enum": ["doi", "isbn", "report_number", "standard_number", "official_url", "none"]
+        },
+        "doi": { "type": ["string", "null"] },
+        "isbn": { "type": ["string", "null"] },
+        "report_number": { "type": ["string", "null"] },
+        "standard_number": { "type": ["string", "null"] },
+        "official_url": { "type": ["string", "null"] },
+        "edition": { "type": ["string", "null"] },
+        "chapter": { "type": ["string", "null"] },
+        "section": { "type": ["string", "null"] },
+        "equations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pages": { "type": ["string", "null"] },
+        "verification_notes": { "type": "string" }
+      }
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "role"],
+      "properties": {
+        "path": { "type": "string" },
+        "symbol": { "type": ["string", "null"] },
+        "role": {
+          "type": "string",
+          "enum": [
+            "cpu_implementation",
+            "numba_implementation",
+            "torch_implementation",
+            "cuda_implementation",
+            "reference_implementation",
+            "api_entry_point",
+            "config_surface",
+            "delegation_wrapper"
+          ]
+        }
+      }
+    }
+  }
+}

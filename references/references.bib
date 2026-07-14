@@ -1,0 +1,84 @@
+% Lunaris algorithm bibliography
+% ================================
+% Canonical BibTeX records for the scientific algorithms, physical models,
+% numerical methods, data products and standards implemented by Lunaris.
+%
+% This file is the Layer-2 bibliography of the algorithm-traceability system.
+% It is NOT the software citation for Lunaris itself (see CITATION.cff) and NOT
+% the third-party license inventory (see THIRD_PARTY_NOTICES.md).
+%
+% Rules (see docs/ALGORITHM_TRACEABILITY_POLICY.md):
+%   * Every record carries at least one persistent identifier
+%     (doi / isbn / report number / standard number / stable official url).
+%   * Metadata is verified against the primary source or its official landing
+%     page before a record is added; the verification detail lives in the
+%     registry entry's primary_reference.verification_notes, not here.
+%   * Citation keys follow FirstAuthorYYYYShortMnemonic.
+%
+% Every key below must be cited by at least one entry in
+% docs/algorithms/algorithm_registry.yaml (enforced by tools/algorithm_registry.py).
+
+% ---------------------------------------------------------------------------
+% Third-body gravity
+% ---------------------------------------------------------------------------
+@book{Battin1999Astrodynamics,
+  author    = {Battin, Richard H.},
+  title     = {An Introduction to the Mathematics and Methods of Astrodynamics},
+  edition   = {Revised},
+  publisher = {American Institute of Aeronautics and Astronautics},
+  series    = {AIAA Education Series},
+  address   = {Reston, Virginia},
+  year      = {1999},
+  isbn      = {978-1-56347-342-5}
+}
+
+% ---------------------------------------------------------------------------
+% Compensated summation
+% ---------------------------------------------------------------------------
+@article{Kahan1965ReducingErrors,
+  author  = {Kahan, William},
+  title   = {Pracniques: Further Remarks on Reducing Truncation Errors},
+  journal = {Communications of the ACM},
+  volume  = {8},
+  number  = {1},
+  pages   = {40},
+  year    = {1965},
+  doi     = {10.1145/363707.363723}
+}
+
+% ---------------------------------------------------------------------------
+% Integrators
+% ---------------------------------------------------------------------------
+@article{Virtanen2020SciPy,
+  author  = {Virtanen, Pauli and Gommers, Ralf and Oliphant, Travis E. and
+             Haberland, Matt and Reddy, Tyler and Cournapeau, David and
+             Burovski, Evgeni and Peterson, Pearu and Weckesser, Warren and
+             Bright, Jonathan and van der Walt, St{\'e}fan J. and Brett, Matthew and
+             Wilson, Joshua and Millman, K. Jarrod and Mayorov, Nikolay and
+             Nelson, Andrew R. J. and Jones, Eric and Kern, Robert and
+             Larson, Eric and Carey, C. J. and Polat, {\.I}lhan and Feng, Yu and
+             Moore, Eric W. and VanderPlas, Jake and Laxalde, Denis and
+             Perktold, Josef and Cimrman, Robert and Henriksen, Ian and
+             Quintero, E. A. and Harris, Charles R. and Archibald, Anne M. and
+             Ribeiro, Ant{\^o}nio H. and Pedregosa, Fabian and
+             van Mulbregt, Paul and {SciPy 1.0 Contributors}},
+  title   = {{SciPy} 1.0: Fundamental Algorithms for Scientific Computing in {Python}},
+  journal = {Nature Methods},
+  volume  = {17},
+  number  = {3},
+  pages   = {261--272},
+  year    = {2020},
+  doi     = {10.1038/s41592-019-0686-2}
+}
+
+@book{HairerNorsettWanner1993ODEsI,
+  author    = {Hairer, Ernst and N{\o}rsett, Syvert P. and Wanner, Gerhard},
+  title     = {Solving Ordinary Differential Equations I: Nonstiff Problems},
+  edition   = {Second Revised},
+  publisher = {Springer-Verlag},
+  series    = {Springer Series in Computational Mathematics},
+  volume    = {8},
+  address   = {Berlin, Heidelberg},
+  year      = {1993},
+  isbn      = {978-3-540-56670-0}
+}

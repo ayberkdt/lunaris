@@ -1,0 +1,240 @@
+# Lunaris algorithm registry
+# ===========================
+# Machine-readable source of truth for the algorithm-traceability system.
+# Maps stable Lunaris algorithm identifiers (Layer 1) to verified bibliographic
+# citation keys (Layer 2, defined in references/references.bib) and canonical
+# method names (Layer 3), plus the implementing source symbols, validating
+# tests, assumptions and limitations.
+#
+# WORKFLOW after every edit:
+#   python tools/algorithm_registry.py validate
+#   python tools/algorithm_registry.py generate
+#   git add docs/algorithms/algorithm_registry.yaml references/references.bib \
+#           docs/ALGORITHM_CATALOG.md
+#
+# HARD RULES (see docs/ALGORITHM_TRACEABILITY_POLICY.md):
+#   * IDs are permanent. Never renumber, reuse, or delete an id; retire it with
+#     status: retired instead.
+#   * Never claim verification_status: verified_primary_source without having
+#     confirmed the defining section/equation in the primary source.
+#   * Non-HEUR entries require at least one citation key and a primary_reference.
+
+registry_version: 1
+generated_catalog: docs/ALGORITHM_CATALOG.md
+unreferenced_bib_allowlist: []
+
+entries:
+  - id: LUNARIS-ALG-INT-001
+    slug: dop853_adaptive_runge_kutta_delegation
+    canonical_name: >-
+      Dormand-Prince 8(5,3) explicit Runge-Kutta method as delegated to SciPy DOP853
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Virtanen2020SciPy
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: article
+      citation_key: Virtanen2020SciPy
+      identifier_kind: doi
+      doi: 10.1038/s41592-019-0686-2
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.DOP853.html
+      edition: null
+      chapter: null
+      section: "scipy.integrate.solve_ivp method='DOP853'"
+      equations: []
+      pages: "261-272"
+      verification_notes: >-
+        Lunaris delegates adaptive integration to scipy.integrate.solve_ivp; the
+        DOP853 method is SciPy's Python port of Hairer's DOP853 (explicit
+        Runge-Kutta of order 8(5,3) with a 5th/3rd-order error estimator and
+        7th-order dense output). SciPy paper DOI 10.1038/s41592-019-0686-2
+        verified (Nature Methods 17(3):261-272, 2020); the official SciPy DOP853
+        page confirms the order-8(5,3) Dormand-Prince identity and cites Hairer,
+        Norsett & Wanner (1993). Method-origin book ISBN 978-3-540-56670-0
+        verified; exact Hairer section (II) pending physical-copy confirmation.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/core/propagation/scipy_runner.py
+        symbol: run_scipy_propagation
+        role: cpu_implementation
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: >-
+        Right-hand-side callable f(t, y), initial state, integration span and
+        absolute/relative tolerances (SI units).
+      outputs: State trajectory sampled on the requested output grid.
+      exact_or_approximate: adaptive_error_controlled_approximation
+      preserved_properties:
+        - embedded 5(3) error estimate drives adaptive step control
+        - 7th-order dense output for off-node sampling
+    lunaris_modifications:
+      - >-
+        Lunaris only selects and configures the SciPy method (token resolution,
+        tolerance policy, chunked output grid); the stepper itself is unmodified.
+    assumptions:
+      - non-stiff dynamics over each integration chunk
+      - right-hand side is sufficiently smooth for high-order accuracy
+    limitations:
+      - not symplectic; long-horizon energy behaviour is not structurally bounded
+      - stiff regimes should use an implicit method (Radau/BDF) instead
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+      - tests/test_solver_tolerance_defaults.py
+    see_also: []
+    notes: >-
+      Additional SciPy methods (RK45, RK23, Radau, BDF, LSODA) share this
+      delegation surface and will receive their own ids during Phase 2.
+
+  - id: LUNARIS-ALG-SUM-001
+    slug: kahan_compensated_summation
+    canonical_name: Kahan compensated summation
+    category: numerical_algorithm
+    domain: SUM
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Kahan1965ReducingErrors
+    primary_reference:
+      type: article
+      citation_key: Kahan1965ReducingErrors
+      identifier_kind: doi
+      doi: 10.1145/363707.363723
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://dl.acm.org/doi/10.1145/363707.363723
+      edition: null
+      chapter: null
+      section: null
+      equations: []
+      pages: "40"
+      verification_notes: >-
+        W. Kahan, "Pracniques: Further Remarks on Reducing Truncation Errors",
+        Communications of the ACM 8(1):40, January 1965. DOI 10.1145/363707.363723
+        verified via the ACM Digital Library and Wikidata; the compensated-sum
+        recurrence (running sum, carried error term, corrected addend) matches
+        the one-page original exactly.
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _kahan_sum_step
+        role: numba_implementation
+    mathematical_contract:
+      inputs: running sum, carried compensation term, next addend
+      outputs: updated running sum and updated compensation term
+      exact_or_approximate: exact_error_free_transformation
+      preserved_properties:
+        - recovers low-order bits lost to rounding during accumulation
+        - reduces summation error growth from O(n*eps) toward O(eps)
+    lunaris_modifications:
+      - >-
+        Applied per-step inside the high-degree spherical-harmonic acceleration
+        accumulation; the algorithm itself is unchanged.
+    assumptions:
+      - IEEE-754 round-to-nearest float64 arithmetic
+      - compiler/JIT does not re-associate the compensation subtraction
+    limitations:
+      - does not help when individual addends are themselves inaccurate
+      - guards against cancellation across many terms, not within one term
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_independent_sh_validation.py
+    see_also: []
+    notes: >-
+      Numba does not reorder these floating-point operations, so the
+      compensation term survives compilation; this is why the recurrence is kept
+      as an explicit four-line helper rather than a bare Python sum.
+
+  - id: LUNARIS-ALG-TB-001
+    slug: battin_fq_differential_third_body
+    canonical_name: >-
+      Battin F(q) cancellation-resistant differential third-body formulation
+    category: numerical_algorithm
+    domain: TB
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact_reformulation
+    verification_status: identifier_verified_content_pending
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Battin1999Astrodynamics
+    primary_reference:
+      type: book
+      citation_key: Battin1999Astrodynamics
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-1-56347-342-5
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Revised
+      chapter: null
+      section: null
+      equations: []
+      pages: null
+      verification_notes: >-
+        Book metadata verified: Richard H. Battin, "An Introduction to the
+        Mathematics and Methods of Astrodynamics", Revised Edition, AIAA
+        Education Series, 1999, ISBN 978-1-56347-342-5. The implemented device
+        rewrites F = (1+q)^{3/2} - 1 as q(3+3q+q^2)/(1+(1+q)^{3/2}) to avoid the
+        subtractive cancellation of the direct differential form; this identity
+        is elementary and was checked independently, and the F(q)/Encke device is
+        attributed to Battin by GMAT's MathSpec and multiple modern propagators.
+        PENDING: exact Battin chapter/section/equation number (physical copy
+        needed) before this may be promoted to verified_primary_source.
+    symbols:
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: accel_third_body_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: calc_3rd_body_accel
+        role: api_entry_point
+      - path: src/lunaris/core/torch_third_body.py
+        symbol: third_body_accel_batch
+        role: torch_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _third_body_cuda
+        role: cuda_implementation
+    mathematical_contract:
+      inputs: >-
+        Moon-centred spacecraft and third-body position vectors and the
+        third-body gravitational parameter mu (SI units).
+      outputs: differential (tidal) third-body acceleration in m/s^2
+      exact_or_approximate: exact_algebraic_reformulation
+      preserved_properties:
+        - algebraically equal to mu*[(r_tb-r_sc)/|r_tb-r_sc|^3 - r_tb/|r_tb|^3]
+        - removes catastrophic cancellation for small |r_sc|/|r_tb|
+    lunaris_modifications:
+      - float64 numba CPU kernel, torch batch mirror, and CUDA kernel
+      - Moon-centred origin and Lunaris ephemeris/frame contracts
+    assumptions:
+      - point-mass third body
+      - both vectors share the same origin and frame
+    limitations:
+      - does not model the third body's non-spherical gravity
+      - returns a zero vector inside a 1 m singularity guard
+    validation:
+      - tests/test_third_body_precision.py
+      - tests/test_third_body_effects.py
+      - tests/test_torch_third_body.py
+    see_also: []
+    notes: >-
+      This is a numerically stable reformulation of the SAME differential
+      acceleration, not a different physical force model. Do not describe it as a
+      distinct perturbation.
