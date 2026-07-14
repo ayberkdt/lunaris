@@ -99,6 +99,554 @@ entries:
       Additional SciPy methods (RK45, RK23, Radau, BDF, LSODA) share this
       delegation surface and will receive their own ids during Phase 2.
 
+  - id: LUNARIS-ALG-INT-002
+    slug: classical_rk4_fixed_step
+    canonical_name: Classical fourth-order Runge-Kutta method (RK4)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: book
+      citation_key: HairerNorsettWanner1993ODEsI
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-56670-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second Revised
+      chapter: "II (Runge-Kutta and Extrapolation Methods)"
+      section: "II.1 (the first Runge-Kutta methods)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The implemented tableau (k1..k4 with the standard 1/2, 1/2, 1 nodes and
+        the 1/6,1/3,1/3,1/6 weights) is the classical fourth-order Runge-Kutta
+        method presented in Hairer, Norsett & Wanner (1993), Chapter II. Book
+        ISBN 978-3-540-56670-0 verified via Springer; exact page pending
+        physical copy but the tableau identity is unambiguous.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _rk4_step_full
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: RHS f(t, y), state y, step h
+      outputs: state advanced by one step of size h
+      exact_or_approximate: fourth_order_accurate
+      preserved_properties:
+        - 4th-order local/global accuracy for smooth RHS
+    lunaris_modifications: []
+    assumptions:
+      - first-order ODE form y' = f(t, y)
+    limitations:
+      - not symplectic; fixed step has no error control
+    validation:
+      - tests/test_integrators.py
+      - tests/test_batched_fixed_step.py
+    see_also: []
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-003
+    slug: classical_rkn4_fixed_step
+    canonical_name: Classical fourth-order Runge-Kutta-Nystrom method (RKN4)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: identifier_verified_content_pending
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: book
+      citation_key: HairerNorsettWanner1993ODEsI
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-56670-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second Revised
+      chapter: "II (Runge-Kutta and Extrapolation Methods)"
+      section: Runge-Kutta-Nystrom methods for second-order ODEs
+      equations: []
+      pages: null
+      verification_notes: >-
+        Runge-Kutta-Nystrom methods for y'' = f(t, y) are treated in Hairer,
+        Norsett & Wanner (1993), Chapter II. The implemented step uses r_mid with
+        0.125 h^2 k1, r_end with 0.5 h^2 k2, position update r + h v +
+        (h^2/6)(k1+2 k2) and velocity update v + (h/6)(k1+4 k2+k4), reusing k2=k3.
+        Book ISBN verified; PENDING confirmation that these coefficients match
+        the specific classical RKN4 tableau in the cited section (physical copy
+        needed) rather than a different 4th-order RKN pair.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _rkn4_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed position/velocity state, step h
+      outputs: position/velocity advanced by one step
+      exact_or_approximate: fourth_order_accurate
+      preserved_properties:
+        - direct second-order integration without reduction overhead
+    lunaris_modifications:
+      - single acceleration evaluation reused for k2 and k3
+    assumptions:
+      - dynamics expressible as y'' = a(t, y) (force independent of velocity)
+    limitations:
+      - inapplicable to velocity-dependent forces (e.g. relativistic drag terms)
+    validation:
+      - tests/test_integrators.py
+      - tests/test_batched_fixed_step.py
+    see_also: []
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-004
+    slug: gragg_bulirsch_stoer_extrapolation
+    canonical_name: >-
+      Gragg-Bulirsch-Stoer extrapolation with the modified midpoint rule
+      (exposed as the RK8 token)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: book
+      citation_key: HairerNorsettWanner1993ODEsI
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-56670-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second Revised
+      chapter: "II (Runge-Kutta and Extrapolation Methods)"
+      section: "II.9 (extrapolation methods; Gragg modified midpoint)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The code applies Gragg's symmetric modified-midpoint rule over the
+        sub-step sequence (2,4,6,8) and combines the results with the polynomial
+        (Bulirsch-Stoer / Deuflhard) extrapolation recurrence
+        T[i] += (T[i]-T[i-1])/((n_i/n_{i-k})^2 - 1). This is the
+        Gragg-Bulirsch-Stoer extrapolation method (Hairer, Norsett & Wanner 1993,
+        Chapter II, extrapolation methods), NOT an 8th-order Runge-Kutta tableau.
+        Book ISBN verified.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _rk8_step_full
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _modified_midpoint
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: RHS f(t, y), state y, macro-step h
+      outputs: high-order extrapolated state after one macro-step
+      exact_or_approximate: high_order_extrapolation
+      preserved_properties:
+        - even-order error expansion of the symmetric midpoint rule
+        - high effective order via extrapolation to zero sub-step
+    lunaris_modifications:
+      - fixed (2,4,6,8) sub-step sequence rather than an adaptive tableau
+    assumptions:
+      - smooth RHS (extrapolation assumes an asymptotic error expansion)
+    limitations:
+      - >-
+        NAMING: the accepted token is RK8, but this is a Gragg-Bulirsch-Stoer
+        extrapolation method, not a Runge-Kutta order-8 formula. See the
+        traceability findings note.
+    validation:
+      - tests/test_integrators.py
+      - tests/test_batched_fixed_step.py
+    see_also: []
+    notes: >-
+      Naming finding: the RK8 alias is misleading; the implemented algorithm is
+      Gragg-Bulirsch-Stoer extrapolation. The behaviour is correct and this entry
+      does not change it; only the documented identity is corrected.
+
+  - id: LUNARIS-ALG-INT-005
+    slug: velocity_verlet_stormer_verlet
+    canonical_name: Velocity Verlet (Stormer-Verlet) symplectic method
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerLubichWanner2006Geometric
+    primary_reference:
+      type: book
+      citation_key: HairerLubichWanner2006Geometric
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-30663-4
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second
+      chapter: "I (Examples and Numerical Experiments)"
+      section: "The Stormer-Verlet method"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The half-kick / drift / half-kick sequence (v_half = v + 0.5 h a0;
+        r1 = r + h v_half; v1 = v_half + 0.5 h a1) is the velocity form of the
+        Stormer-Verlet method treated in Hairer, Lubich & Wanner, "Geometric
+        Numerical Integration", 2nd ed. ISBN 978-3-540-30663-4 verified via
+        Springer/Amazon. Historical origins: Stormer, Verlet (1967, position
+        form) and Swope et al. (1982, velocity form).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _vv_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed state, step h
+      outputs: symplectically advanced position/velocity
+      exact_or_approximate: second_order_symplectic
+      preserved_properties:
+        - symplectic and time-reversible
+        - bounded energy error for Hamiltonian systems
+    lunaris_modifications: []
+    assumptions:
+      - separable Hamiltonian with velocity-independent force
+    limitations:
+      - only second order; use a composition method for higher order
+    validation:
+      - tests/test_integrators.py
+      - tests/test_symplectic_strict_guard.py
+    see_also:
+      - LUNARIS-ALG-INT-006
+      - LUNARIS-ALG-INT-007
+    notes: >-
+      Accepted aliases VV, VERLET, STORMER_VERLET and LEAPFROG all resolve to
+      this method.
+
+  - id: LUNARIS-ALG-INT-006
+    slug: recursive_triple_jump_symplectic_composition
+    canonical_name: >-
+      Recursive triple-jump symmetric composition of velocity Verlet (Y4/Y6/Y8)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Yoshida1990Symplectic
+    primary_reference:
+      type: article
+      citation_key: Yoshida1990Symplectic
+      identifier_kind: doi
+      doi: 10.1016/0375-9601(90)90092-3
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Triple-jump composition construction
+      equations: []
+      pages: "262-268"
+      verification_notes: >-
+        H. Yoshida, "Construction of higher order symplectic integrators",
+        Physics Letters A 150(5-7):262-268, 1990. DOI 10.1016/0375-9601(90)
+        90092-3 verified via ScienceDirect/ADS. The code composes velocity-Verlet
+        sub-steps with the triple-jump weights x1 = 1/(2 - 2^{1/(2k+1)}),
+        x0 = -2^{1/(2k+1)}/(2 - 2^{1/(2k+1)}). Y4 (k=1) reproduces the
+        Forest-Ruth / Yoshida 4th-order integrator. NAMING: Y6/Y8 use this
+        recursive triple-jump construction, NOT Yoshida's optimized minimal-stage
+        6th/8th-order coefficient sets (which the same paper obtains by solving
+        the order conditions numerically).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _composition_weights
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _composed_step
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _y6_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed state, step h, composition order
+      outputs: symplectically advanced state of order 2k
+      exact_or_approximate: order_2k_symplectic
+      preserved_properties:
+        - symplectic and time-reversible at every composition level
+    lunaris_modifications:
+      - recursive triple-jump rather than optimized minimal-stage coefficients
+    assumptions:
+      - separable Hamiltonian with velocity-independent force
+    limitations:
+      - >-
+        Y6/Y8 have larger error constants than Yoshida's optimized solution sets
+        because the recursive triple jump uses more sub-steps.
+    validation:
+      - tests/test_integrators.py
+      - tests/test_symplectic_strict_guard.py
+    see_also:
+      - LUNARIS-ALG-INT-005
+    notes: >-
+      Naming clarification: only Y4 is literally Yoshida's coefficient set; Y6/Y8
+      are the recursive triple-jump (Suzuki fractal) construction. The methods
+      are valid symplectic integrators of the stated order.
+
+  - id: LUNARIS-ALG-INT-007
+    slug: pefrl_position_extended_forest_ruth
+    canonical_name: >-
+      Position-Extended Forest-Ruth-Like (PEFRL) fourth-order symplectic
+      integrator
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Omelyan2002PEFRL
+    primary_reference:
+      type: article
+      citation_key: Omelyan2002PEFRL
+      identifier_kind: doi
+      doi: 10.1016/S0010-4655(02)00451-4
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: PEFRL coefficients
+      equations: []
+      pages: "188-202"
+      verification_notes: >-
+        I. P. Omelyan, I. M. Mryglod & R. Folk, "Optimized Forest-Ruth- and
+        Suzuki-like algorithms for integration of motion in many-body systems",
+        Computer Physics Communications 146(2):188-202, 2002. DOI
+        10.1016/S0010-4655(02)00451-4 verified. The implemented constants
+        xi=0.1786178958448091, lambda=-0.2123418310626054,
+        chi=-0.06626458266981849 are exactly the published PEFRL coefficients.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _pefrl_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed state, step h
+      outputs: symplectically advanced state
+      exact_or_approximate: fourth_order_symplectic
+      preserved_properties:
+        - symplectic with a markedly smaller error constant than Yoshida4
+        - drift fractions telescope to 1 and velocity kicks sum to 1
+    lunaris_modifications: []
+    assumptions:
+      - separable Hamiltonian with velocity-independent force
+    limitations:
+      - four force evaluations per step
+    validation:
+      - tests/test_integrators.py
+      - tests/test_symplectic_strict_guard.py
+    see_also:
+      - LUNARIS-ALG-INT-005
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-008
+    slug: rk45_dormand_prince_delegation
+    canonical_name: >-
+      Dormand-Prince 5(4) embedded Runge-Kutta method as delegated to SciPy RK45
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - DormandPrince1980Embedded
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: DormandPrince1980Embedded
+      identifier_kind: doi
+      doi: 10.1016/0771-050X(80)90013-3
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.RK45.html
+      edition: null
+      chapter: null
+      section: RK5(4) embedded pair
+      equations: []
+      pages: "19-26"
+      verification_notes: >-
+        SciPy's RK45 is the Dormand-Prince 5(4) embedded pair (Dormand & Prince,
+        J. Comput. Appl. Math. 6(1):19-26, 1980; DOI 10.1016/0771-050X(80)
+        90013-3 verified). Lunaris selects the method through the SciPy
+        delegation surface; SciPy is the actual implementation (Virtanen et al.
+        2020).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: RHS f(t, y), initial state, span, tolerances
+      outputs: adaptively stepped trajectory on the output grid
+      exact_or_approximate: adaptive_error_controlled_approximation
+      preserved_properties:
+        - embedded 4th-order error estimate drives step control
+    lunaris_modifications:
+      - method selection and tolerance policy only
+    assumptions:
+      - non-stiff dynamics
+    limitations:
+      - lower order than DOP853 for tight tolerances
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+    see_also:
+      - LUNARIS-ALG-INT-001
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-009
+    slug: rk23_bogacki_shampine_delegation
+    canonical_name: >-
+      Bogacki-Shampine 3(2) embedded Runge-Kutta method as delegated to SciPy RK23
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - BogackiShampine1989Pair
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: BogackiShampine1989Pair
+      identifier_kind: doi
+      doi: 10.1016/0893-9659(89)90079-7
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.RK23.html
+      edition: null
+      chapter: null
+      section: 3(2) FSAL pair
+      equations: []
+      pages: "321-325"
+      verification_notes: >-
+        SciPy's RK23 is the Bogacki-Shampine 3(2) FSAL pair (Bogacki & Shampine,
+        Applied Mathematics Letters 2(4):321-325, 1989; DOI
+        10.1016/0893-9659(89)90079-7 verified). SciPy is the delegated
+        implementation (Virtanen et al. 2020).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: RHS f(t, y), initial state, span, tolerances
+      outputs: adaptively stepped trajectory on the output grid
+      exact_or_approximate: adaptive_error_controlled_approximation
+      preserved_properties:
+        - embedded 2nd-order error estimate; FSAL reuse
+    lunaris_modifications:
+      - method selection and tolerance policy only
+    assumptions:
+      - non-stiff dynamics; loose tolerances
+    limitations:
+      - low order; inaccurate for tight tolerances
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+    see_also:
+      - LUNARIS-ALG-INT-001
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-010
+    slug: scipy_stiff_solver_delegation
+    canonical_name: >-
+      Implicit stiff ODE solvers (Radau IIA, BDF, LSODA) as delegated to SciPy
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerWanner1996ODEsII
+      - Virtanen2020SciPy
+    primary_reference:
+      type: book
+      citation_key: HairerWanner1996ODEsII
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-05221-7
+      isbn: 978-3-540-60452-5
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
+      edition: Second Revised
+      chapter: "IV-V (stiff Runge-Kutta and multistep methods)"
+      section: Radau IIA and BDF methods
+      equations: []
+      pages: null
+      verification_notes: >-
+        SciPy's Radau (order-5 Radau IIA) and BDF solvers implement methods from
+        Hairer & Wanner, "Solving Ordinary Differential Equations II", 2nd ed.
+        (ISBN 978-3-540-60452-5, DOI 10.1007/978-3-642-05221-7 verified). LSODA
+        wraps the ODEPACK automatic stiff/non-stiff switcher (Hindmarsh; Petzold
+        1983). All are reached through the SciPy delegation surface (Virtanen et
+        al. 2020); these stiff options are available but rarely used for
+        gravity-only propagation.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: RHS f(t, y), initial state, span, tolerances (Jacobian optional)
+      outputs: adaptively stepped trajectory on the output grid
+      exact_or_approximate: implicit_adaptive_approximation
+      preserved_properties:
+        - A-stability suitable for stiff systems
+    lunaris_modifications:
+      - method selection and tolerance policy only
+    assumptions:
+      - problem may be stiff
+    limitations:
+      - LSODA-specific ODEPACK origin (Petzold 1983) recorded in prose only
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+    see_also:
+      - LUNARIS-ALG-INT-001
+    notes: >-
+      Grouped delegation entry; SciPy is the verified delegated implementation
+      and the method origins are cited per solver.
+
   - id: LUNARIS-ALG-SH-001
     slug: fully_normalized_alf_forward_column_recursion
     canonical_name: >-
@@ -460,6 +1008,57 @@ entries:
     see_also:
       - LUNARIS-ALG-SH-002
     notes: ""
+
+  - id: LUNARIS-HEUR-EVT-001
+    slug: in_step_event_root_localization
+    canonical_name: >-
+      In-step event-time localization by bisection with a false-position final
+      correction
+    category: heuristic
+    domain: EVT
+    status: active
+    added: "2026-07-14"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/core/propagation/events.py
+        symbol: _refine_event_time_bisect
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/events.py
+        symbol: _event_crossed
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: >-
+        a single fixed-step interval with a sign change in the event function g,
+        plus a sub-step re-integrator
+      outputs: refined event time and state inside the interval
+      exact_or_approximate: bracketed_root_localization
+      preserved_properties:
+        - keeps the bracket around the sign change
+        - does not perturb the main integrator's state advancement
+    lunaris_modifications:
+      - >-
+        Sub-steps are re-integrated from the interval start so symplectic
+        stepping is unchanged; only the reported event time/state is refined.
+      - fail-closed on non-finite bracket or callback values
+    assumptions:
+      - exactly one sign change of g within the interval
+    limitations:
+      - >-
+        Policy, not a library root-finder: the underlying method is standard
+        bisection with a false-position (regula-falsi) final linear-in-g
+        correction; the in-step re-integration wrapper is Lunaris-specific.
+    validation:
+      - tests/test_events.py
+      - tests/test_event_outcome_contract.py
+    see_also: []
+    notes: >-
+      Terminal-event outcome selection follows SciPy solve_ivp parity semantics
+      (earliest terminal crossing). The root find itself is elementary bisection
+      + false position, hence no external primary source is claimed.
 
   - id: LUNARIS-HEUR-SH-001
     slug: pole_stable_order_truncation
