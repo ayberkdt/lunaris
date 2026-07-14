@@ -8,7 +8,7 @@ offscreen Qt platform.
 from __future__ import annotations
 
 import pytest
-from tests.ui_qt_helpers import QtCore, QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 pytest.importorskip("PySide6.QtWidgets")
 QtTest = pytest.importorskip("PySide6.QtTest")
@@ -146,3 +146,41 @@ def test_toggle_switch_is_keyboard_operable() -> None:
 def _press(app, widget, key) -> None:
     QtTest.QTest.keyClick(widget, key)
     app.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Shortcut inventory (W2.3): ui/core/shortcuts.py is the single source of
+# truth consumed by the menu bar and the window-level QShortcut builders.
+# ---------------------------------------------------------------------------
+
+
+def test_shortcut_inventory_ids_and_keys_are_unique() -> None:
+    from lunaris.ui.core.shortcuts import SHORTCUTS
+
+    ids = [s.action_id for s in SHORTCUTS]
+    assert len(ids) == len(set(ids)), "duplicate action ids in shortcut inventory"
+
+    all_keys = [k for s in SHORTCUTS for k in s.key_sequences]
+    assert len(all_keys) == len(set(all_keys)), (
+        f"conflicting key bindings in shortcut inventory: {sorted(all_keys)}"
+    )
+
+
+def test_shortcut_inventory_keys_parse_as_key_sequences() -> None:
+    _app()
+    from lunaris.ui.core.shortcuts import SHORTCUTS
+
+    for s in SHORTCUTS:
+        assert s.key_sequences, f"{s.action_id} declares no key sequence"
+        assert s.scope in {"menu", "window"}, f"{s.action_id} has unknown scope"
+        for key in s.key_sequences:
+            seq = QtGui.QKeySequence(key)
+            assert not seq.isEmpty(), f"{s.action_id}: {key!r} did not parse"
+
+
+def test_shortcut_helpers_roundtrip() -> None:
+    from lunaris.ui.core import shortcuts
+
+    assert shortcuts.primary_key("analysis.run") == "F5"
+    assert shortcuts.keys("view.toggle_log")[0] == shortcuts.primary_key("view.toggle_log")
+    assert len(shortcuts.keys("nav.page")) == 9
