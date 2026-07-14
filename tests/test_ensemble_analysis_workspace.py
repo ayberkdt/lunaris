@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets, wait_until
 
 from lunaris.analysis.ensemble.plotting import plot_ensemble_report
 from lunaris.analysis.ensemble.statistics import compute_ensemble_report
@@ -36,20 +36,10 @@ def _app() -> QtWidgets.QApplication:
     return app
 
 
-def _wait_until(app: QtWidgets.QApplication, predicate, timeout_s: float = 2.0) -> bool:
-    """Drive the event loop until *predicate* holds or the timeout passes.
-
-    The console drawer now animates open/closed (~200 ms, skipped under
-    reduced motion), so its final geometry is asserted after the slide
-    finishes rather than one processEvents() later.
-    """
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        app.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return bool(predicate())
+# The console drawer animates open/closed (~200 ms, skipped under reduced
+# motion), so final geometry is asserted via the shared wait_until helper
+# (tests/ui_qt_helpers.py) after the slide finishes.
+_wait_until = wait_until
 
 
 def test_log_panel_collapse_reduces_splitter_footprint() -> None:

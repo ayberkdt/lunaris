@@ -22,25 +22,37 @@ Solid foundation already in place:
 - Global QSS covers component states (focus / disabled / tables / scrollbars /
   tooltips / tabs).
 
-Core industrial gaps (re-measured 2026-07-11; the original counts below were a
-generation stale):
+Current state (re-measured 2026-07-14):
 
-- **Inline styling in pages is largely retired.** Per-page `setStyleSheet`
-  counts are now 0–3 (`orbit_config_page` 3, `data_files_page` 2,
-  `result_exports_page` 2, `batch_propagation_page` 1, `force_models_page` 1);
-  the ~50 remaining call sites are shared infrastructure in `ui_commons`. The
-  original Phase 0 driver (36/23/15/12/11 per page) is effectively done; page
-  code routes through `primitives.py` + object-name selectors. Residual work is
-  the shared-infra sites, not the pages.
-- **Keyboard / accessibility is the real gap.** `setTabOrder` is used **0**
-  times across `ui/` — tab order is entirely Qt-default. `setAccessibleName`
-  is broader than first measured (76 call sites across 13 files) but uneven;
-  focus rings on the custom `ToggleSwitch` / `SegmentedControl` are unverified.
-- **States/feedback uneven**, custom widgets (`ToggleSwitch`, `CostIndicator`)
-  are paint-only (no keyboard/focus), and data tables appear on only 2 pages.
-- **Spacing rhythm** is now normalized to the 4px scale and gated by
+- **Inline styling in pages is retired.** Per-page `setStyleSheet` counts are
+  0–3; the remaining call sites are shared infrastructure in `ui_commons`.
+  Page code routes through `primitives.py` + object-name selectors.
+- **Keyboard layer landed.** `FormGrid` wires deterministic tab order
+  automatically on every `add_row` (`apply_tab_order`, `tests/test_ui_keyboard.py`);
+  `ToggleSwitch` paints a state-aware focus ring and `SegmentedControl`
+  segments inherit `QPushButton:focus` from the global QSS; all menu and
+  window-level shortcuts come from one inventory
+  (`ui/core/shortcuts.py`) with a headless uniqueness/conflict test.
+- **Form validation contract live.** `FormGrid`/`LabeledField` expose
+  `set_error` / `focus_first_invalid` (`tests/test_ui_forms.py`); the
+  propagation page pilots the blur-display/instant-clear behaviour and gates
+  F5/preflight on `validate_inputs()`.
+- **Results zone P1a shipped.** `ui/core/results_index.py` (read-only,
+  depth-bounded, symlink-skipping) + the Run History card on Results & Export:
+  run selector, KPI summary with explicit units, provenance (config sha256),
+  figure/report gallery, DEMO badge for demonstration output.
+- **Multi-series plots carry a non-color channel.** `VisualizationTokens`
+  defines paired color+dash cycles consumed together
+  (`ui/core/plot_style.py`); `tools/ui/color_audit.py` gates the invariant
+  under protan/deutan/tritan simulation (also run from
+  `tests/test_plot_series_style.py`). Series roles: truth=solid,
+  surrogate=dashed, comparison=dotted.
+- **Spacing rhythm** is normalized to the 4px scale and gated by
   `tools/ui/spacing_scan.py`; a snapshot-diff harness
   (`tools/ui/snapshot_suite.py`) guards further visual changes.
+- **Data tables**: the shared `DataTable` (sort/copy/CSV/unit headers/numeric
+  alignment) is used on `force_models_page` and `batch_propagation_page`; the
+  artifact browser tree has copy/CSV parity.
 
 ## Verification (applies to every phase)
 
@@ -64,35 +76,40 @@ Outcome: page-level inline `setStyleSheet` is down to 0–3 per page (from
 36/23/15/12/11); pages route through `primitives.py` + object-names;
 `scan_hardcoded_colors` = 0. Remaining inline sites are shared `ui_commons`
 infrastructure, tracked separately. Spacing is normalized to the 4px scale and
-gated. The next-highest leverage has shifted to **Phase 1 (keyboard)**, where
-`setTabOrder` coverage is still zero.
+gated.
 
-## Phase 1 — Keyboard & interaction (daily professional use)
+## Phase 1 — Keyboard & interaction (DONE 2026-07-14)
 
-3. Global shortcuts + command surface: Run/Stop, page switching (Ctrl+1..n),
-   focus console / search, save/open (today only a few in `ui/app.py`).
-4. Full keyboard navigation: `setTabOrder` across every page, visible focus
-   ring, `setAccessibleName/Description` on every interactive control.
-5. Make custom widgets keyboard-accessible: `ToggleSwitch` / `SegmentedControl`
-   handle Space/Enter, draw a focus ring, verified on HiDPI (currently
-   paint-only, no focus/keyboard).
+3. ~~Global shortcuts + command surface~~ — single inventory in
+   `ui/core/shortcuts.py` (menu labels + key sequences consumed from it;
+   conflicts caught by test).
+4. ~~Full keyboard navigation~~ — `FormGrid.apply_tab_order()` re-wires the
+   chain on every added row; keyboard round-trip tests in
+   `tests/test_ui_keyboard.py`. `setAccessibleName` coverage remains uneven on
+   older pages (open follow-up).
+5. ~~Custom-widget keyboard access~~ — `ToggleSwitch` (QAbstractButton: Space
+   works, state-aware focus ring painted) and `SegmentedControl` (radio-group
+   arrow navigation, QSS focus) verified by tests.
 
-## Phase 2 — State & feedback robustness
+## Phase 2 — State & feedback robustness (PARTIAL)
 
-6. Standardize loading / busy / empty / error / validation states through
-   `InlineNotice` / `EmptyState`; every long-running op is cancelable; the UI
-   thread must never freeze (threading audit).
+6. Validation states standardized at the primitive level
+   (`set_error`/`focus_first_invalid`, blur-display contract, propagation-page
+   pilot + preflight gate). Remaining: roll the pilot out to
+   `force_models_page` and `batch_propagation_page`; a fresh threading audit
+   found long operations (propagation, frozen search, batch) already run in
+   QProcess/workers with cancellation.
 7. Keep scientific honesty always visible: requested-vs-actual backend, units,
    reference frame, and a clear demo-vs-real data distinction in the status
-   strip.
+   strip. The Run History card now badges DEMO output and shows provenance.
 
-## Phase 3 — Data presentation (mission-analysis core)
+## Phase 3 — Data presentation (mission-analysis core) (PARTIAL)
 
-8. Strong data tables: sort / filter / copy / CSV export, monospace numeric
-   alignment, unit-bearing headers — for results / ephemeris / event logs
-   (tables exist on only 2 pages today).
+8. ~~Strong data tables~~ — shared `DataTable` primitive (sort / copy / CSV /
+   unit headers / right-aligned monospace numerics) used by the force-model
+   preview and the batch backend-comparison table.
 9. Units, frames, and provenance mandatory on every physical value (via
-   `UnitField`).
+   `UnitField`); the Results-zone KPI path formats units through one helper.
 
 ## Phase 4 — Density & layout discipline
 
@@ -108,6 +125,8 @@ gated. The next-highest leverage has shifted to **Phase 1 (keyboard)**, where
 
 ---
 
-Recommended start: Phase 0 pilot on `force_models_page` — migrate to the
-component system and prove visual parity with before/after captures; if the
-pilot is clean, apply the same pattern to the remaining pages.
+Next highest-leverage work (2026-07-14): finish the Phase 2 form-contract
+rollout (`force_models_page`, then `batch_propagation_page` — largest page,
+migrate last with snapshot cover), close the `setAccessibleName` gaps on older
+pages, then Phase 4 (density/responsive audit) and Phase 5 (discoverability,
+closing accessibility audit).

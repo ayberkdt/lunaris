@@ -841,7 +841,9 @@ class LiveLossPlot(QWidget):
             _c_train = THEME["accent"]
             _c_val = THEME["secondary"]
             self._pen_train = pg.mkPen(color=_c_train, width=2.4)
-            self._pen_val = pg.mkPen(color=_c_val, width=2.4)
+            # Validation is dashed so the two curves stay separable without
+            # color (series color+dash contract, VisualizationTokens W4).
+            self._pen_val = pg.mkPen(color=_c_val, width=2.4, style=Qt.DashLine)
             self._pen_train_shadow = pg.mkPen(color=QColor(with_alpha(_c_train, 0.22)), width=7)
             self._pen_val_shadow = pg.mkPen(color=QColor(with_alpha(_c_val, 0.22)), width=7)
 

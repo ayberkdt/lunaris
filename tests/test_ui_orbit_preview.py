@@ -154,3 +154,27 @@ def test_camera_is_not_reset_when_parameters_change() -> None:
         assert before == after
     finally:
         viz.deleteLater()
+
+
+def test_disk_meshdata_faces_index_only_existing_vertices() -> None:
+    """Regression: the plane-disk fan indexed vertex ``n+1`` (out of bounds)
+    and built degenerate ``[0, k, k]`` triangles, crashing GLMeshItem.paint
+    with ``IndexError: index 97 is out of bounds for axis 0 with size 97``."""
+    from lunaris.ui.pages.orbit_config_page import HAS_OPENGL
+
+    if not HAS_OPENGL:
+        pytest.skip("pyqtgraph.opengl not available")
+
+    md = OrbitViz3D._make_disk_meshdata(n=96)
+    verts = md.vertexes()
+    faces = md.faces()
+    assert verts.shape == (97, 3)
+    assert faces.shape == (96, 3)
+    assert faces.min() >= 0
+    assert faces.max() < verts.shape[0]
+    # No degenerate triangles: all three corners distinct in every face.
+    assert (faces[:, 0] != faces[:, 1]).all()
+    assert (faces[:, 1] != faces[:, 2]).all()
+    assert (faces[:, 0] != faces[:, 2]).all()
+    # Fan closes: last face wraps back to the first ring vertex.
+    assert faces[-1].tolist() == [0, 96, 1]

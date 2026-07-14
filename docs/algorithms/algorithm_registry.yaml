@@ -1,0 +1,2786 @@
+# Lunaris algorithm registry
+# ===========================
+# Machine-readable source of truth for the algorithm-traceability system.
+# Maps stable Lunaris algorithm identifiers (Layer 1) to verified bibliographic
+# citation keys (Layer 2, defined in references/references.bib) and canonical
+# method names (Layer 3), plus the implementing source symbols, validating
+# tests, assumptions and limitations.
+#
+# WORKFLOW after every edit:
+#   python tools/algorithm_registry.py validate
+#   python tools/algorithm_registry.py generate
+#   git add docs/algorithms/algorithm_registry.yaml references/references.bib \
+#           docs/ALGORITHM_CATALOG.md
+#
+# HARD RULES (see docs/ALGORITHM_TRACEABILITY_POLICY.md):
+#   * IDs are permanent. Never renumber, reuse, or delete an id; retire it with
+#     status: retired instead.
+#   * Never claim verification_status: verified_primary_source without having
+#     confirmed the defining section/equation in the primary source.
+#   * Non-HEUR entries require at least one citation key and a primary_reference.
+
+registry_version: 1
+generated_catalog: docs/ALGORITHM_CATALOG.md
+unreferenced_bib_allowlist: []
+
+entries:
+  - id: LUNARIS-ALG-EPH-001
+    slug: spice_ephemeris_orientation_tables
+    canonical_name: >-
+      SPICE-built fixed-grid ephemeris and lunar-orientation tables
+    category: data_product
+    domain: EPH
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Acton1996SpiceNaif
+    primary_reference:
+      type: article
+      citation_key: Acton1996SpiceNaif
+      identifier_kind: doi
+      doi: 10.1016/0032-0633(95)00107-7
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://naif.jpl.nasa.gov/naif/
+      edition: null
+      chapter: null
+      section: SPICE ancillary information system
+      equations: []
+      pages: "65-70"
+      verification_notes: >-
+        C. H. Acton, "Ancillary data services of NASA's Navigation and Ancillary
+        Information Facility", Planetary and Space Science 44(1):65-70, 1996.
+        DOI 10.1016/0032-0633(95)00107-7 verified via ScienceDirect/ADS. Lunaris
+        samples SPICE (via spiceypy) onto uniform-grid tables of third-body
+        positions and lunar-orientation quaternions; the underlying ephemeris
+        data product is DE440 (see LUNARIS-DATA-EPH-001).
+    symbols:
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: build_tables
+        role: cpu_implementation
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: build_spice_tables
+        role: delegation_wrapper
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: EphemerisManager
+        role: api_entry_point
+    mathematical_contract:
+      inputs: duration, output step, and loaded SPICE kernels
+      outputs: >-
+        uniform-grid tables of body positions (m) and unit orientation
+        quaternions, plus GM lookups
+      exact_or_approximate: sampled_from_reference_ephemeris
+      preserved_properties:
+        - values match SPICE at grid nodes
+        - orientation quaternions renormalized to unit length
+    lunaris_modifications:
+      - fixed-grid resampling for fast in-loop interpolation
+      - fail-closed handling when kernels are missing
+    assumptions:
+      - required SPICE kernels (incl. DE440) are loaded
+    limitations:
+      - off-node values require interpolation (see LUNARIS-ALG-INTP-001, LUNARIS-ALG-FRM-001)
+    validation:
+      - tests/test_ephemeris.py
+      - tests/test_main_ephemeris_policy.py
+    see_also:
+      - LUNARIS-DATA-EPH-001
+      - LUNARIS-ALG-INTP-001
+      - LUNARIS-ALG-FRM-001
+    notes: ""
+
+  - id: LUNARIS-ALG-FRM-001
+    slug: slerp_unit_quaternion_interpolation
+    canonical_name: >-
+      Spherical linear interpolation of unit quaternions (SLERP)
+    category: interpolation
+    domain: FRM
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Shoemake1985QuaternionCurves
+    primary_reference:
+      type: article
+      citation_key: Shoemake1985QuaternionCurves
+      identifier_kind: doi
+      doi: 10.1145/325165.325242
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Spherical linear interpolation (slerp)
+      equations: []
+      pages: "245-254"
+      verification_notes: >-
+        K. Shoemake, "Animating rotation with quaternion curves", ACM SIGGRAPH
+        Computer Graphics 19(3):245-254, 1985. DOI 10.1145/325165.325242 verified
+        via the ACM Digital Library (note: the DOI stem is 325165, not 325334).
+        The implemented weights s0=sin((1-t)theta)/sin(theta),
+        s1=sin(t theta)/sin(theta) are the SLERP formula, with shortest-arc sign
+        handling and a lerp+normalize fallback for near-parallel quaternions.
+    symbols:
+      - path: src/lunaris/common/math_utils.py
+        symbol: _quat_slerp
+        role: numba_implementation
+      - path: src/lunaris/common/math_utils.py
+        symbol: interp_quat_slerp
+        role: cpu_implementation
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: interp_quat_safe
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: two unit quaternions and a parameter t in [0,1]
+      outputs: interpolated unit quaternion
+      exact_or_approximate: exact_constant_angular_velocity
+      preserved_properties:
+        - constant angular velocity along the shortest arc
+        - unit norm of the result
+    lunaris_modifications:
+      - shortest-arc sign flip when the dot product is negative
+      - lerp+normalize fallback below a near-parallel threshold
+    assumptions:
+      - both inputs are unit quaternions
+    limitations:
+      - not commutative; endpoints must be ordered
+    validation:
+      - tests/test_math_utils.py
+      - tests/test_numba_frame_slerp.py
+    see_also:
+      - LUNARIS-ALG-FRM-002
+    notes: ""
+
+  - id: LUNARIS-ALG-FRM-002
+    slug: hamilton_scalar_first_quaternion_rotation
+    canonical_name: >-
+      Scalar-first (Hamilton) unit-quaternion active vector rotation
+    category: frame_time_convention
+    domain: FRM
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Kuipers1999Quaternions
+    primary_reference:
+      type: book
+      citation_key: Kuipers1999Quaternions
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-0-691-10298-6
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Quaternion rotation operator
+      equations: []
+      pages: null
+      verification_notes: >-
+        J. B. Kuipers, "Quaternions and Rotation Sequences", Princeton University
+        Press, 1999, ISBN 978-0-691-10298-6 verified. The kernel uses the
+        scalar-first (Hamilton) convention and the Rodrigues form
+        v' = v + 2 q0 (q_vec x v) + 2 q_vec x (q_vec x v), equivalent to
+        q * [0,v] * q_conj. This fixes Lunaris's storage/handedness convention.
+    symbols:
+      - path: src/lunaris/common/math_utils.py
+        symbol: quat_rotate_vec
+        role: numba_implementation
+      - path: src/lunaris/common/math_utils.py
+        symbol: quat_rotate_np
+        role: api_entry_point
+      - path: src/lunaris/common/math_utils.py
+        symbol: quat_conj
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: unit quaternion (scalar-first) and a 3-vector
+      outputs: the vector rotated into the target frame
+      exact_or_approximate: exact
+      preserved_properties:
+        - length-preserving (orthogonal) rotation
+        - conjugate equals inverse for unit quaternions
+    lunaris_modifications:
+      - Rodrigues-form evaluation avoiding explicit quaternion products
+    assumptions:
+      - scalar-first storage (q0, q1, q2, q3) and unit norm
+    limitations:
+      - Hamilton (not JPL) convention; callers must supply matching quaternions
+    validation:
+      - tests/test_math_utils.py
+      - tests/test_torch_frame.py
+    see_also:
+      - LUNARIS-ALG-FRM-001
+      - LUNARIS-STD-FRM-001
+    notes: >-
+      Convention is scalar-first Hamilton with active rotation; SPICE-provided
+      lunar-orientation quaternions are consumed under this convention.
+
+  - id: LUNARIS-ALG-INT-001
+    slug: dop853_adaptive_runge_kutta_delegation
+    canonical_name: >-
+      Dormand-Prince 8(5,3) explicit Runge-Kutta method as delegated to SciPy DOP853
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Virtanen2020SciPy
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: article
+      citation_key: Virtanen2020SciPy
+      identifier_kind: doi
+      doi: 10.1038/s41592-019-0686-2
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.DOP853.html
+      edition: null
+      chapter: null
+      section: "scipy.integrate.solve_ivp method='DOP853'"
+      equations: []
+      pages: "261-272"
+      verification_notes: >-
+        Lunaris delegates adaptive integration to scipy.integrate.solve_ivp; the
+        DOP853 method is SciPy's Python port of Hairer's DOP853 (explicit
+        Runge-Kutta of order 8(5,3) with a 5th/3rd-order error estimator and
+        7th-order dense output). SciPy paper DOI 10.1038/s41592-019-0686-2
+        verified (Nature Methods 17(3):261-272, 2020); the official SciPy DOP853
+        page confirms the order-8(5,3) Dormand-Prince identity and cites Hairer,
+        Norsett & Wanner (1993). Method-origin book ISBN 978-3-540-56670-0
+        verified; exact Hairer section (II) pending physical-copy confirmation.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/core/propagation/scipy_runner.py
+        symbol: run_scipy_propagation
+        role: cpu_implementation
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: >-
+        Right-hand-side callable f(t, y), initial state, integration span and
+        absolute/relative tolerances (SI units).
+      outputs: State trajectory sampled on the requested output grid.
+      exact_or_approximate: adaptive_error_controlled_approximation
+      preserved_properties:
+        - embedded 5(3) error estimate drives adaptive step control
+        - 7th-order dense output for off-node sampling
+    lunaris_modifications:
+      - >-
+        Lunaris only selects and configures the SciPy method (token resolution,
+        tolerance policy, chunked output grid); the stepper itself is unmodified.
+    assumptions:
+      - non-stiff dynamics over each integration chunk
+      - right-hand side is sufficiently smooth for high-order accuracy
+    limitations:
+      - not symplectic; long-horizon energy behaviour is not structurally bounded
+      - stiff regimes should use an implicit method (Radau/BDF) instead
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+      - tests/test_solver_tolerance_defaults.py
+    see_also: []
+    notes: >-
+      Additional SciPy methods (RK45, RK23, Radau, BDF, LSODA) share this
+      delegation surface and will receive their own ids during Phase 2.
+
+  - id: LUNARIS-ALG-INT-002
+    slug: classical_rk4_fixed_step
+    canonical_name: Classical fourth-order Runge-Kutta method (RK4)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: book
+      citation_key: HairerNorsettWanner1993ODEsI
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-56670-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second Revised
+      chapter: "II (Runge-Kutta and Extrapolation Methods)"
+      section: "II.1 (the first Runge-Kutta methods)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The implemented tableau (k1..k4 with the standard 1/2, 1/2, 1 nodes and
+        the 1/6,1/3,1/3,1/6 weights) is the classical fourth-order Runge-Kutta
+        method presented in Hairer, Norsett & Wanner (1993), Chapter II. Book
+        ISBN 978-3-540-56670-0 verified via Springer; exact page pending
+        physical copy but the tableau identity is unambiguous.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _rk4_step_full
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: RHS f(t, y), state y, step h
+      outputs: state advanced by one step of size h
+      exact_or_approximate: fourth_order_accurate
+      preserved_properties:
+        - 4th-order local/global accuracy for smooth RHS
+    lunaris_modifications: []
+    assumptions:
+      - first-order ODE form y' = f(t, y)
+    limitations:
+      - not symplectic; fixed step has no error control
+    validation:
+      - tests/test_integrators.py
+      - tests/test_batched_fixed_step.py
+    see_also: []
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-003
+    slug: classical_rkn4_fixed_step
+    canonical_name: Classical fourth-order Runge-Kutta-Nystrom method (RKN4)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: identifier_verified_content_pending
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: book
+      citation_key: HairerNorsettWanner1993ODEsI
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-56670-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second Revised
+      chapter: "II (Runge-Kutta and Extrapolation Methods)"
+      section: Runge-Kutta-Nystrom methods for second-order ODEs
+      equations: []
+      pages: null
+      verification_notes: >-
+        Runge-Kutta-Nystrom methods for y'' = f(t, y) are treated in Hairer,
+        Norsett & Wanner (1993), Chapter II. The implemented step uses r_mid with
+        0.125 h^2 k1, r_end with 0.5 h^2 k2, position update r + h v +
+        (h^2/6)(k1+2 k2) and velocity update v + (h/6)(k1+4 k2+k4), reusing k2=k3.
+        Book ISBN verified; PENDING confirmation that these coefficients match
+        the specific classical RKN4 tableau in the cited section (physical copy
+        needed) rather than a different 4th-order RKN pair.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _rkn4_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed position/velocity state, step h
+      outputs: position/velocity advanced by one step
+      exact_or_approximate: fourth_order_accurate
+      preserved_properties:
+        - direct second-order integration without reduction overhead
+    lunaris_modifications:
+      - single acceleration evaluation reused for k2 and k3
+    assumptions:
+      - dynamics expressible as y'' = a(t, y) (force independent of velocity)
+    limitations:
+      - inapplicable to velocity-dependent forces (e.g. relativistic drag terms)
+    validation:
+      - tests/test_integrators.py
+      - tests/test_batched_fixed_step.py
+    see_also: []
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-004
+    slug: gragg_bulirsch_stoer_extrapolation
+    canonical_name: >-
+      Gragg-Bulirsch-Stoer extrapolation with the modified midpoint rule
+      (exposed as the RK8 token)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerNorsettWanner1993ODEsI
+    primary_reference:
+      type: book
+      citation_key: HairerNorsettWanner1993ODEsI
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-56670-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second Revised
+      chapter: "II (Runge-Kutta and Extrapolation Methods)"
+      section: "II.9 (extrapolation methods; Gragg modified midpoint)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The code applies Gragg's symmetric modified-midpoint rule over the
+        sub-step sequence (2,4,6,8) and combines the results with the polynomial
+        (Bulirsch-Stoer / Deuflhard) extrapolation recurrence
+        T[i] += (T[i]-T[i-1])/((n_i/n_{i-k})^2 - 1). This is the
+        Gragg-Bulirsch-Stoer extrapolation method (Hairer, Norsett & Wanner 1993,
+        Chapter II, extrapolation methods), NOT an 8th-order Runge-Kutta tableau.
+        Book ISBN verified.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _rk8_step_full
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/rk.py
+        symbol: _modified_midpoint
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: RHS f(t, y), state y, macro-step h
+      outputs: high-order extrapolated state after one macro-step
+      exact_or_approximate: high_order_extrapolation
+      preserved_properties:
+        - even-order error expansion of the symmetric midpoint rule
+        - high effective order via extrapolation to zero sub-step
+    lunaris_modifications:
+      - fixed (2,4,6,8) sub-step sequence rather than an adaptive tableau
+    assumptions:
+      - smooth RHS (extrapolation assumes an asymptotic error expansion)
+    limitations:
+      - >-
+        NAMING: the accepted token is RK8, but this is a Gragg-Bulirsch-Stoer
+        extrapolation method, not a Runge-Kutta order-8 formula. See the
+        traceability findings note.
+    validation:
+      - tests/test_integrators.py
+      - tests/test_batched_fixed_step.py
+    see_also: []
+    notes: >-
+      Naming finding: the RK8 alias is misleading; the implemented algorithm is
+      Gragg-Bulirsch-Stoer extrapolation. The behaviour is correct and this entry
+      does not change it; only the documented identity is corrected.
+
+  - id: LUNARIS-ALG-INT-005
+    slug: velocity_verlet_stormer_verlet
+    canonical_name: Velocity Verlet (Stormer-Verlet) symplectic method
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerLubichWanner2006Geometric
+    primary_reference:
+      type: book
+      citation_key: HairerLubichWanner2006Geometric
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-3-540-30663-4
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Second
+      chapter: "I (Examples and Numerical Experiments)"
+      section: "The Stormer-Verlet method"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The half-kick / drift / half-kick sequence (v_half = v + 0.5 h a0;
+        r1 = r + h v_half; v1 = v_half + 0.5 h a1) is the velocity form of the
+        Stormer-Verlet method treated in Hairer, Lubich & Wanner, "Geometric
+        Numerical Integration", 2nd ed. ISBN 978-3-540-30663-4 verified via
+        Springer/Amazon. Historical origins: Stormer, Verlet (1967, position
+        form) and Swope et al. (1982, velocity form).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _vv_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed state, step h
+      outputs: symplectically advanced position/velocity
+      exact_or_approximate: second_order_symplectic
+      preserved_properties:
+        - symplectic and time-reversible
+        - bounded energy error for Hamiltonian systems
+    lunaris_modifications: []
+    assumptions:
+      - separable Hamiltonian with velocity-independent force
+    limitations:
+      - only second order; use a composition method for higher order
+    validation:
+      - tests/test_integrators.py
+      - tests/test_symplectic_strict_guard.py
+    see_also:
+      - LUNARIS-ALG-INT-006
+      - LUNARIS-ALG-INT-007
+    notes: >-
+      Accepted aliases VV, VERLET, STORMER_VERLET and LEAPFROG all resolve to
+      this method.
+
+  - id: LUNARIS-ALG-INT-006
+    slug: recursive_triple_jump_symplectic_composition
+    canonical_name: >-
+      Recursive triple-jump symmetric composition of velocity Verlet (Y4/Y6/Y8)
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Yoshida1990Symplectic
+    primary_reference:
+      type: article
+      citation_key: Yoshida1990Symplectic
+      identifier_kind: doi
+      doi: 10.1016/0375-9601(90)90092-3
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Triple-jump composition construction
+      equations: []
+      pages: "262-268"
+      verification_notes: >-
+        H. Yoshida, "Construction of higher order symplectic integrators",
+        Physics Letters A 150(5-7):262-268, 1990. DOI 10.1016/0375-9601(90)
+        90092-3 verified via ScienceDirect/ADS. The code composes velocity-Verlet
+        sub-steps with the triple-jump weights x1 = 1/(2 - 2^{1/(2k+1)}),
+        x0 = -2^{1/(2k+1)}/(2 - 2^{1/(2k+1)}). Y4 (k=1) reproduces the
+        Forest-Ruth / Yoshida 4th-order integrator. NAMING: Y6/Y8 use this
+        recursive triple-jump construction, NOT Yoshida's optimized minimal-stage
+        6th/8th-order coefficient sets (which the same paper obtains by solving
+        the order conditions numerically).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _composition_weights
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _composed_step
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _y6_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed state, step h, composition order
+      outputs: symplectically advanced state of order 2k
+      exact_or_approximate: order_2k_symplectic
+      preserved_properties:
+        - symplectic and time-reversible at every composition level
+    lunaris_modifications:
+      - recursive triple-jump rather than optimized minimal-stage coefficients
+    assumptions:
+      - separable Hamiltonian with velocity-independent force
+    limitations:
+      - >-
+        Y6/Y8 have larger error constants than Yoshida's optimized solution sets
+        because the recursive triple jump uses more sub-steps.
+    validation:
+      - tests/test_integrators.py
+      - tests/test_symplectic_strict_guard.py
+    see_also:
+      - LUNARIS-ALG-INT-005
+    notes: >-
+      Naming clarification: only Y4 is literally Yoshida's coefficient set; Y6/Y8
+      are the recursive triple-jump (Suzuki fractal) construction. The methods
+      are valid symplectic integrators of the stated order.
+
+  - id: LUNARIS-ALG-INT-007
+    slug: pefrl_position_extended_forest_ruth
+    canonical_name: >-
+      Position-Extended Forest-Ruth-Like (PEFRL) fourth-order symplectic
+      integrator
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Omelyan2002PEFRL
+    primary_reference:
+      type: article
+      citation_key: Omelyan2002PEFRL
+      identifier_kind: doi
+      doi: 10.1016/S0010-4655(02)00451-4
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: PEFRL coefficients
+      equations: []
+      pages: "188-202"
+      verification_notes: >-
+        I. P. Omelyan, I. M. Mryglod & R. Folk, "Optimized Forest-Ruth- and
+        Suzuki-like algorithms for integration of motion in many-body systems",
+        Computer Physics Communications 146(2):188-202, 2002. DOI
+        10.1016/S0010-4655(02)00451-4 verified. The implemented constants
+        xi=0.1786178958448091, lambda=-0.2123418310626054,
+        chi=-0.06626458266981849 are exactly the published PEFRL coefficients.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: _pefrl_step
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: acceleration a(t, y), packed state, step h
+      outputs: symplectically advanced state
+      exact_or_approximate: fourth_order_symplectic
+      preserved_properties:
+        - symplectic with a markedly smaller error constant than Yoshida4
+        - drift fractions telescope to 1 and velocity kicks sum to 1
+    lunaris_modifications: []
+    assumptions:
+      - separable Hamiltonian with velocity-independent force
+    limitations:
+      - four force evaluations per step
+    validation:
+      - tests/test_integrators.py
+      - tests/test_symplectic_strict_guard.py
+    see_also:
+      - LUNARIS-ALG-INT-005
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-008
+    slug: rk45_dormand_prince_delegation
+    canonical_name: >-
+      Dormand-Prince 5(4) embedded Runge-Kutta method as delegated to SciPy RK45
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - DormandPrince1980Embedded
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: DormandPrince1980Embedded
+      identifier_kind: doi
+      doi: 10.1016/0771-050X(80)90013-3
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.RK45.html
+      edition: null
+      chapter: null
+      section: RK5(4) embedded pair
+      equations: []
+      pages: "19-26"
+      verification_notes: >-
+        SciPy's RK45 is the Dormand-Prince 5(4) embedded pair (Dormand & Prince,
+        J. Comput. Appl. Math. 6(1):19-26, 1980; DOI 10.1016/0771-050X(80)
+        90013-3 verified). Lunaris selects the method through the SciPy
+        delegation surface; SciPy is the actual implementation (Virtanen et al.
+        2020).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: RHS f(t, y), initial state, span, tolerances
+      outputs: adaptively stepped trajectory on the output grid
+      exact_or_approximate: adaptive_error_controlled_approximation
+      preserved_properties:
+        - embedded 4th-order error estimate drives step control
+    lunaris_modifications:
+      - method selection and tolerance policy only
+    assumptions:
+      - non-stiff dynamics
+    limitations:
+      - lower order than DOP853 for tight tolerances
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+    see_also:
+      - LUNARIS-ALG-INT-001
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-009
+    slug: rk23_bogacki_shampine_delegation
+    canonical_name: >-
+      Bogacki-Shampine 3(2) embedded Runge-Kutta method as delegated to SciPy RK23
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - BogackiShampine1989Pair
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: BogackiShampine1989Pair
+      identifier_kind: doi
+      doi: 10.1016/0893-9659(89)90079-7
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.RK23.html
+      edition: null
+      chapter: null
+      section: 3(2) FSAL pair
+      equations: []
+      pages: "321-325"
+      verification_notes: >-
+        SciPy's RK23 is the Bogacki-Shampine 3(2) FSAL pair (Bogacki & Shampine,
+        Applied Mathematics Letters 2(4):321-325, 1989; DOI
+        10.1016/0893-9659(89)90079-7 verified). SciPy is the delegated
+        implementation (Virtanen et al. 2020).
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: RHS f(t, y), initial state, span, tolerances
+      outputs: adaptively stepped trajectory on the output grid
+      exact_or_approximate: adaptive_error_controlled_approximation
+      preserved_properties:
+        - embedded 2nd-order error estimate; FSAL reuse
+    lunaris_modifications:
+      - method selection and tolerance policy only
+    assumptions:
+      - non-stiff dynamics; loose tolerances
+    limitations:
+      - low order; inaccurate for tight tolerances
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+    see_also:
+      - LUNARIS-ALG-INT-001
+    notes: ""
+
+  - id: LUNARIS-ALG-INT-010
+    slug: scipy_stiff_solver_delegation
+    canonical_name: >-
+      Implicit stiff ODE solvers (Radau IIA, BDF, LSODA) as delegated to SciPy
+    category: integrator
+    domain: INT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HairerWanner1996ODEsII
+      - Virtanen2020SciPy
+    primary_reference:
+      type: book
+      citation_key: HairerWanner1996ODEsII
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-05221-7
+      isbn: 978-3-540-60452-5
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
+      edition: Second Revised
+      chapter: "IV-V (stiff Runge-Kutta and multistep methods)"
+      section: Radau IIA and BDF methods
+      equations: []
+      pages: null
+      verification_notes: >-
+        SciPy's Radau (order-5 Radau IIA) and BDF solvers implement methods from
+        Hairer & Wanner, "Solving Ordinary Differential Equations II", 2nd ed.
+        (ISBN 978-3-540-60452-5, DOI 10.1007/978-3-642-05221-7 verified). LSODA
+        wraps the ODEPACK automatic stiff/non-stiff switcher (Hindmarsh; Petzold
+        1983). All are reached through the SciPy delegation surface (Virtanen et
+        al. 2020); these stiff options are available but rarely used for
+        gravity-only propagation.
+    symbols:
+      - path: src/lunaris/core/propagation/integrators/scipy.py
+        symbol: _resolve_scipy_method
+        role: delegation_wrapper
+      - path: src/lunaris/common/integrator_methods.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: RHS f(t, y), initial state, span, tolerances (Jacobian optional)
+      outputs: adaptively stepped trajectory on the output grid
+      exact_or_approximate: implicit_adaptive_approximation
+      preserved_properties:
+        - A-stability suitable for stiff systems
+    lunaris_modifications:
+      - method selection and tolerance policy only
+    assumptions:
+      - problem may be stiff
+    limitations:
+      - LSODA-specific ODEPACK origin (Petzold 1983) recorded in prose only
+    validation:
+      - tests/test_integrators.py
+      - tests/test_solver_policy_and_telemetry.py
+    see_also:
+      - LUNARIS-ALG-INT-001
+    notes: >-
+      Grouped delegation entry; SciPy is the verified delegated implementation
+      and the method origins are cited per solver.
+
+  - id: LUNARIS-ALG-INTP-001
+    slug: clamped_catmull_rom_vec3_interpolation
+    canonical_name: Clamped uniform Catmull-Rom cubic interpolation of vector time series
+    category: interpolation
+    domain: INTP
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - CatmullRom1974Splines
+    primary_reference:
+      type: incollection
+      citation_key: CatmullRom1974Splines
+      identifier_kind: doi
+      doi: 10.1016/B978-0-12-079050-0.50020-5
+      isbn: 978-0-12-079050-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: A class of local interpolating splines
+      equations: []
+      pages: "317-326"
+      verification_notes: >-
+        E. Catmull and R. Rom, "A class of local interpolating splines", in
+        Computer Aided Geometric Design (Barnhill & Riesenfeld, eds.), Academic
+        Press, 1974, pp. 317-326. ISBN 978-0-12-079050-0 and chapter DOI
+        10.1016/B978-0-12-079050-0.50020-5 verified. The implemented basis
+        weights 0.5*[(-f+2f^2-f^3),(2-5f^2+3f^3),(f+4f^2-3f^3),(-f^2+f^3)] are the
+        standard uniform Catmull-Rom cubic; control-point indices are clamped at
+        the table ends.
+    symbols:
+      - path: src/lunaris/common/math_utils.py
+        symbol: interp_vec3_catmull
+        role: cpu_implementation
+      - path: src/lunaris/core/torch_third_body.py
+        symbol: interp_vec3_catmull_torch
+        role: torch_implementation
+    mathematical_contract:
+      inputs: time, uniform step dt, and an (N,3) table
+      outputs: C1-continuous interpolated 3-vector
+      exact_or_approximate: exact_catmull_rom
+      preserved_properties:
+        - passes through the control points (interpolating)
+        - C1 continuity of the tangent
+    lunaris_modifications:
+      - endpoint index clamping (clamped Catmull-Rom variant)
+      - endpoint/degenerate-table fallbacks
+    assumptions:
+      - uniformly spaced samples in time
+    limitations:
+      - uniform parameterization (not the centripetal variant)
+    validation:
+      - tests/test_math_utils.py
+      - tests/test_ephemeris_interpolation.py
+    see_also:
+      - LUNARIS-ALG-EPH-001
+    notes: >-
+      GPU/CPU parity: the torch ephemeris path was upgraded from linear to
+      Catmull-Rom to match the CPU kernel.
+
+  - id: LUNARIS-ALG-ML-001
+    slug: siren_sinusoidal_representation_network
+    canonical_name: Sinusoidal Representation Network (SIREN)
+    category: neural_architecture
+    domain: ML
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Sitzmann2020SIREN
+    primary_reference:
+      type: inproceedings
+      citation_key: Sitzmann2020SIREN
+      identifier_kind: doi
+      doi: 10.5555/3495724.3496350
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://arxiv.org/abs/2006.09661
+      edition: null
+      chapter: null
+      section: SIREN architecture and initialization scheme
+      equations: []
+      pages: null
+      verification_notes: >-
+        V. Sitzmann, J. N. P. Martel, A. W. Bergman, D. B. Lindell & G.
+        Wetzstein, "Implicit Neural Representations with Periodic Activation
+        Functions", NeurIPS 2020 (arXiv:2006.09661; ACM DOI 10.5555/3495724.
+        3496350 verified). The sin(w0 x) activation and the paper's principled
+        init (first layer uniform(-1/n_in, 1/n_in); hidden uniform(
+        -sqrt(6/n_in)/w0, +sqrt(6/n_in)/w0)) match the reference exactly.
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: Sine
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: siren_init_hidden_
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: SirenMLP
+        role: torch_implementation
+      - path: src/lunaris/surrogate/runtime/networks.py
+        symbol: SirenMLP
+        role: reference_implementation
+    mathematical_contract:
+      inputs: coordinate input tensor (scaled spacecraft position)
+      outputs: implicit-field output (gravity potential or acceleration)
+      exact_or_approximate: exact_architecture
+      preserved_properties:
+        - periodic activations with the paper's variance-preserving init
+    lunaris_modifications:
+      - applied to lunar gravity-field regression (default w0 = 30)
+    assumptions:
+      - inputs scaled consistently with the trained scalers
+    limitations:
+      - init scheme assumes the sine activation and matching w0
+    validation:
+      - tests/test_surrogate_architecture_upgrades.py
+      - tests/test_surrogate_gravity.py
+    see_also:
+      - LUNARIS-ALG-ML-002
+      - LUNARIS-HEUR-ML-001
+    notes: ""
+
+  - id: LUNARIS-ALG-ML-002
+    slug: random_fourier_feature_encoding
+    canonical_name: Random Fourier feature input encoding
+    category: neural_architecture
+    domain: ML
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Tancik2020FourierFeatures
+    primary_reference:
+      type: inproceedings
+      citation_key: Tancik2020FourierFeatures
+      identifier_kind: official_url
+      doi: null
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://arxiv.org/abs/2006.10739
+      edition: null
+      chapter: null
+      section: Gaussian random Fourier feature mapping
+      equations: []
+      pages: null
+      verification_notes: >-
+        M. Tancik et al., "Fourier Features Let Networks Learn High Frequency
+        Functions in Low Dimensional Domains", NeurIPS 2020 (arXiv:2006.10739,
+        stable arXiv URL verified; NeurIPS proceedings hash 55053683...). The
+        embedding maps x -> [cos(2 pi B x), sin(2 pi B x)] with B drawn from a
+        Gaussian of scale sigma, the Gaussian RFF mapping of the paper.
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: FourierInputEmbedding
+        role: torch_implementation
+      - path: src/lunaris/surrogate/runtime/networks.py
+        symbol: FourierInputEmbedding
+        role: reference_implementation
+    mathematical_contract:
+      inputs: low-dimensional coordinate input and a fixed random matrix B
+      outputs: high-dimensional sinusoidal feature embedding
+      exact_or_approximate: exact_encoding
+      preserved_properties:
+        - tunable frequency bandwidth via sigma
+        - deterministic given the stored seed
+    lunaris_modifications:
+      - optional raw-input append; seed/sigma recorded in the artifact config
+    assumptions:
+      - B is fixed at initialization and persisted for inference parity
+    limitations:
+      - sigma must be tuned to the target spectral content
+    validation:
+      - tests/test_surrogate_architecture_upgrades.py
+      - tests/test_surrogate_gravity.py
+    see_also:
+      - LUNARIS-ALG-ML-001
+    notes: ""
+
+  - id: LUNARIS-ALG-OE-001
+    slug: classical_orbital_element_conversions
+    canonical_name: >-
+      Classical orbital-element conversions (state vector to/from Keplerian
+      elements)
+    category: numerical_algorithm
+    domain: OE
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Vallado2013Fundamentals
+    primary_reference:
+      type: book
+      citation_key: Vallado2013Fundamentals
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-1-881883-18-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Fourth
+      chapter: "2 (Kepler's Equation and Kepler's Problem)"
+      section: RV2COE and COE2RV algorithms
+      equations: []
+      pages: null
+      verification_notes: >-
+        D. A. Vallado, "Fundamentals of Astrodynamics and Applications", 4th ed.,
+        Microcosm Press, 2013. ISBN 978-1-881883-18-0 verified. The conversions
+        follow Vallado's RV2COE / COE2RV algorithms with the standard
+        special-case handling (circular, equatorial). PENDING only the exact
+        algorithm numbers from the physical copy; the method identity is the
+        classical osculating-element set.
+    symbols:
+      - path: src/lunaris/common/math_utils.py
+        symbol: rv_to_coe_select
+        role: cpu_implementation
+      - path: src/lunaris/common/math_utils.py
+        symbol: coe_to_rv
+        role: cpu_implementation
+      - path: src/lunaris/common/math_utils.py
+        symbol: batch_y_to_elements
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: position/velocity (m, m/s) and mu, or Keplerian elements and mu
+      outputs: osculating Keplerian elements, or state vector
+      exact_or_approximate: exact_two_body_transformation
+      preserved_properties:
+        - two-body invariants (energy, angular momentum) at the conversion epoch
+    lunaris_modifications:
+      - branch handling for near-circular and near-equatorial edge cases
+      - vectorized batch element extraction
+    assumptions:
+      - instantaneous osculating (two-body) elements
+    limitations:
+      - undefined elements (e.g. node for equatorial orbits) use documented fallbacks
+    validation:
+      - tests/test_math_utils.py
+    see_also: []
+    notes: ""
+
+  - id: LUNARIS-ALG-OPT-001
+    slug: adamw_optimizer_delegation
+    canonical_name: AdamW (decoupled weight decay) optimizer as delegated to PyTorch
+    category: optimization
+    domain: OPT
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - LoshchilovHutter2019AdamW
+      - KingmaBa2015Adam
+    primary_reference:
+      type: inproceedings
+      citation_key: LoshchilovHutter2019AdamW
+      identifier_kind: official_url
+      doi: null
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://arxiv.org/abs/1711.05101
+      edition: null
+      chapter: null
+      section: Decoupled weight decay (AdamW)
+      equations: []
+      pages: null
+      verification_notes: >-
+        Training uses torch.optim.AdamW (fused on CUDA when available). AdamW is
+        Loshchilov & Hutter, "Decoupled Weight Decay Regularization", ICLR 2019
+        (arXiv:1711.05101 verified); the base Adam update is Kingma & Ba, ICLR
+        2015 (arXiv:1412.6980). The optimizer itself is the PyTorch
+        implementation; Lunaris only configures parameter groups and schedule.
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/training/engine.py
+        symbol: _build_model_and_optim
+        role: delegation_wrapper
+    mathematical_contract:
+      inputs: model parameter groups, learning rate, weight decay
+      outputs: parameter updates with decoupled weight decay
+      exact_or_approximate: adaptive_first_order_optimizer
+      preserved_properties:
+        - weight decay decoupled from the adaptive gradient step
+    lunaris_modifications:
+      - parameter-group construction and learning-rate schedule only
+    assumptions:
+      - gradients are finite (NaN guards elsewhere in the loop)
+    limitations:
+      - delegated; Lunaris does not reimplement the update rule
+    validation:
+      - tests/test_st_lrps_training_improvements.py
+      - tests/test_surrogate_training_contracts.py
+    see_also: []
+    notes: ""
+
+  - id: LUNARIS-ALG-OPT-002
+    slug: gradnorm_adaptive_loss_balancing
+    canonical_name: GradNorm adaptive multi-task loss balancing
+    category: optimization
+    domain: OPT
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Chen2018GradNorm
+    primary_reference:
+      type: inproceedings
+      citation_key: Chen2018GradNorm
+      identifier_kind: official_url
+      doi: null
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://arxiv.org/abs/1711.02257
+      edition: null
+      chapter: null
+      section: GradNorm gradient-magnitude balancing
+      equations: []
+      pages: null
+      verification_notes: >-
+        Z. Chen, V. Badrinarayanan, C.-Y. Lee & A. Rabinovich, "GradNorm:
+        Gradient Normalization for Adaptive Loss Balancing in Deep Multitask
+        Networks", ICML 2018 (arXiv:1711.02257 verified). Lunaris ADAPTS GradNorm
+        to balance its gravity loss terms (value/derivative/auxiliary) by tuning
+        their gradient magnitudes on shared backbone parameters.
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/training/losses.py
+        symbol: GradNormWeights
+        role: torch_implementation
+    mathematical_contract:
+      inputs: per-task losses and shared-parameter gradients
+      outputs: adaptively updated per-task loss weights
+      exact_or_approximate: adaptive_loss_weighting
+      preserved_properties:
+        - balances gradient magnitudes across loss terms
+    lunaris_modifications:
+      - applied to Lunaris gravity loss terms and backbone parameter selection
+    assumptions:
+      - a meaningful shared parameter set exists for gradient balancing
+    limitations:
+      - adds a backward pass for the gradient-norm targets
+    validation:
+      - tests/test_st_lrps_baseline_gradnorm_domain.py
+    see_also:
+      - LUNARIS-ALG-OPT-003
+    notes: ""
+
+  - id: LUNARIS-ALG-OPT-003
+    slug: sobolev_derivative_supervision_loss
+    canonical_name: Sobolev training (derivative-supervision loss)
+    category: optimization
+    domain: OPT
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Czarnecki2017Sobolev
+    primary_reference:
+      type: inproceedings
+      citation_key: Czarnecki2017Sobolev
+      identifier_kind: doi
+      doi: 10.5555/3294996.3295182
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://arxiv.org/abs/1706.04859
+      edition: null
+      chapter: null
+      section: Sobolev training with target derivatives
+      equations: []
+      pages: null
+      verification_notes: >-
+        W. M. Czarnecki, S. Osindero, M. Jaderberg, G. Swirszcz & R. Pascanu,
+        "Sobolev Training for Neural Networks", NeurIPS 2017 (arXiv:1706.04859;
+        ACM DOI 10.5555/3294996.3295182 verified). Lunaris ADAPTS this to gravity:
+        the potential network is supervised on both the value and its
+        input-gradient (the acceleration), i.e. derivative supervision.
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/training/losses.py
+        symbol: SobolevLoss
+        role: torch_implementation
+    mathematical_contract:
+      inputs: predicted field, target values, and target derivatives
+      outputs: combined value + derivative loss
+      exact_or_approximate: derivative_matching_loss
+      preserved_properties:
+        - supervises the gradient (acceleration), not only the value (potential)
+    lunaris_modifications:
+      - gravity-specific weighting and altitude balancing of the derivative term
+    assumptions:
+      - target derivatives (accelerations) are available for training samples
+    limitations:
+      - requires derivative labels; higher memory for the gradient term
+    validation:
+      - tests/test_st_lrps_training_improvements.py
+      - tests/test_surrogate_training_contracts.py
+    see_also:
+      - LUNARIS-ALG-OPT-002
+    notes: >-
+      This is the core physics-supervision mechanism: matching accelerations as
+      input-gradients of the learned potential.
+
+  - id: LUNARIS-ALG-PHZ-001
+    slug: tangential_gauss_ve_phase_drift
+    canonical_name: >-
+      Tangential Gauss variational equation for along-track phase drift with RIC
+      error decomposition
+    category: diagnostic
+    domain: PHZ
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Vallado2013Fundamentals
+    primary_reference:
+      type: book
+      citation_key: Vallado2013Fundamentals
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-1-881883-18-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Fourth
+      chapter: "9 (Special Perturbation Techniques)"
+      section: Gauss variational equations and the RSW/RIC frame
+      equations: []
+      pages: null
+      verification_notes: >-
+        The diagnostic integrates the exact tangential Gauss variational equation
+        for the semi-major axis, da/dt = 2 a^2 v / mu * a_tangential, to predict
+        along-track (phase) drift from a measured tangential acceleration bias,
+        and decomposes position error in the radial/in-track/cross-track (RIC,
+        a.k.a. RSW) frame. Both are standard astrodynamics (Vallado 4th ed.,
+        ISBN 978-1-881883-18-0 verified); exact section numbers pending physical
+        copy.
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: predict_phase_drift_from_tangential_bias
+        role: cpu_implementation
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: diagnose_tangential_bias
+        role: cpu_implementation
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: compute_ric_error_history
+        role: cpu_implementation
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: osculating_sma
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: reference and test trajectories (position/velocity) and mu
+      outputs: >-
+        predicted phase drift, RIC error history, and tangential-bias diagnosis
+      exact_or_approximate: exact_gauss_ve_causal_test
+      preserved_properties:
+        - links tangential acceleration bias to secular along-track drift
+    lunaris_modifications:
+      - causal test tying surrogate acceleration bias to observed phase drift
+    assumptions:
+      - near-circular osculating dynamics for the Gauss VE integration
+    limitations:
+      - diagnostic only; does not alter propagation
+    validation:
+      - tests/test_phase_diagnostics.py
+      - tests/test_orbit_drift.py
+    see_also:
+      - LUNARIS-ALG-OE-001
+    notes: >-
+      Central to the phase-drift analysis: along-track error is dominated by
+      semi-major-axis drift from a tangential acceleration bias.
+
+  - id: LUNARIS-ALG-SAMP-001
+    slug: scrambled_sobol_low_discrepancy_design
+    canonical_name: Scrambled Sobol low-discrepancy sequence sampling
+    category: sampling
+    domain: SAMP
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Sobol1967Distribution
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: Sobol1967Distribution
+      identifier_kind: doi
+      doi: 10.1016/0041-5553(67)90144-9
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.qmc.Sobol.html
+      edition: null
+      chapter: null
+      section: Sobol low-discrepancy sequence
+      equations: []
+      pages: "86-112"
+      verification_notes: >-
+        Sobol' sequences: I. M. Sobol', USSR Comput. Math. Math. Phys. 7(4):
+        86-112, 1967 (DOI 10.1016/0041-5553(67)90144-9 verified). Lunaris uses
+        scipy.stats.qmc.Sobol (Owen-type scrambling when scramble=True); SciPy is
+        the delegated implementation (Virtanen et al. 2020). The initial-state
+        and spacecraft-property designs map the unit sequence to physical ranges.
+    symbols:
+      - path: src/lunaris/batch/sampling.py
+        symbol: generate_standard_normal_design
+        role: delegation_wrapper
+      - path: src/lunaris/batch/sampling.py
+        symbol: sample_initial_states
+        role: api_entry_point
+    mathematical_contract:
+      inputs: number of samples, dimension, seed, scramble flag
+      outputs: low-discrepancy design in the unit hypercube (then mapped to ranges)
+      exact_or_approximate: low_discrepancy_quasi_random
+      preserved_properties:
+        - low discrepancy / better space filling than pseudo-random sampling
+    lunaris_modifications:
+      - >-
+        Deterministic (unscrambled) Sobol discards the pathological all-zero
+        first point; scrambled Sobol retains it (Lunaris policy documented in
+        the sampler).
+    assumptions:
+      - independent standardized inputs before range mapping
+    limitations:
+      - unscrambled Sobol has no variance estimate; use scrambled for UQ
+    validation:
+      - tests/test_batch_sampling.py
+      - tests/test_batch_sampling_designs.py
+    see_also:
+      - LUNARIS-ALG-SAMP-002
+    notes: >-
+      The all-zero-first-point discard for the unscrambled variant is a Lunaris
+      policy, not part of the Sobol construction.
+
+  - id: LUNARIS-ALG-SAMP-002
+    slug: latin_hypercube_sampling
+    canonical_name: Latin hypercube sampling
+    category: sampling
+    domain: SAMP
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - McKayBeckmanConover1979LHS
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: McKayBeckmanConover1979LHS
+      identifier_kind: doi
+      doi: 10.1080/00401706.1979.10489755
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.qmc.LatinHypercube.html
+      edition: null
+      chapter: null
+      section: Latin hypercube sampling
+      equations: []
+      pages: "239-245"
+      verification_notes: >-
+        Latin hypercube sampling: McKay, Beckman & Conover, Technometrics 21(2):
+        239-245, 1979 (DOI 10.1080/00401706.1979.10489755 verified). Lunaris uses
+        scipy.stats.qmc.LatinHypercube (Virtanen et al. 2020, delegated
+        implementation).
+    symbols:
+      - path: src/lunaris/batch/sampling.py
+        symbol: generate_standard_normal_design
+        role: delegation_wrapper
+    mathematical_contract:
+      inputs: number of samples, dimension, seed
+      outputs: stratified design with one sample per axis stratum
+      exact_or_approximate: stratified_sampling
+      preserved_properties:
+        - one-dimensional stratification along every axis
+    lunaris_modifications:
+      - mapped to standardized normal inputs before physical range mapping
+    assumptions:
+      - independent standardized inputs
+    limitations:
+      - stratification is per-axis; no guaranteed multi-dim low discrepancy
+    validation:
+      - tests/test_batch_sampling.py
+      - tests/test_batch_sampling_designs.py
+    see_also:
+      - LUNARIS-ALG-SAMP-001
+    notes: ""
+
+  - id: LUNARIS-ALG-SH-001
+    slug: fully_normalized_alf_forward_column_recursion
+    canonical_name: >-
+      Standard forward-column recursion of fully-normalized associated Legendre
+      functions
+    category: numerical_algorithm
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HolmesFeatherstone2002Legendre
+    primary_reference:
+      type: article
+      citation_key: HolmesFeatherstone2002Legendre
+      identifier_kind: doi
+      doi: 10.1007/s00190-002-0216-2
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Standard forward-column recursion of normalised ALFs
+      equations: []
+      pages: "279-299"
+      verification_notes: >-
+        S. A. Holmes and W. E. Featherstone, "A unified approach to the Clenshaw
+        summation and the recursive computation of very high degree and order
+        normalised associated Legendre functions", Journal of Geodesy 76(5):
+        279-299, 2002. DOI 10.1007/s00190-002-0216-2 verified via Springer. The
+        implemented diagonal seed sqrt((2n+1)/2n), sub-diagonal sqrt(2n+1) and
+        vertical coefficients A[n,m]=sqrt((2n-1)(2n+1)/((n-m)(n+m))),
+        B[n,m]=sqrt((2n+1)(n-m-1)(n+m-1)/((2n-3)(n+m)(n-m))) are exactly the
+        standard forward-column recursion presented in this paper (also Colombo
+        1981).
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: build_legendre_coeffs
+        role: reference_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _compute_legendre_polynomials_inplace
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _apply_legendre_normalization
+        role: numba_implementation
+    mathematical_contract:
+      inputs: maximum degree, sin/cos of geocentric latitude
+      outputs: >-
+        fully-normalized associated Legendre functions P_nm and their latitude
+        derivatives dP_nm/dphi
+      exact_or_approximate: exact_recurrence
+      preserved_properties:
+        - 4-pi (geodesy) full normalization
+        - numerical stability to very high degree/order
+    lunaris_modifications:
+      - >-
+        Geodesy convention: no Condon-Shortley phase, real-harmonic sqrt(2)
+        scaling for m>0 (matches GRAIL/EGM/GRACE/ICGEM coefficient definitions).
+      - pole-safe per-order truncation via the stable-m limit (see LUNARIS-HEUR-SH-001)
+    assumptions:
+      - IEEE-754 float64 arithmetic
+      - coefficients supplied in the same normalization convention
+    limitations:
+      - Condon-Shortley phase must be excluded by the coefficient provider
+      - >-
+        Reliable in IEEE-754 float64 only to degree ~1900 (Holmes &
+        Featherstone 2002): above that, the sectoral seed cos(phi)^m can
+        underflow before the recursion re-enters the oscillatory region
+        (n >= m / cos(phi)), silently zeroing physically recovering columns;
+        the Holmes-Featherstone global 1e-280 scaling would then be required.
+        At the GRAIL maximum N=1800 the measured margin between the underflow
+        cut and the oscillatory boundary is >= ~50 orders at every latitude
+        (worst near cos(phi) ~ 0.4), verified against pyshtools at N=1800
+        (2026-07-14).
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_independent_sh_validation.py
+      - tests/test_sh_convention_lock.py
+      - tests/test_sh_high_degree_stability.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      The absence of the Condon-Shortley phase is a convention, not a bug:
+      applying (-1)^m would corrupt tesseral/sectoral terms while leaving zonal
+      (J2) tests unaffected.
+
+  - id: LUNARIS-ALG-SH-002
+    slug: spherical_harmonic_gravity_acceleration
+    canonical_name: >-
+      Spherical-harmonic gravitational acceleration via the classical
+      spherical-coordinate geopotential gradient
+    category: physical_model
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+      - HolmesFeatherstone2002Legendre
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.2 (gravitational field / spherical-harmonic expansion)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        O. Montenbruck and E. Gill, "Satellite Orbits: Models, Methods and
+        Applications", Springer, 2000. ISBN 978-3-540-67280-7 and DOI
+        10.1007/978-3-642-58351-3 verified; Chapter 3 (Force Models) confirmed
+        from the publisher table of contents, with the gravitational
+        spherical-harmonic expansion in Section 3.2. Lunaris implements the
+        classical spherical-coordinate gradient of the truncated geopotential
+        (radial and meridional basis vectors, dP/dphi from LUNARIS-ALG-SH-001),
+        which is physically the exact gradient of the same expansion.
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _compute_sh_acceleration_serial
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: sh_accel_fixed_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: GravityModel
+        role: api_entry_point
+      - path: src/lunaris/physics/torch_spherical_harmonics.py
+        symbol: TorchSHGravityEvaluator.acceleration
+        role: torch_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _sh_accel_cuda
+        role: cuda_implementation
+    mathematical_contract:
+      inputs: >-
+        body-fixed position (m), reference radius, mu, and fully-normalized
+        C_nm/S_nm coefficient blocks
+      outputs: gravitational acceleration in the body-fixed frame (m/s^2)
+      exact_or_approximate: exact_gradient_of_truncated_field
+      preserved_properties:
+        - curl-free (gradient of a scalar potential)
+        - degree-0 term reduces to the point-mass monopole
+    lunaris_modifications:
+      - Kahan-compensated accumulation in the serial kernel (see LUNARIS-ALG-SUM-001)
+      - optional parallel fastmath kernel above a degree threshold
+      - pole-safe evaluation via the stable-m limit (see LUNARIS-HEUR-SH-001)
+    assumptions:
+      - position expressed in the body-fixed frame of the coefficient set
+      - coefficients in the 4-pi normalization without Condon-Shortley phase
+    limitations:
+      - truncation error grows if the degree is below the field's spectral content
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_gravity_propagation_parity.py
+      - tests/test_sh_frame_invariants.py
+      - tests/test_independent_sh_validation.py
+      - tests/test_sh_high_degree_stability.py
+    see_also:
+      - LUNARIS-ALG-SH-001
+      - LUNARIS-ALG-SUM-001
+      - LUNARIS-HEUR-SH-001
+      - LUNARIS-HEUR-SH-002
+    notes: ""
+
+  - id: LUNARIS-ALG-SUM-001
+    slug: kahan_compensated_summation
+    canonical_name: Kahan compensated summation
+    category: numerical_algorithm
+    domain: SUM
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Kahan1965ReducingErrors
+    primary_reference:
+      type: article
+      citation_key: Kahan1965ReducingErrors
+      identifier_kind: doi
+      doi: 10.1145/363707.363723
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://dl.acm.org/doi/10.1145/363707.363723
+      edition: null
+      chapter: null
+      section: null
+      equations: []
+      pages: "40"
+      verification_notes: >-
+        W. Kahan, "Pracniques: Further Remarks on Reducing Truncation Errors",
+        Communications of the ACM 8(1):40, January 1965. DOI 10.1145/363707.363723
+        verified via the ACM Digital Library and Wikidata; the compensated-sum
+        recurrence (running sum, carried error term, corrected addend) matches
+        the one-page original exactly.
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _kahan_sum_step
+        role: numba_implementation
+    mathematical_contract:
+      inputs: running sum, carried compensation term, next addend
+      outputs: updated running sum and updated compensation term
+      exact_or_approximate: exact_error_free_transformation
+      preserved_properties:
+        - recovers low-order bits lost to rounding during accumulation
+        - reduces summation error growth from O(n*eps) toward O(eps)
+    lunaris_modifications:
+      - >-
+        Applied per-step inside the high-degree spherical-harmonic acceleration
+        accumulation; the algorithm itself is unchanged.
+    assumptions:
+      - IEEE-754 round-to-nearest float64 arithmetic
+      - compiler/JIT does not re-associate the compensation subtraction
+    limitations:
+      - does not help when individual addends are themselves inaccurate
+      - guards against cancellation across many terms, not within one term
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_independent_sh_validation.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      Numba does not reorder these floating-point operations, so the
+      compensation term survives compilation; this is why the recurrence is kept
+      as an explicit four-line helper rather than a bare Python sum.
+
+  - id: LUNARIS-ALG-TB-001
+    slug: battin_fq_differential_third_body
+    canonical_name: >-
+      Battin F(q) cancellation-resistant differential third-body formulation
+    category: numerical_algorithm
+    domain: TB
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact_reformulation
+    verification_status: identifier_verified_content_pending
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Battin1999Astrodynamics
+    primary_reference:
+      type: book
+      citation_key: Battin1999Astrodynamics
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-1-56347-342-5
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Revised
+      chapter: null
+      section: null
+      equations: []
+      pages: null
+      verification_notes: >-
+        Book metadata verified: Richard H. Battin, "An Introduction to the
+        Mathematics and Methods of Astrodynamics", Revised Edition, AIAA
+        Education Series, 1999, ISBN 978-1-56347-342-5. The implemented device
+        rewrites F = (1+q)^{3/2} - 1 as q(3+3q+q^2)/(1+(1+q)^{3/2}) to avoid the
+        subtractive cancellation of the direct differential form; this identity
+        is elementary and was checked independently, and the F(q)/Encke device is
+        attributed to Battin by GMAT's MathSpec and multiple modern propagators.
+        PENDING: exact Battin chapter/section/equation number (physical copy
+        needed) before this may be promoted to verified_primary_source.
+    symbols:
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: accel_third_body_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: calc_3rd_body_accel
+        role: api_entry_point
+      - path: src/lunaris/core/torch_third_body.py
+        symbol: third_body_accel_batch
+        role: torch_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _third_body_cuda
+        role: cuda_implementation
+    mathematical_contract:
+      inputs: >-
+        Moon-centred spacecraft and third-body position vectors and the
+        third-body gravitational parameter mu (SI units).
+      outputs: differential (tidal) third-body acceleration in m/s^2
+      exact_or_approximate: exact_algebraic_reformulation
+      preserved_properties:
+        - algebraically equal to mu*[(r_tb-r_sc)/|r_tb-r_sc|^3 - r_tb/|r_tb|^3]
+        - removes catastrophic cancellation for small |r_sc|/|r_tb|
+    lunaris_modifications:
+      - float64 numba CPU kernel, torch batch mirror, and CUDA kernel
+      - Moon-centred origin and Lunaris ephemeris/frame contracts
+    assumptions:
+      - point-mass third body
+      - both vectors share the same origin and frame
+    limitations:
+      - does not model the third body's non-spherical gravity
+      - returns a zero vector inside a 1 m singularity guard
+    validation:
+      - tests/test_third_body_precision.py
+      - tests/test_third_body_effects.py
+      - tests/test_torch_third_body.py
+    see_also:
+      - LUNARIS-ALG-TB-002
+    notes: >-
+      This is a numerically stable reformulation of the SAME differential
+      acceleration, not a different physical force model. Do not describe it as a
+      distinct perturbation.
+
+  - id: LUNARIS-ALG-TB-002
+    slug: newtonian_point_mass_central_gravity
+    canonical_name: Newtonian point-mass (monopole) central-body gravitational acceleration
+    category: physical_model
+    domain: TB
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.1 (point-mass / two-body acceleration)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        Montenbruck & Gill (2000), ISBN 978-3-540-67280-7. The central-body
+        monopole acceleration a = -mu * r / |r|^3 is the elementary Newtonian
+        two-body term introduced in Chapter 3; book identifiers verified as for
+        LUNARIS-ALG-SH-002.
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: compute_point_mass_acceleration
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: calc_central_body_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: position vector relative to the central body (m) and mu (m^3/s^2)
+      outputs: monopole gravitational acceleration (m/s^2)
+      exact_or_approximate: exact
+      preserved_properties:
+        - inverse-square central force
+        - identical to the degree-0 term of the spherical-harmonic field
+    lunaris_modifications:
+      - singularity guard at small radius
+    assumptions:
+      - spherically symmetric central body
+    limitations:
+      - ignores all non-spherical and third-body perturbations by construction
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_dynamics.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: ""
+
+  - id: LUNARIS-DATA-CST-001
+    slug: codata_2018_fundamental_constants
+    canonical_name: CODATA 2018 recommended fundamental physical constants
+    category: data_product
+    domain: CST
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Tiesinga2021CODATA
+    primary_reference:
+      type: article
+      citation_key: Tiesinga2021CODATA
+      identifier_kind: doi
+      doi: 10.1103/RevModPhys.93.025010
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://physics.nist.gov/constants
+      edition: null
+      chapter: null
+      section: Recommended values (CODATA 2018)
+      equations: []
+      pages: "025010"
+      verification_notes: >-
+        E. Tiesinga, P. J. Mohr, D. B. Newell & B. N. Taylor, "CODATA Recommended
+        Values of the Fundamental Physical Constants: 2018", Reviews of Modern
+        Physics 93, 025010 (2021). DOI 10.1103/RevModPhys.93.025010 verified via
+        APS/ADS. Lunaris uses the CODATA 2018 gravitational constant G =
+        6.6743e-11 and the exact SI speed of light c = 299792458 m/s.
+    symbols:
+      - path: src/lunaris/common/constants.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: none (constant definitions)
+      outputs: G, c and derived radiation constants
+      exact_or_approximate: reference_constant_values
+      preserved_properties:
+        - single source of truth for physical constants across the toolchain
+    lunaris_modifications:
+      - provenance strings record the source per constant
+    assumptions:
+      - SI units throughout
+    limitations:
+      - body GMs come from DE440, not CODATA (see LUNARIS-DATA-EPH-001)
+    validation:
+      - tests/test_canonical_constants.py
+    see_also:
+      - LUNARIS-DATA-EPH-001
+    notes: >-
+      c is the exact post-2019-SI definition; G is CODATA 2018.
+
+  - id: LUNARIS-DATA-EPH-001
+    slug: jpl_de440_planetary_lunar_ephemeris
+    canonical_name: JPL DE440 planetary and lunar ephemeris
+    category: data_product
+    domain: EPH
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - ParkFolkner2021DE440
+    primary_reference:
+      type: article
+      citation_key: ParkFolkner2021DE440
+      identifier_kind: doi
+      doi: 10.3847/1538-3881/abd414
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://ssd.jpl.nasa.gov/planets/eph_export.html
+      edition: null
+      chapter: null
+      section: DE440 planetary and lunar ephemeris
+      equations: []
+      pages: "105"
+      verification_notes: >-
+        R. S. Park, W. M. Folkner, J. G. Williams & D. H. Boggs, "The JPL
+        Planetary and Lunar Ephemerides DE440 and DE441", The Astronomical
+        Journal 161(3):105, 2021. DOI 10.3847/1538-3881/abd414 verified via IOP/
+        ADS. DE440 supplies the third-body positions, lunar orientation/libration
+        and the GM values recorded in Lunaris constants provenance.
+    symbols:
+      - path: src/lunaris/common/constants.py
+        symbol: null
+        role: config_surface
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: get_body_gm_m3s2
+        role: api_entry_point
+    mathematical_contract:
+      inputs: body identifier and epoch (via SPICE kernels)
+      outputs: reference positions/orientation and GM constants
+      exact_or_approximate: reference_data_product
+      preserved_properties:
+        - consistent GM and body-frame definitions across the toolchain
+    lunaris_modifications:
+      - consumed through SPICE kernels; not re-integrated by Lunaris
+    assumptions:
+      - DE440 kernels are the loaded ephemeris source
+    limitations:
+      - superseded fields would require a kernel swap, not a code change
+    validation:
+      - tests/test_canonical_constants.py
+      - tests/test_ephemeris.py
+    see_also:
+      - LUNARIS-ALG-EPH-001
+      - LUNARIS-STD-FRM-001
+    notes: >-
+      GRAIL lunar gravity coefficients are defined in the DE440 principal-axis
+      body frame (see LUNARIS-STD-FRM-001).
+
+  - id: LUNARIS-DATA-GRAV-001
+    slug: grail_gl1800f_lunar_gravity_field
+    canonical_name: GRAIL GL1800F lunar spherical-harmonic gravity field (JGGRX_1800F)
+    category: data_product
+    domain: DATA
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: identifier_verified_content_pending
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - GrailGL1800FSHADR
+      - Konopliv2014GRAIL
+    primary_reference:
+      type: dataset
+      citation_key: GrailGL1800FSHADR
+      identifier_kind: official_url
+      doi: null
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://pds-geosciences.wustl.edu/grail/grail-l-lgrs-5-rdr-v1/grail_1001/shadr/
+      edition: null
+      chapter: null
+      section: JGGRX_1800F_SHA product
+      equations: []
+      pages: null
+      verification_notes: >-
+        The shipped coefficient set is GL1800F (file jggrx_1800f_sha), read
+        directly from its PDS SHADR label: degree/order 1800, fully normalized,
+        reference radius 1738.0 km, DE440 principal-axis frame, k2=0.024223,
+        k3=0.0163. PENDING: the label attributes the field to R. S. Park, A.
+        Berne, A. S. Konopliv & J. T. Keane, but that specific GL1800 journal
+        citation was not fully resolved; the GRAIL high-resolution field
+        methodology is Konopliv et al. 2014 (DOI 10.1002/2013GL059066 verified).
+    symbols:
+      - path: src/lunaris/loaders/io_gravity.py
+        symbol: load_shadr_ascii
+        role: cpu_implementation
+      - path: src/lunaris/loaders/io_gravity.py
+        symbol: load_gravity_model
+        role: api_entry_point
+    mathematical_contract:
+      inputs: SHADR coefficient file path
+      outputs: >-
+        fully-normalized C_nm/S_nm blocks, reference radius, and GM for
+        spherical-harmonic evaluation
+      exact_or_approximate: reference_gravity_coefficient_set
+      preserved_properties:
+        - fully-normalized (no Condon-Shortley) convention matching LUNARIS-ALG-SH-001
+        - DE440 principal-axis body frame (LUNARIS-STD-FRM-001)
+    lunaris_modifications:
+      - degree truncation at load time; structural monopole handling
+    assumptions:
+      - coefficients interpreted in the DE440 PA frame at radius 1738.0 km
+    limitations:
+      - static field; no time-variable gravity
+    validation:
+      - tests/test_loader_helpers.py
+      - tests/test_gravity_reference_runner.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+      - LUNARIS-STD-FRM-001
+    notes: >-
+      This is the actual lunar gravity field Lunaris evaluates; the SH algorithm
+      (LUNARIS-ALG-SH-002) consumes these coefficients.
+
+  - id: LUNARIS-HEUR-EVT-001
+    slug: in_step_event_root_localization
+    canonical_name: >-
+      In-step event-time localization by bisection with a false-position final
+      correction
+    category: heuristic
+    domain: EVT
+    status: active
+    added: "2026-07-14"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/core/propagation/events.py
+        symbol: _refine_event_time_bisect
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/events.py
+        symbol: _event_crossed
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: >-
+        a single fixed-step interval with a sign change in the event function g,
+        plus a sub-step re-integrator
+      outputs: refined event time and state inside the interval
+      exact_or_approximate: bracketed_root_localization
+      preserved_properties:
+        - keeps the bracket around the sign change
+        - does not perturb the main integrator's state advancement
+    lunaris_modifications:
+      - >-
+        Sub-steps are re-integrated from the interval start so symplectic
+        stepping is unchanged; only the reported event time/state is refined.
+      - fail-closed on non-finite bracket or callback values
+    assumptions:
+      - exactly one sign change of g within the interval
+    limitations:
+      - >-
+        Policy, not a library root-finder: the underlying method is standard
+        bisection with a false-position (regula-falsi) final linear-in-g
+        correction; the in-step re-integration wrapper is Lunaris-specific.
+    validation:
+      - tests/test_events.py
+      - tests/test_event_outcome_contract.py
+    see_also: []
+    notes: >-
+      Terminal-event outcome selection follows SciPy solve_ivp parity semantics
+      (earliest terminal crossing). The root find itself is elementary bisection
+      + false position, hence no external primary source is claimed.
+
+  - id: LUNARIS-HEUR-ML-001
+    slug: multiband_siren_and_physics_encodings
+    canonical_name: >-
+      Multi-band SIREN variants and physics-informed input encodings
+      (Lunaris-specific)
+    category: neural_architecture
+    domain: ML
+    status: active
+    added: "2026-07-14"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: MultiScaleSirenMLP
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: AdditiveMultiBandSirenMLP
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: _compute_harmonic_w0_bands
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: RealSHBasisEncoding
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: PhysicalRadialDecayEncoding
+        role: torch_implementation
+    mathematical_contract:
+      inputs: scaled coordinates (and radius) of the query point
+      outputs: multi-band SIREN features / physics-motivated encodings
+      exact_or_approximate: project_specific_architecture
+      preserved_properties:
+        - geometrically-spaced w0 bands aligned to the SH residual spectrum
+    lunaris_modifications:
+      - >-
+        w0 bands spaced in log-degree to match spherical-harmonic spatial
+        frequencies (n/R_moon); radial-decay and real-SH-basis encodings that
+        inject gravity structure into the input.
+    assumptions:
+      - the residual field spectrum is bounded by the target SH degree
+    limitations:
+      - >-
+        Lunaris-specific composition; builds on SIREN (LUNARIS-ALG-ML-001) but
+        the multi-band schedule and physics encodings are not a single published
+        method. The real-SH basis follows the standard SH definition
+        (LUNARIS-ALG-SH-001).
+    validation:
+      - tests/test_surrogate_architecture_upgrades.py
+    see_also:
+      - LUNARIS-ALG-ML-001
+      - LUNARIS-ALG-SH-001
+    notes: >-
+      Heuristic architecture family; the SIREN backbone and Fourier features are
+      registered separately with their primary sources.
+
+  - id: LUNARIS-HEUR-SH-001
+    slug: pole_stable_order_truncation
+    canonical_name: Pole-stable spherical-harmonic order truncation (stable-m limit)
+    category: heuristic
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _compute_stable_m_limit
+        role: numba_implementation
+    mathematical_contract:
+      inputs: cos(geocentric latitude) and maximum degree
+      outputs: highest order m for which cos(phi)^m stays above the float64 floor
+      exact_or_approximate: conservative_truncation
+      preserved_properties:
+        - skips only orders whose sectoral terms have underflowed to zero
+    lunaris_modifications:
+      - >-
+        Lunaris-specific policy m < LOG_UNDERFLOW_LIMIT / ln|cos phi|, clamped to
+        [0, max_degree], with exact-pole and near-equator special cases.
+    assumptions:
+      - underflowed high-order sectoral terms contribute negligibly
+    limitations:
+      - performance/stability policy, not a change to the physical field
+      - >-
+        The negligibility assumption holds only while the underflow cut stays
+        below the oscillatory-region boundary m ~ N cos(phi), i.e. for
+        N <= ~1900 in float64. Measured at N=1800 (2026-07-14): full-m and
+        stable-m kernels agree to 3.6e-14 worst-case across latitudes,
+        pyshtools cross-check 1e-9 class. For N > ~1900 the cut would drop
+        physically recovering columns and Holmes-Featherstone scaling is
+        needed instead.
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_sh_frame_invariants.py
+      - tests/test_sh_high_degree_stability.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      Project-specific heuristic; no external primary source. Justified by the
+      float64 underflow floor rather than a published algorithm.
+
+  - id: LUNARIS-HEUR-SH-002
+    slug: degree_switched_smoothstep_altitude_blend
+    canonical_name: >-
+      Degree-switched spherical-harmonic evaluation with a cubic-Hermite
+      (smoothstep) altitude blend
+    category: heuristic
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: sh_accel_adaptive_blend_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _apply_smoothstep
+        role: numba_implementation
+    mathematical_contract:
+      inputs: position, two evaluation degrees, and a blend altitude band
+      outputs: >-
+        acceleration that transitions C1-continuously between a low and a high
+        evaluation degree across the band
+      exact_or_approximate: continuous_policy_blend
+      preserved_properties:
+        - C1 continuity of the blended acceleration across the altitude band
+    lunaris_modifications:
+      - >-
+        The blend weight uses the standard cubic-Hermite smoothstep 3t^2-2t^3;
+        the degree schedule and altitude band are a Lunaris performance policy.
+    assumptions:
+      - the high-degree field is only needed at low altitude
+    limitations:
+      - the blended result is a policy, not the exact field at intermediate degrees
+    validation:
+      - tests/test_spherical_harmonics.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      The smoothstep polynomial 3t^2-2t^3 is a standard cubic-Hermite S-curve;
+      the degree-switching schedule itself is a Lunaris-specific heuristic.
+
+  - id: LUNARIS-MODEL-J2E-001
+    slug: differential_earth_j2_oblateness
+    canonical_name: Differential Earth-J2 oblateness perturbation in a Moon-centred frame
+    category: physical_model
+    domain: J2E
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.2 (zonal harmonics / J2)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The vector J2 acceleration a = (3/2) J2 mu R^2 / r^5 *
+        [(5 (r.k)^2/r^2 - 1) r - 2 (r.k) k] is the standard oblateness term
+        (Montenbruck & Gill 2000, Chapter 3; book identifiers verified as for
+        LUNARIS-ALG-SH-002). Lunaris applies it DIFFERENTIALLY for Earth in a
+        Moon-centred inertial frame: a_diff = a_J2(Earth->SC) - a_J2(Earth->Moon).
+    symbols:
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: _accel_j2_oblate_unit_k
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: accel_j2_oblate_diff_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: calc_j2_oblate_diff_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        Moon-centred spacecraft and Earth positions, Earth mu, reference radius,
+        J2, and the Earth spin-axis unit vector
+      outputs: differential J2 acceleration in m/s^2
+      exact_or_approximate: exact_gradient_differential_form
+      preserved_properties:
+        - subtracts the origin (Moon) J2 acceleration for the relative EOM
+    lunaris_modifications:
+      - differential (Moon-centred) formulation of the standard J2 term
+      - explicit unit spin-axis input
+    assumptions:
+      - single zonal J2 term; Earth spin axis supplied as a unit vector
+    limitations:
+      - only the J2 zonal harmonic of Earth (no higher zonals/tesserals)
+    validation:
+      - tests/test_dynamics.py
+      - tests/test_force_gradients.py
+    see_also:
+      - LUNARIS-ALG-TB-001
+    notes: >-
+      A small perturbation on a lunar orbiter; included for completeness of the
+      Earth-perturbation budget.
+
+  - id: LUNARIS-MODEL-RAD-001
+    slug: cannonball_srp_conical_shadow
+    canonical_name: >-
+      Cannonball solar radiation pressure with a dual-cone (conical)
+      umbra/penumbra shadow
+    category: physical_model
+    domain: RAD
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.4 (solar radiation pressure and shadow function)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The cannonball law a = (P0 Cr A/m)(AU/d)^2 nu u_hat(sun->sc) and the
+        dual-cone (umbra + penumbra) shadow geometry with a finite solar disk
+        follow Montenbruck & Gill (2000), Section 3.4 (identifiers verified as
+        for LUNARIS-ALG-SH-002). Lunaris ADAPTS the penumbra: the fractional
+        illumination uses a cubic-Hermite smoothstep across the umbra->penumbra
+        band instead of the exact overlapping-disk area, and supports both Moon
+        and Earth occulters (shadow = min of the two).
+    symbols:
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: accel_srp
+        role: numba_implementation
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: _shadow_factor_conical
+        role: numba_implementation
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: compute_srp_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        Moon-centred spacecraft, Sun and Earth positions; radii; AU; P0; Cr;
+        area; mass; eclipse toggles
+      outputs: solar-radiation-pressure acceleration (m/s^2)
+      exact_or_approximate: cannonball_with_smoothstep_penumbra
+      preserved_properties:
+        - inverse-square flux falloff with heliocentric distance
+        - zero force inside the umbra
+    lunaris_modifications:
+      - smoothstep penumbra transition instead of exact occulted-disk area
+      - combined Moon+Earth shadow via the minimum shadow factor
+    assumptions:
+      - spherical spacecraft (cannonball), single reflectivity coefficient Cr
+    limitations:
+      - no attitude-dependent or multi-surface SRP
+      - penumbra fraction is an approximation, not the exact geometric area
+    validation:
+      - tests/test_solar_effects.py
+      - tests/test_srp_eclipse.py
+    see_also:
+      - LUNARIS-MODEL-RAD-002
+      - LUNARIS-MODEL-RAD-003
+    notes: ""
+
+  - id: LUNARIS-MODEL-RAD-002
+    slug: facet_lunar_albedo_radiation_pressure
+    canonical_name: Faceted lunar albedo (shortwave) radiation-pressure model
+    category: empirical_model
+    domain: RAD
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Knocke1988EarthRadiation
+    primary_reference:
+      type: inproceedings
+      citation_key: Knocke1988EarthRadiation
+      identifier_kind: doi
+      doi: 10.2514/6.1988-4292
+      isbn: null
+      report_number: AIAA Paper 88-4292
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Diffuse-body shortwave (albedo) radiation force
+      equations: []
+      pages: "577-587"
+      verification_notes: >-
+        P. C. Knocke, J. C. Ries & B. D. Tapley, "Earth Radiation Pressure
+        Effects on Satellites", AIAA Paper 88-4292, 1988, pp. 577-587. DOI
+        10.2514/6.1988-4292 verified via AIAA. Lunaris ADAPTS this diffuse-body
+        shortwave (albedo) radiation-pressure model from Earth to the MOON,
+        summing reflected-sunlight contributions over a lat/lon facet grid.
+    symbols:
+      - path: src/lunaris/physics/lunar_albedo.py
+        symbol: albedo_single_facet_accel_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/lunar_albedo.py
+        symbol: accel_albedo_facets_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/lunar_albedo.py
+        symbol: calc_albedo_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: spacecraft state, Sun direction, facet grid, albedo, spacecraft props
+      outputs: albedo radiation-pressure acceleration (m/s^2)
+      exact_or_approximate: faceted_diffuse_reflection_sum
+      preserved_properties:
+        - only sunlit, visible facets contribute
+    lunaris_modifications:
+      - Earth ERP formalism applied to lunar albedo over a lat/lon facet grid
+    assumptions:
+      - Lambertian diffuse reflection; cannonball spacecraft response
+    limitations:
+      - facet-resolution dependent; static albedo map
+    validation:
+      - tests/test_lunar_albedo.py
+      - tests/test_surface_effects.py
+    see_also:
+      - LUNARIS-MODEL-RAD-003
+    notes: ""
+
+  - id: LUNARIS-MODEL-RAD-003
+    slug: facet_thermal_ir_radiation_pressure
+    canonical_name: Faceted lunar thermal-infrared (longwave) radiation-pressure model
+    category: empirical_model
+    domain: RAD
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Knocke1988EarthRadiation
+    primary_reference:
+      type: inproceedings
+      citation_key: Knocke1988EarthRadiation
+      identifier_kind: doi
+      doi: 10.2514/6.1988-4292
+      isbn: null
+      report_number: AIAA Paper 88-4292
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Diffuse-body longwave (thermal) radiation force
+      equations: []
+      pages: "577-587"
+      verification_notes: >-
+        Same primary source as LUNARIS-MODEL-RAD-002 (Knocke et al. 1988, DOI
+        10.2514/6.1988-4292 verified); this entry is the longwave (thermal-IR)
+        counterpart, summing thermal re-emission over the lunar facet grid.
+    symbols:
+      - path: src/lunaris/physics/thermal_ir.py
+        symbol: build_latlon_facets
+        role: cpu_implementation
+      - path: src/lunaris/physics/thermal_ir.py
+        symbol: accel_thermal_ir_facets_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/thermal_ir.py
+        symbol: calc_thermal_ir_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: spacecraft state, facet grid, thermal emission model, spacecraft props
+      outputs: thermal-IR radiation-pressure acceleration (m/s^2)
+      exact_or_approximate: faceted_thermal_emission_sum
+      preserved_properties:
+        - integrates longwave emission over visible facets
+    lunaris_modifications:
+      - Earth ERP thermal formalism applied to lunar surface facets
+    assumptions:
+      - diffuse thermal re-emission; cannonball spacecraft response
+    limitations:
+      - depends on the surface thermal model and facet resolution
+    validation:
+      - tests/test_thermal_ir.py
+      - tests/test_surface_effects.py
+    see_also:
+      - LUNARIS-MODEL-RAD-002
+    notes: ""
+
+  - id: LUNARIS-MODEL-REL-001
+    slug: schwarzschild_1pn_central
+    canonical_name: Schwarzschild first post-Newtonian acceleration (central body)
+    category: physical_model
+    domain: REL
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "10 (General relativistic models for space-time coordinates and equations of motion)"
+      section: "10.3"
+      equations:
+        - "10.12 (Schwarzschild term)"
+      pages: null
+      verification_notes: >-
+        IERS Conventions (2010), IERS Technical Note No. 36, Eq. 10.12. Report
+        number and ISBN 978-3-89888-989-6 verified via iers.org/ADS. The kernel
+        a = (mu/(c^2 r^3)) [(4 mu/r - v^2) r + 4 (r.v) v] is the Schwarzschild
+        part of Eq. 10.12 with PPN parameters beta = gamma = 1 (Lense-Thirring
+        and geodesic terms handled separately/omitted).
+    symbols:
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _schwarzschild_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: calc_schwarzschild_accel
+        role: api_entry_point
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: RelativityModel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: position (m), velocity (m/s), central-body mu (m^3/s^2)
+      outputs: 1PN Schwarzschild acceleration correction (m/s^2)
+      exact_or_approximate: exact_1pn_with_beta_gamma_unity
+      preserved_properties:
+        - reproduces the relativistic perihelion advance
+    lunaris_modifications:
+      - PPN parameters fixed to general relativity (beta = gamma = 1)
+    assumptions:
+      - single dominant central mass
+      - weak-field, slow-motion (1PN) regime
+    limitations:
+      - no frame-dragging (Lense-Thirring) term
+    validation:
+      - tests/test_relativity_effects.py
+    see_also:
+      - LUNARIS-MODEL-REL-002
+      - LUNARIS-MODEL-REL-003
+    notes: ""
+
+  - id: LUNARIS-MODEL-REL-002
+    slug: de_sitter_geodesic_precession
+    canonical_name: de Sitter (geodesic) precession acceleration
+    category: physical_model
+    domain: REL
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "10 (General relativistic models for space-time coordinates and equations of motion)"
+      section: "10.3"
+      equations:
+        - "10.12 (geodesic/de Sitter term)"
+      pages: null
+      verification_notes: >-
+        IERS Conventions (2010), TN 36, Eq. 10.12 geodesic term. The kernel forms
+        Omega_dS = (3/2) mu_body/(c^2 |R|^3) (R x V) and applies a = +2 Omega x v
+        (prograde). Sign verified against the canonical ~19.2 mas/yr solar
+        geodetic precession; regression in tests/test_de_sitter_precession.py.
+    symbols:
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _de_sitter_components
+        role: numba_implementation
+    mathematical_contract:
+      inputs: spacecraft velocity and the Moon->body position/velocity
+      outputs: geodesic-precession acceleration (m/s^2)
+      exact_or_approximate: exact_1pn_geodesic
+      preserved_properties:
+        - prograde precession of the orbit plane at |Omega_dS|
+    lunaris_modifications:
+      - Coriolis-like +2 Omega x v application in the Moon-centred frame
+    assumptions:
+      - Moon orbits the external body in the weak-field regime
+    limitations:
+      - geodesic term only; no Lense-Thirring
+    validation:
+      - tests/test_de_sitter_precession.py
+      - tests/test_relativity_effects.py
+    see_also:
+      - LUNARIS-MODEL-REL-001
+    notes: >-
+      Sign is intentionally +2 Omega x v (prograde); a previous sign error was
+      corrected and is locked by the precession regression test.
+
+  - id: LUNARIS-MODEL-REL-003
+    slug: external_body_differential_1pn
+    canonical_name: >-
+      External-body differential first post-Newtonian correction
+      (Schwarzschild + de Sitter)
+    category: physical_model
+    domain: REL
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "10 (General relativistic models for space-time coordinates and equations of motion)"
+      section: "10.3"
+      equations:
+        - "10.12"
+      pages: null
+      verification_notes: >-
+        Combines the differential Schwarzschild correction (a_1PN(SC wrt body) -
+        a_1PN(Moon wrt body)) with the de Sitter term (LUNARIS-MODEL-REL-002),
+        both derived from IERS TN 36 Eq. 10.12. The differential Moon-centred
+        composition is a Lunaris adaptation of the single-body IERS forms.
+    symbols:
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _external_schwarzschild_diff_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _external_1pn_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: calc_external_1pn_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: spacecraft state and the external body Moon-centred state and mu
+      outputs: differential external-body 1PN acceleration (m/s^2)
+      exact_or_approximate: differential_1pn
+      preserved_properties:
+        - subtracts the Moon-origin 1PN term for the relative EOM
+    lunaris_modifications:
+      - differential Moon-centred composition of the IERS single-body terms
+    assumptions:
+      - external body in the weak-field regime
+    limitations:
+      - no Lense-Thirring; external Schwarzschild uses beta = gamma = 1
+    validation:
+      - tests/test_relativity_effects.py
+    see_also:
+      - LUNARIS-MODEL-REL-001
+      - LUNARIS-MODEL-REL-002
+    notes: ""
+
+  - id: LUNARIS-MODEL-TID-001
+    slug: lunar_solid_tide_love_degree_2_3
+    canonical_name: >-
+      Elastic lunar solid-body tide (degree-2 and degree-3 Love-number disturbing
+      potential)
+    category: physical_model
+    domain: TID
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "6 (Effects of the solid Earth tides)"
+      section: "6.1 (elastic solid Earth tides, Love-number formulation)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The Love-number disturbing potential dU_l = k_l mu_j/|R_j| (R/|r|)^(l+1)
+        (R/|R_j|)^l P_l(c) and its gradient follow the elastic solid-tide
+        formalism of IERS Conventions (2010), TN 36, Chapter 6. Lunaris applies
+        this Earth-tide formalism to the MOON (lunar Love numbers k2/k3), an
+        adaptation of the terrestrial convention; instantaneous elastic response
+        only.
+    symbols:
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: solid_tide_potential_degree_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: accel_solid_tides_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: calc_solid_tide_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        Moon-fixed spacecraft and tide-raising-body vectors, body mu, lunar
+        radius, Love number, and degree (2 or 3)
+      outputs: solid-tide acceleration (m/s^2), gradient of the positive potential
+      exact_or_approximate: exact_gradient_of_elastic_tide_potential
+      preserved_properties:
+        - degree-2 and degree-3 Love-number response
+    lunaris_modifications:
+      - terrestrial IERS Love-tide formalism applied to lunar parameters
+      - dimensionless radius ratios to avoid large intermediate powers
+    assumptions:
+      - instantaneous elastic response (no lag, dissipation, ocean/thermal tides)
+    limitations:
+      - no anelastic/frequency-dependent Love numbers; degrees 2 and 3 only
+    validation:
+      - tests/test_solid_tides.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      Lunaris uses the Earth-tide convention with lunar Love numbers; this is an
+      adaptation, not a lunar-specific published tide model.
+
+  - id: LUNARIS-STD-FRM-001
+    slug: lunar_principal_axis_body_frame
+    canonical_name: Lunar principal-axis (PA) body-fixed frame realized by DE440
+    category: frame_time_convention
+    domain: FRM
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - ParkFolkner2021DE440
+    primary_reference:
+      type: article
+      citation_key: ParkFolkner2021DE440
+      identifier_kind: doi
+      doi: 10.3847/1538-3881/abd414
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/
+      edition: null
+      chapter: null
+      section: Lunar orientation and principal-axis frame
+      equations: []
+      pages: "105"
+      verification_notes: >-
+        The lunar body-fixed frame used for spherical-harmonic gravity is the
+        principal-axis (PA) frame defined by the DE440 lunar libration (Park et
+        al. 2021, DOI 10.3847/1538-3881/abd414 verified), realized through SPICE
+        PCK/BPC kernels. This is distinct from the mean-Earth/polar-axis (ME)
+        frame; GRAIL SHADR coefficients are defined in the PA frame, which is why
+        Lunaris evaluates the field there.
+    symbols:
+      - path: src/lunaris/common/frame_policy.py
+        symbol: resolve_frame_policy
+        role: config_surface
+      - path: src/lunaris/core/torch_frame.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: inertial state and a lunar-orientation quaternion
+      outputs: state expressed in the lunar principal-axis body frame
+      exact_or_approximate: frame_convention
+      preserved_properties:
+        - consistency between the gravity-coefficient frame and the rotation applied
+    lunaris_modifications:
+      - rotation realized with the scalar-first Hamilton quaternion (LUNARIS-ALG-FRM-002)
+    assumptions:
+      - orientation quaternions are the DE440-consistent PA realization
+    limitations:
+      - does not implement the mean-Earth/polar-axis (ME) frame
+    validation:
+      - tests/test_frame_policy.py
+      - tests/test_sh_convention_lock.py
+    see_also:
+      - LUNARIS-ALG-FRM-002
+      - LUNARIS-DATA-EPH-001
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      PA vs ME is a common source of lunar-gravity frame errors; this entry
+      records that Lunaris uses the PA frame consistent with the coefficient set.

@@ -1,6 +1,10 @@
 cff-version: 1.2.0
 title: "Lunaris"
-message: "If you use Lunaris (or its ST-LRPS surrogate-gravity model) in scientific work, please cite the repository and associated publications."
+message: >-
+  If you use Lunaris (or its ST-LRPS surrogate-gravity model) in scientific work,
+  please cite the repository and associated publications. To cite a specific
+  algorithm or physical model implemented by Lunaris, use its primary source in
+  references/references.bib (indexed by docs/ALGORITHM_CATALOG.md), not this file.
 type: software
 authors:
   - family-names: "Demirkanat"
@@ -10,5 +14,15 @@ authors:
 repository-code: "https://github.com/ayberkdt/lunaris"
 url: "https://github.com/ayberkdt/lunaris"
 license: "MIT"
+version: "0.1.0rc1"
+date-released: "2026-07-14"
+keywords:
+  - lunar
+  - astrodynamics
+  - orbit-propagation
+  - gravity-modeling
+  - spherical-harmonics
+  - surrogate-modeling
+  - physics-informed-machine-learning
 # A Zenodo DOI can be added here once a tagged release is archived:
 # doi: "10.5281/zenodo.XXXXXXX"

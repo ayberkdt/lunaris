@@ -1,0 +1,412 @@
+% Lunaris algorithm bibliography
+% ================================
+% Canonical BibTeX records for the scientific algorithms, physical models,
+% numerical methods, data products and standards implemented by Lunaris.
+%
+% This file is the Layer-2 bibliography of the algorithm-traceability system.
+% It is NOT the software citation for Lunaris itself (see CITATION.cff) and NOT
+% the third-party license inventory (see THIRD_PARTY_NOTICES.md).
+%
+% Rules (see docs/ALGORITHM_TRACEABILITY_POLICY.md):
+%   * Every record carries at least one persistent identifier
+%     (doi / isbn / report number / standard number / stable official url).
+%   * Metadata is verified against the primary source or its official landing
+%     page before a record is added; the verification detail lives in the
+%     registry entry's primary_reference.verification_notes, not here.
+%   * Citation keys follow FirstAuthorYYYYShortMnemonic.
+%
+% Every key below must be cited by at least one entry in
+% docs/algorithms/algorithm_registry.yaml (enforced by tools/algorithm_registry.py).
+
+% ---------------------------------------------------------------------------
+% Third-body gravity
+% ---------------------------------------------------------------------------
+@book{Battin1999Astrodynamics,
+  author    = {Battin, Richard H.},
+  title     = {An Introduction to the Mathematics and Methods of Astrodynamics},
+  edition   = {Revised},
+  publisher = {American Institute of Aeronautics and Astronautics},
+  series    = {AIAA Education Series},
+  address   = {Reston, Virginia},
+  year      = {1999},
+  isbn      = {978-1-56347-342-5}
+}
+
+% ---------------------------------------------------------------------------
+% Spherical-harmonic gravity
+% ---------------------------------------------------------------------------
+@article{HolmesFeatherstone2002Legendre,
+  author  = {Holmes, S. A. and Featherstone, W. E.},
+  title   = {A Unified Approach to the {Clenshaw} Summation and the Recursive
+             Computation of Very High Degree and Order Normalised Associated
+             {Legendre} Functions},
+  journal = {Journal of Geodesy},
+  volume  = {76},
+  number  = {5},
+  pages   = {279--299},
+  year    = {2002},
+  doi     = {10.1007/s00190-002-0216-2}
+}
+
+@book{MontenbruckGill2000SatelliteOrbits,
+  author    = {Montenbruck, Oliver and Gill, Eberhard},
+  title     = {Satellite Orbits: Models, Methods and Applications},
+  publisher = {Springer-Verlag},
+  address   = {Berlin, Heidelberg},
+  year      = {2000},
+  isbn      = {978-3-540-67280-7},
+  doi       = {10.1007/978-3-642-58351-3}
+}
+
+% ---------------------------------------------------------------------------
+% Ephemeris, interpolation and frames
+% ---------------------------------------------------------------------------
+@incollection{CatmullRom1974Splines,
+  author    = {Catmull, Edwin and Rom, Raphael},
+  title     = {A Class of Local Interpolating Splines},
+  booktitle = {Computer Aided Geometric Design},
+  editor    = {Barnhill, Robert E. and Riesenfeld, Richard F.},
+  publisher = {Academic Press},
+  pages     = {317--326},
+  year      = {1974},
+  isbn      = {978-0-12-079050-0},
+  doi       = {10.1016/B978-0-12-079050-0.50020-5}
+}
+
+@article{Shoemake1985QuaternionCurves,
+  author  = {Shoemake, Ken},
+  title   = {Animating Rotation with Quaternion Curves},
+  journal = {ACM SIGGRAPH Computer Graphics},
+  volume  = {19},
+  number  = {3},
+  pages   = {245--254},
+  year    = {1985},
+  doi     = {10.1145/325165.325242}
+}
+
+@book{Kuipers1999Quaternions,
+  author    = {Kuipers, Jack B.},
+  title     = {Quaternions and Rotation Sequences: A Primer with Applications to
+               Orbits, Aerospace, and Virtual Reality},
+  publisher = {Princeton University Press},
+  address   = {Princeton, New Jersey},
+  year      = {1999},
+  isbn      = {978-0-691-10298-6}
+}
+
+@article{Acton1996SpiceNaif,
+  author  = {Acton, Charles H.},
+  title   = {Ancillary Data Services of {NASA}'s Navigation and Ancillary
+             Information Facility},
+  journal = {Planetary and Space Science},
+  volume  = {44},
+  number  = {1},
+  pages   = {65--70},
+  year    = {1996},
+  doi     = {10.1016/0032-0633(95)00107-7}
+}
+
+@article{ParkFolkner2021DE440,
+  author  = {Park, Ryan S. and Folkner, William M. and Williams, James G. and
+             Boggs, Dale H.},
+  title   = {The {JPL} Planetary and Lunar Ephemerides {DE440} and {DE441}},
+  journal = {The Astronomical Journal},
+  volume  = {161},
+  number  = {3},
+  pages   = {105},
+  year    = {2021},
+  doi     = {10.3847/1538-3881/abd414}
+}
+
+% ---------------------------------------------------------------------------
+% Neural architectures and optimization (ST-LRPS surrogate)
+% ---------------------------------------------------------------------------
+@inproceedings{Sitzmann2020SIREN,
+  author    = {Sitzmann, Vincent and Martel, Julien N. P. and Bergman, Alexander W.
+               and Lindell, David B. and Wetzstein, Gordon},
+  title     = {Implicit Neural Representations with Periodic Activation Functions},
+  booktitle = {Advances in Neural Information Processing Systems 33 (NeurIPS 2020)},
+  year      = {2020},
+  doi       = {10.5555/3495724.3496350},
+  url       = {https://arxiv.org/abs/2006.09661}
+}
+
+@inproceedings{Tancik2020FourierFeatures,
+  author    = {Tancik, Matthew and Srinivasan, Pratul P. and Mildenhall, Ben and
+               Fridovich-Keil, Sara and Raghavan, Nithin and Singhal, Utkarsh and
+               Ramamoorthi, Ravi and Barron, Jonathan T. and Ng, Ren},
+  title     = {Fourier Features Let Networks Learn High Frequency Functions in Low
+               Dimensional Domains},
+  booktitle = {Advances in Neural Information Processing Systems 33 (NeurIPS 2020)},
+  year      = {2020},
+  url       = {https://arxiv.org/abs/2006.10739}
+}
+
+@inproceedings{KingmaBa2015Adam,
+  author    = {Kingma, Diederik P. and Ba, Jimmy},
+  title     = {Adam: A Method for Stochastic Optimization},
+  booktitle = {3rd International Conference on Learning Representations (ICLR 2015)},
+  year      = {2015},
+  url       = {https://arxiv.org/abs/1412.6980}
+}
+
+@inproceedings{LoshchilovHutter2019AdamW,
+  author    = {Loshchilov, Ilya and Hutter, Frank},
+  title     = {Decoupled Weight Decay Regularization},
+  booktitle = {7th International Conference on Learning Representations (ICLR 2019)},
+  year      = {2019},
+  url       = {https://arxiv.org/abs/1711.05101}
+}
+
+@inproceedings{Chen2018GradNorm,
+  author    = {Chen, Zhao and Badrinarayanan, Vijay and Lee, Chen-Yu and
+               Rabinovich, Andrew},
+  title     = {{GradNorm}: Gradient Normalization for Adaptive Loss Balancing in
+               Deep Multitask Networks},
+  booktitle = {Proceedings of the 35th International Conference on Machine Learning
+               (ICML 2018)},
+  year      = {2018},
+  url       = {https://arxiv.org/abs/1711.02257}
+}
+
+@inproceedings{Czarnecki2017Sobolev,
+  author    = {Czarnecki, Wojciech M. and Osindero, Simon and Jaderberg, Max and
+               {\'S}wirszcz, Grzegorz and Pascanu, Razvan},
+  title     = {Sobolev Training for Neural Networks},
+  booktitle = {Advances in Neural Information Processing Systems 30 (NeurIPS 2017)},
+  year      = {2017},
+  doi       = {10.5555/3294996.3295182},
+  url       = {https://arxiv.org/abs/1706.04859}
+}
+
+% ---------------------------------------------------------------------------
+% Scientific data products and constants
+% ---------------------------------------------------------------------------
+@dataset{GrailGL1800FSHADR,
+  author    = {{JPL GRAIL Level-2 Team}},
+  title     = {{GRAIL} Lunar Gravity Field {GL1800F} (Spherical Harmonic
+               Coefficients, {JGGRX\_1800F\_SHA})},
+  publisher = {NASA Planetary Data System, Geosciences Node},
+  year      = {2023},
+  note      = {Degree/order 1800, fully normalized, reference radius 1738.0 km,
+               DE440 principal-axis frame; PDS label reference R. S. Park, A.
+               Berne, A. S. Konopliv, J. T. Keane},
+  url       = {https://pds-geosciences.wustl.edu/grail/grail-l-lgrs-5-rdr-v1/grail_1001/shadr/}
+}
+
+@article{Konopliv2014GRAIL,
+  author  = {Konopliv, Alexander S. and Park, Ryan S. and Yuan, Dah-Ning and
+             Asmar, Sami W. and Watkins, Michael M. and Williams, James G. and
+             Fahnestock, Eugene and Kruizinga, Gerhard and Paik, Meegyeong and
+             Strekalov, Dmitry and Harvey, Nate and Smith, David E. and
+             Zuber, Maria T.},
+  title   = {High-Resolution Lunar Gravity Fields from the {GRAIL} Primary and
+             Extended Missions},
+  journal = {Geophysical Research Letters},
+  volume  = {41},
+  number  = {5},
+  pages   = {1452--1458},
+  year    = {2014},
+  doi     = {10.1002/2013GL059066}
+}
+
+@article{Tiesinga2021CODATA,
+  author  = {Tiesinga, Eite and Mohr, Peter J. and Newell, David B. and
+             Taylor, Barry N.},
+  title   = {{CODATA} Recommended Values of the Fundamental Physical Constants: 2018},
+  journal = {Reviews of Modern Physics},
+  volume  = {93},
+  number  = {2},
+  pages   = {025010},
+  year    = {2021},
+  doi     = {10.1103/RevModPhys.93.025010}
+}
+
+% ---------------------------------------------------------------------------
+% Sampling and orbital elements
+% ---------------------------------------------------------------------------
+@article{Sobol1967Distribution,
+  author  = {Sobol', Il'ya M.},
+  title   = {On the Distribution of Points in a Cube and the Approximate
+             Evaluation of Integrals},
+  journal = {USSR Computational Mathematics and Mathematical Physics},
+  volume  = {7},
+  number  = {4},
+  pages   = {86--112},
+  year    = {1967},
+  doi     = {10.1016/0041-5553(67)90144-9}
+}
+
+@article{McKayBeckmanConover1979LHS,
+  author  = {McKay, Michael D. and Beckman, Richard J. and Conover, William J.},
+  title   = {A Comparison of Three Methods for Selecting Values of Input
+             Variables in the Analysis of Output from a Computer Code},
+  journal = {Technometrics},
+  volume  = {21},
+  number  = {2},
+  pages   = {239--245},
+  year    = {1979},
+  doi     = {10.1080/00401706.1979.10489755}
+}
+
+@book{Vallado2013Fundamentals,
+  author    = {Vallado, David A.},
+  title     = {Fundamentals of Astrodynamics and Applications},
+  edition   = {Fourth},
+  publisher = {Microcosm Press},
+  series    = {Space Technology Library},
+  address   = {Hawthorne, California},
+  year      = {2013},
+  isbn      = {978-1-881883-18-0}
+}
+
+% ---------------------------------------------------------------------------
+% Radiation pressure
+% ---------------------------------------------------------------------------
+@inproceedings{Knocke1988EarthRadiation,
+  author    = {Knocke, Philip C. and Ries, John C. and Tapley, Byron D.},
+  title     = {Earth Radiation Pressure Effects on Satellites},
+  booktitle = {Proceedings of the AIAA/AAS Astrodynamics Conference},
+  pages     = {577--587},
+  year      = {1988},
+  note      = {AIAA Paper 88-4292},
+  doi       = {10.2514/6.1988-4292}
+}
+
+% ---------------------------------------------------------------------------
+% Relativity, solid tides and standards
+% ---------------------------------------------------------------------------
+@techreport{PetitLuzum2010IERSConventions,
+  author      = {Petit, G{\'e}rard and Luzum, Brian},
+  title       = {{IERS} Conventions (2010)},
+  institution = {International Earth Rotation and Reference Systems Service},
+  number      = {IERS Technical Note No. 36},
+  address     = {Frankfurt am Main},
+  publisher   = {Verlag des Bundesamts f{\"u}r Kartographie und Geod{\"a}sie},
+  year        = {2010},
+  isbn        = {978-3-89888-989-6},
+  url         = {https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html}
+}
+
+% ---------------------------------------------------------------------------
+% Compensated summation
+% ---------------------------------------------------------------------------
+@article{Kahan1965ReducingErrors,
+  author  = {Kahan, William},
+  title   = {Pracniques: Further Remarks on Reducing Truncation Errors},
+  journal = {Communications of the ACM},
+  volume  = {8},
+  number  = {1},
+  pages   = {40},
+  year    = {1965},
+  doi     = {10.1145/363707.363723}
+}
+
+% ---------------------------------------------------------------------------
+% Integrators
+% ---------------------------------------------------------------------------
+@article{Virtanen2020SciPy,
+  author  = {Virtanen, Pauli and Gommers, Ralf and Oliphant, Travis E. and
+             Haberland, Matt and Reddy, Tyler and Cournapeau, David and
+             Burovski, Evgeni and Peterson, Pearu and Weckesser, Warren and
+             Bright, Jonathan and van der Walt, St{\'e}fan J. and Brett, Matthew and
+             Wilson, Joshua and Millman, K. Jarrod and Mayorov, Nikolay and
+             Nelson, Andrew R. J. and Jones, Eric and Kern, Robert and
+             Larson, Eric and Carey, C. J. and Polat, {\.I}lhan and Feng, Yu and
+             Moore, Eric W. and VanderPlas, Jake and Laxalde, Denis and
+             Perktold, Josef and Cimrman, Robert and Henriksen, Ian and
+             Quintero, E. A. and Harris, Charles R. and Archibald, Anne M. and
+             Ribeiro, Ant{\^o}nio H. and Pedregosa, Fabian and
+             van Mulbregt, Paul and {SciPy 1.0 Contributors}},
+  title   = {{SciPy} 1.0: Fundamental Algorithms for Scientific Computing in {Python}},
+  journal = {Nature Methods},
+  volume  = {17},
+  number  = {3},
+  pages   = {261--272},
+  year    = {2020},
+  doi     = {10.1038/s41592-019-0686-2}
+}
+
+@book{HairerNorsettWanner1993ODEsI,
+  author    = {Hairer, Ernst and N{\o}rsett, Syvert P. and Wanner, Gerhard},
+  title     = {Solving Ordinary Differential Equations I: Nonstiff Problems},
+  edition   = {Second Revised},
+  publisher = {Springer-Verlag},
+  series    = {Springer Series in Computational Mathematics},
+  volume    = {8},
+  address   = {Berlin, Heidelberg},
+  year      = {1993},
+  isbn      = {978-3-540-56670-0}
+}
+
+@book{HairerWanner1996ODEsII,
+  author    = {Hairer, Ernst and Wanner, Gerhard},
+  title     = {Solving Ordinary Differential Equations II: Stiff and
+               Differential-Algebraic Problems},
+  edition   = {Second Revised},
+  publisher = {Springer-Verlag},
+  series    = {Springer Series in Computational Mathematics},
+  volume    = {14},
+  address   = {Berlin, Heidelberg},
+  year      = {1996},
+  isbn      = {978-3-540-60452-5},
+  doi       = {10.1007/978-3-642-05221-7}
+}
+
+@article{DormandPrince1980Embedded,
+  author  = {Dormand, J. R. and Prince, P. J.},
+  title   = {A Family of Embedded {Runge-Kutta} Formulae},
+  journal = {Journal of Computational and Applied Mathematics},
+  volume  = {6},
+  number  = {1},
+  pages   = {19--26},
+  year    = {1980},
+  doi     = {10.1016/0771-050X(80)90013-3}
+}
+
+@article{BogackiShampine1989Pair,
+  author  = {Bogacki, Przemys{\l}aw and Shampine, Lawrence F.},
+  title   = {A 3(2) Pair of {Runge-Kutta} Formulas},
+  journal = {Applied Mathematics Letters},
+  volume  = {2},
+  number  = {4},
+  pages   = {321--325},
+  year    = {1989},
+  doi     = {10.1016/0893-9659(89)90079-7}
+}
+
+@book{HairerLubichWanner2006Geometric,
+  author    = {Hairer, Ernst and Lubich, Christian and Wanner, Gerhard},
+  title     = {Geometric Numerical Integration: Structure-Preserving Algorithms
+               for Ordinary Differential Equations},
+  edition   = {Second},
+  publisher = {Springer-Verlag},
+  series    = {Springer Series in Computational Mathematics},
+  volume    = {31},
+  address   = {Berlin, Heidelberg},
+  year      = {2006},
+  isbn      = {978-3-540-30663-4}
+}
+
+@article{Yoshida1990Symplectic,
+  author  = {Yoshida, Haruo},
+  title   = {Construction of Higher Order Symplectic Integrators},
+  journal = {Physics Letters A},
+  volume  = {150},
+  number  = {5-7},
+  pages   = {262--268},
+  year    = {1990},
+  doi     = {10.1016/0375-9601(90)90092-3}
+}
+
+@article{Omelyan2002PEFRL,
+  author  = {Omelyan, Igor P. and Mryglod, Ihor M. and Folk, Reinhard},
+  title   = {Optimized {Forest-Ruth-} and {Suzuki-}like Algorithms for
+             Integration of Motion in Many-Body Systems},
+  journal = {Computer Physics Communications},
+  volume  = {146},
+  number  = {2},
+  pages   = {188--202},
+  year    = {2002},
+  doi     = {10.1016/S0010-4655(02)00451-4}
+}

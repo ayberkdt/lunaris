@@ -780,11 +780,11 @@ class OrbitViz3D(QtWidgets.QWidget):
         ang = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
         ring = np.column_stack([np.cos(ang), np.sin(ang), np.zeros_like(ang)])
         verts = np.vstack([[0.0, 0.0, 0.0], ring])
+        # Ring vertices are 1..n (0 is the centre); the modulo wraps the last
+        # face back to ring vertex 1 so no face can index past the ring.
         faces = np.array(
-            [[0, i + 1, (i % n) + 1] for i in range(1, n + 1)], dtype=int
+            [[0, i + 1, ((i + 1) % n) + 1] for i in range(n)], dtype=int
         )
-        # Wrap the last face back to the first ring vertex.
-        faces[-1, 2] = 1
         return gl.MeshData(vertexes=verts, faces=faces)
 
     def _perifocal_velocity_dir(self, ta_deg: float) -> np.ndarray:

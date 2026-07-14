@@ -42,6 +42,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
     from lunaris.ui.components.primitives import EmptyState, KeyValueList, Section
+    from lunaris.ui.core.results_index import RunRecord, index_runs, run_kpis
     from lunaris.ui.core.ui_commons import (
         THEME,
         NoWheelComboBox,
@@ -195,6 +196,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout.setSpacing(DESIGN_TOKENS.layout.page_gap)
 
         layout.addWidget(self._build_output_config_card())
+        layout.addWidget(self._build_run_history_card())
         layout.addWidget(self._build_diagnostics_card())
         layout.addWidget(self._build_artifacts_card())
         layout.addWidget(self._build_artifact_browser_card())
@@ -279,6 +281,206 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout.addWidget(note)
 
         return section
+
+    # ------------------------------------------------------------------
+    # Run History (Results zone P1a: run selector + KPI summary + gallery)
+    # ------------------------------------------------------------------
+
+    _GALLERY_THUMB = QtCore.QSize(180, 120)
+
+    def _build_run_history_card(self) -> QtWidgets.QFrame:
+        """Completed-run browser: select a run, read its KPIs, open its figures.
+
+        Everything shown here comes from files the run itself wrote
+        (``run_config.json`` / ``run_diagnostics.json`` / PNG-PDF artifacts) via
+        the read-only :mod:`lunaris.ui.core.results_index` layer — the card
+        never synthesizes values and never modifies the run directory.
+        """
+
+        section = Section(
+            "Run History",
+            "Completed runs found in the results directory: KPI summary, "
+            "provenance, and figure gallery.",
+        )
+        layout = section.content_layout
+
+        header_row = QtWidgets.QHBoxLayout()
+        btn_refresh = QtWidgets.QPushButton("Refresh Runs")
+        btn_refresh.setIcon(get_icon("fa6s.rotate", THEME["fg_main"]))
+        btn_refresh.clicked.connect(self.refresh_runs)
+        header_row.addWidget(btn_refresh)
+        header_row.addStretch(1)
+        self.lbl_runs_status = QtWidgets.QLabel("")
+        self.lbl_runs_status.setObjectName("statusLabel")
+        header_row.addWidget(self.lbl_runs_status)
+        layout.addLayout(header_row)
+
+        self.runs_empty = EmptyState(
+            "No completed runs yet",
+            "Configure an orbit and press Run (F5); finished runs appear here "
+            "with their reports and figures.",
+        )
+        layout.addWidget(self.runs_empty)
+
+        self.run_history_body = QtWidgets.QWidget()
+        body = QtWidgets.QHBoxLayout(self.run_history_body)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(DESIGN_TOKENS.spacing.lg)
+
+        self.list_runs = QtWidgets.QListWidget()
+        self.list_runs.setAccessibleName("Completed run list")
+        self.list_runs.setFixedWidth(300)
+        self.list_runs.setAlternatingRowColors(True)
+        self.list_runs.currentRowChanged.connect(self._on_run_selected)
+        body.addWidget(self.list_runs)
+
+        detail = QtWidgets.QVBoxLayout()
+        detail.setSpacing(DESIGN_TOKENS.spacing.sm)
+
+        badge_row = QtWidgets.QHBoxLayout()
+        badge_row.setSpacing(DESIGN_TOKENS.spacing.sm)
+        self.lbl_run_title = QtWidgets.QLabel("")
+        self.lbl_run_title.setObjectName("sectionTitle")
+        badge_row.addWidget(self.lbl_run_title)
+        self.badge_run_demo = StatusBadge("DEMO", kind="warning")
+        self.badge_run_demo.setToolTip(
+            "Directory name marks this as demonstration output - not mission evidence."
+        )
+        self.badge_run_demo.setVisible(False)
+        badge_row.addWidget(self.badge_run_demo)
+        self.badge_run_config = StatusBadge("CONFIG UNREADABLE", kind="error")
+        self.badge_run_config.setToolTip(
+            "run_config.json could not be parsed; KPI values may be incomplete."
+        )
+        self.badge_run_config.setVisible(False)
+        badge_row.addWidget(self.badge_run_config)
+        badge_row.addStretch(1)
+        detail.addLayout(badge_row)
+
+        self.kpi_run = KeyValueList()
+        detail.addWidget(self.kpi_run)
+
+        self.lbl_run_provenance = QtWidgets.QLabel("")
+        self.lbl_run_provenance.setObjectName("fieldHint")
+        self.lbl_run_provenance.setWordWrap(True)
+        self.lbl_run_provenance.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        detail.addWidget(self.lbl_run_provenance)
+
+        self.gallery_runs = QtWidgets.QListWidget()
+        self.gallery_runs.setAccessibleName("Run figure gallery")
+        self.gallery_runs.setViewMode(QtWidgets.QListView.IconMode)
+        self.gallery_runs.setIconSize(self._GALLERY_THUMB)
+        self.gallery_runs.setResizeMode(QtWidgets.QListView.Adjust)
+        self.gallery_runs.setMovement(QtWidgets.QListView.Static)
+        self.gallery_runs.setWordWrap(True)
+        self.gallery_runs.setMinimumHeight(170)
+        self.gallery_runs.itemDoubleClicked.connect(self._on_gallery_open)
+        detail.addWidget(self.gallery_runs, 1)
+
+        body.addLayout(detail, 1)
+        self.run_history_body.setVisible(False)
+        layout.addWidget(self.run_history_body)
+
+        try:
+            self.ent_out_dir.editingFinished.connect(self.refresh_runs)
+        except Exception:
+            pass
+        QtCore.QTimer.singleShot(0, self.refresh_runs)
+        return section
+
+    def refresh_runs(self, *_args) -> None:
+        """Re-index the results directory and rebuild the run selector."""
+        self.lbl_runs_status.setText("Indexing runs...")
+        out_dir = self.ent_out_dir.text().strip() if hasattr(self, "ent_out_dir") else ""
+        self._run_records: list[RunRecord] = []
+        if out_dir:
+            try:
+                self._run_records = index_runs(Path(out_dir))
+            except Exception:
+                self._run_records = []
+
+        self.list_runs.blockSignals(True)
+        self.list_runs.clear()
+        for record in self._run_records:
+            stamp = record.created_at.strftime("%Y-%m-%d %H:%M")
+            item = QtWidgets.QListWidgetItem(f"{record.label}\n{stamp}")
+            item.setToolTip(str(record.run_dir))
+            if record.is_demo:
+                item.setIcon(get_icon("fa6s.flask", THEME["warning"]))
+            else:
+                item.setIcon(get_icon("fa6s.circle-check", THEME["success"]))
+            self.list_runs.addItem(item)
+        self.list_runs.blockSignals(False)
+
+        has_runs = bool(self._run_records)
+        self.runs_empty.setVisible(not has_runs)
+        self.run_history_body.setVisible(has_runs)
+        if has_runs:
+            self.lbl_runs_status.setText(f"{len(self._run_records)} run(s) indexed.")
+            self.list_runs.setCurrentRow(0)
+        else:
+            self.lbl_runs_status.setText("No runs found." if out_dir else "Output directory not set.")
+
+    def _on_run_selected(self, row: int) -> None:
+        records = getattr(self, "_run_records", [])
+        if row < 0 or row >= len(records):
+            return
+        record = records[row]
+
+        self.lbl_run_title.setText(record.label)
+        self.badge_run_demo.setVisible(record.is_demo)
+        self.badge_run_config.setVisible(not record.config_ok)
+
+        while self.kpi_run.layout_grid.count():
+            item = self.kpi_run.layout_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for label, value in run_kpis(record):
+            self.kpi_run.add_item(label, value)
+
+        provenance = f"config sha256 {record.config_sha256 or '?'} - {record.run_dir}"
+        if record.reports:
+            provenance += f" - {len(record.reports)} report(s)"
+        self.lbl_run_provenance.setText(provenance)
+
+        self.gallery_runs.clear()
+        for figure in record.figures:
+            item = QtWidgets.QListWidgetItem(figure.name)
+            item.setData(QtCore.Qt.UserRole, str(figure))
+            item.setToolTip(str(figure))
+            icon = self._thumbnail_icon(figure)
+            if icon is not None:
+                item.setIcon(icon)
+            else:
+                item.setIcon(get_icon("fa6s.image", THEME["fg_main"]))
+            self.gallery_runs.addItem(item)
+        for report in record.reports:
+            item = QtWidgets.QListWidgetItem(report.name)
+            item.setData(QtCore.Qt.UserRole, str(report))
+            item.setToolTip(str(report))
+            item.setIcon(get_icon("fa6s.file-pdf", THEME["fg_main"]))
+            self.gallery_runs.addItem(item)
+
+    def _thumbnail_icon(self, path: Path) -> QtGui.QIcon | None:
+        """Load a small aspect-preserving thumbnail (fast scaled decode)."""
+        try:
+            reader = QtGui.QImageReader(str(path))
+            reader.setAutoTransform(True)
+            size = reader.size()
+            if size.isValid():
+                reader.setScaledSize(size.scaled(self._GALLERY_THUMB, QtCore.Qt.KeepAspectRatio))
+            image = reader.read()
+            if image.isNull():
+                return None
+            return QtGui.QIcon(QtGui.QPixmap.fromImage(image))
+        except Exception:
+            return None
+
+    def _on_gallery_open(self, item: QtWidgets.QListWidgetItem) -> None:
+        path = item.data(QtCore.Qt.UserRole)
+        if path and Path(str(path)).exists():
+            self._open_path_externally(Path(str(path)))
 
     def _build_diagnostics_card(self) -> QtWidgets.QFrame:
         """
@@ -727,6 +929,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         except Exception:
             pass
         self._refresh_artifact_browser()
+        self.refresh_runs()
 
     def _set_artifact_empty(self, title: str, description: str) -> None:
         """Show the standardized empty-state in place of the (empty) tree."""

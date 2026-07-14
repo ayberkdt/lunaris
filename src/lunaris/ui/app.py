@@ -101,6 +101,7 @@ ASSETS_DIR = UI_ASSETS_DIR
 # =============================================================================
 # 4.                          ICON UTILITIES
 # =============================================================================
+from lunaris.ui.core import shortcuts
 from lunaris.ui.core.command_builder import (
     build_batch_command,
     build_command,
@@ -662,34 +663,34 @@ class MainWindow(QtWidgets.QMainWindow):
         # FILE MENU
         m_file = mb.addMenu("&File")
 
-        a_load = m_file.addAction("Load Mission Profile...")
-        a_load.setShortcut("Ctrl+O")
+        a_load = m_file.addAction(shortcuts.spec("file.load_profile").label)
+        a_load.setShortcut(shortcuts.primary_key("file.load_profile"))
         a_load.triggered.connect(self._action_load_session)
 
-        a_save = m_file.addAction("Save Mission Profile")
-        a_save.setShortcut("Ctrl+S")
+        a_save = m_file.addAction(shortcuts.spec("file.save_profile").label)
+        a_save.setShortcut(shortcuts.primary_key("file.save_profile"))
         a_save.triggered.connect(self._action_save_session)
 
         m_file.addSeparator()
 
-        a_open_dir = m_file.addAction("Open Results Folder")
-        a_open_dir.setShortcut("Ctrl+Shift+O")
+        a_open_dir = m_file.addAction(shortcuts.spec("file.open_results").label)
+        a_open_dir.setShortcut(shortcuts.primary_key("file.open_results"))
         a_open_dir.triggered.connect(self._action_open_out_dir)
 
         m_file.addSeparator()
-        a_exit = m_file.addAction("Exit")
-        a_exit.setShortcut("Alt+F4")
+        a_exit = m_file.addAction(shortcuts.spec("file.exit").label)
+        a_exit.setShortcut(shortcuts.primary_key("file.exit"))
         a_exit.triggered.connect(self.close)
 
         # ANALYSIS MENU
         m_run = mb.addMenu("&Analysis")
 
-        a_run = m_run.addAction("Start Propagation")
-        a_run.setShortcut("F5")
+        a_run = m_run.addAction(shortcuts.spec("analysis.run").label)
+        a_run.setShortcut(shortcuts.primary_key("analysis.run"))
         a_run.triggered.connect(self._start_preflight_validation)
 
-        a_stop = m_run.addAction("Abort Propagation")
-        a_stop.setShortcut("Shift+F5")
+        a_stop = m_run.addAction(shortcuts.spec("analysis.stop").label)
+        a_stop.setShortcut(shortcuts.primary_key("analysis.stop"))
         a_stop.triggered.connect(self._stop_process)
 
         # SETTINGS MENU
@@ -712,20 +713,22 @@ class MainWindow(QtWidgets.QMainWindow):
         # VIEW MENU
         m_view = mb.addMenu("&View")
 
-        a_log = m_view.addAction("Toggle Log Panel")
-        a_log.setShortcuts([QtGui.QKeySequence("Ctrl+`"), QtGui.QKeySequence("Ctrl+L")])
+        a_log = m_view.addAction(shortcuts.spec("view.toggle_log").label)
+        a_log.setShortcuts(
+            [QtGui.QKeySequence(k) for k in shortcuts.keys("view.toggle_log")]
+        )
         a_log.triggered.connect(self._toggle_log_collapsed)
 
-        a_clear = m_view.addAction("Clear Log")
-        a_clear.setShortcut("Ctrl+K")
+        a_clear = m_view.addAction(shortcuts.spec("view.clear_log").label)
+        a_clear.setShortcut(shortcuts.primary_key("view.clear_log"))
         a_clear.triggered.connect(self._clear_log)
 
         m_view.addSeparator()
 
-        a_density = m_view.addAction("Compact Density")
+        a_density = m_view.addAction(shortcuts.spec("view.compact_density").label)
         a_density.setCheckable(True)
         a_density.setChecked(self._density == "compact")
-        a_density.setShortcut("Ctrl+Shift+D")
+        a_density.setShortcut(shortcuts.primary_key("view.compact_density"))
         a_density.toggled.connect(self._toggle_density)
 
         a_reduce_motion = m_view.addAction("Reduce Motion")
@@ -740,14 +743,18 @@ class MainWindow(QtWidgets.QMainWindow):
         focuses the execution-console search field. Run/Stop/Save/Open already have
         menu shortcuts (F5 / Shift+F5 / Ctrl+S / Ctrl+O).
         """
+        page_keys = shortcuts.keys("nav.page")
         self._page_shortcuts: list[QtGui.QShortcut] = []
-        for i, (key, _label, _icon) in enumerate(NAV_PAGES[:9]):
-            sc = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{i + 1}"), self)
+        # zip truncates to the shorter side: at most nine pages get a chord.
+        for (key, _label, _icon), seq in zip(NAV_PAGES, page_keys, strict=False):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
             sc.setContext(QtCore.Qt.WindowShortcut)
             sc.activated.connect(lambda k=key: self._switch_page(k))
             self._page_shortcuts.append(sc)
 
-        self._console_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+F"), self)
+        self._console_shortcut = QtGui.QShortcut(
+            QtGui.QKeySequence(shortcuts.primary_key("console.focus_search")), self
+        )
         self._console_shortcut.setContext(QtCore.Qt.WindowShortcut)
         self._console_shortcut.activated.connect(self._focus_console_search)
 
@@ -1402,6 +1409,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # Check if preflight already running
         if self.preflight_worker and self.preflight_worker.isRunning():
             self._log_message("[Warning] Pre-flight validation already in progress", severity="warning")
+            return
+
+        # Field-level gate: surface every invalid propagation field inline and
+        # move focus to the first one instead of failing later in preflight.
+        page = getattr(self, "page_propagation", None)
+        if page is not None and hasattr(page, "validate_inputs") and not page.validate_inputs():
+            self._switch_page("Propagation")
+            self._log_message(
+                "[Error] Fix the highlighted propagation fields before running.",
+                severity="error",
+            )
             return
 
         # Collect data for validation
