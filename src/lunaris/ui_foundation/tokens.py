@@ -128,6 +128,36 @@ class VisualizationTokens:
     axis_y: str = "rgba(34,211,182,0.78)"
     axis_z: str = "rgba(125,183,255,0.78)"
 
+    # ------------------------------------------------------------------
+    # Multi-series plots (W4): color + line-style cycles consumed TOGETHER.
+    #
+    # Color alone cannot carry series identity for color-vision-deficient
+    # readers, so pyqtgraph adapters (lunaris.ui.core.plot_style) pair series
+    # index i with (series_cycle[i % 6], series_dash_cycle[i % 4]). The cycle
+    # lengths are coprime-ish (lcm 12), so a repeated color always returns
+    # with a different dash — the same color never appears twice with the
+    # same line style. Colors reuse the already CVD-screened plot tokens
+    # above plus the axis-x red family; tools/ui/color_audit.py verifies the
+    # same-dash pairs stay above the redmean confusion threshold under
+    # protan/deutan/tritan simulation.
+    # ------------------------------------------------------------------
+    series_cycle: tuple[str, ...] = (
+        "#6AA9FF",  # selected_plot blue
+        "#15D6A6",  # comparison teal-green
+        "#E7B86A",  # periapsis amber
+        "#9F7CFF",  # node violet
+        "#F87171",  # axis-x red
+        "#7DEEDD",  # apoapsis light teal
+    )
+    #: Qt-neutral dash names; adapters map them to Qt.PenStyle.
+    series_dash_cycle: tuple[str, ...] = ("solid", "dash", "dot", "dashdot")
+    # Physical series identity is carried by line style, not color (truth vs
+    # model must survive grayscale): truth=solid, surrogate=dashed,
+    # comparison/reference=dotted.
+    truth_dash: str = "solid"
+    surrogate_dash: str = "dash"
+    comparison_dash: str = "dot"
+
     def as_dict(self) -> dict[str, str]:
         return asdict(self)
 
