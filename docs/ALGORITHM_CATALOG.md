@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**32 entries.**
+**38 entries.**
 
-Implementation class: adaptation (7), delegated_library (5), exact (12), exact_reformulation (1), heuristic (3), standard_implementation (4)
+Implementation class: adaptation (9), delegated_library (6), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (4)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (3), verified_primary_source (27)
+Verification status: identifier_verified_content_pending (2), unverifiable (4), verified_primary_source (32)
 
 ## Index
 
@@ -30,6 +30,11 @@ Verification status: identifier_verified_content_pending (2), unverifiable (3), 
 | [`LUNARIS-ALG-INT-009`](#lunarisalgint009) | Bogacki-Shampine 3(2) embedded Runge-Kutta method as delegated to SciPy RK23 | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-INT-010`](#lunarisalgint010) | Implicit stiff ODE solvers (Radau IIA, BDF, LSODA) as delegated to SciPy | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-INTP-001`](#lunarisalgintp001) | Clamped uniform Catmull-Rom cubic interpolation of vector time series | exact | verified_primary_source |
+| [`LUNARIS-ALG-ML-001`](#lunarisalgml001) | Sinusoidal Representation Network (SIREN) | exact | verified_primary_source |
+| [`LUNARIS-ALG-ML-002`](#lunarisalgml002) | Random Fourier feature input encoding | exact | verified_primary_source |
+| [`LUNARIS-ALG-OPT-001`](#lunarisalgopt001) | AdamW (decoupled weight decay) optimizer as delegated to PyTorch | delegated_library | verified_primary_source |
+| [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | GradNorm adaptive multi-task loss balancing | adaptation | verified_primary_source |
+| [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003) | Sobolev training (derivative-supervision loss) | adaptation | verified_primary_source |
 | [`LUNARIS-ALG-SH-001`](#lunarisalgsh001) | Standard forward-column recursion of fully-normalized associated Legendre functions | exact | verified_primary_source |
 | [`LUNARIS-ALG-SH-002`](#lunarisalgsh002) | Spherical-harmonic gravitational acceleration via the classical spherical-coordinate geopotential gradient | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-SUM-001`](#lunarisalgsum001) | Kahan compensated summation | exact | verified_primary_source |
@@ -37,6 +42,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (3), 
 | [`LUNARIS-ALG-TB-002`](#lunarisalgtb002) | Newtonian point-mass (monopole) central-body gravitational acceleration | exact | verified_primary_source |
 | [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001) | JPL DE440 planetary and lunar ephemeris | standard_implementation | verified_primary_source |
 | [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001) | In-step event-time localization by bisection with a false-position final correction | heuristic | unverifiable |
+| [`LUNARIS-HEUR-ML-001`](#lunarisheurml001) | Multi-band SIREN variants and physics-informed input encodings (Lunaris-specific) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-001`](#lunarisheursh001) | Pole-stable spherical-harmonic order truncation (stable-m limit) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-002`](#lunarisheursh002) | Degree-switched spherical-harmonic evaluation with a cubic-Hermite (smoothstep) altitude blend | heuristic | unverifiable |
 | [`LUNARIS-MODEL-J2E-001`](#lunarismodelj2e001) | Differential Earth-J2 oblateness perturbation in a Moon-centred frame | adaptation | verified_primary_source |
@@ -1020,3 +1026,176 @@ Verification status: identifier_verified_content_pending (2), unverifiable (3), 
   - `tests/test_ephemeris_interpolation.py`
 - **See also**: [`LUNARIS-ALG-EPH-001`](#lunarisalgeph001)
 - **Notes**: GPU/CPU parity: the torch ephemeris path was upgraded from linear to Catmull-Rom to match the CPU kernel.
+
+## Neural architectures (ML)
+
+<a id="lunarisalgml001"></a>
+### LUNARIS-ALG-ML-001 -- Sinusoidal Representation Network (SIREN)
+
+- **Slug**: `siren_sinusoidal_representation_network`
+- **Category**: neural_architecture | **Domain**: ML | **Status**: active
+- **Classification**: exact
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Sitzmann2020SIREN` -- Sitzmann, 2020. "Implicit Neural Representations with Periodic Activation Functions" (section SIREN architecture and initialization scheme) [DOI: 10.5555/3495724.3496350]
+- **Verification notes**: V. Sitzmann, J. N. P. Martel, A. W. Bergman, D. B. Lindell & G. Wetzstein, "Implicit Neural Representations with Periodic Activation Functions", NeurIPS 2020 (arXiv:2006.09661; ACM DOI 10.5555/3495724. 3496350 verified). The sin(w0 x) activation and the paper's principled init (first layer uniform(-1/n_in, 1/n_in); hidden uniform( -sqrt(6/n_in)/w0, +sqrt(6/n_in)/w0)) match the reference exactly.
+- **Mathematical contract**:
+  - Inputs: coordinate input tensor (scaled spacecraft position)
+  - Outputs: implicit-field output (gravity potential or acceleration)
+  - Exactness: exact_architecture
+  - Preserves: periodic activations with the paper's variance-preserving init
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `Sine` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `siren_init_hidden_` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `SirenMLP` (torch_implementation)
+  - `src/lunaris/surrogate/runtime/networks.py` -- `SirenMLP` (reference_implementation)
+- **Lunaris modifications**:
+  - applied to lunar gravity-field regression (default w0 = 30)
+- **Assumptions**:
+  - inputs scaled consistently with the trained scalers
+- **Limitations**:
+  - init scheme assumes the sine activation and matching w0
+- **Validated by**:
+  - `tests/test_surrogate_architecture_upgrades.py`
+  - `tests/test_surrogate_gravity.py`
+- **See also**: [`LUNARIS-ALG-ML-002`](#lunarisalgml002), [`LUNARIS-HEUR-ML-001`](#lunarisheurml001)
+
+<a id="lunarisalgml002"></a>
+### LUNARIS-ALG-ML-002 -- Random Fourier feature input encoding
+
+- **Slug**: `random_fourier_feature_encoding`
+- **Category**: neural_architecture | **Domain**: ML | **Status**: active
+- **Classification**: exact
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Tancik2020FourierFeatures` -- Tancik, 2020. "Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains" (section Gaussian random Fourier feature mapping) [OFFICIAL URL: https://arxiv.org/abs/2006.10739]
+- **Verification notes**: M. Tancik et al., "Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains", NeurIPS 2020 (arXiv:2006.10739, stable arXiv URL verified; NeurIPS proceedings hash 55053683...). The embedding maps x -> [cos(2 pi B x), sin(2 pi B x)] with B drawn from a Gaussian of scale sigma, the Gaussian RFF mapping of the paper.
+- **Mathematical contract**:
+  - Inputs: low-dimensional coordinate input and a fixed random matrix B
+  - Outputs: high-dimensional sinusoidal feature embedding
+  - Exactness: exact_encoding
+  - Preserves: tunable frequency bandwidth via sigma
+  - Preserves: deterministic given the stored seed
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `FourierInputEmbedding` (torch_implementation)
+  - `src/lunaris/surrogate/runtime/networks.py` -- `FourierInputEmbedding` (reference_implementation)
+- **Lunaris modifications**:
+  - optional raw-input append; seed/sigma recorded in the artifact config
+- **Assumptions**:
+  - B is fixed at initialization and persisted for inference parity
+- **Limitations**:
+  - sigma must be tuned to the target spectral content
+- **Validated by**:
+  - `tests/test_surrogate_architecture_upgrades.py`
+  - `tests/test_surrogate_gravity.py`
+- **See also**: [`LUNARIS-ALG-ML-001`](#lunarisalgml001)
+
+<a id="lunarisheurml001"></a>
+### LUNARIS-HEUR-ML-001 -- Multi-band SIREN variants and physics-informed input encodings (Lunaris-specific)
+
+- **Slug**: `multiband_siren_and_physics_encodings`
+- **Category**: neural_architecture | **Domain**: ML | **Status**: active
+- **Classification**: heuristic
+- **Verification**: unverifiable | **Scientific status**: implemented_and_tested
+- **Primary reference**: Lunaris-specific; no external primary reference.
+- **Mathematical contract**:
+  - Inputs: scaled coordinates (and radius) of the query point
+  - Outputs: multi-band SIREN features / physics-motivated encodings
+  - Exactness: project_specific_architecture
+  - Preserves: geometrically-spaced w0 bands aligned to the SH residual spectrum
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `MultiScaleSirenMLP` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `AdditiveMultiBandSirenMLP` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `_compute_harmonic_w0_bands` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `RealSHBasisEncoding` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `PhysicalRadialDecayEncoding` (torch_implementation)
+- **Lunaris modifications**:
+  - w0 bands spaced in log-degree to match spherical-harmonic spatial frequencies (n/R_moon); radial-decay and real-SH-basis encodings that inject gravity structure into the input.
+- **Assumptions**:
+  - the residual field spectrum is bounded by the target SH degree
+- **Limitations**:
+  - Lunaris-specific composition; builds on SIREN (LUNARIS-ALG-ML-001) but the multi-band schedule and physics encodings are not a single published method. The real-SH basis follows the standard SH definition (LUNARIS-ALG-SH-001).
+- **Validated by**:
+  - `tests/test_surrogate_architecture_upgrades.py`
+- **See also**: [`LUNARIS-ALG-ML-001`](#lunarisalgml001), [`LUNARIS-ALG-SH-001`](#lunarisalgsh001)
+- **Notes**: Heuristic architecture family; the SIREN backbone and Fourier features are registered separately with their primary sources.
+
+## Optimization (OPT)
+
+<a id="lunarisalgopt001"></a>
+### LUNARIS-ALG-OPT-001 -- AdamW (decoupled weight decay) optimizer as delegated to PyTorch
+
+- **Slug**: `adamw_optimizer_delegation`
+- **Category**: optimization | **Domain**: OPT | **Status**: active
+- **Classification**: delegated_library
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `LoshchilovHutter2019AdamW` -- Loshchilov, 2019. "Decoupled Weight Decay Regularization" (section Decoupled weight decay (AdamW)) [OFFICIAL URL: https://arxiv.org/abs/1711.05101]
+- **Verification notes**: Training uses torch.optim.AdamW (fused on CUDA when available). AdamW is Loshchilov & Hutter, "Decoupled Weight Decay Regularization", ICLR 2019 (arXiv:1711.05101 verified); the base Adam update is Kingma & Ba, ICLR 2015 (arXiv:1412.6980). The optimizer itself is the PyTorch implementation; Lunaris only configures parameter groups and schedule.
+- **Mathematical contract**:
+  - Inputs: model parameter groups, learning rate, weight decay
+  - Outputs: parameter updates with decoupled weight decay
+  - Exactness: adaptive_first_order_optimizer
+  - Preserves: weight decay decoupled from the adaptive gradient step
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/training/engine.py` -- `_build_model_and_optim` (delegation_wrapper)
+- **Lunaris modifications**:
+  - parameter-group construction and learning-rate schedule only
+- **Assumptions**:
+  - gradients are finite (NaN guards elsewhere in the loop)
+- **Limitations**:
+  - delegated; Lunaris does not reimplement the update rule
+- **Validated by**:
+  - `tests/test_st_lrps_training_improvements.py`
+  - `tests/test_surrogate_training_contracts.py`
+
+<a id="lunarisalgopt002"></a>
+### LUNARIS-ALG-OPT-002 -- GradNorm adaptive multi-task loss balancing
+
+- **Slug**: `gradnorm_adaptive_loss_balancing`
+- **Category**: optimization | **Domain**: OPT | **Status**: active
+- **Classification**: adaptation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Chen2018GradNorm` -- Chen, 2018. "{GradNorm}: Gradient Normalization for Adaptive Loss Balancing in Deep Multitask Networks" (section GradNorm gradient-magnitude balancing) [OFFICIAL URL: https://arxiv.org/abs/1711.02257]
+- **Verification notes**: Z. Chen, V. Badrinarayanan, C.-Y. Lee & A. Rabinovich, "GradNorm: Gradient Normalization for Adaptive Loss Balancing in Deep Multitask Networks", ICML 2018 (arXiv:1711.02257 verified). Lunaris ADAPTS GradNorm to balance its gravity loss terms (value/derivative/auxiliary) by tuning their gradient magnitudes on shared backbone parameters.
+- **Mathematical contract**:
+  - Inputs: per-task losses and shared-parameter gradients
+  - Outputs: adaptively updated per-task loss weights
+  - Exactness: adaptive_loss_weighting
+  - Preserves: balances gradient magnitudes across loss terms
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/training/losses.py` -- `GradNormWeights` (torch_implementation)
+- **Lunaris modifications**:
+  - applied to Lunaris gravity loss terms and backbone parameter selection
+- **Assumptions**:
+  - a meaningful shared parameter set exists for gradient balancing
+- **Limitations**:
+  - adds a backward pass for the gradient-norm targets
+- **Validated by**:
+  - `tests/test_st_lrps_baseline_gradnorm_domain.py`
+- **See also**: [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003)
+
+<a id="lunarisalgopt003"></a>
+### LUNARIS-ALG-OPT-003 -- Sobolev training (derivative-supervision loss)
+
+- **Slug**: `sobolev_derivative_supervision_loss`
+- **Category**: optimization | **Domain**: OPT | **Status**: active
+- **Classification**: adaptation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Czarnecki2017Sobolev` -- Czarnecki, 2017. "Sobolev Training for Neural Networks" (section Sobolev training with target derivatives) [DOI: 10.5555/3294996.3295182]
+- **Verification notes**: W. M. Czarnecki, S. Osindero, M. Jaderberg, G. Swirszcz & R. Pascanu, "Sobolev Training for Neural Networks", NeurIPS 2017 (arXiv:1706.04859; ACM DOI 10.5555/3294996.3295182 verified). Lunaris ADAPTS this to gravity: the potential network is supervised on both the value and its input-gradient (the acceleration), i.e. derivative supervision.
+- **Mathematical contract**:
+  - Inputs: predicted field, target values, and target derivatives
+  - Outputs: combined value + derivative loss
+  - Exactness: derivative_matching_loss
+  - Preserves: supervises the gradient (acceleration), not only the value (potential)
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/training/losses.py` -- `SobolevLoss` (torch_implementation)
+- **Lunaris modifications**:
+  - gravity-specific weighting and altitude balancing of the derivative term
+- **Assumptions**:
+  - target derivatives (accelerations) are available for training samples
+- **Limitations**:
+  - requires derivative labels; higher memory for the gradient term
+- **Validated by**:
+  - `tests/test_st_lrps_training_improvements.py`
+  - `tests/test_surrogate_training_contracts.py`
+- **See also**: [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002)
+- **Notes**: This is the core physics-supervision mechanism: matching accelerations as input-gradients of the learned potential.

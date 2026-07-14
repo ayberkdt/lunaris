@@ -263,7 +263,9 @@ def _module_defined_names(path: Path) -> set[str]:
     Direct ``Class.method`` children are also exposed in dotted form so an entry
     can point at a specific method.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    # Some source files carry a UTF-8 BOM; utf-8-sig strips it so ast.parse does
+    # not choke on a leading U+FEFF.
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
