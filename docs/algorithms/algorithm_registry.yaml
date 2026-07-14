@@ -1265,6 +1265,77 @@ entries:
       This is the core physics-supervision mechanism: matching accelerations as
       input-gradients of the learned potential.
 
+  - id: LUNARIS-ALG-PHZ-001
+    slug: tangential_gauss_ve_phase_drift
+    canonical_name: >-
+      Tangential Gauss variational equation for along-track phase drift with RIC
+      error decomposition
+    category: diagnostic
+    domain: PHZ
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Vallado2013Fundamentals
+    primary_reference:
+      type: book
+      citation_key: Vallado2013Fundamentals
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-1-881883-18-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Fourth
+      chapter: "9 (Special Perturbation Techniques)"
+      section: Gauss variational equations and the RSW/RIC frame
+      equations: []
+      pages: null
+      verification_notes: >-
+        The diagnostic integrates the exact tangential Gauss variational equation
+        for the semi-major axis, da/dt = 2 a^2 v / mu * a_tangential, to predict
+        along-track (phase) drift from a measured tangential acceleration bias,
+        and decomposes position error in the radial/in-track/cross-track (RIC,
+        a.k.a. RSW) frame. Both are standard astrodynamics (Vallado 4th ed.,
+        ISBN 978-1-881883-18-0 verified); exact section numbers pending physical
+        copy.
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: predict_phase_drift_from_tangential_bias
+        role: cpu_implementation
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: diagnose_tangential_bias
+        role: cpu_implementation
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: compute_ric_error_history
+        role: cpu_implementation
+      - path: src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py
+        symbol: osculating_sma
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: reference and test trajectories (position/velocity) and mu
+      outputs: >-
+        predicted phase drift, RIC error history, and tangential-bias diagnosis
+      exact_or_approximate: exact_gauss_ve_causal_test
+      preserved_properties:
+        - links tangential acceleration bias to secular along-track drift
+    lunaris_modifications:
+      - causal test tying surrogate acceleration bias to observed phase drift
+    assumptions:
+      - near-circular osculating dynamics for the Gauss VE integration
+    limitations:
+      - diagnostic only; does not alter propagation
+    validation:
+      - tests/test_phase_diagnostics.py
+      - tests/test_orbit_drift.py
+    see_also:
+      - LUNARIS-ALG-OE-001
+    notes: >-
+      Central to the phase-drift analysis: along-track error is dominated by
+      semi-major-axis drift from a tangential acceleration bias.
+
   - id: LUNARIS-ALG-SAMP-001
     slug: scrambled_sobol_low_discrepancy_design
     canonical_name: Scrambled Sobol low-discrepancy sequence sampling

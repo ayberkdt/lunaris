@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**43 entries.**
+**44 entries.**
 
-Implementation class: adaptation (9), delegated_library (8), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (7)
+Implementation class: adaptation (9), delegated_library (8), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (8)
 
-Verification status: identifier_verified_content_pending (3), unverifiable (4), verified_primary_source (36)
+Verification status: identifier_verified_content_pending (3), unverifiable (4), verified_primary_source (37)
 
 ## Index
 
@@ -36,6 +36,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
 | [`LUNARIS-ALG-OPT-001`](#lunarisalgopt001) | AdamW (decoupled weight decay) optimizer as delegated to PyTorch | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | GradNorm adaptive multi-task loss balancing | adaptation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003) | Sobolev training (derivative-supervision loss) | adaptation | verified_primary_source |
+| [`LUNARIS-ALG-PHZ-001`](#lunarisalgphz001) | Tangential Gauss variational equation for along-track phase drift with RIC error decomposition | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001) | Scrambled Sobol low-discrepancy sequence sampling | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-SAMP-002`](#lunarisalgsamp002) | Latin hypercube sampling | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-SH-001`](#lunarisalgsh001) | Standard forward-column recursion of fully-normalized associated Legendre functions | exact | verified_primary_source |
@@ -1119,6 +1120,39 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - `tests/test_batch_sampling.py`
   - `tests/test_batch_sampling_designs.py`
 - **See also**: [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001)
+
+## Phase / perturbation diagnostics (PHZ)
+
+<a id="lunarisalgphz001"></a>
+### LUNARIS-ALG-PHZ-001 -- Tangential Gauss variational equation for along-track phase drift with RIC error decomposition
+
+- **Slug**: `tangential_gauss_ve_phase_drift`
+- **Category**: diagnostic | **Domain**: PHZ | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Vallado2013Fundamentals` -- Vallado, 2013. "Fundamentals of Astrodynamics and Applications" (edition Fourth; chapter 9 (Special Perturbation Techniques); section Gauss variational equations and the RSW/RIC frame) [ISBN: 978-1-881883-18-0]
+- **Verification notes**: The diagnostic integrates the exact tangential Gauss variational equation for the semi-major axis, da/dt = 2 a^2 v / mu * a_tangential, to predict along-track (phase) drift from a measured tangential acceleration bias, and decomposes position error in the radial/in-track/cross-track (RIC, a.k.a. RSW) frame. Both are standard astrodynamics (Vallado 4th ed., ISBN 978-1-881883-18-0 verified); exact section numbers pending physical copy.
+- **Mathematical contract**:
+  - Inputs: reference and test trajectories (position/velocity) and mu
+  - Outputs: predicted phase drift, RIC error history, and tangential-bias diagnosis
+  - Exactness: exact_gauss_ve_causal_test
+  - Preserves: links tangential acceleration bias to secular along-track drift
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py` -- `predict_phase_drift_from_tangential_bias` (cpu_implementation)
+  - `src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py` -- `diagnose_tangential_bias` (cpu_implementation)
+  - `src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py` -- `compute_ric_error_history` (cpu_implementation)
+  - `src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py` -- `osculating_sma` (cpu_implementation)
+- **Lunaris modifications**:
+  - causal test tying surrogate acceleration bias to observed phase drift
+- **Assumptions**:
+  - near-circular osculating dynamics for the Gauss VE integration
+- **Limitations**:
+  - diagnostic only; does not alter propagation
+- **Validated by**:
+  - `tests/test_phase_diagnostics.py`
+  - `tests/test_orbit_drift.py`
+- **See also**: [`LUNARIS-ALG-OE-001`](#lunarisalgoe001)
+- **Notes**: Central to the phase-drift analysis: along-track error is dominated by semi-major-axis drift from a tangential acceleration bias.
 
 ## Neural architectures (ML)
 
