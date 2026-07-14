@@ -6,16 +6,19 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**18 entries.**
+**24 entries.**
 
-Implementation class: adaptation (1), delegated_library (4), exact (8), exact_reformulation (1), heuristic (3), standard_implementation (1)
+Implementation class: adaptation (1), delegated_library (5), exact (10), exact_reformulation (1), heuristic (3), standard_implementation (4)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (3), verified_primary_source (13)
+Verification status: identifier_verified_content_pending (2), unverifiable (3), verified_primary_source (19)
 
 ## Index
 
 | ID | Method | Class | Verification |
 | --- | --- | --- | --- |
+| [`LUNARIS-ALG-EPH-001`](#lunarisalgeph001) | SPICE-built fixed-grid ephemeris and lunar-orientation tables | delegated_library | verified_primary_source |
+| [`LUNARIS-ALG-FRM-001`](#lunarisalgfrm001) | Spherical linear interpolation of unit quaternions (SLERP) | exact | verified_primary_source |
+| [`LUNARIS-ALG-FRM-002`](#lunarisalgfrm002) | Scalar-first (Hamilton) unit-quaternion active vector rotation | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-INT-001`](#lunarisalgint001) | Dormand-Prince 8(5,3) explicit Runge-Kutta method as delegated to SciPy DOP853 | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-INT-002`](#lunarisalgint002) | Classical fourth-order Runge-Kutta method (RK4) | exact | verified_primary_source |
 | [`LUNARIS-ALG-INT-003`](#lunarisalgint003) | Classical fourth-order Runge-Kutta-Nystrom method (RKN4) | exact | identifier_verified_content_pending |
@@ -26,14 +29,17 @@ Verification status: identifier_verified_content_pending (2), unverifiable (3), 
 | [`LUNARIS-ALG-INT-008`](#lunarisalgint008) | Dormand-Prince 5(4) embedded Runge-Kutta method as delegated to SciPy RK45 | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-INT-009`](#lunarisalgint009) | Bogacki-Shampine 3(2) embedded Runge-Kutta method as delegated to SciPy RK23 | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-INT-010`](#lunarisalgint010) | Implicit stiff ODE solvers (Radau IIA, BDF, LSODA) as delegated to SciPy | delegated_library | verified_primary_source |
+| [`LUNARIS-ALG-INTP-001`](#lunarisalgintp001) | Clamped uniform Catmull-Rom cubic interpolation of vector time series | exact | verified_primary_source |
 | [`LUNARIS-ALG-SH-001`](#lunarisalgsh001) | Standard forward-column recursion of fully-normalized associated Legendre functions | exact | verified_primary_source |
 | [`LUNARIS-ALG-SH-002`](#lunarisalgsh002) | Spherical-harmonic gravitational acceleration via the classical spherical-coordinate geopotential gradient | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-SUM-001`](#lunarisalgsum001) | Kahan compensated summation | exact | verified_primary_source |
 | [`LUNARIS-ALG-TB-001`](#lunarisalgtb001) | Battin F(q) cancellation-resistant differential third-body formulation | exact_reformulation | identifier_verified_content_pending |
 | [`LUNARIS-ALG-TB-002`](#lunarisalgtb002) | Newtonian point-mass (monopole) central-body gravitational acceleration | exact | verified_primary_source |
+| [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001) | JPL DE440 planetary and lunar ephemeris | standard_implementation | verified_primary_source |
 | [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001) | In-step event-time localization by bisection with a false-position final correction | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-001`](#lunarisheursh001) | Pole-stable spherical-harmonic order truncation (stable-m limit) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-002`](#lunarisheursh002) | Degree-switched spherical-harmonic evaluation with a cubic-Hermite (smoothstep) altitude blend | heuristic | unverifiable |
+| [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001) | Lunar principal-axis (PA) body-fixed frame realized by DE440 | standard_implementation | verified_primary_source |
 
 ## Third-body gravity (TB)
 
@@ -261,6 +267,161 @@ Verification status: identifier_verified_content_pending (2), unverifiable (3), 
   - `tests/test_independent_sh_validation.py`
 - **See also**: [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
 - **Notes**: Numba does not reorder these floating-point operations, so the compensation term survives compilation; this is why the recurrence is kept as an explicit four-line helper rather than a bare Python sum.
+
+## Ephemeris and interpolation (EPH)
+
+<a id="lunarisalgeph001"></a>
+### LUNARIS-ALG-EPH-001 -- SPICE-built fixed-grid ephemeris and lunar-orientation tables
+
+- **Slug**: `spice_ephemeris_orientation_tables`
+- **Category**: data_product | **Domain**: EPH | **Status**: active
+- **Classification**: delegated_library
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Acton1996SpiceNaif` -- Acton, 1996. "Ancillary Data Services of {NASA}'s Navigation and Ancillary Information Facility" (section SPICE ancillary information system; pages 65-70) [DOI: 10.1016/0032-0633(95)00107-7]
+- **Verification notes**: C. H. Acton, "Ancillary data services of NASA's Navigation and Ancillary Information Facility", Planetary and Space Science 44(1):65-70, 1996. DOI 10.1016/0032-0633(95)00107-7 verified via ScienceDirect/ADS. Lunaris samples SPICE (via spiceypy) onto uniform-grid tables of third-body positions and lunar-orientation quaternions; the underlying ephemeris data product is DE440 (see LUNARIS-DATA-EPH-001).
+- **Mathematical contract**:
+  - Inputs: duration, output step, and loaded SPICE kernels
+  - Outputs: uniform-grid tables of body positions (m) and unit orientation quaternions, plus GM lookups
+  - Exactness: sampled_from_reference_ephemeris
+  - Preserves: values match SPICE at grid nodes
+  - Preserves: orientation quaternions renormalized to unit length
+- **Implementing symbols**:
+  - `src/lunaris/physics/ephemeris.py` -- `build_tables` (cpu_implementation)
+  - `src/lunaris/physics/ephemeris.py` -- `build_spice_tables` (delegation_wrapper)
+  - `src/lunaris/physics/ephemeris.py` -- `EphemerisManager` (api_entry_point)
+- **Lunaris modifications**:
+  - fixed-grid resampling for fast in-loop interpolation
+  - fail-closed handling when kernels are missing
+- **Assumptions**:
+  - required SPICE kernels (incl. DE440) are loaded
+- **Limitations**:
+  - off-node values require interpolation (see LUNARIS-ALG-INTP-001, LUNARIS-ALG-FRM-001)
+- **Validated by**:
+  - `tests/test_ephemeris.py`
+  - `tests/test_main_ephemeris_policy.py`
+- **See also**: [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001), [`LUNARIS-ALG-INTP-001`](#lunarisalgintp001), [`LUNARIS-ALG-FRM-001`](#lunarisalgfrm001)
+
+<a id="lunarisdataeph001"></a>
+### LUNARIS-DATA-EPH-001 -- JPL DE440 planetary and lunar ephemeris
+
+- **Slug**: `jpl_de440_planetary_lunar_ephemeris`
+- **Category**: data_product | **Domain**: EPH | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `ParkFolkner2021DE440` -- Park, 2021. "The {JPL} Planetary and Lunar Ephemerides {DE440} and {DE441}" (section DE440 planetary and lunar ephemeris; pages 105) [DOI: 10.3847/1538-3881/abd414]
+- **Verification notes**: R. S. Park, W. M. Folkner, J. G. Williams & D. H. Boggs, "The JPL Planetary and Lunar Ephemerides DE440 and DE441", The Astronomical Journal 161(3):105, 2021. DOI 10.3847/1538-3881/abd414 verified via IOP/ ADS. DE440 supplies the third-body positions, lunar orientation/libration and the GM values recorded in Lunaris constants provenance.
+- **Mathematical contract**:
+  - Inputs: body identifier and epoch (via SPICE kernels)
+  - Outputs: reference positions/orientation and GM constants
+  - Exactness: reference_data_product
+  - Preserves: consistent GM and body-frame definitions across the toolchain
+- **Implementing symbols**:
+  - `src/lunaris/common/constants.py` -- `(module)` (config_surface)
+  - `src/lunaris/physics/ephemeris.py` -- `get_body_gm_m3s2` (api_entry_point)
+- **Lunaris modifications**:
+  - consumed through SPICE kernels; not re-integrated by Lunaris
+- **Assumptions**:
+  - DE440 kernels are the loaded ephemeris source
+- **Limitations**:
+  - superseded fields would require a kernel swap, not a code change
+- **Validated by**:
+  - `tests/test_canonical_constants.py`
+  - `tests/test_ephemeris.py`
+- **See also**: [`LUNARIS-ALG-EPH-001`](#lunarisalgeph001), [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001)
+- **Notes**: GRAIL lunar gravity coefficients are defined in the DE440 principal-axis body frame (see LUNARIS-STD-FRM-001).
+
+## Frame conventions (FRM)
+
+<a id="lunarisalgfrm001"></a>
+### LUNARIS-ALG-FRM-001 -- Spherical linear interpolation of unit quaternions (SLERP)
+
+- **Slug**: `slerp_unit_quaternion_interpolation`
+- **Category**: interpolation | **Domain**: FRM | **Status**: active
+- **Classification**: exact
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Shoemake1985QuaternionCurves` -- Shoemake, 1985. "Animating Rotation with Quaternion Curves" (section Spherical linear interpolation (slerp); pages 245-254) [DOI: 10.1145/325165.325242]
+- **Verification notes**: K. Shoemake, "Animating rotation with quaternion curves", ACM SIGGRAPH Computer Graphics 19(3):245-254, 1985. DOI 10.1145/325165.325242 verified via the ACM Digital Library (note: the DOI stem is 325165, not 325334). The implemented weights s0=sin((1-t)theta)/sin(theta), s1=sin(t theta)/sin(theta) are the SLERP formula, with shortest-arc sign handling and a lerp+normalize fallback for near-parallel quaternions.
+- **Mathematical contract**:
+  - Inputs: two unit quaternions and a parameter t in [0,1]
+  - Outputs: interpolated unit quaternion
+  - Exactness: exact_constant_angular_velocity
+  - Preserves: constant angular velocity along the shortest arc
+  - Preserves: unit norm of the result
+- **Implementing symbols**:
+  - `src/lunaris/common/math_utils.py` -- `_quat_slerp` (numba_implementation)
+  - `src/lunaris/common/math_utils.py` -- `interp_quat_slerp` (cpu_implementation)
+  - `src/lunaris/physics/ephemeris.py` -- `interp_quat_safe` (cpu_implementation)
+- **Lunaris modifications**:
+  - shortest-arc sign flip when the dot product is negative
+  - lerp+normalize fallback below a near-parallel threshold
+- **Assumptions**:
+  - both inputs are unit quaternions
+- **Limitations**:
+  - not commutative; endpoints must be ordered
+- **Validated by**:
+  - `tests/test_math_utils.py`
+  - `tests/test_numba_frame_slerp.py`
+- **See also**: [`LUNARIS-ALG-FRM-002`](#lunarisalgfrm002)
+
+<a id="lunarisalgfrm002"></a>
+### LUNARIS-ALG-FRM-002 -- Scalar-first (Hamilton) unit-quaternion active vector rotation
+
+- **Slug**: `hamilton_scalar_first_quaternion_rotation`
+- **Category**: frame_time_convention | **Domain**: FRM | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Kuipers1999Quaternions` -- Kuipers, 1999. "Quaternions and Rotation Sequences: A Primer with Applications to Orbits, Aerospace, and Virtual Reality" (section Quaternion rotation operator) [ISBN: 978-0-691-10298-6]
+- **Verification notes**: J. B. Kuipers, "Quaternions and Rotation Sequences", Princeton University Press, 1999, ISBN 978-0-691-10298-6 verified. The kernel uses the scalar-first (Hamilton) convention and the Rodrigues form v' = v + 2 q0 (q_vec x v) + 2 q_vec x (q_vec x v), equivalent to q * [0,v] * q_conj. This fixes Lunaris's storage/handedness convention.
+- **Mathematical contract**:
+  - Inputs: unit quaternion (scalar-first) and a 3-vector
+  - Outputs: the vector rotated into the target frame
+  - Exactness: exact
+  - Preserves: length-preserving (orthogonal) rotation
+  - Preserves: conjugate equals inverse for unit quaternions
+- **Implementing symbols**:
+  - `src/lunaris/common/math_utils.py` -- `quat_rotate_vec` (numba_implementation)
+  - `src/lunaris/common/math_utils.py` -- `quat_rotate_np` (api_entry_point)
+  - `src/lunaris/common/math_utils.py` -- `quat_conj` (cpu_implementation)
+- **Lunaris modifications**:
+  - Rodrigues-form evaluation avoiding explicit quaternion products
+- **Assumptions**:
+  - scalar-first storage (q0, q1, q2, q3) and unit norm
+- **Limitations**:
+  - Hamilton (not JPL) convention; callers must supply matching quaternions
+- **Validated by**:
+  - `tests/test_math_utils.py`
+  - `tests/test_torch_frame.py`
+- **See also**: [`LUNARIS-ALG-FRM-001`](#lunarisalgfrm001), [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001)
+- **Notes**: Convention is scalar-first Hamilton with active rotation; SPICE-provided lunar-orientation quaternions are consumed under this convention.
+
+<a id="lunarisstdfrm001"></a>
+### LUNARIS-STD-FRM-001 -- Lunar principal-axis (PA) body-fixed frame realized by DE440
+
+- **Slug**: `lunar_principal_axis_body_frame`
+- **Category**: frame_time_convention | **Domain**: FRM | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `ParkFolkner2021DE440` -- Park, 2021. "The {JPL} Planetary and Lunar Ephemerides {DE440} and {DE441}" (section Lunar orientation and principal-axis frame; pages 105) [DOI: 10.3847/1538-3881/abd414]
+- **Verification notes**: The lunar body-fixed frame used for spherical-harmonic gravity is the principal-axis (PA) frame defined by the DE440 lunar libration (Park et al. 2021, DOI 10.3847/1538-3881/abd414 verified), realized through SPICE PCK/BPC kernels. This is distinct from the mean-Earth/polar-axis (ME) frame; GRAIL SHADR coefficients are defined in the PA frame, which is why Lunaris evaluates the field there.
+- **Mathematical contract**:
+  - Inputs: inertial state and a lunar-orientation quaternion
+  - Outputs: state expressed in the lunar principal-axis body frame
+  - Exactness: frame_convention
+  - Preserves: consistency between the gravity-coefficient frame and the rotation applied
+- **Implementing symbols**:
+  - `src/lunaris/common/frame_policy.py` -- `resolve_frame_policy` (config_surface)
+  - `src/lunaris/core/torch_frame.py` -- `(module)` (config_surface)
+- **Lunaris modifications**:
+  - rotation realized with the scalar-first Hamilton quaternion (LUNARIS-ALG-FRM-002)
+- **Assumptions**:
+  - orientation quaternions are the DE440-consistent PA realization
+- **Limitations**:
+  - does not implement the mean-Earth/polar-axis (ME) frame
+- **Validated by**:
+  - `tests/test_frame_policy.py`
+  - `tests/test_sh_convention_lock.py`
+- **See also**: [`LUNARIS-ALG-FRM-002`](#lunarisalgfrm002), [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001), [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
+- **Notes**: PA vs ME is a common source of lunar-gravity frame errors; this entry records that Lunaris uses the PA frame consistent with the coefficient set.
 
 ## Integrators (INT)
 
@@ -574,3 +735,36 @@ Verification status: identifier_verified_content_pending (2), unverifiable (3), 
   - `tests/test_events.py`
   - `tests/test_event_outcome_contract.py`
 - **Notes**: Terminal-event outcome selection follows SciPy solve_ivp parity semantics (earliest terminal crossing). The root find itself is elementary bisection + false position, hence no external primary source is claimed.
+
+## Interpolation (INTP)
+
+<a id="lunarisalgintp001"></a>
+### LUNARIS-ALG-INTP-001 -- Clamped uniform Catmull-Rom cubic interpolation of vector time series
+
+- **Slug**: `clamped_catmull_rom_vec3_interpolation`
+- **Category**: interpolation | **Domain**: INTP | **Status**: active
+- **Classification**: exact
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `CatmullRom1974Splines` -- Catmull, 1974. "A Class of Local Interpolating Splines" (section A class of local interpolating splines; pages 317-326) [DOI: 10.1016/B978-0-12-079050-0.50020-5]
+- **Verification notes**: E. Catmull and R. Rom, "A class of local interpolating splines", in Computer Aided Geometric Design (Barnhill & Riesenfeld, eds.), Academic Press, 1974, pp. 317-326. ISBN 978-0-12-079050-0 and chapter DOI 10.1016/B978-0-12-079050-0.50020-5 verified. The implemented basis weights 0.5*[(-f+2f^2-f^3),(2-5f^2+3f^3),(f+4f^2-3f^3),(-f^2+f^3)] are the standard uniform Catmull-Rom cubic; control-point indices are clamped at the table ends.
+- **Mathematical contract**:
+  - Inputs: time, uniform step dt, and an (N,3) table
+  - Outputs: C1-continuous interpolated 3-vector
+  - Exactness: exact_catmull_rom
+  - Preserves: passes through the control points (interpolating)
+  - Preserves: C1 continuity of the tangent
+- **Implementing symbols**:
+  - `src/lunaris/common/math_utils.py` -- `interp_vec3_catmull` (cpu_implementation)
+  - `src/lunaris/core/torch_third_body.py` -- `interp_vec3_catmull_torch` (torch_implementation)
+- **Lunaris modifications**:
+  - endpoint index clamping (clamped Catmull-Rom variant)
+  - endpoint/degenerate-table fallbacks
+- **Assumptions**:
+  - uniformly spaced samples in time
+- **Limitations**:
+  - uniform parameterization (not the centripetal variant)
+- **Validated by**:
+  - `tests/test_math_utils.py`
+  - `tests/test_ephemeris_interpolation.py`
+- **See also**: [`LUNARIS-ALG-EPH-001`](#lunarisalgeph001)
+- **Notes**: GPU/CPU parity: the torch ephemeris path was upgraded from linear to Catmull-Rom to match the CPU kernel.

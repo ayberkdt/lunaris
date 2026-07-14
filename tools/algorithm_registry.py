@@ -98,6 +98,7 @@ _BIB_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "book": ("author", "title", "publisher", "year"),
     "article": ("author", "title", "journal", "year"),
     "inproceedings": ("author", "title", "booktitle", "year"),
+    "incollection": ("author", "title", "booktitle", "year"),
     "techreport": ("title", "year"),  # author/institution checked separately
     "manual": ("title", "year"),
     "misc": ("title",),

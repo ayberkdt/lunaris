@@ -190,6 +190,7 @@
             "book",
             "article",
             "inproceedings",
+            "incollection",
             "techreport",
             "standard",
             "dataset",
