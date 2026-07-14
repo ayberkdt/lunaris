@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**38 entries.**
+**41 entries.**
 
-Implementation class: adaptation (9), delegated_library (6), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (4)
+Implementation class: adaptation (9), delegated_library (8), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (5)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (4), verified_primary_source (32)
+Verification status: identifier_verified_content_pending (2), unverifiable (4), verified_primary_source (35)
 
 ## Index
 
@@ -32,9 +32,12 @@ Verification status: identifier_verified_content_pending (2), unverifiable (4), 
 | [`LUNARIS-ALG-INTP-001`](#lunarisalgintp001) | Clamped uniform Catmull-Rom cubic interpolation of vector time series | exact | verified_primary_source |
 | [`LUNARIS-ALG-ML-001`](#lunarisalgml001) | Sinusoidal Representation Network (SIREN) | exact | verified_primary_source |
 | [`LUNARIS-ALG-ML-002`](#lunarisalgml002) | Random Fourier feature input encoding | exact | verified_primary_source |
+| [`LUNARIS-ALG-OE-001`](#lunarisalgoe001) | Classical orbital-element conversions (state vector to/from Keplerian elements) | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-001`](#lunarisalgopt001) | AdamW (decoupled weight decay) optimizer as delegated to PyTorch | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | GradNorm adaptive multi-task loss balancing | adaptation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003) | Sobolev training (derivative-supervision loss) | adaptation | verified_primary_source |
+| [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001) | Scrambled Sobol low-discrepancy sequence sampling | delegated_library | verified_primary_source |
+| [`LUNARIS-ALG-SAMP-002`](#lunarisalgsamp002) | Latin hypercube sampling | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-SH-001`](#lunarisalgsh001) | Standard forward-column recursion of fully-normalized associated Legendre functions | exact | verified_primary_source |
 | [`LUNARIS-ALG-SH-002`](#lunarisalgsh002) | Spherical-harmonic gravitational acceleration via the classical spherical-coordinate geopotential gradient | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-SUM-001`](#lunarisalgsum001) | Kahan compensated summation | exact | verified_primary_source |
@@ -1026,6 +1029,94 @@ Verification status: identifier_verified_content_pending (2), unverifiable (4), 
   - `tests/test_ephemeris_interpolation.py`
 - **See also**: [`LUNARIS-ALG-EPH-001`](#lunarisalgeph001)
 - **Notes**: GPU/CPU parity: the torch ephemeris path was upgraded from linear to Catmull-Rom to match the CPU kernel.
+
+## Orbital elements (OE)
+
+<a id="lunarisalgoe001"></a>
+### LUNARIS-ALG-OE-001 -- Classical orbital-element conversions (state vector to/from Keplerian elements)
+
+- **Slug**: `classical_orbital_element_conversions`
+- **Category**: numerical_algorithm | **Domain**: OE | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Vallado2013Fundamentals` -- Vallado, 2013. "Fundamentals of Astrodynamics and Applications" (edition Fourth; chapter 2 (Kepler's Equation and Kepler's Problem); section RV2COE and COE2RV algorithms) [ISBN: 978-1-881883-18-0]
+- **Verification notes**: D. A. Vallado, "Fundamentals of Astrodynamics and Applications", 4th ed., Microcosm Press, 2013. ISBN 978-1-881883-18-0 verified. The conversions follow Vallado's RV2COE / COE2RV algorithms with the standard special-case handling (circular, equatorial). PENDING only the exact algorithm numbers from the physical copy; the method identity is the classical osculating-element set.
+- **Mathematical contract**:
+  - Inputs: position/velocity (m, m/s) and mu, or Keplerian elements and mu
+  - Outputs: osculating Keplerian elements, or state vector
+  - Exactness: exact_two_body_transformation
+  - Preserves: two-body invariants (energy, angular momentum) at the conversion epoch
+- **Implementing symbols**:
+  - `src/lunaris/common/math_utils.py` -- `rv_to_coe_select` (cpu_implementation)
+  - `src/lunaris/common/math_utils.py` -- `coe_to_rv` (cpu_implementation)
+  - `src/lunaris/common/math_utils.py` -- `batch_y_to_elements` (cpu_implementation)
+- **Lunaris modifications**:
+  - branch handling for near-circular and near-equatorial edge cases
+  - vectorized batch element extraction
+- **Assumptions**:
+  - instantaneous osculating (two-body) elements
+- **Limitations**:
+  - undefined elements (e.g. node for equatorial orbits) use documented fallbacks
+- **Validated by**:
+  - `tests/test_math_utils.py`
+
+## Sampling / design of experiments (SAMP)
+
+<a id="lunarisalgsamp001"></a>
+### LUNARIS-ALG-SAMP-001 -- Scrambled Sobol low-discrepancy sequence sampling
+
+- **Slug**: `scrambled_sobol_low_discrepancy_design`
+- **Category**: sampling | **Domain**: SAMP | **Status**: active
+- **Classification**: delegated_library
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Sobol1967Distribution` -- Sobol', 1967. "On the Distribution of Points in a Cube and the Approximate Evaluation of Integrals" (section Sobol low-discrepancy sequence; pages 86-112) [DOI: 10.1016/0041-5553(67)90144-9]
+- **Verification notes**: Sobol' sequences: I. M. Sobol', USSR Comput. Math. Math. Phys. 7(4): 86-112, 1967 (DOI 10.1016/0041-5553(67)90144-9 verified). Lunaris uses scipy.stats.qmc.Sobol (Owen-type scrambling when scramble=True); SciPy is the delegated implementation (Virtanen et al. 2020). The initial-state and spacecraft-property designs map the unit sequence to physical ranges.
+- **Mathematical contract**:
+  - Inputs: number of samples, dimension, seed, scramble flag
+  - Outputs: low-discrepancy design in the unit hypercube (then mapped to ranges)
+  - Exactness: low_discrepancy_quasi_random
+  - Preserves: low discrepancy / better space filling than pseudo-random sampling
+- **Implementing symbols**:
+  - `src/lunaris/batch/sampling.py` -- `generate_standard_normal_design` (delegation_wrapper)
+  - `src/lunaris/batch/sampling.py` -- `sample_initial_states` (api_entry_point)
+- **Lunaris modifications**:
+  - Deterministic (unscrambled) Sobol discards the pathological all-zero first point; scrambled Sobol retains it (Lunaris policy documented in the sampler).
+- **Assumptions**:
+  - independent standardized inputs before range mapping
+- **Limitations**:
+  - unscrambled Sobol has no variance estimate; use scrambled for UQ
+- **Validated by**:
+  - `tests/test_batch_sampling.py`
+  - `tests/test_batch_sampling_designs.py`
+- **See also**: [`LUNARIS-ALG-SAMP-002`](#lunarisalgsamp002)
+- **Notes**: The all-zero-first-point discard for the unscrambled variant is a Lunaris policy, not part of the Sobol construction.
+
+<a id="lunarisalgsamp002"></a>
+### LUNARIS-ALG-SAMP-002 -- Latin hypercube sampling
+
+- **Slug**: `latin_hypercube_sampling`
+- **Category**: sampling | **Domain**: SAMP | **Status**: active
+- **Classification**: delegated_library
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `McKayBeckmanConover1979LHS` -- McKay, 1979. "A Comparison of Three Methods for Selecting Values of Input Variables in the Analysis of Output from a Computer Code" (section Latin hypercube sampling; pages 239-245) [DOI: 10.1080/00401706.1979.10489755]
+- **Verification notes**: Latin hypercube sampling: McKay, Beckman & Conover, Technometrics 21(2): 239-245, 1979 (DOI 10.1080/00401706.1979.10489755 verified). Lunaris uses scipy.stats.qmc.LatinHypercube (Virtanen et al. 2020, delegated implementation).
+- **Mathematical contract**:
+  - Inputs: number of samples, dimension, seed
+  - Outputs: stratified design with one sample per axis stratum
+  - Exactness: stratified_sampling
+  - Preserves: one-dimensional stratification along every axis
+- **Implementing symbols**:
+  - `src/lunaris/batch/sampling.py` -- `generate_standard_normal_design` (delegation_wrapper)
+- **Lunaris modifications**:
+  - mapped to standardized normal inputs before physical range mapping
+- **Assumptions**:
+  - independent standardized inputs
+- **Limitations**:
+  - stratification is per-axis; no guaranteed multi-dim low discrepancy
+- **Validated by**:
+  - `tests/test_batch_sampling.py`
+  - `tests/test_batch_sampling_designs.py`
+- **See also**: [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001)
 
 ## Neural architectures (ML)
 

@@ -1036,6 +1036,69 @@ entries:
       - LUNARIS-ALG-ML-001
     notes: ""
 
+  - id: LUNARIS-ALG-OE-001
+    slug: classical_orbital_element_conversions
+    canonical_name: >-
+      Classical orbital-element conversions (state vector to/from Keplerian
+      elements)
+    category: numerical_algorithm
+    domain: OE
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Vallado2013Fundamentals
+    primary_reference:
+      type: book
+      citation_key: Vallado2013Fundamentals
+      identifier_kind: isbn
+      doi: null
+      isbn: 978-1-881883-18-0
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: Fourth
+      chapter: "2 (Kepler's Equation and Kepler's Problem)"
+      section: RV2COE and COE2RV algorithms
+      equations: []
+      pages: null
+      verification_notes: >-
+        D. A. Vallado, "Fundamentals of Astrodynamics and Applications", 4th ed.,
+        Microcosm Press, 2013. ISBN 978-1-881883-18-0 verified. The conversions
+        follow Vallado's RV2COE / COE2RV algorithms with the standard
+        special-case handling (circular, equatorial). PENDING only the exact
+        algorithm numbers from the physical copy; the method identity is the
+        classical osculating-element set.
+    symbols:
+      - path: src/lunaris/common/math_utils.py
+        symbol: rv_to_coe_select
+        role: cpu_implementation
+      - path: src/lunaris/common/math_utils.py
+        symbol: coe_to_rv
+        role: cpu_implementation
+      - path: src/lunaris/common/math_utils.py
+        symbol: batch_y_to_elements
+        role: cpu_implementation
+    mathematical_contract:
+      inputs: position/velocity (m, m/s) and mu, or Keplerian elements and mu
+      outputs: osculating Keplerian elements, or state vector
+      exact_or_approximate: exact_two_body_transformation
+      preserved_properties:
+        - two-body invariants (energy, angular momentum) at the conversion epoch
+    lunaris_modifications:
+      - branch handling for near-circular and near-equatorial edge cases
+      - vectorized batch element extraction
+    assumptions:
+      - instantaneous osculating (two-body) elements
+    limitations:
+      - undefined elements (e.g. node for equatorial orbits) use documented fallbacks
+    validation:
+      - tests/test_math_utils.py
+    see_also: []
+    notes: ""
+
   - id: LUNARIS-ALG-OPT-001
     slug: adamw_optimizer_delegation
     canonical_name: AdamW (decoupled weight decay) optimizer as delegated to PyTorch
@@ -1201,6 +1264,125 @@ entries:
     notes: >-
       This is the core physics-supervision mechanism: matching accelerations as
       input-gradients of the learned potential.
+
+  - id: LUNARIS-ALG-SAMP-001
+    slug: scrambled_sobol_low_discrepancy_design
+    canonical_name: Scrambled Sobol low-discrepancy sequence sampling
+    category: sampling
+    domain: SAMP
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Sobol1967Distribution
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: Sobol1967Distribution
+      identifier_kind: doi
+      doi: 10.1016/0041-5553(67)90144-9
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.qmc.Sobol.html
+      edition: null
+      chapter: null
+      section: Sobol low-discrepancy sequence
+      equations: []
+      pages: "86-112"
+      verification_notes: >-
+        Sobol' sequences: I. M. Sobol', USSR Comput. Math. Math. Phys. 7(4):
+        86-112, 1967 (DOI 10.1016/0041-5553(67)90144-9 verified). Lunaris uses
+        scipy.stats.qmc.Sobol (Owen-type scrambling when scramble=True); SciPy is
+        the delegated implementation (Virtanen et al. 2020). The initial-state
+        and spacecraft-property designs map the unit sequence to physical ranges.
+    symbols:
+      - path: src/lunaris/batch/sampling.py
+        symbol: generate_standard_normal_design
+        role: delegation_wrapper
+      - path: src/lunaris/batch/sampling.py
+        symbol: sample_initial_states
+        role: api_entry_point
+    mathematical_contract:
+      inputs: number of samples, dimension, seed, scramble flag
+      outputs: low-discrepancy design in the unit hypercube (then mapped to ranges)
+      exact_or_approximate: low_discrepancy_quasi_random
+      preserved_properties:
+        - low discrepancy / better space filling than pseudo-random sampling
+    lunaris_modifications:
+      - >-
+        Deterministic (unscrambled) Sobol discards the pathological all-zero
+        first point; scrambled Sobol retains it (Lunaris policy documented in
+        the sampler).
+    assumptions:
+      - independent standardized inputs before range mapping
+    limitations:
+      - unscrambled Sobol has no variance estimate; use scrambled for UQ
+    validation:
+      - tests/test_batch_sampling.py
+      - tests/test_batch_sampling_designs.py
+    see_also:
+      - LUNARIS-ALG-SAMP-002
+    notes: >-
+      The all-zero-first-point discard for the unscrambled variant is a Lunaris
+      policy, not part of the Sobol construction.
+
+  - id: LUNARIS-ALG-SAMP-002
+    slug: latin_hypercube_sampling
+    canonical_name: Latin hypercube sampling
+    category: sampling
+    domain: SAMP
+    status: active
+    added: "2026-07-14"
+    implementation_class: delegated_library
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - McKayBeckmanConover1979LHS
+      - Virtanen2020SciPy
+    primary_reference:
+      type: article
+      citation_key: McKayBeckmanConover1979LHS
+      identifier_kind: doi
+      doi: 10.1080/00401706.1979.10489755
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.qmc.LatinHypercube.html
+      edition: null
+      chapter: null
+      section: Latin hypercube sampling
+      equations: []
+      pages: "239-245"
+      verification_notes: >-
+        Latin hypercube sampling: McKay, Beckman & Conover, Technometrics 21(2):
+        239-245, 1979 (DOI 10.1080/00401706.1979.10489755 verified). Lunaris uses
+        scipy.stats.qmc.LatinHypercube (Virtanen et al. 2020, delegated
+        implementation).
+    symbols:
+      - path: src/lunaris/batch/sampling.py
+        symbol: generate_standard_normal_design
+        role: delegation_wrapper
+    mathematical_contract:
+      inputs: number of samples, dimension, seed
+      outputs: stratified design with one sample per axis stratum
+      exact_or_approximate: stratified_sampling
+      preserved_properties:
+        - one-dimensional stratification along every axis
+    lunaris_modifications:
+      - mapped to standardized normal inputs before physical range mapping
+    assumptions:
+      - independent standardized inputs
+    limitations:
+      - stratification is per-axis; no guaranteed multi-dim low discrepancy
+    validation:
+      - tests/test_batch_sampling.py
+      - tests/test_batch_sampling_designs.py
+    see_also:
+      - LUNARIS-ALG-SAMP-001
+    notes: ""
 
   - id: LUNARIS-ALG-SH-001
     slug: fully_normalized_alf_forward_column_recursion
