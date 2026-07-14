@@ -1746,6 +1746,61 @@ entries:
       - LUNARIS-ALG-SH-002
     notes: ""
 
+  - id: LUNARIS-DATA-CST-001
+    slug: codata_2018_fundamental_constants
+    canonical_name: CODATA 2018 recommended fundamental physical constants
+    category: data_product
+    domain: CST
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Tiesinga2021CODATA
+    primary_reference:
+      type: article
+      citation_key: Tiesinga2021CODATA
+      identifier_kind: doi
+      doi: 10.1103/RevModPhys.93.025010
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://physics.nist.gov/constants
+      edition: null
+      chapter: null
+      section: Recommended values (CODATA 2018)
+      equations: []
+      pages: "025010"
+      verification_notes: >-
+        E. Tiesinga, P. J. Mohr, D. B. Newell & B. N. Taylor, "CODATA Recommended
+        Values of the Fundamental Physical Constants: 2018", Reviews of Modern
+        Physics 93, 025010 (2021). DOI 10.1103/RevModPhys.93.025010 verified via
+        APS/ADS. Lunaris uses the CODATA 2018 gravitational constant G =
+        6.6743e-11 and the exact SI speed of light c = 299792458 m/s.
+    symbols:
+      - path: src/lunaris/common/constants.py
+        symbol: null
+        role: config_surface
+    mathematical_contract:
+      inputs: none (constant definitions)
+      outputs: G, c and derived radiation constants
+      exact_or_approximate: reference_constant_values
+      preserved_properties:
+        - single source of truth for physical constants across the toolchain
+    lunaris_modifications:
+      - provenance strings record the source per constant
+    assumptions:
+      - SI units throughout
+    limitations:
+      - body GMs come from DE440, not CODATA (see LUNARIS-DATA-EPH-001)
+    validation:
+      - tests/test_canonical_constants.py
+    see_also:
+      - LUNARIS-DATA-EPH-001
+    notes: >-
+      c is the exact post-2019-SI definition; G is CODATA 2018.
+
   - id: LUNARIS-DATA-EPH-001
     slug: jpl_de440_planetary_lunar_ephemeris
     canonical_name: JPL DE440 planetary and lunar ephemeris
@@ -1806,6 +1861,73 @@ entries:
     notes: >-
       GRAIL lunar gravity coefficients are defined in the DE440 principal-axis
       body frame (see LUNARIS-STD-FRM-001).
+
+  - id: LUNARIS-DATA-GRAV-001
+    slug: grail_gl1800f_lunar_gravity_field
+    canonical_name: GRAIL GL1800F lunar spherical-harmonic gravity field (JGGRX_1800F)
+    category: data_product
+    domain: DATA
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: identifier_verified_content_pending
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - GrailGL1800FSHADR
+      - Konopliv2014GRAIL
+    primary_reference:
+      type: dataset
+      citation_key: GrailGL1800FSHADR
+      identifier_kind: official_url
+      doi: null
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://pds-geosciences.wustl.edu/grail/grail-l-lgrs-5-rdr-v1/grail_1001/shadr/
+      edition: null
+      chapter: null
+      section: JGGRX_1800F_SHA product
+      equations: []
+      pages: null
+      verification_notes: >-
+        The shipped coefficient set is GL1800F (file jggrx_1800f_sha), read
+        directly from its PDS SHADR label: degree/order 1800, fully normalized,
+        reference radius 1738.0 km, DE440 principal-axis frame, k2=0.024223,
+        k3=0.0163. PENDING: the label attributes the field to R. S. Park, A.
+        Berne, A. S. Konopliv & J. T. Keane, but that specific GL1800 journal
+        citation was not fully resolved; the GRAIL high-resolution field
+        methodology is Konopliv et al. 2014 (DOI 10.1002/2013GL059066 verified).
+    symbols:
+      - path: src/lunaris/loaders/io_gravity.py
+        symbol: load_shadr_ascii
+        role: cpu_implementation
+      - path: src/lunaris/loaders/io_gravity.py
+        symbol: load_gravity_model
+        role: api_entry_point
+    mathematical_contract:
+      inputs: SHADR coefficient file path
+      outputs: >-
+        fully-normalized C_nm/S_nm blocks, reference radius, and GM for
+        spherical-harmonic evaluation
+      exact_or_approximate: reference_gravity_coefficient_set
+      preserved_properties:
+        - fully-normalized (no Condon-Shortley) convention matching LUNARIS-ALG-SH-001
+        - DE440 principal-axis body frame (LUNARIS-STD-FRM-001)
+    lunaris_modifications:
+      - degree truncation at load time; structural monopole handling
+    assumptions:
+      - coefficients interpreted in the DE440 PA frame at radius 1738.0 km
+    limitations:
+      - static field; no time-variable gravity
+    validation:
+      - tests/test_loader_helpers.py
+      - tests/test_gravity_reference_runner.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+      - LUNARIS-STD-FRM-001
+    notes: >-
+      This is the actual lunar gravity field Lunaris evaluates; the SH algorithm
+      (LUNARIS-ALG-SH-002) consumes these coefficients.
 
   - id: LUNARIS-HEUR-EVT-001
     slug: in_step_event_root_localization

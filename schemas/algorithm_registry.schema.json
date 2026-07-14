@@ -83,7 +83,7 @@
           "enum": [
             "TB", "SH", "J2E", "TID", "REL", "RAD", "EPH", "FRM", "TIME",
             "INT", "EVT", "SUM", "INTP", "OE", "SAMP", "UQ", "PHZ", "FRZ",
-            "IMP", "ML", "OPT", "NUM", "DATA", "STD"
+            "IMP", "ML", "OPT", "NUM", "DATA", "CST", "STD"
           ]
         },
         "status": {

@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**41 entries.**
+**43 entries.**
 
-Implementation class: adaptation (9), delegated_library (8), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (5)
+Implementation class: adaptation (9), delegated_library (8), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (7)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (4), verified_primary_source (35)
+Verification status: identifier_verified_content_pending (3), unverifiable (4), verified_primary_source (36)
 
 ## Index
 
@@ -43,7 +43,9 @@ Verification status: identifier_verified_content_pending (2), unverifiable (4), 
 | [`LUNARIS-ALG-SUM-001`](#lunarisalgsum001) | Kahan compensated summation | exact | verified_primary_source |
 | [`LUNARIS-ALG-TB-001`](#lunarisalgtb001) | Battin F(q) cancellation-resistant differential third-body formulation | exact_reformulation | identifier_verified_content_pending |
 | [`LUNARIS-ALG-TB-002`](#lunarisalgtb002) | Newtonian point-mass (monopole) central-body gravitational acceleration | exact | verified_primary_source |
+| [`LUNARIS-DATA-CST-001`](#lunarisdatacst001) | CODATA 2018 recommended fundamental physical constants | standard_implementation | verified_primary_source |
 | [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001) | JPL DE440 planetary and lunar ephemeris | standard_implementation | verified_primary_source |
+| [`LUNARIS-DATA-GRAV-001`](#lunarisdatagrav001) | GRAIL GL1800F lunar spherical-harmonic gravity field (JGGRX_1800F) | standard_implementation | identifier_verified_content_pending |
 | [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001) | In-step event-time localization by bisection with a false-position final correction | heuristic | unverifiable |
 | [`LUNARIS-HEUR-ML-001`](#lunarisheurml001) | Multi-band SIREN variants and physics-informed input encodings (Lunaris-specific) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-001`](#lunarisheursh001) | Pole-stable spherical-harmonic order truncation (stable-m limit) | heuristic | unverifiable |
@@ -1290,3 +1292,64 @@ Verification status: identifier_verified_content_pending (2), unverifiable (4), 
   - `tests/test_surrogate_training_contracts.py`
 - **See also**: [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002)
 - **Notes**: This is the core physics-supervision mechanism: matching accelerations as input-gradients of the learned potential.
+
+## Scientific data products (DATA)
+
+<a id="lunarisdatagrav001"></a>
+### LUNARIS-DATA-GRAV-001 -- GRAIL GL1800F lunar spherical-harmonic gravity field (JGGRX_1800F)
+
+- **Slug**: `grail_gl1800f_lunar_gravity_field`
+- **Category**: data_product | **Domain**: DATA | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: identifier_verified_content_pending | **Scientific status**: implemented_and_tested
+- **Primary reference**: `GrailGL1800FSHADR` -- {JPL GRAIL Level-2 Team}, 2023. "{GRAIL} Lunar Gravity Field {GL1800F} (Spherical Harmonic Coefficients, {JGGRX\_1800F\_SHA})" (section JGGRX_1800F_SHA product) [OFFICIAL URL: https://pds-geosciences.wustl.edu/grail/grail-l-lgrs-5-rdr-v1/grail_1001/shadr/]
+- **Verification notes**: The shipped coefficient set is GL1800F (file jggrx_1800f_sha), read directly from its PDS SHADR label: degree/order 1800, fully normalized, reference radius 1738.0 km, DE440 principal-axis frame, k2=0.024223, k3=0.0163. PENDING: the label attributes the field to R. S. Park, A. Berne, A. S. Konopliv & J. T. Keane, but that specific GL1800 journal citation was not fully resolved; the GRAIL high-resolution field methodology is Konopliv et al. 2014 (DOI 10.1002/2013GL059066 verified).
+- **Mathematical contract**:
+  - Inputs: SHADR coefficient file path
+  - Outputs: fully-normalized C_nm/S_nm blocks, reference radius, and GM for spherical-harmonic evaluation
+  - Exactness: reference_gravity_coefficient_set
+  - Preserves: fully-normalized (no Condon-Shortley) convention matching LUNARIS-ALG-SH-001
+  - Preserves: DE440 principal-axis body frame (LUNARIS-STD-FRM-001)
+- **Implementing symbols**:
+  - `src/lunaris/loaders/io_gravity.py` -- `load_shadr_ascii` (cpu_implementation)
+  - `src/lunaris/loaders/io_gravity.py` -- `load_gravity_model` (api_entry_point)
+- **Lunaris modifications**:
+  - degree truncation at load time; structural monopole handling
+- **Assumptions**:
+  - coefficients interpreted in the DE440 PA frame at radius 1738.0 km
+- **Limitations**:
+  - static field; no time-variable gravity
+- **Validated by**:
+  - `tests/test_loader_helpers.py`
+  - `tests/test_gravity_reference_runner.py`
+- **See also**: [`LUNARIS-ALG-SH-002`](#lunarisalgsh002), [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001)
+- **Notes**: This is the actual lunar gravity field Lunaris evaluates; the SH algorithm (LUNARIS-ALG-SH-002) consumes these coefficients.
+
+## Physical constants (CST)
+
+<a id="lunarisdatacst001"></a>
+### LUNARIS-DATA-CST-001 -- CODATA 2018 recommended fundamental physical constants
+
+- **Slug**: `codata_2018_fundamental_constants`
+- **Category**: data_product | **Domain**: CST | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Tiesinga2021CODATA` -- Tiesinga, 2021. "{CODATA} Recommended Values of the Fundamental Physical Constants: 2018" (section Recommended values (CODATA 2018); pages 025010) [DOI: 10.1103/RevModPhys.93.025010]
+- **Verification notes**: E. Tiesinga, P. J. Mohr, D. B. Newell & B. N. Taylor, "CODATA Recommended Values of the Fundamental Physical Constants: 2018", Reviews of Modern Physics 93, 025010 (2021). DOI 10.1103/RevModPhys.93.025010 verified via APS/ADS. Lunaris uses the CODATA 2018 gravitational constant G = 6.6743e-11 and the exact SI speed of light c = 299792458 m/s.
+- **Mathematical contract**:
+  - Inputs: none (constant definitions)
+  - Outputs: G, c and derived radiation constants
+  - Exactness: reference_constant_values
+  - Preserves: single source of truth for physical constants across the toolchain
+- **Implementing symbols**:
+  - `src/lunaris/common/constants.py` -- `(module)` (config_surface)
+- **Lunaris modifications**:
+  - provenance strings record the source per constant
+- **Assumptions**:
+  - SI units throughout
+- **Limitations**:
+  - body GMs come from DE440, not CODATA (see LUNARIS-DATA-EPH-001)
+- **Validated by**:
+  - `tests/test_canonical_constants.py`
+- **See also**: [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001)
+- **Notes**: c is the exact post-2019-SI definition; G is CODATA 2018.

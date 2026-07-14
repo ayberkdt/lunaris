@@ -62,6 +62,7 @@ DOMAIN_ORDER: tuple[str, ...] = (
     "OPT",
     "NUM",
     "DATA",
+    "CST",
     "STD",
 )
 
@@ -89,6 +90,7 @@ DOMAIN_TITLES: dict[str, str] = {
     "OPT": "Optimization",
     "NUM": "Numerical utilities",
     "DATA": "Scientific data products",
+    "CST": "Physical constants",
     "STD": "Standards and conventions",
 }
 
