@@ -17,6 +17,8 @@ advanced subsystem.
 
 | Document | Use it for |
 | --- | --- |
+| [Algorithm Catalogue](ALGORITHM_CATALOG.md) | Traceability for every implemented algorithm/model: canonical name, verified source, symbols, tests (generated from the registry) |
+| [Algorithm Traceability Policy](ALGORITHM_TRACEABILITY_POLICY.md) | How to name, cite, classify and register a new algorithm or model |
 | [Force Model Validation](FORCE_MODEL_VALIDATION.md) | Physics and limiting-case validation notes |
 | [Gravity Engine External Validation](GRAVITY_ENGINE_EXTERNAL_VALIDATION.md) | Independent gravity/orbit validation harness |
 | [Perturbation Budget](PERTURBATION_BUDGET.md) | Acceleration budgets and interpretation |

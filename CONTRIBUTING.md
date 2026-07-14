@@ -54,6 +54,14 @@ Notes:
 - Add or extend tests with each change; a new perturbation, frame/time
   transform, integrator, or CPU/GPU kernel needs a correctness check, not just a
   smoke test.
+- Register new algorithms and physical models in the traceability system. A new
+  named algorithm, model, integrator, interpolation/sampling method, neural
+  architecture, or scientific data product needs an entry in
+  `docs/algorithms/algorithm_registry.yaml` with a verified primary source. Run
+  `python tools/algorithm_registry.py validate` and `... generate`, then commit
+  the registry, `references/references.bib`, and the generated
+  `docs/ALGORITHM_CATALOG.md` together. See
+  [Algorithm Traceability Policy](docs/ALGORITHM_TRACEABILITY_POLICY.md).
 
 ## Dependency locks
 
