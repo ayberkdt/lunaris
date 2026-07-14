@@ -1535,6 +1535,197 @@ entries:
       A small perturbation on a lunar orbiter; included for completeness of the
       Earth-perturbation budget.
 
+  - id: LUNARIS-MODEL-RAD-001
+    slug: cannonball_srp_conical_shadow
+    canonical_name: >-
+      Cannonball solar radiation pressure with a dual-cone (conical)
+      umbra/penumbra shadow
+    category: physical_model
+    domain: RAD
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.4 (solar radiation pressure and shadow function)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The cannonball law a = (P0 Cr A/m)(AU/d)^2 nu u_hat(sun->sc) and the
+        dual-cone (umbra + penumbra) shadow geometry with a finite solar disk
+        follow Montenbruck & Gill (2000), Section 3.4 (identifiers verified as
+        for LUNARIS-ALG-SH-002). Lunaris ADAPTS the penumbra: the fractional
+        illumination uses a cubic-Hermite smoothstep across the umbra->penumbra
+        band instead of the exact overlapping-disk area, and supports both Moon
+        and Earth occulters (shadow = min of the two).
+    symbols:
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: accel_srp
+        role: numba_implementation
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: _shadow_factor_conical
+        role: numba_implementation
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: compute_srp_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        Moon-centred spacecraft, Sun and Earth positions; radii; AU; P0; Cr;
+        area; mass; eclipse toggles
+      outputs: solar-radiation-pressure acceleration (m/s^2)
+      exact_or_approximate: cannonball_with_smoothstep_penumbra
+      preserved_properties:
+        - inverse-square flux falloff with heliocentric distance
+        - zero force inside the umbra
+    lunaris_modifications:
+      - smoothstep penumbra transition instead of exact occulted-disk area
+      - combined Moon+Earth shadow via the minimum shadow factor
+    assumptions:
+      - spherical spacecraft (cannonball), single reflectivity coefficient Cr
+    limitations:
+      - no attitude-dependent or multi-surface SRP
+      - penumbra fraction is an approximation, not the exact geometric area
+    validation:
+      - tests/test_solar_effects.py
+      - tests/test_srp_eclipse.py
+    see_also:
+      - LUNARIS-MODEL-RAD-002
+      - LUNARIS-MODEL-RAD-003
+    notes: ""
+
+  - id: LUNARIS-MODEL-RAD-002
+    slug: facet_lunar_albedo_radiation_pressure
+    canonical_name: Faceted lunar albedo (shortwave) radiation-pressure model
+    category: empirical_model
+    domain: RAD
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Knocke1988EarthRadiation
+    primary_reference:
+      type: inproceedings
+      citation_key: Knocke1988EarthRadiation
+      identifier_kind: doi
+      doi: 10.2514/6.1988-4292
+      isbn: null
+      report_number: AIAA Paper 88-4292
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Diffuse-body shortwave (albedo) radiation force
+      equations: []
+      pages: "577-587"
+      verification_notes: >-
+        P. C. Knocke, J. C. Ries & B. D. Tapley, "Earth Radiation Pressure
+        Effects on Satellites", AIAA Paper 88-4292, 1988, pp. 577-587. DOI
+        10.2514/6.1988-4292 verified via AIAA. Lunaris ADAPTS this diffuse-body
+        shortwave (albedo) radiation-pressure model from Earth to the MOON,
+        summing reflected-sunlight contributions over a lat/lon facet grid.
+    symbols:
+      - path: src/lunaris/physics/lunar_albedo.py
+        symbol: albedo_single_facet_accel_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/lunar_albedo.py
+        symbol: accel_albedo_facets_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/lunar_albedo.py
+        symbol: calc_albedo_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: spacecraft state, Sun direction, facet grid, albedo, spacecraft props
+      outputs: albedo radiation-pressure acceleration (m/s^2)
+      exact_or_approximate: faceted_diffuse_reflection_sum
+      preserved_properties:
+        - only sunlit, visible facets contribute
+    lunaris_modifications:
+      - Earth ERP formalism applied to lunar albedo over a lat/lon facet grid
+    assumptions:
+      - Lambertian diffuse reflection; cannonball spacecraft response
+    limitations:
+      - facet-resolution dependent; static albedo map
+    validation:
+      - tests/test_lunar_albedo.py
+      - tests/test_surface_effects.py
+    see_also:
+      - LUNARIS-MODEL-RAD-003
+    notes: ""
+
+  - id: LUNARIS-MODEL-RAD-003
+    slug: facet_thermal_ir_radiation_pressure
+    canonical_name: Faceted lunar thermal-infrared (longwave) radiation-pressure model
+    category: empirical_model
+    domain: RAD
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Knocke1988EarthRadiation
+    primary_reference:
+      type: inproceedings
+      citation_key: Knocke1988EarthRadiation
+      identifier_kind: doi
+      doi: 10.2514/6.1988-4292
+      isbn: null
+      report_number: AIAA Paper 88-4292
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Diffuse-body longwave (thermal) radiation force
+      equations: []
+      pages: "577-587"
+      verification_notes: >-
+        Same primary source as LUNARIS-MODEL-RAD-002 (Knocke et al. 1988, DOI
+        10.2514/6.1988-4292 verified); this entry is the longwave (thermal-IR)
+        counterpart, summing thermal re-emission over the lunar facet grid.
+    symbols:
+      - path: src/lunaris/physics/thermal_ir.py
+        symbol: build_latlon_facets
+        role: cpu_implementation
+      - path: src/lunaris/physics/thermal_ir.py
+        symbol: accel_thermal_ir_facets_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/thermal_ir.py
+        symbol: calc_thermal_ir_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: spacecraft state, facet grid, thermal emission model, spacecraft props
+      outputs: thermal-IR radiation-pressure acceleration (m/s^2)
+      exact_or_approximate: faceted_thermal_emission_sum
+      preserved_properties:
+        - integrates longwave emission over visible facets
+    lunaris_modifications:
+      - Earth ERP thermal formalism applied to lunar surface facets
+    assumptions:
+      - diffuse thermal re-emission; cannonball spacecraft response
+    limitations:
+      - depends on the surface thermal model and facet resolution
+    validation:
+      - tests/test_thermal_ir.py
+      - tests/test_surface_effects.py
+    see_also:
+      - LUNARIS-MODEL-RAD-002
+    notes: ""
+
   - id: LUNARIS-MODEL-REL-001
     slug: schwarzschild_1pn_central
     canonical_name: Schwarzschild first post-Newtonian acceleration (central body)
