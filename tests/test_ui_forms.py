@@ -141,3 +141,54 @@ def test_labeledfield_error_hidden_by_default_adds_no_visible_text() -> None:
         assert lf._error_label.text() == ""
     finally:
         lf.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# W3.3 pilot: MissionPropagationPage wires the FormGrid error contract.
+# Computation stays per-keystroke; error DISPLAY appears on blur; fixing a
+# value clears the mark immediately; validate_inputs() is the pre-run gate.
+# ---------------------------------------------------------------------------
+
+
+def _propagation_page():
+    from lunaris.ui.pages.mission_propagation_page import MissionPropagationPage
+
+    _app()
+    return MissionPropagationPage()
+
+
+def test_propagation_duration_error_shown_on_blur_not_while_typing() -> None:
+    page = _propagation_page()
+    try:
+        page.ent_duration.setText("abc")
+        # Typing alone must not flag the field.
+        assert page.ent_duration.property("fieldError") in (None, False)
+
+        page.ent_duration.editingFinished.emit()
+        assert page.ent_duration.property("fieldError") is True
+        assert "not a number" in page.ent_duration.toolTip()
+
+        # Fixing the value clears the mark immediately (no blur needed).
+        page.ent_duration.setText("10.0")
+        assert page.ent_duration.property("fieldError") is False
+    finally:
+        page.deleteLater()
+
+
+def test_propagation_validate_inputs_focuses_first_invalid() -> None:
+    page = _propagation_page()
+    try:
+        page.ent_duration.setText("")
+        page.ent_rtol.setText("nope")
+        assert page.validate_inputs() is False
+        # Both offending fields are marked, message text reachable.
+        assert page.ent_duration.property("fieldError") is True
+        assert page.ent_rtol.property("fieldError") is True
+
+        page.ent_duration.setText("5")
+        page.ent_rtol.setText("1e-9")
+        assert page.validate_inputs() is True
+        assert page.ent_duration.property("fieldError") is False
+        assert page.ent_rtol.property("fieldError") is False
+    finally:
+        page.deleteLater()

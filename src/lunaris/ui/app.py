@@ -1411,6 +1411,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message("[Warning] Pre-flight validation already in progress", severity="warning")
             return
 
+        # Field-level gate: surface every invalid propagation field inline and
+        # move focus to the first one instead of failing later in preflight.
+        page = getattr(self, "page_propagation", None)
+        if page is not None and hasattr(page, "validate_inputs") and not page.validate_inputs():
+            self._switch_page("Propagation")
+            self._log_message(
+                "[Error] Fix the highlighted propagation fields before running.",
+                severity="error",
+            )
+            return
+
         # Collect data for validation
         cmd_data = self._collect_preflight_data()
         if not cmd_data:

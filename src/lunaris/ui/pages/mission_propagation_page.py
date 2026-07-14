@@ -403,6 +403,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
         layout.addStretch(1)
 
         self._wire_summary_updates()
+        self._wire_field_validation()
         self._update_summary()
 
     @staticmethod
@@ -456,6 +457,89 @@ class MissionPropagationPage(QtWidgets.QWidget):
             editor.textChanged.connect(self._update_solver_feedback)
         self.cb_duration_unit.currentTextChanged.connect(self._update_solver_feedback)
 
+    # -------------------------------------------------------------------------
+    # Field-level validation (form-system v2 pilot)
+    #
+    # Contract (see FormGrid.set_error): values are *computed* on every
+    # keystroke as before, but a new error is only *shown* when the field loses
+    # focus, so the user is not scolded mid-typing. Once a field is marked
+    # invalid, fixing it clears the mark immediately.
+    # -------------------------------------------------------------------------
+
+    def _wire_field_validation(self) -> None:
+        self._field_validators: list[tuple[QtWidgets.QLineEdit, Any]] = [
+            (self.ent_duration, self._validate_duration_field),
+            (self.ent_rtol, lambda show: self._validate_tolerance_field(self.ent_rtol, "relative tolerance", show=show)),
+            (self.ent_atol, lambda show: self._validate_tolerance_field(self.ent_atol, "absolute tolerance", show=show)),
+        ]
+        for editor, validator in self._field_validators:
+            editor.editingFinished.connect(lambda v=validator: v(show=True))
+            editor.textChanged.connect(lambda _t="", v=validator: v(show=False))
+
+    def _set_row_error(
+        self,
+        grid: FormGrid,
+        row_widget: QtWidgets.QWidget,
+        editor: QtWidgets.QLineEdit,
+        message: str | None,
+    ) -> None:
+        """Route the message to the grid's error slot and the red border to the editor.
+
+        Composite rows (editor + unit combo in one container) register the
+        container with the grid, but the ``fieldError`` stylesheet rule targets
+        the input widget itself, so the property is mirrored onto the editor.
+        """
+        grid.set_error(row_widget, message)
+        if editor is not row_widget:
+            if not hasattr(self, "_field_base_tooltips"):
+                self._field_base_tooltips: dict[QtWidgets.QWidget, str] = {}
+            base = self._field_base_tooltips.setdefault(editor, editor.toolTip())
+            editor.setProperty("fieldError", bool(message))
+            editor.setToolTip(message or base)
+            style = editor.style()
+            style.unpolish(editor)
+            style.polish(editor)
+
+    def _validate_duration_field(self, *, show: bool) -> bool:
+        text = self.ent_duration.text().strip()
+        message: str | None = None
+        try:
+            if not text or float(text) <= 0.0:
+                message = "Enter a duration greater than zero."
+        except ValueError:
+            message = f"'{text}' is not a number."
+        if message is None or show:
+            self._set_row_error(self._timeline_grid, self._duration_row, self.ent_duration, message)
+        return message is None
+
+    def _validate_tolerance_field(
+        self, editor: QtWidgets.QLineEdit, name: str, *, show: bool
+    ) -> bool:
+        text = editor.text().strip()
+        message: str | None = None
+        try:
+            if not text or float(text) <= 0.0:
+                message = f"Enter a {name} greater than zero (e.g. 1e-9)."
+        except ValueError:
+            message = f"'{text}' is not a number."
+        if message is None or show:
+            self._set_row_error(self._tolerance_grid, editor, editor, message)
+        return message is None
+
+    def validate_inputs(self) -> bool:
+        """Run every field validator, focus the first invalid field, and report.
+
+        Used as a pre-run gate: unlike the passive blur-time display this shows
+        all outstanding errors at once and moves keyboard focus to the first one.
+        """
+        ok = True
+        for _editor, validator in getattr(self, "_field_validators", []):
+            ok = validator(show=True) and ok
+        if not ok:
+            if not self._timeline_grid.focus_first_invalid():
+                self._tolerance_grid.focus_first_invalid()
+        return ok
+
     def _update_summary(self) -> None:
         if not hasattr(self, "lbl_summary_epoch"):
             return
@@ -496,7 +580,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
             )
         )
 
-        form = FormGrid()
+        form = self._timeline_grid = FormGrid()
         self.dt_epoch = QtWidgets.QDateTimeEdit()
         self.dt_epoch.setTimeZone(QtCore.QTimeZone(b"UTC"))
         self.dt_epoch.setDateTime(self.mission_epoch)
@@ -518,6 +602,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
         self.cb_duration_unit.setAccessibleName("Propagation duration unit")
         value_row.addWidget(self.cb_duration_unit)
         form.add_row("Duration", duration_field)
+        self._duration_row = duration_field
         section.add_widget(form)
 
         presets, presets_row = self._row_container()
@@ -569,7 +654,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
 
         # --- Adaptive-only accuracy controls ---------------------------------
         self.tolerance_group = Subsection("Adaptive Accuracy", "Relative tolerance for adaptive propagation.")
-        tolerance_grid = FormGrid()
+        tolerance_grid = self._tolerance_grid = FormGrid()
         self.ent_rtol = NumericDragLineEdit(
             f"{self.solver_cfg.rtol:g}",
             step=1e-13,
