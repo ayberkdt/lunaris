@@ -99,6 +99,168 @@ entries:
       Additional SciPy methods (RK45, RK23, Radau, BDF, LSODA) share this
       delegation surface and will receive their own ids during Phase 2.
 
+  - id: LUNARIS-ALG-SH-001
+    slug: fully_normalized_alf_forward_column_recursion
+    canonical_name: >-
+      Standard forward-column recursion of fully-normalized associated Legendre
+      functions
+    category: numerical_algorithm
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - HolmesFeatherstone2002Legendre
+    primary_reference:
+      type: article
+      citation_key: HolmesFeatherstone2002Legendre
+      identifier_kind: doi
+      doi: 10.1007/s00190-002-0216-2
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: null
+      section: Standard forward-column recursion of normalised ALFs
+      equations: []
+      pages: "279-299"
+      verification_notes: >-
+        S. A. Holmes and W. E. Featherstone, "A unified approach to the Clenshaw
+        summation and the recursive computation of very high degree and order
+        normalised associated Legendre functions", Journal of Geodesy 76(5):
+        279-299, 2002. DOI 10.1007/s00190-002-0216-2 verified via Springer. The
+        implemented diagonal seed sqrt((2n+1)/2n), sub-diagonal sqrt(2n+1) and
+        vertical coefficients A[n,m]=sqrt((2n-1)(2n+1)/((n-m)(n+m))),
+        B[n,m]=sqrt((2n+1)(n-m-1)(n+m-1)/((2n-3)(n+m)(n-m))) are exactly the
+        standard forward-column recursion presented in this paper (also Colombo
+        1981).
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: build_legendre_coeffs
+        role: reference_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _compute_legendre_polynomials_inplace
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _apply_legendre_normalization
+        role: numba_implementation
+    mathematical_contract:
+      inputs: maximum degree, sin/cos of geocentric latitude
+      outputs: >-
+        fully-normalized associated Legendre functions P_nm and their latitude
+        derivatives dP_nm/dphi
+      exact_or_approximate: exact_recurrence
+      preserved_properties:
+        - 4-pi (geodesy) full normalization
+        - numerical stability to very high degree/order
+    lunaris_modifications:
+      - >-
+        Geodesy convention: no Condon-Shortley phase, real-harmonic sqrt(2)
+        scaling for m>0 (matches GRAIL/EGM/GRACE/ICGEM coefficient definitions).
+      - pole-safe per-order truncation via the stable-m limit (see LUNARIS-HEUR-SH-001)
+    assumptions:
+      - IEEE-754 float64 arithmetic
+      - coefficients supplied in the same normalization convention
+    limitations:
+      - Condon-Shortley phase must be excluded by the coefficient provider
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_independent_sh_validation.py
+      - tests/test_sh_convention_lock.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      The absence of the Condon-Shortley phase is a convention, not a bug:
+      applying (-1)^m would corrupt tesseral/sectoral terms while leaving zonal
+      (J2) tests unaffected.
+
+  - id: LUNARIS-ALG-SH-002
+    slug: spherical_harmonic_gravity_acceleration
+    canonical_name: >-
+      Spherical-harmonic gravitational acceleration via the classical
+      spherical-coordinate geopotential gradient
+    category: physical_model
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: standard_implementation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+      - HolmesFeatherstone2002Legendre
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.2 (gravitational field / spherical-harmonic expansion)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        O. Montenbruck and E. Gill, "Satellite Orbits: Models, Methods and
+        Applications", Springer, 2000. ISBN 978-3-540-67280-7 and DOI
+        10.1007/978-3-642-58351-3 verified; Chapter 3 (Force Models) confirmed
+        from the publisher table of contents, with the gravitational
+        spherical-harmonic expansion in Section 3.2. Lunaris implements the
+        classical spherical-coordinate gradient of the truncated geopotential
+        (radial and meridional basis vectors, dP/dphi from LUNARIS-ALG-SH-001),
+        which is physically the exact gradient of the same expansion.
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _compute_sh_acceleration_serial
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: sh_accel_fixed_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: GravityModel
+        role: api_entry_point
+      - path: src/lunaris/physics/torch_spherical_harmonics.py
+        symbol: TorchSHGravityEvaluator.acceleration
+        role: torch_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _sh_accel_cuda
+        role: cuda_implementation
+    mathematical_contract:
+      inputs: >-
+        body-fixed position (m), reference radius, mu, and fully-normalized
+        C_nm/S_nm coefficient blocks
+      outputs: gravitational acceleration in the body-fixed frame (m/s^2)
+      exact_or_approximate: exact_gradient_of_truncated_field
+      preserved_properties:
+        - curl-free (gradient of a scalar potential)
+        - degree-0 term reduces to the point-mass monopole
+    lunaris_modifications:
+      - Kahan-compensated accumulation in the serial kernel (see LUNARIS-ALG-SUM-001)
+      - optional parallel fastmath kernel above a degree threshold
+      - pole-safe evaluation via the stable-m limit (see LUNARIS-HEUR-SH-001)
+    assumptions:
+      - position expressed in the body-fixed frame of the coefficient set
+      - coefficients in the 4-pi normalization without Condon-Shortley phase
+    limitations:
+      - truncation error grows if the degree is below the field's spectral content
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_gravity_propagation_parity.py
+      - tests/test_sh_frame_invariants.py
+      - tests/test_independent_sh_validation.py
+    see_also:
+      - LUNARIS-ALG-SH-001
+      - LUNARIS-ALG-SUM-001
+      - LUNARIS-HEUR-SH-001
+      - LUNARIS-HEUR-SH-002
+    notes: ""
+
   - id: LUNARIS-ALG-SUM-001
     slug: kahan_compensated_summation
     canonical_name: Kahan compensated summation
@@ -155,7 +317,8 @@ entries:
     validation:
       - tests/test_spherical_harmonics.py
       - tests/test_independent_sh_validation.py
-    see_also: []
+    see_also:
+      - LUNARIS-ALG-SH-002
     notes: >-
       Numba does not reorder these floating-point operations, so the
       compensation term survives compilation; this is why the recurrence is kept
@@ -233,8 +396,151 @@ entries:
       - tests/test_third_body_precision.py
       - tests/test_third_body_effects.py
       - tests/test_torch_third_body.py
-    see_also: []
+    see_also:
+      - LUNARIS-ALG-TB-002
     notes: >-
       This is a numerically stable reformulation of the SAME differential
       acceleration, not a different physical force model. Do not describe it as a
       distinct perturbation.
+
+  - id: LUNARIS-ALG-TB-002
+    slug: newtonian_point_mass_central_gravity
+    canonical_name: Newtonian point-mass (monopole) central-body gravitational acceleration
+    category: physical_model
+    domain: TB
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.1 (point-mass / two-body acceleration)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        Montenbruck & Gill (2000), ISBN 978-3-540-67280-7. The central-body
+        monopole acceleration a = -mu * r / |r|^3 is the elementary Newtonian
+        two-body term introduced in Chapter 3; book identifiers verified as for
+        LUNARIS-ALG-SH-002.
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: compute_point_mass_acceleration
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: calc_central_body_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: position vector relative to the central body (m) and mu (m^3/s^2)
+      outputs: monopole gravitational acceleration (m/s^2)
+      exact_or_approximate: exact
+      preserved_properties:
+        - inverse-square central force
+        - identical to the degree-0 term of the spherical-harmonic field
+    lunaris_modifications:
+      - singularity guard at small radius
+    assumptions:
+      - spherically symmetric central body
+    limitations:
+      - ignores all non-spherical and third-body perturbations by construction
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_dynamics.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: ""
+
+  - id: LUNARIS-HEUR-SH-001
+    slug: pole_stable_order_truncation
+    canonical_name: Pole-stable spherical-harmonic order truncation (stable-m limit)
+    category: heuristic
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _compute_stable_m_limit
+        role: numba_implementation
+    mathematical_contract:
+      inputs: cos(geocentric latitude) and maximum degree
+      outputs: highest order m for which cos(phi)^m stays above the float64 floor
+      exact_or_approximate: conservative_truncation
+      preserved_properties:
+        - skips only orders whose sectoral terms have underflowed to zero
+    lunaris_modifications:
+      - >-
+        Lunaris-specific policy m < LOG_UNDERFLOW_LIMIT / ln|cos phi|, clamped to
+        [0, max_degree], with exact-pole and near-equator special cases.
+    assumptions:
+      - underflowed high-order sectoral terms contribute negligibly
+    limitations:
+      - performance/stability policy, not a change to the physical field
+    validation:
+      - tests/test_spherical_harmonics.py
+      - tests/test_sh_frame_invariants.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      Project-specific heuristic; no external primary source. Justified by the
+      float64 underflow floor rather than a published algorithm.
+
+  - id: LUNARIS-HEUR-SH-002
+    slug: degree_switched_smoothstep_altitude_blend
+    canonical_name: >-
+      Degree-switched spherical-harmonic evaluation with a cubic-Hermite
+      (smoothstep) altitude blend
+    category: heuristic
+    domain: SH
+    status: active
+    added: "2026-07-14"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: sh_accel_adaptive_blend_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _apply_smoothstep
+        role: numba_implementation
+    mathematical_contract:
+      inputs: position, two evaluation degrees, and a blend altitude band
+      outputs: >-
+        acceleration that transitions C1-continuously between a low and a high
+        evaluation degree across the band
+      exact_or_approximate: continuous_policy_blend
+      preserved_properties:
+        - C1 continuity of the blended acceleration across the altitude band
+    lunaris_modifications:
+      - >-
+        The blend weight uses the standard cubic-Hermite smoothstep 3t^2-2t^3;
+        the degree schedule and altitude band are a Lunaris performance policy.
+    assumptions:
+      - the high-degree field is only needed at low altitude
+    limitations:
+      - the blended result is a policy, not the exact field at intermediate degrees
+    validation:
+      - tests/test_spherical_harmonics.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      The smoothstep polynomial 3t^2-2t^3 is a standard cubic-Hermite S-curve;
+      the degree-switching schedule itself is a Lunaris-specific heuristic.
