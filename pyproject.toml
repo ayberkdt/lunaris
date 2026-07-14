@@ -90,6 +90,11 @@ dev = [
   "mypy>=1.8,<2",
   "import-linter>=2.0,<3",
   "pre-commit>=3.5,<5",
+  # Algorithm-traceability registry tooling (tools/algorithm_registry.py):
+  # parse the YAML source of truth and validate it against the JSON Schema.
+  # Dev-only; the runtime package never imports these.
+  "pyyaml>=6,<7",
+  "jsonschema>=4.18,<5",
 ]
 all = [
   "torch>=2.0,<3",
@@ -107,6 +112,8 @@ all = [
   "mypy>=1.8,<2",
   "import-linter>=2.0,<3",
   "pre-commit>=3.5,<5",
+  "pyyaml>=6,<7",
+  "jsonschema>=4.18,<5",
 ]
 
 [project.urls]
