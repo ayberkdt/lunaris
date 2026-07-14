@@ -1469,6 +1469,323 @@ entries:
       The smoothstep polynomial 3t^2-2t^3 is a standard cubic-Hermite S-curve;
       the degree-switching schedule itself is a Lunaris-specific heuristic.
 
+  - id: LUNARIS-MODEL-J2E-001
+    slug: differential_earth_j2_oblateness
+    canonical_name: Differential Earth-J2 oblateness perturbation in a Moon-centred frame
+    category: physical_model
+    domain: J2E
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - MontenbruckGill2000SatelliteOrbits
+    primary_reference:
+      type: book
+      citation_key: MontenbruckGill2000SatelliteOrbits
+      identifier_kind: isbn
+      doi: 10.1007/978-3-642-58351-3
+      isbn: 978-3-540-67280-7
+      report_number: null
+      standard_number: null
+      official_url: null
+      edition: null
+      chapter: "3 (Force Models)"
+      section: "3.2 (zonal harmonics / J2)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The vector J2 acceleration a = (3/2) J2 mu R^2 / r^5 *
+        [(5 (r.k)^2/r^2 - 1) r - 2 (r.k) k] is the standard oblateness term
+        (Montenbruck & Gill 2000, Chapter 3; book identifiers verified as for
+        LUNARIS-ALG-SH-002). Lunaris applies it DIFFERENTIALLY for Earth in a
+        Moon-centred inertial frame: a_diff = a_J2(Earth->SC) - a_J2(Earth->Moon).
+    symbols:
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: _accel_j2_oblate_unit_k
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: accel_j2_oblate_diff_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/third_body_effects.py
+        symbol: calc_j2_oblate_diff_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        Moon-centred spacecraft and Earth positions, Earth mu, reference radius,
+        J2, and the Earth spin-axis unit vector
+      outputs: differential J2 acceleration in m/s^2
+      exact_or_approximate: exact_gradient_differential_form
+      preserved_properties:
+        - subtracts the origin (Moon) J2 acceleration for the relative EOM
+    lunaris_modifications:
+      - differential (Moon-centred) formulation of the standard J2 term
+      - explicit unit spin-axis input
+    assumptions:
+      - single zonal J2 term; Earth spin axis supplied as a unit vector
+    limitations:
+      - only the J2 zonal harmonic of Earth (no higher zonals/tesserals)
+    validation:
+      - tests/test_dynamics.py
+      - tests/test_force_gradients.py
+    see_also:
+      - LUNARIS-ALG-TB-001
+    notes: >-
+      A small perturbation on a lunar orbiter; included for completeness of the
+      Earth-perturbation budget.
+
+  - id: LUNARIS-MODEL-REL-001
+    slug: schwarzschild_1pn_central
+    canonical_name: Schwarzschild first post-Newtonian acceleration (central body)
+    category: physical_model
+    domain: REL
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "10 (General relativistic models for space-time coordinates and equations of motion)"
+      section: "10.3"
+      equations:
+        - "10.12 (Schwarzschild term)"
+      pages: null
+      verification_notes: >-
+        IERS Conventions (2010), IERS Technical Note No. 36, Eq. 10.12. Report
+        number and ISBN 978-3-89888-989-6 verified via iers.org/ADS. The kernel
+        a = (mu/(c^2 r^3)) [(4 mu/r - v^2) r + 4 (r.v) v] is the Schwarzschild
+        part of Eq. 10.12 with PPN parameters beta = gamma = 1 (Lense-Thirring
+        and geodesic terms handled separately/omitted).
+    symbols:
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _schwarzschild_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: calc_schwarzschild_accel
+        role: api_entry_point
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: RelativityModel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: position (m), velocity (m/s), central-body mu (m^3/s^2)
+      outputs: 1PN Schwarzschild acceleration correction (m/s^2)
+      exact_or_approximate: exact_1pn_with_beta_gamma_unity
+      preserved_properties:
+        - reproduces the relativistic perihelion advance
+    lunaris_modifications:
+      - PPN parameters fixed to general relativity (beta = gamma = 1)
+    assumptions:
+      - single dominant central mass
+      - weak-field, slow-motion (1PN) regime
+    limitations:
+      - no frame-dragging (Lense-Thirring) term
+    validation:
+      - tests/test_relativity_effects.py
+    see_also:
+      - LUNARIS-MODEL-REL-002
+      - LUNARIS-MODEL-REL-003
+    notes: ""
+
+  - id: LUNARIS-MODEL-REL-002
+    slug: de_sitter_geodesic_precession
+    canonical_name: de Sitter (geodesic) precession acceleration
+    category: physical_model
+    domain: REL
+    status: active
+    added: "2026-07-14"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "10 (General relativistic models for space-time coordinates and equations of motion)"
+      section: "10.3"
+      equations:
+        - "10.12 (geodesic/de Sitter term)"
+      pages: null
+      verification_notes: >-
+        IERS Conventions (2010), TN 36, Eq. 10.12 geodesic term. The kernel forms
+        Omega_dS = (3/2) mu_body/(c^2 |R|^3) (R x V) and applies a = +2 Omega x v
+        (prograde). Sign verified against the canonical ~19.2 mas/yr solar
+        geodetic precession; regression in tests/test_de_sitter_precession.py.
+    symbols:
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _de_sitter_components
+        role: numba_implementation
+    mathematical_contract:
+      inputs: spacecraft velocity and the Moon->body position/velocity
+      outputs: geodesic-precession acceleration (m/s^2)
+      exact_or_approximate: exact_1pn_geodesic
+      preserved_properties:
+        - prograde precession of the orbit plane at |Omega_dS|
+    lunaris_modifications:
+      - Coriolis-like +2 Omega x v application in the Moon-centred frame
+    assumptions:
+      - Moon orbits the external body in the weak-field regime
+    limitations:
+      - geodesic term only; no Lense-Thirring
+    validation:
+      - tests/test_de_sitter_precession.py
+      - tests/test_relativity_effects.py
+    see_also:
+      - LUNARIS-MODEL-REL-001
+    notes: >-
+      Sign is intentionally +2 Omega x v (prograde); a previous sign error was
+      corrected and is locked by the precession regression test.
+
+  - id: LUNARIS-MODEL-REL-003
+    slug: external_body_differential_1pn
+    canonical_name: >-
+      External-body differential first post-Newtonian correction
+      (Schwarzschild + de Sitter)
+    category: physical_model
+    domain: REL
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "10 (General relativistic models for space-time coordinates and equations of motion)"
+      section: "10.3"
+      equations:
+        - "10.12"
+      pages: null
+      verification_notes: >-
+        Combines the differential Schwarzschild correction (a_1PN(SC wrt body) -
+        a_1PN(Moon wrt body)) with the de Sitter term (LUNARIS-MODEL-REL-002),
+        both derived from IERS TN 36 Eq. 10.12. The differential Moon-centred
+        composition is a Lunaris adaptation of the single-body IERS forms.
+    symbols:
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _external_schwarzschild_diff_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: _external_1pn_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: calc_external_1pn_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: spacecraft state and the external body Moon-centred state and mu
+      outputs: differential external-body 1PN acceleration (m/s^2)
+      exact_or_approximate: differential_1pn
+      preserved_properties:
+        - subtracts the Moon-origin 1PN term for the relative EOM
+    lunaris_modifications:
+      - differential Moon-centred composition of the IERS single-body terms
+    assumptions:
+      - external body in the weak-field regime
+    limitations:
+      - no Lense-Thirring; external Schwarzschild uses beta = gamma = 1
+    validation:
+      - tests/test_relativity_effects.py
+    see_also:
+      - LUNARIS-MODEL-REL-001
+      - LUNARIS-MODEL-REL-002
+    notes: ""
+
+  - id: LUNARIS-MODEL-TID-001
+    slug: lunar_solid_tide_love_degree_2_3
+    canonical_name: >-
+      Elastic lunar solid-body tide (degree-2 and degree-3 Love-number disturbing
+      potential)
+    category: physical_model
+    domain: TID
+    status: active
+    added: "2026-07-14"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - PetitLuzum2010IERSConventions
+    primary_reference:
+      type: techreport
+      citation_key: PetitLuzum2010IERSConventions
+      identifier_kind: report_number
+      doi: null
+      isbn: 978-3-89888-989-6
+      report_number: IERS Technical Note No. 36
+      standard_number: null
+      official_url: https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html
+      edition: null
+      chapter: "6 (Effects of the solid Earth tides)"
+      section: "6.1 (elastic solid Earth tides, Love-number formulation)"
+      equations: []
+      pages: null
+      verification_notes: >-
+        The Love-number disturbing potential dU_l = k_l mu_j/|R_j| (R/|r|)^(l+1)
+        (R/|R_j|)^l P_l(c) and its gradient follow the elastic solid-tide
+        formalism of IERS Conventions (2010), TN 36, Chapter 6. Lunaris applies
+        this Earth-tide formalism to the MOON (lunar Love numbers k2/k3), an
+        adaptation of the terrestrial convention; instantaneous elastic response
+        only.
+    symbols:
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: solid_tide_potential_degree_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: accel_solid_tides_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: calc_solid_tide_accel
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        Moon-fixed spacecraft and tide-raising-body vectors, body mu, lunar
+        radius, Love number, and degree (2 or 3)
+      outputs: solid-tide acceleration (m/s^2), gradient of the positive potential
+      exact_or_approximate: exact_gradient_of_elastic_tide_potential
+      preserved_properties:
+        - degree-2 and degree-3 Love-number response
+    lunaris_modifications:
+      - terrestrial IERS Love-tide formalism applied to lunar parameters
+      - dimensionless radius ratios to avoid large intermediate powers
+    assumptions:
+      - instantaneous elastic response (no lag, dissipation, ocean/thermal tides)
+    limitations:
+      - no anelastic/frequency-dependent Love numbers; degrees 2 and 3 only
+    validation:
+      - tests/test_solid_tides.py
+    see_also:
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      Lunaris uses the Earth-tide convention with lunar Love numbers; this is an
+      adaptation, not a lunar-specific published tide model.
+
   - id: LUNARIS-STD-FRM-001
     slug: lunar_principal_axis_body_frame
     canonical_name: Lunar principal-axis (PA) body-fixed frame realized by DE440
