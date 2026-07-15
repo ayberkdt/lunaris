@@ -30,6 +30,7 @@ Notes
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -43,10 +44,8 @@ import numpy as np
 # --- Matplotlib backend selection ---
 # Must run BEFORE importing pyplot.
 if os.environ.get("STLRPS_INTERACTIVE", "0").strip().lower() not in ("1", "true", "yes", "y"):
-    try:
+    with contextlib.suppress(Exception):
         matplotlib.use("Agg")
-    except Exception:
-        pass
 
 import matplotlib.legend
 import matplotlib.pyplot as plt
@@ -58,6 +57,8 @@ try:
     from lunaris.core.dynamics import make_accel  # type: ignore
 except ImportError:
     make_accel = None
+
+import contextlib
 
 from lunaris.analysis.postprocess import (
     _extract_rv_vectors,
@@ -376,10 +377,8 @@ def time_colored_path(
                 fraction=float(cbar_fraction),
             )
             cbar.set_label(str(cbar_label))
-            try:
+            with contextlib.suppress(Exception):
                 apply_standard_colorbar(cbar)
-            except Exception:
-                pass
         except Exception:
             cbar = None
 
@@ -1181,10 +1180,8 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None =
 
         cbar = fig.colorbar(lc, ax=ax, fraction=0.03, pad=0.05, shrink=0.75)
         cbar.set_label("Time [days]")
-        try:
+        with contextlib.suppress(Exception):
             apply_standard_colorbar(cbar)
-        except Exception:
-            pass
 
         c0 = None
         c1 = None
@@ -1220,10 +1217,8 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None =
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     ax.set_zlim(-lim, lim)
-    try:
+    with contextlib.suppress(Exception):
         ax.set_box_aspect((1, 1, 1))
-    except Exception:
-        pass
 
     _legend(ax, loc="upper right")
     fig.tight_layout()
@@ -1274,10 +1269,8 @@ def figure_eomega(t_days: np.ndarray, elems: dict[str, np.ndarray]) -> plt.Figur
 
     cbar = fig.colorbar(lc, ax=ax, pad=0.10, fraction=0.045, shrink=0.85)
     cbar.set_label("Time [days]")
-    try:
+    with contextlib.suppress(Exception):
         apply_standard_colorbar(cbar)
-    except Exception:
-        pass
 
     c0 = None
     c1 = None
@@ -1459,10 +1452,8 @@ def figure_perturbation_magnitude(
         new_flags = copy.copy(flags)
         for k, v in overrides.items():
             if hasattr(new_flags, k):
-                try:
+                with contextlib.suppress(Exception):
                     setattr(new_flags, k, bool(v))
-                except Exception:
-                    pass
         new_ctx.flags = new_flags
         return new_ctx
 
@@ -2208,18 +2199,14 @@ def merge_meta_with_auto_config(
     if "mass_kg" not in sc:
         val = _first_present(history, ["mass_kg", "mass", "m"])
         if val is not None:
-            try:
+            with contextlib.suppress(Exception):
                 sc["mass_kg"] = float(_as_np(val).ravel()[0])
-            except Exception:
-                pass
 
     if "area_m2" not in sc:
         val = _first_present(history, ["area_m2", "area", "cross_section"])
         if val is not None:
-            try:
+            with contextlib.suppress(Exception):
                 sc["area_m2"] = float(_as_np(val).ravel()[0])
-            except Exception:
-                pass
 
     return merged
 

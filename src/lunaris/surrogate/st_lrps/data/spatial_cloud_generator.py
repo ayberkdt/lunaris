@@ -43,6 +43,8 @@ except Exception as e:  # pragma: no cover
     raise RuntimeError("Numba is required for this script. Install: pip install numba") from e
 
 # ---- SH potential/acceleration kernels (SSOT: lunaris.physics) ----
+import contextlib
+
 from lunaris.physics.spherical_harmonics import (
     precompute_legendre_constants,
 )
@@ -371,14 +373,10 @@ def finalize_pt_from_memmap(memmap_path: Path, out_path: Path, n_samples: int, d
     torch.save({"data": data_t, "columns": _cols_list, "meta": attrs}, str(out_path))
 
     if delete_memmap:
-        try:
+        with contextlib.suppress(Exception):
             del mm
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             memmap_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 # =============================================================================

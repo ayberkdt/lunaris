@@ -185,6 +185,8 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
+import contextlib
+
 from .common_widgets import (
     ImageGallery,
     ProcessPane,
@@ -1738,10 +1740,8 @@ class CloudGenTab(QWidget):
             return
         # Try to find the suite dir from the runner output
         log_text = ""
-        try:
+        with contextlib.suppress(Exception):
             log_text = self.runner.log.toPlainText()
-        except Exception:
-            pass
         suite_dir: str | None = None
         for line in reversed(log_text.splitlines()):
             m = re.search(r"suite dir\s*[:\->]+\s*(.+)", line, re.IGNORECASE)
@@ -2177,20 +2177,16 @@ class CloudAnalysisTab(QWidget):
         ]:
             v = s.value(key)
             if v is not None:
-                try:
+                with contextlib.suppress(Exception):
                     getattr(self, attr).setValue(cast(v))
-                except Exception:
-                    pass
         for attr, key, cast, _default in [
             ("alt_min_km", "alt_min_km", float, -1.0),
             ("alt_max_km", "alt_max_km", float, -1.0),
         ]:
             v = s.value(key)
             if v is not None:
-                try:
+                with contextlib.suppress(Exception):
                     getattr(self, attr).setValue(cast(v))
-                except Exception:
-                    pass
         for attr, key, _default in [
             ("no_plots", "no_plots", False),
             ("dump_json", "dump_json", True),

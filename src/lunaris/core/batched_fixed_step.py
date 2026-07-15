@@ -24,6 +24,7 @@ need autograd internally (ST-LRPS potential gradients) re-enable it locally.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -322,12 +323,10 @@ def run_batched_fixed_step(
                 }
             )
             chunk = new_chunk
-            try:
+            # R29b-justified: cache flush is a best-effort recovery aid; the
+            # retry below decides success, not this call.
+            with contextlib.suppress(Exception):
                 torch.cuda.empty_cache()
-            except Exception:
-                # R29b-justified: cache flush is a best-effort recovery aid; the
-                # retry below decides success, not this call.
-                pass
             continue
         total_raw_state_steps += chunk_n * total_steps_per_sample
         total_active_state_steps += active_steps
@@ -336,12 +335,10 @@ def run_batched_fixed_step(
             callback(float(b) / float(max(N, 1)))
 
     if getattr(device, "type", "") == "cuda":
-        try:
+        # R29b-justified: synchronize only tightens the wall-clock timing
+        # below; a failure degrades timing accuracy, never the physics.
+        with contextlib.suppress(Exception):
             torch.cuda.synchronize(device)
-        except Exception:
-            # R29b-justified: synchronize only tightens the wall-clock timing
-            # below; a failure degrades timing accuracy, never the physics.
-            pass
     elapsed = time.perf_counter() - t_start
 
     n_impacts = int(np.sum(impact_flags > 0.5))

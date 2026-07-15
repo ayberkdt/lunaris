@@ -20,6 +20,8 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import contextlib
+
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
@@ -1188,10 +1190,8 @@ def run_random_scenario_mode(
                         converted = dict(row)
                         for k, v in converted.items():
                             if k not in ("model", "status") and v not in (None, "", "None"):
-                                try:
+                                with contextlib.suppress(ValueError, TypeError):
                                     converted[k] = float(v)
-                                except (ValueError, TypeError):
-                                    pass
                         if converted.get("status") == "ok":
                             all_metrics.append(converted)
                     except (KeyError, ValueError):

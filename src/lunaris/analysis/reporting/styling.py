@@ -128,6 +128,7 @@ Guidelines for contributors
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -500,10 +501,8 @@ def apply_axes_style(ax: matplotlib.axes.Axes, title: str = "") -> None:
     ax.set_facecolor(THEME["bg_axes"])
 
     # Minor ticks (safe for projections/custom axes)
-    try:
+    with contextlib.suppress(Exception):
         ax.minorticks_on()
-    except Exception:
-        pass
 
     # Grid: use rcParams as SSOT (avoid hardcoded alpha drift)
     major_alpha = float(plt.rcParams.get("grid.alpha", 0.22))
@@ -611,15 +610,11 @@ def apply_standard_colorbar(cbar) -> None:
     """
     Standardize colorbar appearance across the project.
     """
-    try:
+    with contextlib.suppress(Exception):
         cbar.outline.set_linewidth(0.6)
-    except Exception:
-        pass
 
-    try:
+    with contextlib.suppress(Exception):
         cbar.ax.tick_params(colors=THEME["text_dim"])
-    except Exception:
-        pass
 
 
 
@@ -662,10 +657,8 @@ def apply_legend_style(
     frame.set_alpha(float(framealpha))
     frame.set_facecolor(THEME["bg_axes"])
     frame.set_edgecolor(THEME["grid"])
-    try:
+    with contextlib.suppress(Exception):
         frame.set_linewidth(float(linewidth))
-    except Exception:
-        pass
 
     # Title + text colors (robust across backends)
     try:

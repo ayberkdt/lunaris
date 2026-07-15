@@ -27,6 +27,7 @@ Configuration policy
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses as _dataclasses
 import datetime
 import json
@@ -599,10 +600,8 @@ def _default_outdir(base: Path) -> Path:
 
 def parse_args() -> TrainConfig:
     if hasattr(sys.stdout, "reconfigure"):
-        try:
+        with contextlib.suppress(AttributeError, OSError, ValueError):
             sys.stdout.reconfigure(errors="replace")
-        except (AttributeError, OSError, ValueError):
-            pass
 
     ap = argparse.ArgumentParser(
         description="Sobolev scalar-potential surrogate training for residual lunar gravity",
@@ -1394,10 +1393,8 @@ def parse_args() -> TrainConfig:
             degree_min_meta = meta_early.degree_min
             # Also check cloud_config for degree_max
             if degree_max_meta is None and meta_early.cloud_config is not None:
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     degree_max_meta = int(meta_early.cloud_config.get("degree_max", 0)) or None
-                except (TypeError, ValueError):
-                    pass
 
             print("\n" + "=" * 62)
             print("  AUTO-DETECTED DATASET PARAMETERS")

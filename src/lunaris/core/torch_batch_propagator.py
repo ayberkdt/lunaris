@@ -63,6 +63,8 @@ from lunaris.common.frame_policy import (
 )
 
 logger = logging.getLogger(__name__)
+import contextlib
+
 from lunaris.core.batched_fixed_step import (
     query_device_memory,
     resolve_vram_aware_chunk_size,
@@ -523,12 +525,10 @@ class TorchBatchPropagator:
             if not _is_torch_cuda_oom(torch, exc):
                 raise
             warmup_metrics["accel_warmup_skipped_reason"] = "cuda_oom"
-            try:
+            # Best-effort after a diagnostic-only OOM; propagation below
+            # still gets the shared loop's chunk-halving recovery.
+            with contextlib.suppress(Exception):
                 torch.cuda.empty_cache()
-            except Exception:
-                # Best-effort after a diagnostic-only OOM; propagation below
-                # still gets the shared loop's chunk-halving recovery.
-                pass
             logger.warning(
                 "[BATCH][GPU-STLRPS] skipped warmup/timing acceleration due to "
                 "CUDA OOM at warmup_n=%d; continuing with chunked propagation.",

@@ -5,6 +5,7 @@ PySide6 dashboard for the lunar scalar-potential surrogate codebase. This module
 a thin launcher that wires together the structured UI components.
 """
 
+import contextlib
 import os
 import sys
 
@@ -33,12 +34,10 @@ from lunaris.surrogate.st_lrps.ui.studio_parts.training_pages import STLRPSTrain
 
 
 def main() -> None:
-    try:
+    with contextlib.suppress(Exception):
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
-    except Exception:
-        pass
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
     os.chdir(str(project_root_from_file(__file__)))
     app = QApplication(sys.argv)

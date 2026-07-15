@@ -43,6 +43,7 @@ Run
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -2094,10 +2095,8 @@ class ProcessPane(QWidget):
                 sb = self.log.verticalScrollBar()
                 sb.setValue(sb.maximum())
         if self._on_parse_progress:
-            try:
+            with contextlib.suppress(Exception):
                 self._on_parse_progress(text)
-            except Exception:
-                pass
 
     def start(
         self, program: str, args: list[str], workdir: str | None = None
@@ -2143,13 +2142,11 @@ class ProcessPane(QWidget):
         # to prevent orphan subprocesses.
         pid = self.proc.processId()
         if platform.system() == "Windows" and pid:
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(pid)],
                     capture_output=True, check=False,
                 )
-            except Exception:
-                pass
 
         self.proc.terminate()
 
@@ -2174,20 +2171,16 @@ class ProcessPane(QWidget):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         if exit_status == QProcess.ExitStatus.NormalExit:
-            try:
+            with contextlib.suppress(Exception):
                 self.progress.setValue(self.progress.maximum())
-            except Exception:
-                pass
             if self._output_dir and Path(self._output_dir).is_dir():
                 self.btn_open_folder.setVisible(True)
             _send_os_notification(
                 "Lunar Potential Surrogate", f"Process finished (exit={exit_code})."
             )
         if self._on_finished_hook:
-            try:
+            with contextlib.suppress(Exception):
                 self._on_finished_hook(exit_code, exit_status)
-            except Exception:
-                pass
 
     def _open_output_folder(self) -> None:
         if self._output_dir:

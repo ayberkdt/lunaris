@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -714,10 +715,8 @@ class H5BlockDataset(Dataset):
 
     def __del__(self) -> None:
         if self._h5 is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._h5.close()
-            except Exception:
-                pass
 
 class BlockShuffleSampler(Sampler[int]):
     """

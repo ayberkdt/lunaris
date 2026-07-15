@@ -290,6 +290,8 @@ class _TopKErrors:
                   "abs_a_error,rel_a_error,altitude_km,cos_sim,angular_deg")
         np.savetxt(str(path), arr, delimiter=",", header=header, comments="")
 
+import contextlib
+
 from lunaris.surrogate.runtime import find_latest_st_lrps_model_dir
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
@@ -327,13 +329,12 @@ def _sync(device: torch.device) -> None:
     if device.type == "cuda":
         torch.cuda.synchronize()
     elif device.type == "mps":
-        try:
+        with contextlib.suppress(Exception):
             torch.mps.synchronize()
-        except Exception:
-            pass
 
 
 # --- Shared model/scaler implementation ---
+
 from lunaris.surrogate.serialization import safe_torch_load
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     append_run_evaluation,
@@ -416,10 +417,8 @@ def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> dict[str,
     for key, value in meta.raw_attrs.items():
         if key not in out:
             if isinstance(value, bytes):
-                try:
+                with contextlib.suppress(UnicodeDecodeError):
                     value = value.decode("utf-8")
-                except UnicodeDecodeError:
-                    pass
             out[key] = value
     return out
 
@@ -2602,7 +2601,7 @@ def evaluate(
             }
         # If the dataset is an ood_combined file with embedded split metadata, annotate.
         if _ds_role == "ood_combined" and not _has_exact_ood_split:
-            try:
+            with contextlib.suppress(Exception):
                 ood_table["ood_combined_meta"] = {
                     "ood_low_n_generated": int(ds_meta["ood_low_n"]) if "ood_low_n" in ds_meta else None,
                     "ood_high_n_generated": int(ds_meta["ood_high_n"]) if "ood_high_n" in ds_meta else None,
@@ -2615,8 +2614,6 @@ def evaluate(
                         float(ds_meta["ood_high_alt_max_km"]) if "ood_high_alt_max_km" in ds_meta else None,
                     ],
                 }
-            except Exception:
-                pass
 
     # Assemble angular_metrics block (richer than old a_vectorial)
     _ang_masked_mean = float(np.mean(masked_ang_deg)) if masked_ang_deg.size > 0 else None

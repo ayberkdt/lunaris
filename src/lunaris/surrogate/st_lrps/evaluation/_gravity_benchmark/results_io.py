@@ -22,6 +22,8 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import contextlib
+
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.common.frame_policy import (
@@ -688,10 +690,8 @@ def _save_cached_trajectory(
         os.replace(tmp, path)
     finally:
         if tmp.exists():
-            try:
+            with contextlib.suppress(OSError):
                 tmp.unlink()
-            except OSError:
-                pass
     print(f"[cache] Saved model={model_name} scenario={scenario.scenario_id:06d} file={path}",
           flush=True)
     return path
@@ -1356,10 +1356,8 @@ def build_truth_trajectory_set(
             return
         rate = completed / max(elapsed_s, 1e-9)
         eta = (total - completed) / max(rate, 1e-9)
-        try:
+        with contextlib.suppress(Exception):
             on_progress(int(completed), int(total), float(elapsed_s), float(eta))
-        except Exception:
-            pass
 
     if args.reuse_truth_cache:
         cached = _load_truth_cache(truth_dir, args, scenarios)

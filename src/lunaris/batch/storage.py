@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import warnings
 from collections.abc import Callable, Iterator
@@ -295,14 +296,10 @@ class _HDF5Writer:
     def abort(self) -> None:
         # R29b-justified: abort() runs on the failure path; best-effort cleanup
         # of the .part file must never mask the original exception being raised.
-        try:
+        with contextlib.suppress(Exception):
             self._f.close()
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             self._part_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 class _SummaryOnlyWriter:
@@ -423,10 +420,8 @@ class _NPZWriter:
         self._part_path.replace(self._path)
 
     def abort(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._part_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def _make_writer(

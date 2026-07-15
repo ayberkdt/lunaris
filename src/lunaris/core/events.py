@@ -88,6 +88,7 @@ Example
 
 from __future__ import annotations
 
+import contextlib
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -809,10 +810,8 @@ def make_occultation_event(
     ev = _set_event_props(ev, terminal=terminal, direction=direction)
 
     # Debug-friendly name (optional)
-    try:
+    with contextlib.suppress(Exception):
         ev.__name__ = f"occultation_{label}"
-    except Exception:
-        pass
 
     return ev
 
@@ -1144,10 +1143,8 @@ if __name__ == "__main__":
 
     # Give events debug-friendly names (optional)
     for name, ev in events_named:
-        try:
+        with contextlib.suppress(Exception):
             ev.__name__ = name
-        except Exception:
-            pass
 
     # -----------------------------
     # Solve

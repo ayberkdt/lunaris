@@ -17,6 +17,7 @@ Design notes
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 import logging
@@ -197,10 +198,8 @@ def set_seed(
             logger.warning("set_seed: use_deterministic_algorithms unavailable: %s", exc)
             applied["use_deterministic_algorithms"] = False
     else:
-        try:
+        with contextlib.suppress(Exception):
             torch.use_deterministic_algorithms(False)
-        except Exception:  # pragma: no cover
-            pass
         applied["use_deterministic_algorithms"] = False
 
     logger.info("set_seed applied determinism flags: %s", applied)
@@ -736,10 +735,8 @@ class STLRPSTrainer:
 
         self.model.train(is_train)
         if self.device.type == "cuda":
-            try:
+            with contextlib.suppress(Exception):
                 torch.cuda.reset_peak_memory_stats(self.device)
-            except Exception:
-                pass
         accel_factor = self.curriculum.accel_factor(epoch) if is_train else 1.0
 
         state = _EpochState()
@@ -3547,10 +3544,8 @@ def _restore_stop_signal_handlers(orig: Mapping[int, Any]) -> None:
     import signal as _signal
 
     for sig, old in orig.items():
-        try:
+        with contextlib.suppress(Exception):
             _signal.signal(sig, old)
-        except Exception:  # pragma: no cover - platform/thread dependent
-            pass
 
 
 def _run_training_loop(session: _TrainingSession) -> None:

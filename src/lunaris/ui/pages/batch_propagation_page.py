@@ -37,6 +37,7 @@ Integration with the rest of the application
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import shlex
@@ -561,10 +562,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
         out_path = str(meta.get("output_path", "outputs/ensemble/backend_compare.h5"))
 
         n_samples = "100"
-        try:
+        with contextlib.suppress(Exception):
             n_samples = str(int(float(self.ent_n_samples.text())))
-        except Exception:
-            pass
 
         cmd: list[str] = [python_exec, runner]
         cmd.extend(["--n-samples", n_samples])
@@ -591,10 +590,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         self.txt_backend_compare_cmd.setPlainText(rendered)
 
-        try:
+        with contextlib.suppress(Exception):
             QtWidgets.QApplication.clipboard().setText(rendered)
-        except Exception:
-            pass
 
     def _copy_selected_backend_command(self) -> None:
         """Copy the currently previewed command to clipboard."""
@@ -610,10 +607,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
         runner = str((Path(__file__).resolve().parents[2] / "cli" / "batch_runner.py").resolve())
         python_exec = sys.executable
         n_samples = "100"
-        try:
+        with contextlib.suppress(Exception):
             n_samples = str(int(float(self.ent_n_samples.text())))
-        except Exception:
-            pass
         all_cmds: list[str] = []
         for meta in getattr(self, "_backend_compare_meta", []):
             gravity_mode = str(meta.get("mode", "classic_sh"))
@@ -1385,10 +1380,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
     def _copy_metrics_csv(self) -> None:
         """Copy the last-run metrics (Metric,Value) to the clipboard as CSV."""
-        try:
+        with contextlib.suppress(Exception):
             QtWidgets.QApplication.clipboard().setText(self._metrics_to_csv())
-        except Exception:
-            pass
 
     def _open_report(self) -> None:
         if self._last_report_path and Path(self._last_report_path).exists():

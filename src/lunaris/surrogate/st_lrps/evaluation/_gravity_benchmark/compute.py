@@ -7,6 +7,7 @@ docstring for CLI usage.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import math
 import time
 from dataclasses import dataclass, replace
@@ -204,6 +205,7 @@ class TorchFrameProvider:
 # tests/test_torch_sh_evaluator.py::test_benchmark_evaluator_matches_canonical)
 # and removed to prevent the two copies from drifting. It is re-exported here so
 # existing references (e.g. _make_gpu_accelerator below) keep working unchanged.
+
 from lunaris.physics.torch_spherical_harmonics import (  # noqa: E402
     TorchSHGravityEvaluator,
 )
@@ -395,10 +397,8 @@ def propagate_gpu_batch_model(
     def _emit_progress(step: int, elapsed: float) -> None:
         if progress_cb is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             progress_cb(int(step), total_steps, float(elapsed))
-        except Exception:
-            pass
 
     if str(device).startswith("cuda"):
         torch.cuda.synchronize()
@@ -780,10 +780,8 @@ def propagate_for_scenario(
         # Belt-and-suspenders: temporarily lower degree_max on the surrogate
         _orig_dmax = getattr(grav, "degree_max", 200)
         _base_deg  = max(1, int(getattr(grav, "degree_min", 20)))
-        try:
+        with contextlib.suppress(Exception):
             grav.degree_max = _base_deg
-        except Exception:
-            pass
 
     dyn = DynamicsEngine(
         sc_props=cfg.spacecraft,
@@ -806,10 +804,8 @@ def propagate_for_scenario(
     finally:
         # Restore degree_max on surrogate
         if model_name == "st_lrps":
-            try:
+            with contextlib.suppress(Exception):
                 grav.degree_max = _orig_dmax
-            except Exception:
-                pass
     rt = time.perf_counter() - t0
 
     if res is None or (res.ode is not None and not res.ode.success):
@@ -931,10 +927,8 @@ def run_st_lrps_batch_rk4(
             "moon_fixed_ephemeris with dynamic SLERP.",
             flush=True,
         )
-        try:
+        with contextlib.suppress(Exception):
             args._batch_frame_strategy_notice_emitted = True
-        except Exception:
-            pass
 
     requested_chunk = getattr(args, "batch_size", None)
     if requested_chunk is not None and int(requested_chunk) > 0 and y0_batch.shape[0] > int(requested_chunk):

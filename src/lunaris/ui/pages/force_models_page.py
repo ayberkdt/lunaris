@@ -87,6 +87,7 @@ are purely UI-local into this page (e.g., toggle dependency sync such as
 # =============================================================================
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1475,10 +1476,8 @@ class ForceModelsPage(QtWidgets.QWidget):
             self.lbl_gravity_status.setText("Gravity config updated")
 
         # cost indicator
-        try:
+        with contextlib.suppress(Exception):
             self.ind_gravity_cost.set_level(self._estimate_gravity_cost_level())
-        except Exception:
-            pass
 
     def _sync_force_dependencies(self):
         """

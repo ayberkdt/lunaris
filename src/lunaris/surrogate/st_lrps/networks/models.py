@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 from collections.abc import Mapping
@@ -390,10 +391,8 @@ class MultiScaleSirenMLP(nn.Module):
         key = prefix + "w0_bands_tensor"
         incoming = state_dict.get(key)
         if incoming is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
-            except Exception:
-                pass
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
@@ -488,10 +487,8 @@ class AdditiveMultiBandSirenMLP(nn.Module):
         key = prefix + "w0_bands_tensor"
         incoming = state_dict.get(key)
         if incoming is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
-            except Exception:
-                pass
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:

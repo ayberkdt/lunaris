@@ -8,6 +8,7 @@ Canonical batch ensemble orchestration.
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import logging
 import math
@@ -1332,11 +1333,9 @@ class BatchPropagationEngine:
         # manifest as the gravity/ST-LRPS/GPU-kernel hashes.
         _ephem = getattr(self._dyn, "ephem", None)
         if _ephem is not None and hasattr(_ephem, "kernel_provenance"):
-            try:
+            # Provenance enrichment must never abort a completed batch run.
+            with contextlib.suppress(Exception):
                 _provenance_hashes["spice_kernels"] = _ephem.kernel_provenance()
-            except Exception:
-                # Provenance enrichment must never abort a completed batch run.
-                pass
         # DEM/datum provenance for terrain-aware impact runs (None otherwise).
         _dem_prov = self._resolve_dem_provenance()
         if _dem_prov is not None:

@@ -16,6 +16,7 @@ The page only builds and launches a command; the harness owns all physics.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -1068,10 +1069,8 @@ class OrbitBenchmarkTab(QWidget):
     # Progress / status line parsing (UI-side only; never crashes the UI)
     # ------------------------------------------------------------------
     def _parse_progress(self, line: str) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._update_from_line(line)
-        except Exception:
-            pass  # a single log line must never break the monitor
 
     def _update_from_line(self, line: str) -> None:
         text = str(line).strip()
@@ -1599,20 +1598,16 @@ class OrbitBenchmarkTab(QWidget):
             ("append_scenarios", self.append_scenarios),
         ):
             if s.contains(key):
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     spin.setValue(int(s.value(key)))
-                except (TypeError, ValueError):
-                    pass
         for key, spin in (
             ("alt_min", self.alt_min), ("alt_max", self.alt_max),
             ("duration_days", self.duration_days), ("dt_out", self.dt_out),
             ("rk4_dt", self.rk4_dt), ("max_step", self.max_step),
         ):
             if s.contains(key):
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     spin.setValue(float(s.value(key)))
-                except (TypeError, ValueError):
-                    pass
         _combo(self.scenario_mode, "scenario_mode")
         _combo(self.sampling_method, "sampling_method")
         _combo(self.inclination_sampling, "inclination_sampling")
@@ -1987,16 +1982,12 @@ class OrbitBenchmarkPlotsTab(QWidget):
         rk4 = meta.get("rk4_dt_s")
         if dt_list:
             self.rk4_dt_list.setText(",".join(f"{float(v):g}" for v in dt_list))
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 self.rk4_dt.setValue(float(dt_list[0]))
-            except (TypeError, ValueError):
-                pass
         elif rk4 is not None:
             self.rk4_dt_list.setText("")
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 self.rk4_dt.setValue(float(rk4))
-            except (TypeError, ValueError):
-                pass
 
     def _scan_and_populate(self) -> None:
         """Scan the chosen folder, auto-fill detected settings, list its models."""
@@ -2261,10 +2252,8 @@ class OrbitBenchmarkPlotsTab(QWidget):
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
         if s.contains("rk4_dt"):
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 self.rk4_dt.setValue(float(s.value("rk4_dt")))
-            except (TypeError, ValueError):
-                pass
         if s.contains("rk4_dt_list"):
             self.rk4_dt_list.setText(str(s.value("rk4_dt_list", "")))
         if s.contains("out_dir"):

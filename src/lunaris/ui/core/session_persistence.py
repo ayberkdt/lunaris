@@ -97,6 +97,8 @@ def migrate_session_payload(
     migrated["meta"] = meta
     return migrated
 
+import contextlib
+
 from lunaris.loaders.io_helpers import (
     DataRootHints,
     autodetect_repository_data_roots,
@@ -531,10 +533,8 @@ def apply_visual_state(
 
 def _restore_log_collapsed(mw: Any, collapsed: bool) -> None:
     if mw.is_log_collapsed != collapsed:
-        try:
+        with contextlib.suppress(Exception):
             mw._toggle_log_collapsed()
-        except Exception:
-            pass
 
 
 def _restore_telemetry_visual(telem: Any, plot_type: str, time_unit: str) -> None:

@@ -27,6 +27,7 @@ Key features
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import shutil
@@ -331,17 +332,13 @@ def _result_to_hist(result: Any, config: Any) -> dict[str, Any]:
     mu_m3s2 = float(MU_MOON_DEFAULT)
 
     if config is not None:
-        try:
+        with contextlib.suppress(Exception):
             R_body_m = float(config.body.radius_m)
-        except Exception:
-            pass
         try:
             mu_m3s2 = float(config.gravity.mu)
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 mu_m3s2 = float(config.mu_m3s2)
-            except Exception:
-                pass
 
     hist: dict[str, Any] = {
         "t_s": t_s,
@@ -403,10 +400,8 @@ def _setup_3d_axis(fig: plt.Figure) -> Any:
             axis.pane.set_edgecolor((0, 0, 0, 0))
         except Exception:
             pass
-    try:
+    with contextlib.suppress(Exception):
         ax.set_axis_off()
-    except Exception:
-        pass
     return ax
 
 
@@ -727,10 +722,8 @@ def render_orbit_animation_from_history(
         ccount=int(moon_mesh_v),
         zorder=1,
     )
-    try:
+    with contextlib.suppress(Exception):
         moon_surf.set_alpha(1.0)
-    except Exception:
-        pass
 
     # Moon reference lines (equatorial ring + prime meridian)
     _add_moon_reference_lines(ax, R_body_km)
@@ -804,10 +797,8 @@ def render_orbit_animation_from_history(
     ax.set_xlim(-max_range, max_range)
     ax.set_ylim(-max_range, max_range)
     ax.set_zlim(-max_range, max_range)
-    try:
+    with contextlib.suppress(Exception):
         ax.set_box_aspect([1, 1, 1])
-    except Exception:
-        pass
 
     # Summary title (static, built once)
     mean_alt = float(np.nanmean(alt_anim_km)) if np.any(np.isfinite(alt_anim_km)) else 0.0

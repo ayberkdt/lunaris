@@ -61,6 +61,7 @@ Dependencies:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 from dataclasses import dataclass
@@ -265,10 +266,8 @@ def _get_legendre_tables(
         tables = build_legendre_coeffs(N)
         # Reduce accidental mutation bugs (best-effort)
         for a in tables:
-            try:
+            with contextlib.suppress(Exception):
                 a.flags.writeable = False
-            except Exception:
-                pass
         _LEGENDRE_CACHE[N] = tables
         return tables
 
