@@ -96,7 +96,12 @@ from typing import Any
 from PySide6 import QtCore, QtWidgets
 
 try:
-    from lunaris.ui.components.primitives import DataTable, InlineNotice, Section
+    from lunaris.ui.components.primitives import (
+        DataTable,
+        InlineNotice,
+        Section,
+        scrollable,
+    )
     from lunaris.ui.core.gravity_artifact_utils import (
         ST_LRPS_RUNS_DIR as _ST_LRPS_RUNS_DIR_UTIL,
     )
@@ -285,8 +290,13 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self.setWindowTitle("Gravity Field Configuration")
         self.setObjectName("settingsDialog")
         self.setModal(True)
-        self.resize(750, 600)
-        self.setMinimumSize(640, 500)
+        # Sized so both tabs fit without either scrollbar at the default size
+        # (measured content: 784x492; 750x600 was narrower than the degree-chip
+        # row and shorter than the tab body, which is what forced the overlap).
+        # The minimum can sit far below that because the tabs now scroll — see
+        # `scrollable` — rather than compress their children into each other.
+        self.resize(860, 700)
+        self.setMinimumSize(560, 420)
         self._cfg = cfg  # Reference to mutable config object
 
         # Main Layout
@@ -312,13 +322,16 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self.tabs.setDocumentMode(True)
         self._apply_tab_style()
 
-        # Tab 1: Basic Settings
+        # Both tabs are scroll-wrapped: their content is taller than the dialog
+        # at its minimum size, and a QTabWidget does not scroll on its own. Left
+        # unwrapped, Qt compressed the tab's QVBoxLayout past its minimum and
+        # the children overlapped — the backend hint painted over the combobox,
+        # and Browse/Auto-Detect over the file input.
         self.tab_basic = self._create_basic_tab()
-        self.tabs.addTab(self.tab_basic, "Basic")
+        self.tabs.addTab(scrollable(self.tab_basic), "Basic")
 
-        # Tab 2: Adaptive Optimization
         self.tab_adaptive = self._create_adaptive_tab()
-        self.tabs.addTab(self.tab_adaptive, "Adaptive")
+        self.tabs.addTab(scrollable(self.tab_adaptive), "Adaptive")
 
         layout.addWidget(self.tabs, 1)
 
@@ -762,8 +775,13 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         self.setWindowTitle("Adaptive Gravity Configuration")
         self.setObjectName("settingsDialog")
         self.setModal(True)
-        self.resize(700, 500)
-        self.setMinimumSize(600, 460)
+        # Sized so the styled form plus a usable table fit without squeezing.
+        # Not scroll-wrapped: the table already scrolls internally, and nesting
+        # it inside a second scroll area would give this dialog two scrollbars
+        # doing different things. The table's own minimum height is what stops
+        # the layout from crushing it (see below).
+        self.resize(720, 760)
+        self.setMinimumSize(600, 560)
         self._cfg = cfg
 
         # Main Layout
@@ -824,6 +842,12 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
 
         # Surface styling comes from the global QTableWidget#dataTable rule.
         self.table.setObjectName("dataTable")
+        # A QTableWidget's own minimum is a few pixels, so when the dialog was
+        # shorter than its styled content the table — the entire point of this
+        # dialog — was crushed to a ~20px sliver with its header text sliced in
+        # half. Floor it at roughly a header plus four rows; the table scrolls
+        # internally beyond that.
+        self.table.setMinimumHeight(200)
 
         layout.addWidget(self.table, 1)
 
@@ -989,8 +1013,10 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         self.setWindowTitle("Albedo Model Configuration")
         self.setObjectName("settingsDialog")
         self.setModal(True)
-        self.resize(620, 540)
-        self.setMinimumSize(560, 500)
+        # Sized to the measured styled content (510x715); the form scrolls, so
+        # the minimum can stay small enough for a 768px-tall screen.
+        self.resize(640, 720)
+        self.setMinimumSize(520, 420)
         self._cfg = cfg
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -1061,14 +1087,17 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         )
         form.addRow("", self.chk_require_provider)
 
-        layout.addWidget(form_frame)
+        # Scroll-wrapped for the same reason as the gravity dialog: the styled
+        # form is ~715px tall against a 540px dialog, and a QVBoxLayout that
+        # cannot reach its minimum overlaps its children instead of scrolling —
+        # the albedo/pressure spin boxes collided and the facet-resolution row
+        # was sliced in half. The action buttons stay outside the scroll area.
+        layout.addWidget(scrollable(form_frame), 1)
 
         self.lbl_note = QtWidgets.QLabel()
         self.lbl_note.setWordWrap(True)
         self.lbl_note.setObjectName("fieldHint")
         layout.addWidget(self.lbl_note)
-
-        layout.addStretch(1)
 
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch()
@@ -1848,9 +1877,14 @@ class ForceModelsPage(QtWidgets.QWidget):
             adv_grid.addWidget(edit, row, 1)
             return edit
 
+        # The placeholder is "engine default" like its two siblings below, not
+        # "engine default (0.02416)": this card is half-width, so the longer
+        # string elided to "engine default (..." and dropped the very number it
+        # existed to convey. The value lives in the tooltip, where it survives.
         self.ent_tide_k2 = _tide_value_row(
-            0, "k2 value", "engine default (0.02416)",
-            "Degree-2 lunar potential Love number. Blank keeps the engine default.",
+            0, "k2 value", "engine default",
+            "Degree-2 lunar potential Love number (engine default: 0.02416). "
+            "Blank keeps the engine default.",
         )
         self.ent_tide_k3 = _tide_value_row(
             1, "k3 value", "engine default",
@@ -1899,6 +1933,14 @@ class ForceModelsPage(QtWidgets.QWidget):
         note.setObjectName("fieldHint")
         note.setWordWrap(True)
         layout.addWidget(note)
+
+        # This card is much shorter than the Solid Body Tides card it shares a
+        # row with, and the row stretches both frames to equal height. Without
+        # a trailing stretch the spare height is shared out *between* the rows
+        # of content, floating the title ~80px below its neighbour's and making
+        # the card look empty when it falls below the fold. Push the slack to
+        # the bottom so the two cards share a top baseline.
+        layout.addStretch(1)
 
         return gb
 

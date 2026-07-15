@@ -3,6 +3,7 @@
 from lunaris.ui.components.primitives import (
     ActionBar,
     CompactSearchField,
+    ElidedLabel,
     EmptyState,
     FormGrid,
     InlineNotice,
@@ -19,11 +20,14 @@ from lunaris.ui.components.primitives import (
     Toolbar,
     UnitField,
     apply_tab_order,
+    cap_input_width,
+    scrollable,
 )
 
 __all__ = [
     "ActionBar",
     "CompactSearchField",
+    "ElidedLabel",
     "EmptyState",
     "FormGrid",
     "InlineNotice",
@@ -40,4 +44,6 @@ __all__ = [
     "Toolbar",
     "UnitField",
     "apply_tab_order",
+    "cap_input_width",
+    "scrollable",
 ]

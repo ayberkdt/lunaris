@@ -244,7 +244,11 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         # shown again on Clear All.
         self._empty_overlay = self._build_empty_overlay(self.plot_stack)
         self._has_telemetry = False
-        self._position_empty_overlay()
+        # Route the initial state through _set_empty_visible rather than only
+        # positioning the overlay, so a freshly built page also gets its axes
+        # and grid hidden. Otherwise the very first thing a user sees is a
+        # fully gridded 0.1-0.9 chart that measures nothing.
+        self._set_empty_visible(True)
 
         # Timer for buffered updates (30 FPS)
         self.update_timer = QtCore.QTimer(self)
@@ -413,9 +417,33 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         if overlay is None:
             return
         overlay.setVisible(visible)
+        self._set_plot_scales_visible(not visible)
         if visible:
             self._position_empty_overlay()
             overlay.raise_()
+
+    def _set_plot_scales_visible(self, visible: bool) -> None:
+        """Hide axes and grid while there is no data behind them.
+
+        The empty overlay is transparent, so with no run pyqtgraph's autoscale
+        still drew a fully gridded chart with numeric axes (0.1 … 0.9 on both
+        sides) underneath "Waiting for telemetry". Those numbers are an
+        artefact of an empty view box, not a measurement — on an instrument
+        that reports real trajectories, inventing a scale is worse than showing
+        none. Keep the canvas clean until the first sample arrives.
+        """
+        stack = getattr(self, "plot_stack", None)
+        if stack is None:
+            return
+        for i in range(stack.count()):
+            plot = stack.widget(i)
+            plot_item = getattr(plot, "getPlotItem", None)
+            if plot_item is None:
+                continue
+            item = plot_item()
+            item.showGrid(x=visible, y=visible, alpha=0.3)
+            for axis in ("left", "bottom"):
+                item.showAxis(axis, show=visible)
 
     def resizeEvent(self, event):  # noqa: N802 (Qt naming)
         super().resizeEvent(event)
@@ -650,6 +678,11 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
                 w.setLabel('bottom', label, color=THEME['fg_soft'], size='11pt')
             except Exception as exc:
                 _warn_once("axis_bottom_label", str(exc))
+
+        # pyqtgraph's setLabel implicitly shows the axis it labels, so relabelling
+        # the time axis silently undoes the empty-state hiding. Re-assert it from
+        # the one fact that decides it: whether any telemetry has arrived.
+        self._set_plot_scales_visible(bool(getattr(self, "_has_telemetry", False)))
 
     def _current_timeseries_key(self) -> str | None:
         idx = int(self.plot_stack.currentIndex())
