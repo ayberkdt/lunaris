@@ -1301,7 +1301,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # 26. EXECUTION CONSOLE LOGGING (delegates to ExecutionLogPanel)
     # =========================================================================
 
-    def _log_message(self, text: str, is_error: bool = False, severity: str = None, source: str = ""):
+    def _log_message(self, text: str, is_error: bool = False, severity: str | None = None, source: str = ""):
         """
         Route a message to the Execution Console.
 
@@ -2267,9 +2267,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if sys.platform == "win32":
                 os.startfile(path)
             elif sys.platform == "darwin":
-                subprocess.run(["open", str(path)])
+                subprocess.run(["open", str(path)], check=False)
             else:
-                subprocess.run(["xdg-open", str(path)])
+                subprocess.run(["xdg-open", str(path)], check=False)
             self._log_message(f"[UI] Opened output directory: {path}", severity="system")
         except Exception as e:
             self._log_message(f"[Error] Could not open directory: {e}", severity="error")

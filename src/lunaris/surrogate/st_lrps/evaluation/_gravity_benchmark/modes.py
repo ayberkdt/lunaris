@@ -223,7 +223,7 @@ def evaluate_forces(
 
     summary.sort(key=lambda x: x["accel_err_rms_mGal"])
     _ensure_dir(out_dir / "force_sample_summary.json")
-    with open(out_dir / "force_sample_summary.json", "w") as f:
+    with open(out_dir / "force_sample_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=4)
     _write_csv(summary, out_dir / "force_sample_summary.csv")
     _write_csv(
@@ -301,7 +301,7 @@ def run_single_orbit_mode(args: argparse.Namespace, cfg: SimConfig, ephem: Any) 
 
     summary.sort(key=lambda x: x.get("rms_pos_err_km") or 0)
 
-    with open(out_dir / "comparison_summary.json", "w") as f:
+    with open(out_dir / "comparison_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=4)
     _write_csv(summary, out_dir / "comparison_summary.csv")
 
@@ -1180,7 +1180,7 @@ def run_random_scenario_mode(
 
     if args.resume and metrics_path.exists() and not cache_enabled:
         try:
-            with open(metrics_path, newline="") as f:
+            with open(metrics_path, newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     try:
@@ -1434,7 +1434,7 @@ def run_random_scenario_mode(
     agg      = aggregate_metrics(all_metrics, truth_runtime_mean)
     rankings = build_rankings(agg)
 
-    with open(out_dir / "aggregate_summary.json", "w") as f:
+    with open(out_dir / "aggregate_summary.json", "w", encoding="utf-8") as f:
         json.dump(agg, f, indent=4, default=str)
     _write_csv(rankings, out_dir / "ranking_summary.csv")
     agg_rows = [{"model": m, **stats} for m, stats in agg.items()]
@@ -1664,7 +1664,7 @@ def run_random_scenario_mode(
                 "frame_interpolation": batch_result.get("frame_interpolation"),
                 "uses_frame_rotation": batch_result.get("uses_frame_rotation"),
             }
-            with open(out_dir / "batch_rk4_summary.json", "w") as f:
+            with open(out_dir / "batch_rk4_summary.json", "w", encoding="utf-8") as f:
                 json.dump(batch_summary, f, indent=4, default=str)
             _write_csv(
                 [

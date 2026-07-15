@@ -564,14 +564,14 @@ def main(argv: list[str] | None = None) -> int:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "ablation_spec.json").write_text(json.dumps(entry, indent=2), encoding="utf-8")
         print(f"[ablation] RUN  {entry['name']} -> {run_dir}")
-        result = subprocess.run(entry["command"], cwd=str(_REPO_ROOT))
+        result = subprocess.run(entry["command"], cwd=str(_REPO_ROOT), check=False)
         if result.returncode != 0:
             failures += 1
             print(f"[ablation] FAILED {entry['name']} (exit {result.returncode}).", file=sys.stderr)
         else:
             for ecmd in entry.get("eval_commands", []):
                 print(f"[ablation] EVAL {entry['name']} -> {ecmd[-1]}")
-                eres = subprocess.run(ecmd, cwd=str(_REPO_ROOT))
+                eres = subprocess.run(ecmd, cwd=str(_REPO_ROOT), check=False)
                 if eres.returncode != 0:
                     failures += 1
                     print(f"[ablation] EVAL FAILED {entry['name']} (exit {eres.returncode}).", file=sys.stderr)

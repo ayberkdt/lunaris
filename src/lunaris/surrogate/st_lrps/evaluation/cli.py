@@ -1363,7 +1363,7 @@ def _save_evaluation_plots(a_mag_err, a_pred_mag, a_pred_vec_np, a_rel_floor_abs
         print(f"[warn] cossim_by_altitude.png failed: {_csp_err}")
 
 def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, directional_metrics, metrics, norm_binned_ang, ood_table, out_dir, spatial_a_mag, spatial_a_mape, spatial_a_vec, spatial_u, spatial_u_mape):
-    def write_bins_csv(bins: dict[str, Any], path: Path, extra_cols: list[str] = None) -> None:
+    def write_bins_csv(bins: dict[str, Any], path: Path, extra_cols: list[str] | None = None) -> None:
         if extra_cols is None:
             extra_cols = []
         header = "alt_km_lo,alt_km_hi,n,rmse"

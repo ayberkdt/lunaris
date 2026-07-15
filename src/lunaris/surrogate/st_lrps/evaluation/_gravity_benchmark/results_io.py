@@ -72,7 +72,7 @@ def _write_scenarios_csv(scenarios: list[Scenario], out_dir: Path) -> None:
                   "inc_deg", "raan_deg", "argp_deg", "ta_deg"]
     p = out_dir / "scenarios.csv"
     _ensure_dir(p)
-    with open(p, "w", newline="") as f:
+    with open(p, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for s in scenarios:
@@ -442,7 +442,7 @@ def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> list[Scenario]
 
 def _append_metrics_csv(metrics: dict, path: Path, write_header: bool) -> None:
     _ensure_dir(path)
-    with open(path, "a", newline="") as f:
+    with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=_METRICS_FIELDNAMES, extrasaction="ignore")
         if write_header:
             w.writeheader()
@@ -454,7 +454,7 @@ def _write_csv(rows: list[dict], path: Path) -> None:
         return
     keys = list(rows[0].keys())
     _ensure_dir(path)
-    with open(path, "w", newline="") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)

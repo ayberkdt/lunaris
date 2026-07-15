@@ -142,7 +142,7 @@ def main():
         'path1': {'path': p1, 'future_paths': f1}
     }
 
-    with open('../public/orbit-data.json', 'w') as f:
+    with open('../public/orbit-data.json', 'w', encoding='utf-8') as f:
         json.dump(output, f)
 
     print("Orbits perfectly generated and anchored.")
