@@ -7,6 +7,30 @@ Last verified: 2026-07-05
 > `experimental/force-direct-archive` branch. The supported CUDA ST-LRPS
 > backends are the conservative potential path and the third-body hybrid.
 
+## GPU qualification
+
+CPU is the accuracy reference; GPU backends must be re-qualified against it on a
+recurring cadence, not just once. Two mechanisms:
+
+- **CI (`.github/workflows/cuda-nightly.yml`)** runs the `requires_cuda` suite
+  weekly, but only once a self-hosted runner with the `gpu` label is registered
+  (Settings → Actions → Runners). Until then it stays queued and never blocks
+  PRs.
+- **Local (`tools/gpu_qualification.py`)** runs the same suite on the local
+  device and writes a timestamped, commit-stamped log under the git-ignored
+  `outputs/gpu_qualification/`. It exits non-zero on failure and uses `pytest -rs`
+  so a run that merely *skipped* (no CUDA visible) is distinguishable from one
+  that truly validated the GPU.
+
+  Schedule it weekly with Windows Task Scheduler:
+
+  ```powershell
+  schtasks /Create /SC WEEKLY /D SUN /TN "Lunaris GPU qualification" ^
+    /TR "python \"%CD%\tools\gpu_qualification.py\"" /ST 06:00
+  ```
+
+  or with cron on Linux (`0 6 * * 0 cd /path/to/lunaris && python tools/gpu_qualification.py`).
+
 This document summarizes the batch propagation backend capability surface after
 the modular refactor. The executable source of truth remains the code:
 

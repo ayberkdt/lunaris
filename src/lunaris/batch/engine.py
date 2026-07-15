@@ -488,6 +488,10 @@ class BatchPropagationEngine:
                 None if use_st_lrps_gravity
                 else getattr(cfg.gravity, "adaptive", None)
             ),
+            # Paper-safe / benchmark / strict batch runs must use a fixed SH
+            # degree: forbid the adaptive blend so a reference result is
+            # attributable to one model. Same posture that forbids GPU fallback.
+            strict_fixed_degree=self._fallback_forbidden(),
             ephem_manager=ephem_manager,
             surface_provider=surface_provider,
             earth_j2=earth_j2,
@@ -527,6 +531,24 @@ class BatchPropagationEngine:
             from lunaris.loaders.io_surface import _grid_topo_payload
             return _grid_topo_payload(self._topo_grid)
         return None
+
+    def _resolve_dem_provenance(self) -> dict[str, Any] | None:
+        """DEM/datum provenance (product, resolution, datum, IMG hash) or ``None``.
+
+        Recorded in the manifest so an impact result carries its terrain-source
+        evidence: which DEM at what resolution/datum, and the ground sample
+        distance that floors impact-location certainty. Never raises.
+        """
+        if not bool(getattr(self._cfg, "impact_surface_terrain_enabled", False)):
+            return None
+        if self._topo_grid is None:
+            return None
+        from lunaris.loaders.io_surface import _grid_dem_provenance
+
+        try:
+            return _grid_dem_provenance(self._topo_grid)
+        except Exception:
+            return None
 
     def _build_propagator(self) -> Any:
         """
@@ -1305,6 +1327,20 @@ class BatchPropagationEngine:
         _grav_file = getattr(getattr(cfg, "gravity", None), "file_path", None)
         if _grav_file:
             _provenance_hashes["sh_coefficient_sha256"] = _sha256_file(_grav_file)
+        # SPICE kernel chain: name/kind/sha256 of every furnished kernel plus the
+        # ET coverage window, so the ephemeris provenance lives in the same
+        # manifest as the gravity/ST-LRPS/GPU-kernel hashes.
+        _ephem = getattr(self._dyn, "ephem", None)
+        if _ephem is not None and hasattr(_ephem, "kernel_provenance"):
+            try:
+                _provenance_hashes["spice_kernels"] = _ephem.kernel_provenance()
+            except Exception:
+                # Provenance enrichment must never abort a completed batch run.
+                pass
+        # DEM/datum provenance for terrain-aware impact runs (None otherwise).
+        _dem_prov = self._resolve_dem_provenance()
+        if _dem_prov is not None:
+            _provenance_hashes["terrain_dem"] = _dem_prov
         try:
             _provenance_hashes["kernel_module"] = str(getattr(type(prop), "__module__", "") or "")
             _provenance_hashes["kernel_source_sha256"] = _sha256_file(

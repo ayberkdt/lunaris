@@ -209,6 +209,7 @@ def prepare_adaptive_gravity_policy(
     *,
     gravity_model: Any,
     gravity_adaptive: Any,
+    strict_fixed_degree: bool = False,
 ) -> dict[str, Any]:
     """
     Normalize optional adaptive-degree settings into kernel-friendly arrays.
@@ -217,11 +218,29 @@ def prepare_adaptive_gravity_policy(
     layer still clamps each requested degree to the loaded model's actual
     maximum. This keeps runtime evaluation robust even when older session
     files or UI presets request degrees higher than the active gravity file.
+
+    ``strict_fixed_degree`` (paper-safe / benchmark / strict runs) forbids the
+    adaptive blend outright: a reference result must use a single fixed degree so
+    its error is attributable to one model, not to an altitude-dependent blend of
+    two. Enabling adaptive degree under a strict posture is a hard error, never a
+    silent downgrade.
     """
 
     adaptive = gravity_adaptive
     if adaptive is None and gravity_model is not None:
         adaptive = getattr(gravity_model, "adaptive", None)
+
+    would_enable = (
+        adaptive is not None and bool(getattr(adaptive, "enabled", False)) and int(nmax) > 0
+    )
+    if strict_fixed_degree and would_enable:
+        raise ValueError(
+            "Adaptive SH degree blending is forbidden in paper-safe / benchmark / "
+            "strict runs: a reference result must use a single fixed degree so its "
+            "error is attributable to one model, not an altitude-dependent blend. "
+            "Set gravity.adaptive.enabled=False (fixed degree) for reference runs, "
+            "or drop the strict/paper-safe flag for exploratory use."
+        )
 
     disabled = {
         "adaptive_enabled": False,
@@ -301,8 +320,17 @@ def prepare_adaptive_gravity_policy(
     }
 
 
-def prepare_gravity(gravity_model: Any, *, gravity_adaptive: Any = None) -> _GravPack:
-    """Validated gravity pack: point-mass, surrogate, or strict classical SH."""
+def prepare_gravity(
+    gravity_model: Any,
+    *,
+    gravity_adaptive: Any = None,
+    strict_fixed_degree: bool = False,
+) -> _GravPack:
+    """Validated gravity pack: point-mass, surrogate, or strict classical SH.
+
+    ``strict_fixed_degree`` forbids adaptive-degree blending (paper-safe /
+    benchmark / strict reference runs must use a single fixed degree).
+    """
     if gravity_model is None:
         z11 = np.zeros((1, 1), dtype=np.float64)
         z1 = np.zeros(1, dtype=np.float64)
@@ -367,7 +395,10 @@ def prepare_gravity(gravity_model: Any, *, gravity_adaptive: Any = None) -> _Gra
         extract_gravity_strict(gravity_model)
     )
     adaptive_policy = prepare_adaptive_gravity_policy(
-        int(nmax), gravity_model=gravity_model, gravity_adaptive=gravity_adaptive
+        int(nmax),
+        gravity_model=gravity_model,
+        gravity_adaptive=gravity_adaptive,
+        strict_fixed_degree=strict_fixed_degree,
     )
 
     return _GravPack(

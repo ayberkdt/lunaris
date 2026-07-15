@@ -29,6 +29,7 @@ from lunaris.loaders.io_surface import (
     ConstantTopography,
     InMemorySurfaceProvider,
     TopographyGrid,
+    _grid_dem_provenance,
     _grid_topo_payload,
     sample_topo_radius_m,
 )
@@ -101,6 +102,30 @@ END
 
 # Interior points only (away from the patch boundary) so loader/payload wraps agree.
 _INTERIOR_POINTS = [(15.0, 40.0), (12.3, 33.7), (18.9, 47.1), (11.0, 31.0), (19.0, 49.0)]
+
+
+def test_dem_provenance_records_product_resolution_and_hash(tmp_path):
+    topo = _write_synthetic_ldem(tmp_path)
+    prov = _grid_dem_provenance(topo, r_moon_m=float(R_MOON))
+
+    assert prov is not None
+    assert prov["label_name"] == "synthetic.lbl"
+    assert prov["img_name"] == "synthetic.img"
+    assert prov["img_sha256"] and len(prov["img_sha256"]) == 64
+    assert prov["map_resolution_ppd"] == pytest.approx(_PPD)
+    assert prov["res_deg"] == pytest.approx(1.0 / _PPD)
+    # Ground sample distance = one pixel of arc on the datum radius (offset_km).
+    expected_gsd = math.radians(1.0 / _PPD) * (_OFFSET_KM * 1000.0)
+    assert prov["ground_sample_distance_m"] == pytest.approx(expected_gsd)
+    assert prov["datum_a_axis_radius_km"] == pytest.approx(_OFFSET_KM)
+    assert prov["lat_min_deg"] == pytest.approx(_LAT_MIN)
+    assert prov["lat_max_deg"] == pytest.approx(_LAT_MAX)
+
+
+def test_dem_provenance_none_for_constant_and_missing_grid():
+    assert _grid_dem_provenance(None) is None
+    # ConstantTopography has no `.info`, so there is no DEM provenance to record.
+    assert _grid_dem_provenance(ConstantTopography(R_MOON + 100.0)) is None
 
 
 def test_topo_payload_round_trips_against_loader(tmp_path):

@@ -8,6 +8,31 @@ external body (Earth or Sun) from the standard Love-number disturbing
 potential. It intentionally models only the instantaneous elastic response:
 no time lag, dissipation, ocean tide, or thermal tide terms are included.
 
+Tide-system convention (read before combining with a gravity model)
+-------------------------------------------------------------------
+This elastic tide is an *additive, time-varying* perturbation on top of the
+static spherical-harmonic field. It therefore assumes the loaded gravity
+coefficients are a **tide-free** (a.k.a. "zero-frequency-tide-removed") field:
+the static C_20 (and higher) must NOT already contain the mean/permanent tidal
+deformation, or the permanent part would be double-counted. GRAIL GRGM/jggrx
+products are distributed as tide-free fields, which is the intended pairing; if
+a *zero-tide* or *mean-tide* coefficient set is ever substituted, its permanent
+tidal term must be converted to tide-free first. Lunaris does not auto-detect
+the tide system of a coefficient file — this is a documented modelling
+assumption, verified per gravity product, not enforced in code.
+
+Deliberate omissions and their impact (deferred, not oversights):
+
+* **Time lag / dissipation (imaginary Love number, k2/Q):** absent, so no tidal
+  secular along-track drift or orbital-energy dissipation is modelled. Matters
+  only for very-long-arc (multi-month) high-precision analysis; out of scope for
+  the current mission-analysis accuracy budget.
+* **Ocean tides:** not applicable to the Moon (no ocean).
+* **Thermal tides:** below the current accuracy budget for lunar orbiters.
+* **k2 uncertainty:** the Love number is a fixed constant here; propagating its
+  measurement uncertainty is a UQ concern (a covariance/sampling input), not a
+  force-model change, and is left to the UQ pipeline.
+
 For tide-raising body j, spacecraft Moon-fixed vector r, body Moon-fixed vector
 R_j, lunar reference radius R, and Love number k_l:
 

@@ -15,6 +15,7 @@ window can focus on orchestration rather than background validation mechanics.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -388,6 +389,22 @@ class PreFlightWorker(QtCore.QThread):
             atol = float(self.command_data.get("atol", 1e-14))
             duration_value = float(self.command_data.get("duration_val", 10.0))
 
+            # Non-finite guard first: nan/inf slip past every ``<= 0`` comparison
+            # (``nan <= 0`` is False, ``inf <= 0`` is False), so gate them here to
+            # match the core config contract, which rejects them via np.isfinite.
+            finite_fields = {
+                "Spacecraft mass": mass_kg,
+                "Cross-sectional area": area_m2,
+                "Drag coefficient": cd,
+                "Reflectivity coefficient": cr,
+                "Relative tolerance": rtol,
+                "Absolute tolerance": atol,
+                "Propagation duration": duration_value,
+            }
+            for label, value in finite_fields.items():
+                if not math.isfinite(value):
+                    return False, f"{label} must be a finite number"
+
             if mass_kg <= 0.0:
                 return False, "Spacecraft mass must be positive"
             if area_m2 <= 0.0:
@@ -400,8 +417,10 @@ class PreFlightWorker(QtCore.QThread):
                 return False, "Propagation duration must be positive"
 
             max_step = self.command_data.get("max_step", None)
-            if max_step is not None and float(max_step) <= 0.0:
-                return False, "Maximum solver step must be positive"
+            if max_step is not None:
+                max_step_val = float(max_step)
+                if not math.isfinite(max_step_val) or max_step_val <= 0.0:
+                    return False, "Maximum solver step must be a finite positive number"
 
             return True, "Numeric ranges validated"
         except (TypeError, ValueError) as exc:

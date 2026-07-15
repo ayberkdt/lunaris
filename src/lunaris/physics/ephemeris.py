@@ -139,6 +139,7 @@ import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -234,6 +235,11 @@ class EphemerisTables:
     # above and never calls SPICE again.
     third_body_sampling_mode: str = "not_requested"
     third_body_sampling_fallback_reason: str | None = None
+    # SPICE provenance: the resolved kernels (name/kind/sha256) actually furnished
+    # to sample these tables, and the time-scale note. Provenance-only, so it is
+    # optional and never affects the numerical contract validated below.
+    kernel_provenance: tuple[Mapping[str, Any], ...] = ()
+    time_scale_note: str = ""
 
     def __post_init__(self) -> None:
         # Strict contract validation. Runtime interpolation indexes tables by
@@ -410,6 +416,54 @@ def _try_fill_spkpos_table_m(
         return False, f"{type(exc).__name__}: {detail or 'no detail provided'}"
 
 
+# SPICE kernel-type classification by file extension. Recorded in provenance so a
+# manifest reader can see the leapseconds (LSK), ephemeris (SPK), orientation
+# (PCK/CK), and frame (FK/SCLK) kernels that produced a run without opening them.
+_KERNEL_KIND_BY_SUFFIX: dict[str, str] = {
+    ".tls": "LSK",
+    ".bsp": "SPK",
+    ".bpc": "PCK",
+    ".tpc": "PCK",
+    ".pck": "PCK",
+    ".bc": "CK",
+    ".ck": "CK",
+    ".tf": "FK",
+    ".fk": "FK",
+    ".tsc": "SCLK",
+    ".tm": "META",
+}
+
+
+def _classify_kernel(path: str) -> str:
+    """Return the SPICE kernel kind (LSK/SPK/PCK/CK/FK/...) for a path."""
+    suffix = Path(str(path)).suffix.lower()
+    # Detached-label style ``foo.bsp.txt`` etc.: peel one text suffix and retry.
+    if suffix in (".txt", ".label") and len(Path(str(path)).suffixes) >= 2:
+        suffix = Path(str(path)).suffixes[-2].lower()
+    return _KERNEL_KIND_BY_SUFFIX.get(suffix, "UNKNOWN")
+
+
+def _capture_kernel_provenance(kernels: Sequence[str]) -> tuple[Mapping[str, Any], ...]:
+    """Hash and classify each resolved kernel for the run manifest chain.
+
+    Runs once at table-build time. Never raises: an unreadable kernel yields a
+    ``None`` hash so provenance capture cannot abort a completed build.
+    """
+    from lunaris.common.provenance import sha256_file
+
+    provenance: list[Mapping[str, Any]] = []
+    for k in kernels:
+        provenance.append(
+            {
+                "name": Path(str(k)).name,
+                "path": str(k),
+                "kind": _classify_kernel(str(k)),
+                "sha256": sha256_file(k, missing_ok=True, suppress_errors=True),
+            }
+        )
+    return tuple(provenance)
+
+
 @contextmanager
 def _spice_kernels_loaded(
     kernels: Sequence[str],
@@ -463,6 +517,9 @@ def build_tables(
     # Resolve and normalize kernel paths (and optionally auto-include lunar FK/TF).
     k_list = resolve_kernel_paths(list(kernels), auto_fix=bool(auto_fix_kernel_paths))
     k_list = maybe_autoinclude_lunar_fk(k_list, fixed_frame)
+
+    # Content-hash the exact kernels furnished below, for the manifest chain.
+    kernel_provenance = _capture_kernel_provenance(k_list)
 
     # Deterministic time grid
     t_tab = _build_time_grid(float(duration_s), dt)
@@ -604,6 +661,11 @@ def build_tables(
         observer=str(observer),
         third_body_sampling_mode=third_body_sampling_mode,
         third_body_sampling_fallback_reason=third_body_sampling_fallback_reason,
+        kernel_provenance=kernel_provenance,
+        time_scale_note=(
+            f"start_utc={start_utc!r} parsed to ET (TDB seconds past J2000) via the "
+            "furnished leapseconds kernel (LSK); table ET = et0 + t_tab_s"
+        ),
     )
 
 
@@ -696,6 +758,28 @@ class EphemerisManager:
             "r_sun_tab_m": t.r_sun_tab_m,
             "mu_earth_m3s2": float(t.mu_earth_m3s2),
             "mu_sun_m3s2": float(t.mu_sun_m3s2),
+            "inertial_frame": t.inertial_frame,
+            "fixed_frame": t.fixed_frame,
+            "observer": t.observer,
+        }
+
+    def kernel_provenance(self) -> Mapping[str, Any]:
+        """Return the SPICE provenance chain for this run's ephemeris tables.
+
+        A single payload for the run manifest: the exact kernels (name/kind/
+        sha256) furnished to build the tables, the time-scale note, and the ET
+        coverage window actually sampled. A path string alone is not reproducible
+        evidence; the content hashes are what let a reader verify which
+        leapseconds/ephemeris/orientation kernels produced an archive.
+        """
+        t = self.tables
+        et0 = float(t.et0)
+        et_end = et0 + float(t.t_tab_s[-1]) if t.t_tab_s.size else et0
+        return {
+            "kernels": [dict(k) for k in t.kernel_provenance],
+            "time_scale_note": t.time_scale_note,
+            "et_start": et0,
+            "et_end": et_end,
             "inertial_frame": t.inertial_frame,
             "fixed_frame": t.fixed_frame,
             "observer": t.observer,

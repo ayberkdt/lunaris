@@ -803,10 +803,15 @@ def make_report_pdf(
 # 4.       INTERNAL HELPERS (Directory Management)
 # ============================================================
 
-def _create_run_directory(base_dir: str, *, prefix: str = "run") -> str:
+def create_run_directory(base_dir: str, *, prefix: str = "run") -> str:
     """Create a unique timestamped run directory.
 
     Format: base_dir/prefix_YYYYMMDD_HHMMSS[_N]
+
+    Public so the CLI can create one canonical run directory up front and write
+    config, diagnostics, PNGs, and the PDF into the *same* leaf. Keeping the name
+    format single-sourced here means the Results indexer sees CLI-created and
+    reporting-created run directories identically.
     """
     base = Path(base_dir or ".").expanduser().resolve()
     try:
@@ -872,7 +877,7 @@ def plot_all(
 
     # --- Output directory ---
     if use_run_subdir:
-        run_dir = _create_run_directory(out_dir, prefix="run")
+        run_dir = create_run_directory(out_dir, prefix="run")
     else:
         run_dir = str(Path(out_dir or ".").expanduser().resolve())
         _ensure_dir(run_dir)
@@ -988,6 +993,8 @@ if __name__ == "__main__":  # pragma: no cover
 __all__ = [
     # High-level entrypoint
     "plot_all",
+    # Run-directory management
+    "create_run_directory",
     # Output writers
     "make_report_pdf",
     "save_quicklook_pngs",

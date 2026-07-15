@@ -40,6 +40,13 @@ jobs:
       - name: Verify optional-dependency boundaries on the minimal install
         run: pytest tests/test_optional_dependency_boundaries.py -q
 
+      - name: Algorithm traceability audit (advisory)
+        # Symbol-level coverage audit: lists algorithm-ish code not registered in
+        # docs/algorithms/algorithm_registry.yaml. Advisory by design — it prints
+        # hits but exits 0, so it never blocks a PR. Promote to a gate later by
+        # adding --strict once the hit list is triaged to zero.
+        run: python tools/algorithm_registry.py audit
+
   pytest:
     runs-on: ubuntu-latest
     strategy:
