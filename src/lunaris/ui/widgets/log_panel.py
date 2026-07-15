@@ -651,6 +651,26 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
     def _set_status(self, text: str) -> None:
         self.status_chip.setText(text)
 
+    def set_run_status(self, state: str) -> None:
+        """Reflect the application's run state in the console's status chip.
+
+        The chip sits in a bar labelled "Execution Console", so users read it
+        as the execution status. It previously only ever changed on
+        pause/resume, which left it reading "Idle" for the whole of a run while
+        the header showed a progress bar — two widgets on screen contradicting
+        each other about the same fact. Pause is still the user's own explicit
+        override of the stream and keeps precedence over the run state.
+        """
+        if self._paused:
+            return
+        self._set_status(
+            {
+                "running": "Running",
+                "error": "Run error",
+                "warning": "Validating",
+            }.get(state, "Idle")
+        )
+
     def _flash_status(self, text: str, revert_ms: int = 1600) -> None:
         self._set_status(text)
         if self._status_revert_timer is not None:

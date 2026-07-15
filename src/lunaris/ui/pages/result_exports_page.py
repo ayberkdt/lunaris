@@ -274,6 +274,11 @@ class ResultsExportPage(QtWidgets.QWidget):
         options_row.addStretch(1)
         layout.addLayout(options_row)
 
+        # Sync once at build time, not only from the `toggled` signal and
+        # apply_state(): on a fresh page neither has fired, so the spin box
+        # rendered enabled while the toggle that gates it was off.
+        self._sync_3d_controls()
+
         note = QtWidgets.QLabel(
             "Tabular/report outputs are currently managed by the backend engine. "
             "This page only exposes options that are actually consumed by the CLI."
@@ -418,8 +423,16 @@ class ResultsExportPage(QtWidgets.QWidget):
         if has_runs:
             self.lbl_runs_status.setText(f"{len(self._run_records)} run(s) indexed.")
             self.list_runs.setCurrentRow(0)
+        elif out_dir:
+            # The EmptyState below already says "No completed runs yet" and
+            # explains what to do about it; repeating "No runs found." up here
+            # is the same fact twice in one card. Stay silent and let the
+            # EmptyState carry it.
+            self.lbl_runs_status.setText("")
         else:
-            self.lbl_runs_status.setText("No runs found." if out_dir else "Output directory not set.")
+            # Not the same case: there is no directory to have found runs in,
+            # which the EmptyState does not say.
+            self.lbl_runs_status.setText("Output directory not set.")
 
     def _on_run_selected(self, row: int) -> None:
         records = getattr(self, "_run_records", [])

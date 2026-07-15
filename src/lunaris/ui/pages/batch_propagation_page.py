@@ -51,7 +51,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
     from lunaris.ui.components.ensemble_analysis_panel import EnsembleAnalysisPanel
-    from lunaris.ui.components.primitives import DataTable, InlineNotice, Section
+    from lunaris.ui.components.primitives import (
+        DataTable,
+        InlineNotice,
+        Section,
+        cap_input_width,
+    )
     from lunaris.ui.core.ui_commons import (
         THEME,
         NoWheelComboBox,
@@ -685,6 +690,13 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.ent_seed.setToolTip("Seed for random, LHS, and scrambled Sobol reproducibility")
         grid.addWidget(self.ent_seed, 2, 1)
 
+        # These are all short scalars ("500", "42"): without a cap the value
+        # column stretched them to ~400px each, which detaches the value from
+        # its label. Cap the fields and give the leftover to a stretch column
+        # so it becomes a right margin instead.
+        cap_input_width(self.ent_n_samples, self.cb_sampling_method, self.ent_seed)
+        grid.setColumnStretch(2, 1)
+
         gb.content_layout.addLayout(grid)
         return gb
 
@@ -720,6 +732,9 @@ class BatchPropagationPage(QtWidgets.QWidget):
         )
         self.ent_sigma_v.setToolTip("1-sigma injection velocity dispersion (isotropic, all axes)")
         grid.addWidget(self.ent_sigma_v, 1, 1)
+
+        cap_input_width(self.ent_sigma_r, self.ent_sigma_v)
+        grid.setColumnStretch(2, 1)
 
         layout.addLayout(grid)
 
@@ -1251,7 +1266,12 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.progress_batch.setVisible(False)
         layout.addWidget(self.progress_batch)
 
-        self.lbl_progress_summary = _label("Waiting for run", muted=False)
+        # Idle text is empty on purpose. During a run this pair carries two
+        # genuinely different facts ("Propagating scenarios" / "Batch 12/500"),
+        # but at idle it read "Waiting for run" over "No active batch run",
+        # directly under an "IDLE" badge — three widgets stating one fact. The
+        # badge is the state; the meta line below is the one sentence about it.
+        self.lbl_progress_summary = _label("", muted=False)
         self.lbl_progress_summary.setObjectName("statusValue")
         self.lbl_progress_summary.setWordWrap(True)
         layout.addWidget(self.lbl_progress_summary)
