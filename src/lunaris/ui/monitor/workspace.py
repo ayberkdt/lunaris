@@ -281,6 +281,7 @@ class MonitorWorkspace(QtWidgets.QWidget):
         preset_label.setObjectName("keyLabel")
         bar.addWidget(preset_label)
         self.preset_combo = QtWidgets.QComboBox()
+        self.preset_combo.setAccessibleName("Workspace preset")
         self.preset_combo.setToolTip("Workspace preset (which widgets are open)")
         for preset in PRESETS:
             self.preset_combo.addItem(preset.title, preset.preset_id)
@@ -481,6 +482,7 @@ class ReplayBar(QtWidgets.QFrame):
         self.btn_end = tool_button(">|", "Jump to end")
 
         self.speed_control = QtWidgets.QComboBox()
+        self.speed_control.setAccessibleName("Playback speed")
         for speed in timeline.SPEEDS:
             self.speed_control.addItem(f"{speed:g}×", speed)
         self.speed_control.setCurrentIndex(list(timeline.SPEEDS).index(1.0))
@@ -491,6 +493,7 @@ class ReplayBar(QtWidgets.QFrame):
         bar.addWidget(self.speed_control)
 
         self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.slider.setAccessibleName("Replay timeline cursor")
         self.slider.setRange(0, 10_000)
         self.slider.setToolTip("Timeline cursor (simulation time)")
         bar.addWidget(self.slider, 1)

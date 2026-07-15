@@ -43,6 +43,7 @@ class AltitudeWidget(MonitorWidgetFrame):
 
         selector_row = QtWidgets.QHBoxLayout()
         self.metric_combo = QtWidgets.QComboBox()
+        self.metric_combo.setAccessibleName("Altitude history metric")
         self.metric_combo.setToolTip("Metric shown in the history plot")
         self.metric_combo.currentIndexChanged.connect(lambda _i: self._on_update())
         selector_row.addWidget(self.metric_combo)

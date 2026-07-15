@@ -23,6 +23,7 @@ class EventTimelineWidget(MonitorWidgetFrame):
     def build_content(self) -> QtWidgets.QWidget:
         self.table = QtWidgets.QTreeWidget()
         self.table.setObjectName("monitorEventTable")
+        self.table.setAccessibleName("Mission event timeline")
         self.table.setColumnCount(4)
         self.table.setHeaderLabels(["Sim time", "Event", "Severity", "Detail"])
         self.table.setRootIsDecorated(False)
