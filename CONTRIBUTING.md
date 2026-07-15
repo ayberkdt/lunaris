@@ -25,16 +25,25 @@ Every change must keep these green. They run in CI and in the pre-commit hook.
 
 ```bash
 ruff check .                 # lint (also `ruff format` for formatting)
-mypy                         # type-check the core scope: common, core, physics
+mypy                         # type-check the in-scope layers (see [tool.mypy])
 lint-imports                 # import-linter: enforce the layered architecture
 pytest -m "not slow and not requires_data and not requires_cuda"
 ```
 
 Notes:
 
-- **mypy scope** is intentionally `src/lunaris/{common,core,physics}` (see
-  `[tool.mypy]`). The ST-LRPS package is excluded from the type gate; do not
-  chase its pre-existing out-of-scope errors.
+- **ruff is pinned** to `0.12.0` in CI and `.pre-commit-config.yaml`. Validate
+  against that exact version — a newer local ruff enables rules CI does not have
+  (and vice versa), so a clean local run can still fail the gate.
+- **mypy scope** is the `files` list in `[tool.mypy]` — **read it there, not
+  here.** It is adopted incrementally and grows most releases; any summary in
+  this file is stale the moment it is written (an earlier version of this note
+  claimed "the ST-LRPS package is excluded from the type gate", which had not
+  been true for some time). The shape of it: `common`, `core` and `physics` are
+  covered wholesale; everything else is opted in module-by-module, bottom-up,
+  as it is typed. Run `mypy` to see the real scope — it reports the file count.
+  Adding a module to that list is a normal part of typing it; removing one to
+  silence an error is not.
 - **Architecture** is enforced by `import-linter` contracts in
   `[tool.importlinter]` (e.g. `physics` never imports `core`/`ui`; `common`
   stays dependency-light). New cross-layer imports will fail `lint-imports`.

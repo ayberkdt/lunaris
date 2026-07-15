@@ -2,7 +2,40 @@
 
 ## Unreleased
 
-(nothing yet)
+Merged to `main` after 0.1.0rc1 (#115–#119): 100 files, ~12.6k insertions.
+This is not a formatting-only delta — it adds a new `lunaris.validation`
+convergence module, a full algorithm-traceability system, and widens the lint
+gate. **`main` is materially ahead of rc1**; a release candidate cut from it
+should be 0.1.0rc2.
+
+- **Added an algorithm traceability system (#117, #118).** Every non-trivial
+  algorithm in the codebase is registered in `docs/algorithms/algorithm_registry.yaml`
+  (44 entries) with a persistent ID and a citation into `references/references.bib`
+  (31 entries, each verified against a primary source locator). `tools/algorithm_registry.py`
+  validates the registry against `schemas/algorithm_registry.schema.json`, renders
+  `docs/ALGORITHM_CATALOG.md` deterministically (with a `--check` staleness gate),
+  and audits the source tree for algorithm-ish code that is not registered. The
+  authoring rules live in `docs/ALGORITHM_TRACEABILITY_POLICY.md`. The audit runs
+  in CI as **advisory** (exit 0); `--strict` exists but currently reports 27
+  uncovered files, so gating on it is blocked on triaging that list.
+- **Added a convergence gate for the classical core (#117, #118).** New
+  `src/lunaris/validation/convergence.py` plus `tests/test_convergence_gate.py`,
+  `tests/test_sh_high_degree_stability.py`, `tests/test_altitude_binning.py`, and
+  `tests/test_adaptive_blend_strict_guard.py` (adaptive-degree blending now fails
+  closed rather than silently approximating). Supporting analysis tooling:
+  `tools/blend_error_study.py`, `tools/gpu_qualification.py`.
+- **UI: Results zone, shared shortcut SSOT, and CVD-screened plot series (#115,
+  #116).** New `lunaris.ui.core.{results_index,shortcuts,plot_style}` — a run
+  index behind the Results & Export page, one source of truth for keyboard
+  shortcuts, and a multi-series plot style that pairs colour with a line-dash
+  cycle so series identity survives colour-vision deficiency. Verification
+  tooling: `tools/ui/color_audit.py`, `tools/ui/spacing_scan.py`,
+  `tools/ui/snapshot_suite.py`.
+- **Widened and documented the lint gate (#119).** `ruff` `select` grew beyond
+  `["E","F","W","I","UP","B"]`, and — more usefully — the rules that are
+  deliberately *not* selected now carry an in-file rationale so the decision is
+  not re-litigated every round. Note the pin: CI runs `ruff==0.12.0`, so
+  validating against a newer local ruff is misleading.
 
 ## 0.1.0rc1 — 2026-07-11
 
