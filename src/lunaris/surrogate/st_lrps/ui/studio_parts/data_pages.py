@@ -1150,9 +1150,11 @@ class CloudGenTab(QWidget):
                 candidates.append(out)
         if self._last_suite_dir:
             files = self._suite_manifest_files(Path(self._last_suite_dir))
-            for key in ("train", "val", "test", "ood_combined", "ood_high", "ood_low"):
-                if files.get(key):
-                    candidates.append(files[key])
+            candidates.extend(
+                files[key]
+                for key in ("train", "val", "test", "ood_combined", "ood_high", "ood_low")
+                if files.get(key)
+            )
         candidates.extend([
             self.analysis_input.text().strip(),
             self.out_path.text().strip() if hasattr(self, "out_path") else "",

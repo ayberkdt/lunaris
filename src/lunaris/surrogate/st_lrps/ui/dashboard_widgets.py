@@ -680,8 +680,7 @@ if _HAS_QT:
             else:  # treat as CSV
                 with open(p, encoding="utf-8", newline="") as fh:
                     reader = csv.DictReader(fh)
-                    for r in reader:
-                        rows.append(_flatten_history_row(dict(r)))
+                    rows.extend(_flatten_history_row(dict(r)) for r in reader)
         except Exception:
             return rows
         return rows

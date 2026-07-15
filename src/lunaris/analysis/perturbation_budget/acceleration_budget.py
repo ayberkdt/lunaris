@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
@@ -210,7 +211,7 @@ def non_gravity_vectors(config: PerturbationBudgetConfig, sample: SampleState) -
 def sh_increment_vectors(sh_vectors: Mapping[int, np.ndarray]) -> dict[str, np.ndarray]:
     degrees = sorted(int(d) for d in sh_vectors)
     out: dict[str, np.ndarray] = {}
-    for lo, hi in zip(degrees[:-1], degrees[1:], strict=False):
+    for lo, hi in itertools.pairwise(degrees):
         out[f"Delta SH{lo}->{hi}"] = np.asarray(sh_vectors[hi], dtype=np.float64) - np.asarray(sh_vectors[lo], dtype=np.float64)
     return out
 

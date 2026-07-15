@@ -447,19 +447,19 @@ def _write_summary_md(path: Path, rows: list[Mapping[str, Any]]) -> None:
         "test RMSE a | ood RMSE a | status |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    for row in rows:
-        lines.append(
-            "| {name} | {params} | {tt} | {ep} | {vbl} | {test} | {ood} | {status} |".format(
-                name=row.get("name"),
-                params=_md_num(row.get("param_count")),
-                tt=_md_num(row.get("training_time_s")),
-                ep=_md_num(row.get("best_epoch")),
-                vbl=_md_num(row.get("final_val_base_loss")),
-                test=_md_num(row.get("test_rmse_a")),
-                ood=_md_num(row.get("ood_rmse_a")),
-                status=row.get("status"),
-            )
+    lines.extend(
+        "| {name} | {params} | {tt} | {ep} | {vbl} | {test} | {ood} | {status} |".format(
+            name=row.get("name"),
+            params=_md_num(row.get("param_count")),
+            tt=_md_num(row.get("training_time_s")),
+            ep=_md_num(row.get("best_epoch")),
+            vbl=_md_num(row.get("final_val_base_loss")),
+            test=_md_num(row.get("test_rmse_a")),
+            ood=_md_num(row.get("ood_rmse_a")),
+            status=row.get("status"),
         )
+        for row in rows
+    )
     lines.append("")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

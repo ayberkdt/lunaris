@@ -404,9 +404,9 @@ def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> t
     candidates: list[Path] = []
 
     # Priority A: explicit names from label
-    for name in (ptr_file, explicit_file_name):
-        if name:
-            candidates.append(label_path.parent / name)
+    candidates.extend(
+        label_path.parent / name for name in (ptr_file, explicit_file_name) if name
+    )
 
     # Priority B: implicit convention (same stem)
     stem = _strip_known_label_suffixes(label_path)

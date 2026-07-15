@@ -939,10 +939,11 @@ def _include_manifest_contract_findings(
     if not isinstance(report, Mapping):
         return
     checked.append("artifact_contract_compatibility")
-    for message in report.get("warnings", []) or []:
-        warnings.append(str(message))
-    for message in report.get("errors", []) or []:
-        errors.append("contract compatibility: " + str(message))
+    warnings.extend(str(message) for message in report.get("warnings", []) or [])
+    errors.extend(
+        "contract compatibility: " + str(message)
+        for message in report.get("errors", []) or []
+    )
 
 
 def _to_float(value: Any) -> float | None:

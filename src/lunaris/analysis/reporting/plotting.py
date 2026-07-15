@@ -59,6 +59,7 @@ except ImportError:
     make_accel = None
 
 import contextlib
+import itertools
 
 from lunaris.analysis.postprocess import (
     _extract_rv_vectors,
@@ -325,7 +326,7 @@ def time_colored_path(
     seg_list: list[np.ndarray] = []
     c_list: list[np.ndarray] = []
 
-    for a, b in zip(cuts[:-1], cuts[1:], strict=False):
+    for a, b in itertools.pairwise(cuts):
         if (b - a) < 2:
             continue
 

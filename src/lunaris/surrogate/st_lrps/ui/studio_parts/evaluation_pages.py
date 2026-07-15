@@ -622,10 +622,11 @@ class STLRPSEvalTab(QWidget):
             s = rep.get(section)
             if not isinstance(s, dict):
                 return
-            parts = []
-            for key in ("rmse", "rel_mean", "rel_p50", "rel_p90", "mean", "p50", "p90"):
-                if key in s:
-                    parts.append(f"{key}={s[key]:.4g}")
+            parts = [
+                f"{key}={s[key]:.4g}"
+                for key in ("rmse", "rel_mean", "rel_p50", "rel_p90", "mean", "p50", "p90")
+                if key in s
+            ]
             if parts:
                 lines.append(f"  {label}: " + "  ".join(parts))
 

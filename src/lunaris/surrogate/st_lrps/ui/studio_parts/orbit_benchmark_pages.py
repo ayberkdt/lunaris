@@ -2151,9 +2151,11 @@ class OrbitBenchmarkPlotsTab(QWidget):
             if d.is_dir():
                 search_dirs.append(d)
         search_dirs.append(base)
-        for sub in sorted(base.glob("*/")):
-            if sub.is_dir() and sub.name not in ("plots", "reports"):
-                search_dirs.append(sub)
+        search_dirs.extend(
+            sub
+            for sub in sorted(base.glob("*/"))
+            if sub.is_dir() and sub.name not in ("plots", "reports")
+        )
 
         cutoff = (since - 2.0) if since else None
         seen: set = set()

@@ -19,6 +19,7 @@ import numpy as np
 
 matplotlib.use("Agg")
 import contextlib
+import itertools
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -112,7 +113,7 @@ def _sh_degree_color(deg: int) -> str:
         return anchors[0][1]
     if deg >= anchors[-1][0]:
         return anchors[-1][1]
-    for (d0, c0), (d1, c1) in zip(anchors, anchors[1:], strict=False):
+    for (d0, c0), (d1, c1) in itertools.pairwise(anchors):
         if d0 <= deg <= d1:
             f = (deg - d0) / (d1 - d0) if d1 > d0 else 0.0
             r0, r1 = _hex_to_rgb(c0), _hex_to_rgb(c1)

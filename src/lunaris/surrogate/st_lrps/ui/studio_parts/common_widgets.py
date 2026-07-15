@@ -1338,9 +1338,11 @@ class LiveLossPlot(QWidget):
         try:
             rows: list[dict[str, Any]] = []
             if p.suffix.lower() == ".jsonl":
-                for line in p.read_text(encoding="utf-8").splitlines():
-                    if line.strip():
-                        rows.append(json.loads(line))
+                rows.extend(
+                    json.loads(line)
+                    for line in p.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                )
             elif p.suffix.lower() == ".csv":
                 import csv as _csv
                 with p.open("r", newline="", encoding="utf-8") as handle:
@@ -2303,9 +2305,11 @@ def _inspect_run_artifacts(run_dir: str) -> dict[str, Any]:
     mismatch_fields: list[str] = []
     ckpt_cfg = ckpt.get("config") if isinstance(ckpt, dict) else {}
     if isinstance(config_payload, dict) and isinstance(ckpt_cfg, dict):
-        for field in CRITICAL_CONFIG_FIELDS:
-            if field in config_payload and field in ckpt_cfg and config_payload.get(field) != ckpt_cfg.get(field):
-                mismatch_fields.append(field)
+        mismatch_fields.extend(
+            field
+            for field in CRITICAL_CONFIG_FIELDS
+            if field in config_payload and field in ckpt_cfg and config_payload.get(field) != ckpt_cfg.get(field)
+        )
     if mismatch_fields:
         status["warnings"].append(
             "config_checkpoint_mismatch:" + ", ".join(mismatch_fields[:8])

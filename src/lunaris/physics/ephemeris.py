@@ -451,16 +451,15 @@ def _capture_kernel_provenance(kernels: Sequence[str]) -> tuple[Mapping[str, Any
     """
     from lunaris.common.provenance import sha256_file
 
-    provenance: list[Mapping[str, Any]] = []
-    for k in kernels:
-        provenance.append(
-            {
-                "name": Path(str(k)).name,
-                "path": str(k),
-                "kind": _classify_kernel(str(k)),
-                "sha256": sha256_file(k, missing_ok=True, suppress_errors=True),
-            }
-        )
+    provenance: list[Mapping[str, Any]] = [
+        {
+            "name": Path(str(k)).name,
+            "path": str(k),
+            "kind": _classify_kernel(str(k)),
+            "sha256": sha256_file(k, missing_ok=True, suppress_errors=True),
+        }
+        for k in kernels
+    ]
     return tuple(provenance)
 
 

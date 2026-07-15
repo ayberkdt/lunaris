@@ -965,17 +965,23 @@ def _benchmark_consistency_warnings(
     requested = breakdown.get("requested_models", [])
     in_metrics = set(breakdown.get("models_in_metrics", []))
     failed = set(breakdown.get("failed_models", []))
-    for name in breakdown.get("failed_models", []):
-        warns.append(f"Model {name} failed and is excluded from accuracy metrics.")
-    for name in breakdown.get("partial_models", []):
-        warns.append(
-            f"Model {name} has partial cache coverage; metrics cover only cached scenarios."
-        )
-    for name in breakdown.get("skipped_models", []):
-        warns.append(f"Model {name} was requested but produced no result (skipped).")
-    for name in requested:
-        if name not in in_metrics and name not in failed:
-            warns.append(f"Requested model {name} produced no aggregate metrics.")
+    warns.extend(
+        f"Model {name} failed and is excluded from accuracy metrics."
+        for name in breakdown.get("failed_models", [])
+    )
+    warns.extend(
+        f"Model {name} has partial cache coverage; metrics cover only cached scenarios."
+        for name in breakdown.get("partial_models", [])
+    )
+    warns.extend(
+        f"Model {name} was requested but produced no result (skipped)."
+        for name in breakdown.get("skipped_models", [])
+    )
+    warns.extend(
+        f"Requested model {name} produced no aggregate metrics."
+        for name in requested
+        if name not in in_metrics and name not in failed
+    )
     if requested and not in_metrics:
         warns.append("No requested model produced aggregate metrics.")
     if int(summary.get("n_scenarios_total", 0) or 0) <= 0:
