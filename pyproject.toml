@@ -191,7 +191,49 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 # Conservative starter set: pyflakes (F), import sort (I), pycodestyle (E/W),
 # pyupgrade (UP), bugbear (B). The baseline is now clean and gated in CI.
-select = ["E", "F", "W", "I", "UP", "B"]
+#
+# The individually-listed rules below were cleaned to zero across src/ AND tests/
+# by the round-2 pythonic pass and are pinned here so the cleanup cannot silently
+# regress. They are listed one by one (not whole families) because the rest of
+# each family is either noise here or blocked -- see the notes below.
+select = [
+  "E", "F", "W", "I", "UP", "B",
+  # --- round-2 cleanups, locked in ---
+  "G004",     # f-string in logging call -> lazy %-args
+  "SIM105",   # try/except/pass -> contextlib.suppress
+  "SIM114",   # combinable if-branches
+  "SIM910",   # dict.get(x, None) -> dict.get(x)
+  "PERF401",  # manual append loop -> comprehension/extend
+  "PLW1510",  # subprocess.run without explicit check=
+  "RUF007",   # zip(x, x[1:]) -> itertools.pairwise
+  "RUF010",   # explicit str()/repr() call in f-string
+  "RUF012",   # mutable class default without ClassVar
+  "RUF013",   # implicit Optional
+  "C420",     # dict.fromkeys instead of comprehension
+  "FURB105",  # print("") -> print()
+  "PIE790",   # unnecessary pass
+  "RET506",   # superfluous else after raise
+]
+# Deliberately NOT selected, and why (so this is not re-litigated every round):
+#   RUF100 (unused noqa): meaningless with a narrow select. It reports every
+#     `# noqa: X` whose X is not enabled here (e.g. the intentional PLC0415
+#     re-export/probe directives) as "unused" -- 81 such false hits -- and its
+#     fix deletes them. Only worth enabling alongside a near-`ALL` select.
+#   PLR1730, PIE808, FURB136, PLR5501, RET505: clean everywhere EXCEPT the
+#     numba/CUDA kernels (spherical_harmonics, batch_propagator, adaptive_degree,
+#     thermal_ir, solar_effects, math_utils), which are deliberately excluded
+#     from these passes for numerical-parity and type-inference reasons. In
+#     particular PLR1730 rewrites `if x > lo: lo = x` into `max(...)`, which is
+#     not NaN-equivalent. Selecting them would need a per-file amnesty for all
+#     six kernels; not worth the config surface.
+#   PLW1514 (open without encoding) and FURB110 (if-expr instead of or): still
+#     preview-only in the pinned ruff 0.12.0, so selecting them would gate
+#     nothing and warn on every run, even though the tree is clean for both.
+#     Move them up into `select` if the pin is ever raised past their
+#     stabilisation.
+# Verify additions against the PINNED ruff (0.12.0), not whatever is installed
+# locally: rule stabilisation differs per release, which is the same footgun the
+# version pin in .github/workflows/tests.yml already warns about.
 ignore = [
   # E501 (line length): not enforced to avoid mass reflow churn; revisit later.
   "E501",
