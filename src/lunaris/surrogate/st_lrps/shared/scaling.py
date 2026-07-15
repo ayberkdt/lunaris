@@ -385,7 +385,10 @@ def fit_scaler_streaming(
             raise ValueError("fit_scaler_streaming: indices is empty; cannot fit a train-only scaler.")
     _n_fit_effective = int(n_fit) if idx_train is None else min(int(n_fit), int(idx_train.size))
     _fit_src = "train indices" if idx_train is not None else "whole-file random blocks"
-    logger.info(f"Fitting isometric scaler on {_n_fit_effective:,} rows from '{h5_path.name}' ({_fit_src})...")
+    logger.info(
+        "Fitting isometric scaler on %s rows from '%s' (%s)...",
+        f"{_n_fit_effective:,}", h5_path.name, _fit_src,
+    )
     contract = target_contract
     if contract is None:
         contract = TargetContract.from_resolved_config(
@@ -402,9 +405,15 @@ def fit_scaler_streaming(
             a_sign=float(a_sign),
         )
     logger.info(
-        f"  Target contract: mode={contract.target_mode}, baseline={contract.baseline_kind}, "
-        f"base_degree={contract.base_degree}, target_degree={contract.target_degree}; "
-        f"u_scale_mode={u_scale_mode}, a_scale_mode={a_scale_mode}, mult={target_scale_multiplier}"
+        "  Target contract: mode=%s, baseline=%s, base_degree=%s, target_degree=%s; "
+        "u_scale_mode=%s, a_scale_mode=%s, mult=%s",
+        contract.target_mode,
+        contract.baseline_kind,
+        contract.base_degree,
+        contract.target_degree,
+        u_scale_mode,
+        a_scale_mode,
+        target_scale_multiplier,
     )
     rng = np.random.default_rng(seed)
 
@@ -491,19 +500,23 @@ def fit_scaler_streaming(
         x_scale = max(x_scale_from_meta, 1e-12)
         x_scale_source = "metadata_altitude_max"
         logger.info(
-            f"  x_scale: {x_scale:.3e} m [from metadata: r_ref={r_ref_m_meta:.3e} + alt_max={alt_max_km_meta:.1f} km]"
+            "  x_scale: %.3e m [from metadata: r_ref=%.3e + alt_max=%.1f km]",
+            x_scale, r_ref_m_meta, alt_max_km_meta,
         )
     else:
         x_scale = max(max_r_from_origin, 1e-12)
-        logger.info(f"  x_scale: {x_scale:.3e} m [from streaming max-norm fit over {seen_rows:,} rows]")
+        logger.info(
+            "  x_scale: %.3e m [from streaming max-norm fit over %s rows]",
+            x_scale, f"{seen_rows:,}",
+        )
 
     _mult = float(target_scale_multiplier)
     u_mean, u_scale = u_stats.finalize(mode=str(u_scale_mode), multiplier=_mult)
     a_mean, a_scale = a_stats.finalize(mode=str(a_scale_mode), multiplier=_mult)
 
-    logger.info(f"  x : mean=[0,0,0] (fixed -> Moon CoM), max_r={x_scale:.3e} m")
-    logger.info(f"  dU: mean={u_mean[0]:.3e}, char_scale={u_scale:.3e}")
-    logger.info(f"  da: mean_norm={np.linalg.norm(a_mean):.3e}, char_scale={a_scale:.3e}")
+    logger.info("  x : mean=[0,0,0] (fixed -> Moon CoM), max_r=%.3e m", x_scale)
+    logger.info("  dU: mean=%.3e, char_scale=%.3e", u_mean[0], u_scale)
+    logger.info("  da: mean_norm=%.3e, char_scale=%.3e", np.linalg.norm(a_mean), a_scale)
     logger.info("Isometric scaler fitting complete (residual mode).")
 
     provenance = {

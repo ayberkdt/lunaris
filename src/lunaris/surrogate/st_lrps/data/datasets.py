@@ -281,10 +281,10 @@ class DatasetMeta:
         deriv_conv = _safe_str(attrs, "derivative_convention_version")
         if deriv_conv is None:
             logger.warning(
-                "Dataset is missing 'derivative_convention_version'. "
-                "If generated before the dP_dphi sign fix (derivative_convention_version="
-                f"{REQUIRED_DERIVATIVE_CONVENTION!r}), the latitude acceleration components are "
-                "sign-flipped and the dataset must be regenerated before training."
+                "Dataset is missing 'derivative_convention_version'. If generated before the "
+                "dP_dphi sign fix (derivative_convention_version=%r), the latitude acceleration "
+                "components are sign-flipped and the dataset must be regenerated before training.",
+                REQUIRED_DERIVATIVE_CONVENTION,
             )
 
         # Resolve central_body from attrs or cloud_config
@@ -954,7 +954,7 @@ def infer_a_sign_from_data(
     # added work without changing the decision rule.  Random row sampling also
     # avoids bias from a contiguous, spatially correlated HDF5 block.
     inferred_sign = -1.0 if c1 >= 0.0 else +1.0
-    logger.info(f"Inferred acceleration sign convention: {inferred_sign:+.1f}")
+    logger.info("Inferred acceleration sign convention: %+.1f", inferred_sign)
     return inferred_sign
 
 

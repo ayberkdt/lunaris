@@ -543,13 +543,15 @@ class BatchBackendPlan:
     def log_summary(self) -> None:
         """Log a one-line backend decision summary suitable for the batch log."""
         logger.info(
-            f"[BATCH] Backend plan: {self.final_backend.value}  "
-            f"gravity={self.gravity_backend}  "
-            f"requested_backend={self.requested_backend}  "
-            f"actual_backend={self.actual_backend}  "
-            f"torch_cuda={self.torch_cuda_available}  "
-            f"numba_cuda={self.numba_cuda_available}  "
-            f"integrator={self.integrator}"
+            "[BATCH] Backend plan: %s  gravity=%s  requested_backend=%s  actual_backend=%s  "
+            "torch_cuda=%s  numba_cuda=%s  integrator=%s",
+            self.final_backend.value,
+            self.gravity_backend,
+            self.requested_backend,
+            self.actual_backend,
+            self.torch_cuda_available,
+            self.numba_cuda_available,
+            self.integrator,
         )
         if self.batch_note:
             logger.info("[BATCH] %s", self.batch_note)

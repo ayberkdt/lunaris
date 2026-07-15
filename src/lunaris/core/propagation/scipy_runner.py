@@ -89,12 +89,18 @@ def run_scipy_propagation(
     if verbose:
         if isinstance(atol_arg, np.ndarray):
             logger.info(
-                f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s "
-                f"| atol=vector(pos={getattr(cfg, 'atol_pos', None)}, vel={getattr(cfg, 'atol_vel', None)})"
+                "[PROP] solve_ivp method=%s | dt_out=%gs | max_step=%.6fs | atol=vector(pos=%s, "
+                "vel=%s)",
+                method,
+                dt_out,
+                max_step,
+                getattr(cfg, 'atol_pos', None),
+                getattr(cfg, 'atol_vel', None),
             )
         else:
             logger.info(
-                f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s"
+                "[PROP] solve_ivp method=%s | dt_out=%gs | max_step=%.6fs",
+                method, dt_out, max_step,
             )
 
     def _solve_span(t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray):

@@ -624,8 +624,9 @@ class BatchPropagationEngine:
                 deg_min = getattr(grav_model, "degree_min", "?")
                 deg_max = getattr(grav_model, "degree_max", "?")
                 logger.info(
-                    f"[BATCH][GPU-STLRPS] Loading surrogate: degree_min={deg_min}  "
-                    f"degree_max={deg_max}  model_dir={grav_model.model_dir}"
+                    "[BATCH][GPU-STLRPS] Loading surrogate: degree_min=%s  degree_max=%s  "
+                    "model_dir=%s",
+                    deg_min, deg_max, grav_model.model_dir,
                 )
                 actual_runtime_kind = str(
                     getattr(getattr(grav_model, "_force_runtime", None), "runtime_model_kind", "")
@@ -934,9 +935,8 @@ class BatchPropagationEngine:
             writer = _make_writer(batch_cfg, N, t_out_contract)
 
         logger.info(
-            f"[BATCH] N={N}  backend={backend_name}  "
-            f"T={duration_s / DAY_S:.2f} d  "
-            f"step={batch_cfg.dt_s:.1f} s  snap={output_dt_s:.1f} s"
+            "[BATCH] N=%s  backend=%s  T=%.2f d  step=%.1f s  snap=%.1f s",
+            N, backend_name, duration_s / DAY_S, batch_cfg.dt_s, output_dt_s,
         )
         if self._backend_note:
             logger.info("%s", self._backend_note)
@@ -945,8 +945,8 @@ class BatchPropagationEngine:
             tpb = backend_diag.get("threads_per_block")
             if device_name:
                 logger.info(
-                    f"[BATCH] runtime device={device_name}  tpb={tpb}  "
-                    f"batch_cap~{max_batch}"
+                    "[BATCH] runtime device=%s  tpb=%s  batch_cap~%s",
+                    device_name, tpb, max_batch,
                 )
 
         # ----------------------------------------------------------------
@@ -965,9 +965,9 @@ class BatchPropagationEngine:
         )
         if host_batch_cap < max_batch:
             logger.info(
-                f"[BATCH] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
-                f"(per-batch host buffer ~{host_bytes_per_sample / 1e6:.1f} MB/sample "
-                f"x T={len(t_out_contract)})."
+                "[BATCH] Host-RAM cap reduced batch %s -> %s (per-batch host buffer ~%.1f "
+                "MB/sample x T=%s).",
+                max_batch, host_batch_cap, host_bytes_per_sample / 1e6, len(t_out_contract),
             )
             max_batch = host_batch_cap
 
@@ -1015,8 +1015,8 @@ class BatchPropagationEngine:
             b_n     = b_end - b_start
 
             logger.info(
-                f"[BATCH] Batch {b_idx + 1}/{n_batches}  "
-                f"samples {b_start}-{b_end - 1}"
+                "[BATCH] Batch %s/%s  samples %s-%s",
+                b_idx + 1, n_batches, b_start, b_end - 1,
             )
 
             # Loop variables are bound as defaults: the callback is invoked
@@ -1404,9 +1404,8 @@ class BatchPropagationEngine:
         n_hit = int(np.sum(valid_bool & (impact_all > 0.5)))
         impact_fraction = float(n_hit) / n_valid if n_valid else math.nan
         logger.info(
-            f"[BATCH] Done. Wall={t_wall:.1f}s  "
-            f"impacts={n_hit}/{n_valid} "
-            f"({100.0 * impact_fraction:.1f}%)"
+            "[BATCH] Done. Wall=%.1fs  impacts=%s/%s (%.1f%%)",
+            t_wall, n_hit, n_valid, 100.0 * impact_fraction,
         )
         self._publish_progress(
             stage="finalizing",

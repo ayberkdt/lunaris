@@ -1,4 +1,4 @@
-﻿"""Sobolev losses and curricula for scalar potential-field training."""
+"""Sobolev losses and curricula for scalar potential-field training."""
 
 from __future__ import annotations
 
@@ -282,15 +282,15 @@ class GradNormWeights:
                 self.w_a = _new_w_a
                 self._ntk_done = True   # freeze only on a valid computation
                 _gnw_logger.info(
-                    f"NTK-init: w_a={self.w_a:.4f} (norm_u={self.last_norm_u:.3e}, "
-                    f"norm_a={self.last_norm_a:.3e}, raw={self.last_raw_ratio:.4f}; "
-                    "frozen for rest of training)"
+                    "NTK-init: w_a=%.4f (norm_u=%.3e, norm_a=%.3e, raw=%.4f; frozen for rest of "
+                    "training)",
+                    self.w_a, self.last_norm_u, self.last_norm_a, self.last_raw_ratio,
                 )
             else:
                 # Do NOT freeze: retry on a later step once gradients connect.
                 _gnw_logger.warning(
-                    f"NTK-init deferred (status={self.last_gradnorm_status}); "
-                    f"using w_a={self.w_a:.4f} this step and retrying."
+                    "NTK-init deferred (status=%s); using w_a=%.4f this step and retrying.",
+                    self.last_gradnorm_status, self.w_a,
                 )
             return self.w_u, self.w_a
 
