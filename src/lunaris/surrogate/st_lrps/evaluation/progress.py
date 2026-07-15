@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 __all__ = [
     "PROGRESS_PREFIX",
@@ -299,7 +299,7 @@ class OverallProgress:
     and lets the GPU phase dominate the bar.
     """
 
-    DEFAULT_WEIGHTS = {"truth": 0.40, "gpu": 0.50, "report": 0.10}
+    DEFAULT_WEIGHTS: ClassVar[dict[str, float]] = {"truth": 0.40, "gpu": 0.50, "report": 0.10}
 
     def __init__(
         self,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from PySide6.QtCore import QAbstractTableModel, QFileSystemWatcher, QModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
@@ -73,7 +73,7 @@ def _fmt_epoch(manifest: dict[str, Any]) -> str:
 class RunsTableModel(QAbstractTableModel):
     """Read-only model with safe manifest handling and a searchable view."""
 
-    COLUMNS = ["Name", "Status", "Dataset", "Best Score", "Epoch (best/latest)", "Preset", "Date", "Device"]
+    COLUMNS: ClassVar[list[str]] = ["Name", "Status", "Dataset", "Best Score", "Epoch (best/latest)", "Preset", "Date", "Device"]
 
     def __init__(self, parent=None, *, training_dir: Path | None = None):
         super().__init__(parent)

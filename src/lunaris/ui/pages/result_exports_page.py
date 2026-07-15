@@ -38,6 +38,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import ClassVar
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -737,7 +738,7 @@ class ResultsExportPage(QtWidgets.QWidget):
     # Artifact Browser
     # ------------------------------------------------------------------
 
-    _TYPE_FOR_SUFFIX: dict[str, str] = {
+    _TYPE_FOR_SUFFIX: ClassVar[dict[str, str]] = {
         ".png": "Plot",
         ".jpg": "Plot",
         ".jpeg": "Plot",
@@ -755,7 +756,7 @@ class ResultsExportPage(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
     # Artifact browser state
     # -------------------------------------------------------------------------
-    _FILTER_TYPES: dict[str, set[str]] = {
+    _FILTER_TYPES: ClassVar[dict[str, set[str]]] = {
         "All":     set(),   # empty = no filter
         "Plots":   {".png", ".jpg", ".jpeg", ".svg"},
         "Reports": {".pdf"},

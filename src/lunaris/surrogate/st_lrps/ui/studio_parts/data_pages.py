@@ -48,7 +48,7 @@ import re
 import sys
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from lunaris.common.paths import project_root_from_file
 from lunaris.ui_foundation import THEME
@@ -2352,7 +2352,7 @@ class DatasetInspectionPanel(QWidget):
 
     # Level -> (shared resultBanner kind, label). Colors live in the
     # #resultBanner[kind=...] rules; the label text carries the state.
-    _STATUS_KINDS = {
+    _STATUS_KINDS: ClassVar[dict[str, tuple[str, str]]] = {
         "ready":   ("success", "Ready"),
         "warning": ("warning", "Warning"),
         "error":   ("error", "Error"),
