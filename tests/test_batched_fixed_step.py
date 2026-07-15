@@ -8,6 +8,7 @@ between backends.
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import numpy as np
@@ -263,7 +264,7 @@ def test_callback_fractions_monotone_and_complete(granularity, chunk) -> None:
         callback_granularity=granularity,
     )
     assert fractions, "callback was never invoked"
-    assert all(b >= a for a, b in zip(fractions, fractions[1:], strict=False))
+    assert all(b >= a for a, b in itertools.pairwise(fractions))
     assert fractions[-1] == pytest.approx(1.0)
 
 

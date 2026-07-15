@@ -31,6 +31,7 @@ Design rules
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 
@@ -763,10 +764,8 @@ class LauncherWindow(QtWidgets.QWidget):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.embed.shutdown()
-        except Exception:
-            pass
         super().closeEvent(event)
 
 
@@ -779,18 +778,14 @@ def main() -> None:
     # High-DPI setup must happen before the QApplication is created. This mirrors
     # the ST-LRPS Studio entry point so the Studio renders identically whether it
     # is launched directly or via the hub.
-    try:
+    with contextlib.suppress(Exception):
         QtGui.QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
             QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
-    except Exception:
-        pass
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
-    try:
+    with contextlib.suppress(Exception):
         os.chdir(str(find_project_root()))
-    except Exception:
-        pass
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Lunaris")

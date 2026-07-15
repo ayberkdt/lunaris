@@ -133,9 +133,8 @@ def check_ood_band_ordering(
             # Held-out band must sit strictly BELOW the train band.
             if b_hi > float(train_lo) + _ALT_ORDER_TOL_KM:
                 violations.append(f"{held}.max={b_hi:.3f} not below train.min={float(train_lo):.3f}")
-        else:  # ood_high_altitude: held-out band strictly ABOVE train band.
-            if b_lo < float(train_hi) - _ALT_ORDER_TOL_KM:
-                violations.append(f"{held}.min={b_lo:.3f} not above train.max={float(train_hi):.3f}")
+        elif b_lo < float(train_hi) - _ALT_ORDER_TOL_KM:
+            violations.append(f"{held}.min={b_lo:.3f} not above train.max={float(train_hi):.3f}")
     if violations:
         return PreflightCheck("ood_band_ordering", FAIL, "OOD band overlaps train: " + "; ".join(violations))
     return PreflightCheck("ood_band_ordering", PASS, f"{policy} held-out band is beyond the train band")

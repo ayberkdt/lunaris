@@ -447,19 +447,19 @@ def _write_summary_md(path: Path, rows: list[Mapping[str, Any]]) -> None:
         "test RMSE a | ood RMSE a | status |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    for row in rows:
-        lines.append(
-            "| {name} | {params} | {tt} | {ep} | {vbl} | {test} | {ood} | {status} |".format(
-                name=row.get("name"),
-                params=_md_num(row.get("param_count")),
-                tt=_md_num(row.get("training_time_s")),
-                ep=_md_num(row.get("best_epoch")),
-                vbl=_md_num(row.get("final_val_base_loss")),
-                test=_md_num(row.get("test_rmse_a")),
-                ood=_md_num(row.get("ood_rmse_a")),
-                status=row.get("status"),
-            )
+    lines.extend(
+        "| {name} | {params} | {tt} | {ep} | {vbl} | {test} | {ood} | {status} |".format(
+            name=row.get("name"),
+            params=_md_num(row.get("param_count")),
+            tt=_md_num(row.get("training_time_s")),
+            ep=_md_num(row.get("best_epoch")),
+            vbl=_md_num(row.get("final_val_base_loss")),
+            test=_md_num(row.get("test_rmse_a")),
+            ood=_md_num(row.get("ood_rmse_a")),
+            status=row.get("status"),
         )
+        for row in rows
+    )
     lines.append("")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -564,14 +564,14 @@ def main(argv: list[str] | None = None) -> int:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "ablation_spec.json").write_text(json.dumps(entry, indent=2), encoding="utf-8")
         print(f"[ablation] RUN  {entry['name']} -> {run_dir}")
-        result = subprocess.run(entry["command"], cwd=str(_REPO_ROOT))
+        result = subprocess.run(entry["command"], cwd=str(_REPO_ROOT), check=False)
         if result.returncode != 0:
             failures += 1
             print(f"[ablation] FAILED {entry['name']} (exit {result.returncode}).", file=sys.stderr)
         else:
             for ecmd in entry.get("eval_commands", []):
                 print(f"[ablation] EVAL {entry['name']} -> {ecmd[-1]}")
-                eres = subprocess.run(ecmd, cwd=str(_REPO_ROOT))
+                eres = subprocess.run(ecmd, cwd=str(_REPO_ROOT), check=False)
                 if eres.returncode != 0:
                     failures += 1
                     print(f"[ablation] EVAL FAILED {entry['name']} (exit {eres.returncode}).", file=sys.stderr)

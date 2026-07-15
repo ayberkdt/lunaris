@@ -445,8 +445,7 @@ def load_shadr_ascii(
                         mapped_n = _store_coeff(b1, b2, bC, bS, bline)
                         if mapped_n < last_n_seen:
                             sorted_non_decreasing = False
-                        if mapped_n > last_n_seen:
-                            last_n_seen = mapped_n
+                        last_n_seen = max(last_n_seen, mapped_n)
                     buffered.clear()
                 continue
 
@@ -454,8 +453,7 @@ def load_shadr_ascii(
             mapped_n = _store_coeff(raw1, raw2, val_C, val_S, i_line)
             if mapped_n < last_n_seen:
                 sorted_non_decreasing = False
-            if mapped_n > last_n_seen:
-                last_n_seen = mapped_n
+            last_n_seen = max(last_n_seen, mapped_n)
 
             if (
                 break_when_past_degree
@@ -499,8 +497,8 @@ def load_shadr_ascii(
             # Provide a few concrete missing (n,m) pairs to make debugging actionable.
             missing_examples: list[tuple[int, int]] = []
             if missing > 0:
-                for nn in range(0, n_use + 1):
-                    for mm in range(0, nn + 1):
+                for nn in range(n_use + 1):
+                    for mm in range(nn + 1):
                         if nn == 0 and mm == 0 and not has_c00:
                             continue
                         if seen[nn, mm] == 0:

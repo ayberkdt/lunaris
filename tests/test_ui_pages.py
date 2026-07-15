@@ -10,6 +10,7 @@ entire desktop workflow for every assertion.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -441,20 +442,16 @@ def test_results_export_latest_report_button_state(tmp_path: Path) -> None:
     app.processEvents()
 
     # No PDF → button disabled
-    try:
+    with contextlib.suppress(AttributeError):  # button not yet present
         assert not page.btn_latest_report.isEnabled()
-    except AttributeError:
-        pass  # button not yet present
 
     # Add a PDF
     (out_dir / "report.pdf").write_bytes(b"r")
     page._refresh_artifact_browser()
     app.processEvents()
 
-    try:
+    with contextlib.suppress(AttributeError):
         assert page.btn_latest_report.isEnabled()
-    except AttributeError:
-        pass
 
     page.close()
 

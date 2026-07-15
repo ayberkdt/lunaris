@@ -30,6 +30,7 @@ from __future__ import annotations
 import math
 import os
 from pathlib import Path
+from typing import ClassVar
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -523,9 +524,7 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
 
         # Logic State
         try:
-            if value is None:
-                self._val = 0.0
-            elif isinstance(value, str) and value.strip() == "":
+            if value is None or (isinstance(value, str) and value.strip() == ""):
                 self._val = 0.0
             else:
                 self._val = float(value)
@@ -828,9 +827,9 @@ class CostIndicator(QtWidgets.QWidget):
     Visual indicator of computational cost (Low / Medium / High).
     Used to warn users about heavy settings (e.g. 1000x1000 gravity).
     """
-    _LEVELS = {"low": 1, "medium": 2, "high": 3}
-    _COLORS = {"low": "success", "medium": "warning", "high": "error"} # Keys in THEME
-    _TEXT = {"low": "Low", "medium": "Med", "high": "High"}
+    _LEVELS: ClassVar[dict[str, int]] = {"low": 1, "medium": 2, "high": 3}
+    _COLORS: ClassVar[dict[str, str]] = {"low": "success", "medium": "warning", "high": "error"} # Keys in THEME
+    _TEXT: ClassVar[dict[str, str]] = {"low": "Low", "medium": "Med", "high": "High"}
 
     def __init__(self, level: str = "low", parent=None):
         super().__init__(parent)

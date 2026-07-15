@@ -30,6 +30,7 @@ that tabular/report artifacts are backend-managed.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -37,6 +38,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import ClassVar
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -381,10 +383,8 @@ class ResultsExportPage(QtWidgets.QWidget):
         self.run_history_body.setVisible(False)
         layout.addWidget(self.run_history_body)
 
-        try:
+        with contextlib.suppress(Exception):
             self.ent_out_dir.editingFinished.connect(self.refresh_runs)
-        except Exception:
-            pass
         QtCore.QTimer.singleShot(0, self.refresh_runs)
         return section
 
@@ -738,7 +738,7 @@ class ResultsExportPage(QtWidgets.QWidget):
     # Artifact Browser
     # ------------------------------------------------------------------
 
-    _TYPE_FOR_SUFFIX: dict[str, str] = {
+    _TYPE_FOR_SUFFIX: ClassVar[dict[str, str]] = {
         ".png": "Plot",
         ".jpg": "Plot",
         ".jpeg": "Plot",
@@ -756,7 +756,7 @@ class ResultsExportPage(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
     # Artifact browser state
     # -------------------------------------------------------------------------
-    _FILTER_TYPES: dict[str, set[str]] = {
+    _FILTER_TYPES: ClassVar[dict[str, set[str]]] = {
         "All":     set(),   # empty = no filter
         "Plots":   {".png", ".jpg", ".jpeg", ".svg"},
         "Reports": {".pdf"},
@@ -951,10 +951,8 @@ class ResultsExportPage(QtWidgets.QWidget):
             return
 
         out_dir_text = ""
-        try:
+        with contextlib.suppress(Exception):
             out_dir_text = self.ent_out_dir.text().strip()
-        except Exception:
-            pass
 
         display = out_dir_text or "—"
         if len(display) > 70:
@@ -982,10 +980,8 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         # Determine scan depth
         recursive = False
-        try:
+        with contextlib.suppress(Exception):
             recursive = bool(self.chk_recursive_scan.isChecked())
-        except Exception:
-            pass
 
         # Determine active type filter
         active_filter: set[str] = set()
@@ -1196,10 +1192,8 @@ class ResultsExportPage(QtWidgets.QWidget):
         path = self._selected_artifact_path()
         if not path:
             return
-        try:
+        with contextlib.suppress(Exception):
             QtWidgets.QApplication.clipboard().setText(path)
-        except Exception:
-            pass
 
     def _artifacts_to_csv(self, *, selected_only: bool = False) -> str:
         """Render the artifact tree (or just the selected rows) as CSV text."""
@@ -1225,10 +1219,8 @@ class ResultsExportPage(QtWidgets.QWidget):
 
     def _copy_artifacts_csv(self, *_args) -> None:
         """Copy every listed artifact to the clipboard as CSV."""
-        try:
+        with contextlib.suppress(Exception):
             QtWidgets.QApplication.clipboard().setText(self._artifacts_to_csv())
-        except Exception:
-            pass
 
     def _copy_artifacts_selection(self) -> None:
         """Ctrl+C: copy selected rows as TSV, or the whole list when nothing is selected."""
@@ -1238,10 +1230,8 @@ class ResultsExportPage(QtWidgets.QWidget):
             return
         cols = range(self.tree_artifacts.columnCount())
         lines = ["\t".join(item.text(c) for c in cols) for item in selected]
-        try:
+        with contextlib.suppress(Exception):
             QtWidgets.QApplication.clipboard().setText("\n".join(lines))
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

@@ -34,8 +34,10 @@ def csv_to_markdown_table(
         return "_(no data)_\n"
     cols = list(columns) if columns else list(rows[0].keys())
     out = ["| " + " | ".join(cols) + " |", "|" + "|".join(["---"] * len(cols)) + "|"]
-    for row in rows[: max_rows if max_rows is not None else len(rows)]:
-        out.append("| " + " | ".join(str(row.get(c, "")) for c in cols) + " |")
+    out.extend(
+        "| " + " | ".join(str(row.get(c, "")) for c in cols) + " |"
+        for row in rows[: max_rows if max_rows is not None else len(rows)]
+    )
     return "\n".join(out) + "\n"
 
 

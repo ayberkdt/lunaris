@@ -43,6 +43,7 @@ Run
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -1337,9 +1338,11 @@ class LiveLossPlot(QWidget):
         try:
             rows: list[dict[str, Any]] = []
             if p.suffix.lower() == ".jsonl":
-                for line in p.read_text(encoding="utf-8").splitlines():
-                    if line.strip():
-                        rows.append(json.loads(line))
+                rows.extend(
+                    json.loads(line)
+                    for line in p.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                )
             elif p.suffix.lower() == ".csv":
                 import csv as _csv
                 with p.open("r", newline="", encoding="utf-8") as handle:
@@ -1665,7 +1668,7 @@ class LiveLossPlot(QWidget):
         self._lbl_lr.setText(_chip("Learning Rate", self._fmt_metric(latest_lr)))
 
         self._lbl_score.setText(_chip("Checkpoint Score", self._fmt_metric(self._latest_checkpoint_score)))
-        formula = self._best_formula if self._best_formula else "N/A"
+        formula = self._best_formula or "N/A"
         if len(formula) > 56:
             formula = formula[:53] + "..."
         self._lbl_formula.setText(_chip(self._best_metric_name or "Formula", formula))
@@ -2026,7 +2029,7 @@ class ProcessPane(QWidget):
         if selected:
             # QTextCursor uses U+2029 (paragraph separator) for line breaks;
             # normalize it back to real newlines for pasted output.
-            clipboard.setText(selected.replace(" ", "\n"))
+            clipboard.setText(selected.replace("\u2029", "\n"))
             return
         clipboard.setText(self.log.toPlainText())
 
@@ -2094,10 +2097,8 @@ class ProcessPane(QWidget):
                 sb = self.log.verticalScrollBar()
                 sb.setValue(sb.maximum())
         if self._on_parse_progress:
-            try:
+            with contextlib.suppress(Exception):
                 self._on_parse_progress(text)
-            except Exception:
-                pass
 
     def start(
         self, program: str, args: list[str], workdir: str | None = None
@@ -2143,13 +2144,11 @@ class ProcessPane(QWidget):
         # to prevent orphan subprocesses.
         pid = self.proc.processId()
         if platform.system() == "Windows" and pid:
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(pid)],
                     capture_output=True, check=False,
                 )
-            except Exception:
-                pass
 
         self.proc.terminate()
 
@@ -2174,20 +2173,16 @@ class ProcessPane(QWidget):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         if exit_status == QProcess.ExitStatus.NormalExit:
-            try:
+            with contextlib.suppress(Exception):
                 self.progress.setValue(self.progress.maximum())
-            except Exception:
-                pass
             if self._output_dir and Path(self._output_dir).is_dir():
                 self.btn_open_folder.setVisible(True)
             _send_os_notification(
                 "Lunar Potential Surrogate", f"Process finished (exit={exit_code})."
             )
         if self._on_finished_hook:
-            try:
+            with contextlib.suppress(Exception):
                 self._on_finished_hook(exit_code, exit_status)
-            except Exception:
-                pass
 
     def _open_output_folder(self) -> None:
         if self._output_dir:
@@ -2310,9 +2305,11 @@ def _inspect_run_artifacts(run_dir: str) -> dict[str, Any]:
     mismatch_fields: list[str] = []
     ckpt_cfg = ckpt.get("config") if isinstance(ckpt, dict) else {}
     if isinstance(config_payload, dict) and isinstance(ckpt_cfg, dict):
-        for field in CRITICAL_CONFIG_FIELDS:
-            if field in config_payload and field in ckpt_cfg and config_payload.get(field) != ckpt_cfg.get(field):
-                mismatch_fields.append(field)
+        mismatch_fields.extend(
+            field
+            for field in CRITICAL_CONFIG_FIELDS
+            if field in config_payload and field in ckpt_cfg and config_payload.get(field) != ckpt_cfg.get(field)
+        )
     if mismatch_fields:
         status["warnings"].append(
             "config_checkpoint_mismatch:" + ", ".join(mismatch_fields[:8])

@@ -25,6 +25,7 @@ Generator produces *big* datasets (millions of rows). This script is designed to
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 from dataclasses import dataclass
@@ -381,10 +382,8 @@ def _make_plots(
     matplotlib.use("Agg")  # headless
     import matplotlib.pyplot as plt  # type: ignore
 
-    try:
+    with contextlib.suppress(Exception):
         plt.style.use('seaborn-v0_8-whitegrid')
-    except Exception:
-        pass
     plt.rcParams.update({
         "font.family": "sans-serif",
         "axes.labelsize": 11,
@@ -668,10 +667,8 @@ def main() -> None:
         try:
             X = _sample_rows_h5_contiguous(dset, n_sample=int(args.sample), seed=int(args.seed))
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 h5_file.close()
-            except Exception:
-                pass
     elif ext == ".pt":
         arr, meta = _load_pt(in_path)
         rng = np.random.default_rng(int(args.seed))
@@ -758,7 +755,7 @@ def main() -> None:
     print(f"[degrees]  degree_min={meta.degree_min} | degree_max={meta.degree_max}")
     print(f"[units]    unit_system={meta.unit_system} | r_ref_m={meta.r_ref_m} | DU_m={meta.DU_m}")
     print(f"[analyzed] sampled_rows={X.shape[0]:,} | after_filter={X_f.shape[0]:,} | filter={filter_info}")
-    print("")
+    print()
 
     stats = {
         "file": str(in_path),
@@ -907,7 +904,7 @@ def main() -> None:
         print(f"[plots] saved to: {outdir}")
         for k, v in plot_paths.items():
             print(f"  - {k}: {v}")
-        print("")
+        print()
 
     stats["plots"] = plot_paths
 

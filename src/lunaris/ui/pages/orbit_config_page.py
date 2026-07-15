@@ -42,6 +42,7 @@ Dependencies:
 # =============================================================================
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 from dataclasses import dataclass
@@ -844,10 +845,8 @@ class OrbitViz3D(QtWidgets.QWidget):
             except Exception:
                 return None
         else:
-            try:
+            with contextlib.suppress(Exception):
                 label.setData(pos=np.asarray(point, dtype=float), text=text, color=col)
-            except Exception:
-                pass
         return label
 
     def _update_annotations(self, r_marker: float) -> None:

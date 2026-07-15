@@ -6,6 +6,7 @@ runtime providers lazily, propagate, and hand results to reporting.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import time
@@ -538,10 +539,8 @@ def run_pipeline(args: Namespace) -> int:
     # SPICE provenance chain (kernels/hashes/ET window) into the run diagnostics,
     # so a single run's ephemeris evidence sits alongside its config and figures.
     if ephem_mgr is not None and hasattr(ephem_mgr, "kernel_provenance"):
-        try:
+        with contextlib.suppress(Exception):
             diag_payload["spice_kernels"] = ephem_mgr.kernel_provenance()
-        except Exception:
-            pass
     _warn_optional_failure(
         "Could not write run artifacts",
         lambda: write_run_artifacts(run_dir, cfg, diag_payload),

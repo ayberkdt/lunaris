@@ -18,6 +18,9 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import contextlib
+import itertools
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
@@ -110,7 +113,7 @@ def _sh_degree_color(deg: int) -> str:
         return anchors[0][1]
     if deg >= anchors[-1][0]:
         return anchors[-1][1]
-    for (d0, c0), (d1, c1) in zip(anchors, anchors[1:], strict=False):
+    for (d0, c0), (d1, c1) in itertools.pairwise(anchors):
         if d0 <= deg <= d1:
             f = (deg - d0) / (d1 - d0) if d1 > d0 else 0.0
             r0, r1 = _hex_to_rgb(c0), _hex_to_rgb(c1)
@@ -714,10 +717,8 @@ def estimate_stlrps_equivalent_sh_degree(aggregate_rows: list[dict[str, Any]]) -
         for model, row in by_model.items():
             deg = _model_degree(model)
             if model.startswith("NUMBA_CUDA_SH") and deg is not None:
-                try:
+                with contextlib.suppress(Exception):
                     sh_points.append((deg, float(row[metric_key]), model))
-                except Exception:
-                    pass
         sh_points.sort()
         st_err = float(st[metric_key])
         if not sh_points or not np.isfinite(st_err):
@@ -1315,11 +1316,9 @@ def plot_gpu_batch_report_figures(
                 np.linalg.norm(y_model[:, :3], axis=1) - np.linalg.norm(y_truth[:, :3], axis=1)) / 1000.0
             ric_by_model[result.display_name] = (
                 compute_ric_errors(y_truth[:, :3], y_truth[:, 3:], y_model[:, :3]) / 1000.0)
-            try:
+            with contextlib.suppress(ValueError):
                 tau_by_model[result.display_name] = estimate_phase_lag(
                     t_truth, y_model[:, :3], y_truth[:, :3], y_truth[:, 3:]).tau_s
-            except ValueError:
-                pass  # degenerate geometry: skip the phase panel for this model
 
         pos_max_km = max(_finite_positive([float(np.max(v)) for v in pos_by_model.values()]) or [0.0])
         unit, mult = select_length_unit(pos_max_km)

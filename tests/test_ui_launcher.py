@@ -31,7 +31,7 @@ def _run_isolated(body: str) -> subprocess.CompletedProcess:
         [sys.executable, "-c", textwrap.dedent(body)],
         capture_output=True,
         text=True,
-        env=env,
+        env=env, check=False,
     )
 
 
@@ -196,7 +196,7 @@ def test_training_eval_cli_help_is_headless(module: str) -> None:
         [sys.executable, "-m", module, "--help"],
         capture_output=True,
         text=True,
-        env=env,
+        env=env, check=False,
     )
     assert proc.returncode == 0, f"{module} --help failed:\n{proc.stderr}"
     assert "usage" in (proc.stdout + proc.stderr).lower()

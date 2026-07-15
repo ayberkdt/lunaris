@@ -95,7 +95,7 @@ def sample_topo_radius_torch(topo: dict[str, Any], lat_deg: Any, lon_deg: Any) -
     """
     import torch
 
-    dn = topo.get("dn", None)
+    dn = topo.get("dn")
     const_m = float(topo.get("radius_const_m", 0.0))
     if dn is None:
         return torch.full_like(lat_deg, const_m)

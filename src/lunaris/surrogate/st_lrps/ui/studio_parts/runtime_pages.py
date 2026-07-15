@@ -896,14 +896,15 @@ class ModelReportPanel(QWidget):
         if dsm:
             lines.append("")
             lines.append("── Dataset meta (provenance) ──")
-            for k in ("unit_system", "central_body", "target_mode", "degree_min", "degree_max"):
-                if k in dsm:
-                    lines.append(f"  {k}: {dsm[k]}")
+            lines.extend(
+                f"  {k}: {dsm[k]}"
+                for k in ("unit_system", "central_body", "target_mode", "degree_min", "degree_max")
+                if k in dsm
+            )
         if status.get("warnings"):
             lines.append("")
             lines.append("── Warnings ──")
-            for w in status["warnings"]:
-                lines.append(f"  ! {w}")
+            lines.extend(f"  ! {w}" for w in status["warnings"])
 
         # Disable open buttons for missing files
         self._open_buttons["config.json"].setEnabled((root / "config.json").exists())

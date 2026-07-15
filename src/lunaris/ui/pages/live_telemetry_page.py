@@ -94,6 +94,7 @@ except ImportError:
     raise
 
 
+import contextlib
 import logging as _logging
 
 _log = _logging.getLogger(__name__)
@@ -1031,21 +1032,15 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         t_list, unit = self._get_plot_time_and_unit(t_raw)
         self._set_time_axis_label(unit)
 
-        try:
+        # UI redraw race / curve deleted; ignore to keep stream alive
+        with contextlib.suppress(Exception):
             self.alt_curve.setData(t_list, list(self.alt_data))
-        except Exception:
-            # UI redraw race / curve deleted; ignore to keep stream alive
-            pass
-        try:
+        # UI redraw race / curve deleted; ignore to keep stream alive
+        with contextlib.suppress(Exception):
             self.vel_curve.setData(t_list, list(self.vel_data))
-        except Exception:
-            # UI redraw race / curve deleted; ignore to keep stream alive
-            pass
-        try:
+        # UI redraw race / curve deleted; ignore to keep stream alive
+        with contextlib.suppress(Exception):
             self.ecc_curve.setData(t_list, list(self.ecc_data))
-        except Exception:
-            # UI redraw race / curve deleted; ignore to keep stream alive
-            pass
 
         self._apply_live_auto_y_range()
 
@@ -1054,23 +1049,19 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         lat_arr = np.asarray(self.lat_data, dtype=float)
         mask = np.isfinite(lon_arr) & np.isfinite(lat_arr)
         if mask.any():
-            try:
+            # UI redraw race / curve deleted; ignore to keep stream alive
+            with contextlib.suppress(Exception):
                 self.ground_track_curve.setData(lon_arr[mask].tolist(), lat_arr[mask].tolist())
-            except Exception:
-                # UI redraw race / curve deleted; ignore to keep stream alive
-                pass
         else:
-            try:
+            # UI redraw race / curve deleted; ignore to keep stream alive
+            with contextlib.suppress(Exception):
                 self.ground_track_curve.setData([], [])
-            except Exception:
-                # UI redraw race / curve deleted; ignore to keep stream alive
-                pass
 
         # Publish the latest scalar sample for the KPI strip.
         if self.time_data:
             def _last(dq):
                 return float(dq[-1]) if dq else float("nan")
-            try:
+            with contextlib.suppress(Exception):
                 self.sample_updated.emit({
                     "t_s": _last(self.time_data),
                     "alt_km": _last(self.alt_data),
@@ -1079,8 +1070,6 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
                     "lat_deg": _last(self.lat_data),
                     "lon_deg": _last(self.lon_data),
                 })
-            except Exception:
-                pass
 
     def clear_all(self, _checked: bool = False):
         """Clear all telemetry data."""

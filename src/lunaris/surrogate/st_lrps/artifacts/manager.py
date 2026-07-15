@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -215,10 +216,8 @@ def atomic_write_json(path: Path, payload: dict, *, indent: int = 2) -> None:
             os.fsync(handle.fileno())
         _replace_with_retry(tmp_path, path)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
         raise
 
 
@@ -234,10 +233,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
             os.fsync(handle.fileno())
         _replace_with_retry(tmp_path, path)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
         raise
 
 
@@ -253,10 +250,8 @@ def _atomic_torch_save(path: Path, payload: Any) -> None:
             os.fsync(handle.fileno())
         _replace_with_retry(tmp_path, path)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
         raise
 
 
@@ -493,12 +488,10 @@ def _extract_config_block(ckpt: Mapping[str, Any]) -> dict[str, Any]:
         cfg["dataset_meta"] = dataset_meta
 
     if cfg and cfg.get("architecture_signature") in (None, ""):
-        try:
+        # R29b-justified: best-effort backfill for legacy configs; a missing
+        # signature is caught by strict checkpoint validation downstream.
+        with contextlib.suppress(Exception):
             cfg["architecture_signature"] = compute_architecture_signature(cfg)
-        except Exception:
-            # R29b-justified: best-effort backfill for legacy configs; a missing
-            # signature is caught by strict checkpoint validation downstream.
-            pass
     if cfg and cfg.get("model_builder_version") in (None, ""):
         cfg["model_builder_version"] = MODEL_BUILDER_VERSION
     return cfg
@@ -714,12 +707,10 @@ def validate_checkpoint_schema(ckpt: dict, *, strict: bool = True) -> dict:
     cfg = normalized["config"]
     arch = normalized["architecture"]
     if cfg and cfg.get("architecture_signature") in (None, ""):
-        try:
+        # R29b-justified: best-effort backfill; the strict signature
+        # cross-check right below still fails on real inconsistency.
+        with contextlib.suppress(Exception):
             cfg["architecture_signature"] = compute_architecture_signature(cfg)
-        except Exception:
-            # R29b-justified: best-effort backfill; the strict signature
-            # cross-check right below still fails on real inconsistency.
-            pass
     if arch.get("signature") in (None, "") and cfg.get("architecture_signature"):
         arch["signature"] = cfg.get("architecture_signature")
 
@@ -1126,9 +1117,7 @@ def load_scaler_for_run(
         file_payload = json.loads(layout.scaler_json.read_text(encoding="utf-8"))
 
     ckpt_payload = ckpt.get("scaler")
-    if not isinstance(ckpt_payload, dict):
-        ckpt_payload = None
-    elif not {"x", "u", "a"}.issubset(set(ckpt_payload.keys())):
+    if not isinstance(ckpt_payload, dict) or not {"x", "u", "a"}.issubset(set(ckpt_payload.keys())):
         ckpt_payload = None
 
     if file_payload is None and ckpt_payload is None:
@@ -1398,10 +1387,8 @@ def read_artifact_contract(
     _, ckpt = load_best_or_last(layout, prefer=prefer, device=device or torch.device("cpu"))
     cfg = dict(ckpt.get("config") or {})
     if layout.config_json.exists():
-        try:
+        with contextlib.suppress(Exception):
             cfg = json.loads(layout.config_json.read_text(encoding="utf-8"))
-        except Exception:
-            pass
     scaler_payload = None
     try:
         scaler, _ = load_scaler_for_run(layout, ckpt, device=device or torch.device("cpu"))

@@ -31,6 +31,7 @@ when QtWebEngine is not installed.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 from functools import partial
@@ -257,10 +258,8 @@ class ShowcaseEmbedWidget(QtWidgets.QWidget):
                 self._teardown_view()
                 self._show_fallback(note="")
 
-        try:
+        with contextlib.suppress(Exception):
             view.page().runJavaScript("window.lunarisReady === true", _on_result)
-        except Exception:
-            pass
 
     # -------------------------------------------------------------- fallback --
     def _show_fallback(self, *, note: str) -> None:
@@ -333,20 +332,16 @@ class ShowcaseEmbedWidget(QtWidgets.QWidget):
         """Stop the loopback server and release the web view. Idempotent/safe."""
         self._teardown_view()
         if self._server is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._server.stop()
-            except Exception:
-                pass
             self._server = None
 
     # --------------------------------------------------------------- helpers --
     def _run_js(self, script: str) -> None:
         if not self.is_live():
             return
-        try:
+        with contextlib.suppress(Exception):
             self._view.page().runJavaScript(script)  # type: ignore[union-attr]
-        except Exception:
-            pass
 
     def _teardown_view(self) -> None:
         self._live = False

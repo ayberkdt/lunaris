@@ -29,6 +29,7 @@ import argparse
 import csv
 import heapq
 import importlib
+import itertools
 import json
 import math
 import os
@@ -290,6 +291,8 @@ class _TopKErrors:
                   "abs_a_error,rel_a_error,altitude_km,cos_sim,angular_deg")
         np.savetxt(str(path), arr, delimiter=",", header=header, comments="")
 
+import contextlib
+
 from lunaris.surrogate.runtime import find_latest_st_lrps_model_dir
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
@@ -327,13 +330,12 @@ def _sync(device: torch.device) -> None:
     if device.type == "cuda":
         torch.cuda.synchronize()
     elif device.type == "mps":
-        try:
+        with contextlib.suppress(Exception):
             torch.mps.synchronize()
-        except Exception:
-            pass
 
 
 # --- Shared model/scaler implementation ---
+
 from lunaris.surrogate.serialization import safe_torch_load
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     append_run_evaluation,
@@ -416,10 +418,8 @@ def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> dict[str,
     for key, value in meta.raw_attrs.items():
         if key not in out:
             if isinstance(value, bytes):
-                try:
+                with contextlib.suppress(UnicodeDecodeError):
                     value = value.decode("utf-8")
-                except UnicodeDecodeError:
-                    pass
             out[key] = value
     return out
 
@@ -823,6 +823,32 @@ def _build_ood_region_masks(
     }
 
 
+def _iter_altitude_bins(
+    alt_km: np.ndarray,
+    bin_km: float,
+) -> Iterator[tuple[float, float, np.ndarray, int]]:
+    """Yield ``(lo_km, hi_km, mask, count)`` for each non-empty altitude bin.
+
+    Bin edges snap outward to multiples of ``bin_km`` and bins are half-open
+    ``[lo, hi)``. Yields nothing when the altitudes have no finite extent, so
+    callers fall through to their own empty-result handling.
+    """
+    lo = float(np.nanmin(alt_km)) if alt_km.size else float("nan")
+    hi = float(np.nanmax(alt_km)) if alt_km.size else float("nan")
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        return
+    start = math.floor(lo / bin_km) * bin_km
+    stop = math.ceil(hi / bin_km) * bin_km
+    edges = np.arange(start, stop + bin_km, bin_km, dtype=np.float64)
+    for i in range(len(edges) - 1):
+        a0, a1 = edges[i], edges[i + 1]
+        mask = (alt_km >= a0) & (alt_km < a1)
+        n = int(np.sum(mask))
+        if n == 0:
+            continue
+        yield float(a0), float(a1), mask, n
+
+
 def spatial_rmse_by_altitude(
     alt_km: np.ndarray,
     err: np.ndarray,
@@ -831,24 +857,10 @@ def spatial_rmse_by_altitude(
     alt_km = np.asarray(alt_km, dtype=np.float64).reshape(-1)
     err = np.asarray(err, dtype=np.float64).reshape(-1)
 
-    lo = float(np.nanmin(alt_km))
-    hi = float(np.nanmax(alt_km))
-    if not np.isfinite(lo) or not np.isfinite(hi):
-        return {"bin_km": float(bin_km), "bins": []}
-
-    start = math.floor(lo / bin_km) * bin_km
-    stop = math.ceil(hi / bin_km) * bin_km
-    edges = np.arange(start, stop + bin_km, bin_km, dtype=np.float64)
-
     bins_out: list[dict[str, Any]] = []
-    for i in range(len(edges) - 1):
-        a0, a1 = edges[i], edges[i + 1]
-        mask = (alt_km >= a0) & (alt_km < a1)
-        n = int(np.sum(mask))
-        if n == 0:
-            continue
+    for a0, a1, mask, n in _iter_altitude_bins(alt_km, bin_km):
         rmse = float(np.sqrt(np.mean(err[mask] ** 2)))
-        bins_out.append({"alt_km_lo": float(a0), "alt_km_hi": float(a1), "n": n, "rmse": rmse})
+        bins_out.append({"alt_km_lo": a0, "alt_km_hi": a1, "n": n, "rmse": rmse})
 
     return {"bin_km": float(bin_km), "bins": bins_out}
 
@@ -868,26 +880,12 @@ def spatial_mape_by_altitude(
     floor_abs = infer_relative_floor_abs(ref, eps=eps) if rel_floor_abs is None else float(rel_floor_abs)
     rel_pct = bounded_relative_error_pct(pred, ref, rel_floor_abs=floor_abs)
 
-    lo = float(np.nanmin(alt_km))
-    hi = float(np.nanmax(alt_km))
-    if not np.isfinite(lo) or not np.isfinite(hi):
-        return {"bin_km": float(bin_km), "bins": []}
-
-    start = math.floor(lo / bin_km) * bin_km
-    stop  = math.ceil(hi / bin_km) * bin_km
-    edges = np.arange(start, stop + bin_km, bin_km, dtype=np.float64)
-
     bins_out: list[dict[str, Any]] = []
-    for i in range(len(edges) - 1):
-        a0, a1 = edges[i], edges[i + 1]
-        mask = (alt_km >= a0) & (alt_km < a1)
-        n = int(np.sum(mask))
-        if n == 0:
-            continue
+    for a0, a1, mask, n in _iter_altitude_bins(alt_km, bin_km):
         seg = rel_pct[mask]
         bins_out.append({
-            "alt_km_lo": float(a0),
-            "alt_km_hi": float(a1),
+            "alt_km_lo": a0,
+            "alt_km_hi": a1,
             "n": n,
             "mape_pct": float(np.mean(seg)),
             "p50_pct":  float(np.percentile(seg, 50)),
@@ -1063,20 +1061,10 @@ def save_binned_mae_pct(
     alt = np.asarray(alt_km, dtype=np.float64).reshape(-1)
     err = np.abs(np.asarray(rel_err_pct, dtype=np.float64).reshape(-1))
 
-    lo = math.floor(float(np.nanmin(alt)) / bin_km) * bin_km
-    hi = math.ceil(float(np.nanmax(alt)) / bin_km) * bin_km
-    edges = np.arange(lo, hi + bin_km, bin_km)
-    if len(edges) < 2:
-        return
-
     centers, maes, p25s, p75s, counts = [], [], [], [], []
-    for i in range(len(edges) - 1):
-        mask = (alt >= edges[i]) & (alt < edges[i + 1])
-        n = int(np.sum(mask))
-        if n == 0:
-            continue
+    for a0, a1, mask, n in _iter_altitude_bins(alt, bin_km):
         seg = err[mask]
-        centers.append(0.5 * (edges[i] + edges[i + 1]))
+        centers.append(0.5 * (a0 + a1))
         maes.append(float(np.mean(seg)))
         p25s.append(float(np.percentile(seg, 25)))
         p75s.append(float(np.percentile(seg, 75)))
@@ -1351,15 +1339,8 @@ def _save_evaluation_plots(a_mag_err, a_pred_mag, a_pred_vec_np, a_rel_floor_abs
             ), -1.0, 1.0
         )
         _cs_bin_km = float(alt_bin_km)
-        _cs_lo = math.floor(float(np.nanmin(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
-        _cs_hi = math.ceil(float(np.nanmax(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
-        _cs_edges = np.arange(_cs_lo, _cs_hi + _cs_bin_km, _cs_bin_km)
         _cs_centers, _cs_means, _cs_p10s = [], [], []
-        for _i_e in range(len(_cs_edges) - 1):
-            _ca0, _ca1 = _cs_edges[_i_e], _cs_edges[_i_e + 1]
-            _cmask = (_alt_flat_cs >= _ca0) & (_alt_flat_cs < _ca1)
-            if not np.any(_cmask):
-                continue
+        for _ca0, _ca1, _cmask, _n_cs in _iter_altitude_bins(_alt_flat_cs, _cs_bin_km):
             _cs_centers.append(0.5 * (_ca0 + _ca1))
             _cs_means.append(float(np.mean(_cossim_flat_plot[_cmask])))
             _cs_p10s.append(float(np.percentile(_cossim_flat_plot[_cmask], 10)))
@@ -1382,7 +1363,7 @@ def _save_evaluation_plots(a_mag_err, a_pred_mag, a_pred_vec_np, a_rel_floor_abs
         print(f"[warn] cossim_by_altitude.png failed: {_csp_err}")
 
 def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, directional_metrics, metrics, norm_binned_ang, ood_table, out_dir, spatial_a_mag, spatial_a_mape, spatial_a_vec, spatial_u, spatial_u_mape):
-    def write_bins_csv(bins: dict[str, Any], path: Path, extra_cols: list[str] = None) -> None:
+    def write_bins_csv(bins: dict[str, Any], path: Path, extra_cols: list[str] | None = None) -> None:
         if extra_cols is None:
             extra_cols = []
         header = "alt_km_lo,alt_km_hi,n,rmse"
@@ -1398,11 +1379,11 @@ def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec
 
     def write_mape_csv(bins: dict[str, Any], path: Path) -> None:
         rows = ["alt_km_lo,alt_km_hi,n,mape_pct,p50_pct,p90_pct"]
-        for b in bins.get("bins", []):
-            rows.append(
-                f"{b['alt_km_lo']},{b['alt_km_hi']},{b['n']},"
-                f"{b.get('mape_pct', '')},{b.get('p50_pct', '')},{b.get('p90_pct', '')}"
-            )
+        rows.extend(
+            f"{b['alt_km_lo']},{b['alt_km_hi']},{b['n']},"
+            f"{b.get('mape_pct', '')},{b.get('p50_pct', '')},{b.get('p90_pct', '')}"
+            for b in bins.get("bins", [])
+        )
         path.write_text("\n".join(rows), encoding="utf-8")
 
     write_bins_csv(spatial_u, out_dir / "spatial_rmse_U.csv")
@@ -1423,15 +1404,7 @@ def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec
                 np.linalg.norm(a_pred_vec_np, axis=1) * np.linalg.norm(a_true_vec_np, axis=1), 1e-18
             ), -1.0, 1.0
         )
-        _ang_lo = math.floor(float(np.nanmin(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
-        _ang_hi = math.ceil(float(np.nanmax(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
-        _ang_edges = np.arange(_ang_lo, _ang_hi + _ang_bin_km, _ang_bin_km)
-        for _i_e in range(len(_ang_edges) - 1):
-            _a0, _a1 = _ang_edges[_i_e], _ang_edges[_i_e + 1]
-            _amask = (_alt_flat_ang >= _a0) & (_alt_flat_ang < _a1)
-            _n_bin = int(np.sum(_amask))
-            if _n_bin == 0:
-                continue
+        for _a0, _a1, _amask, _n_bin in _iter_altitude_bins(_alt_flat_ang, _ang_bin_km):
             _seg = _ang_flat[_amask]
             _cs = _cossim_flat[_amask]
             _ang_alt_rows.append(
@@ -2459,7 +2432,7 @@ def evaluate(
     NORM_BINS = [0.0, 1e-10, 1e-9, 1e-8, 1e-7, float("inf")]
     norm_bin_labels = ["<1e-10", "1e-10-1e-9", "1e-9-1e-8", "1e-8-1e-7", ">1e-7"]
     norm_binned_ang: list[dict[str, Any]] = []
-    for _i_bin, (_lo_n, _hi_n) in enumerate(zip(NORM_BINS[:-1], NORM_BINS[1:], strict=False)):
+    for _i_bin, (_lo_n, _hi_n) in enumerate(itertools.pairwise(NORM_BINS)):
         _nb_mask = (a_true_norms >= _lo_n) & (a_true_norms < _hi_n)
         _n_bin = int(np.sum(_nb_mask))
         if _n_bin == 0:
@@ -2602,7 +2575,7 @@ def evaluate(
             }
         # If the dataset is an ood_combined file with embedded split metadata, annotate.
         if _ds_role == "ood_combined" and not _has_exact_ood_split:
-            try:
+            with contextlib.suppress(Exception):
                 ood_table["ood_combined_meta"] = {
                     "ood_low_n_generated": int(ds_meta["ood_low_n"]) if "ood_low_n" in ds_meta else None,
                     "ood_high_n_generated": int(ds_meta["ood_high_n"]) if "ood_high_n" in ds_meta else None,
@@ -2615,8 +2588,6 @@ def evaluate(
                         float(ds_meta["ood_high_alt_max_km"]) if "ood_high_alt_max_km" in ds_meta else None,
                     ],
                 }
-            except Exception:
-                pass
 
     # Assemble angular_metrics block (richer than old a_vectorial)
     _ang_masked_mean = float(np.mean(masked_ang_deg)) if masked_ang_deg.size > 0 else None
@@ -3025,26 +2996,25 @@ def _aggregate_altitude_csv(split: str, eval_dir: Path) -> list[dict[str, Any]]:
     path = eval_dir / "altitude_binned_metrics.csv"
     if not path.exists():
         return []
-    rows: list[dict[str, Any]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            rows.append(
-                {
-                    "split": split,
-                    "altitude_bin_min_km": row.get("alt_km_lo"),
-                    "altitude_bin_max_km": row.get("alt_km_hi"),
-                    "n_samples": row.get("n"),
-                    "rmse_u": row.get("rmse_U"),
-                    "rmse_a_vec": row.get("rmse_a_vec", row.get("rmse_accel")),
-                    "rmse_a_mag": row.get("rmse_a_mag"),
-                    "mae_a_vec": row.get("mae_a_vec"),
-                    "p95_a_error": row.get("p95_a_error"),
-                    "angular_mean_deg": row.get("angular_mean_deg"),
-                    "angular_p90_deg": row.get("angular_p90_deg"),
-                    "radial_rmse": row.get("radial_rmse"),
-                    "cross_rmse": row.get("cross_rmse"),
-                }
-            )
+        rows: list[dict[str, Any]] = [
+            {
+                "split": split,
+                "altitude_bin_min_km": row.get("alt_km_lo"),
+                "altitude_bin_max_km": row.get("alt_km_hi"),
+                "n_samples": row.get("n"),
+                "rmse_u": row.get("rmse_U"),
+                "rmse_a_vec": row.get("rmse_a_vec", row.get("rmse_accel")),
+                "rmse_a_mag": row.get("rmse_a_mag"),
+                "mae_a_vec": row.get("mae_a_vec"),
+                "p95_a_error": row.get("p95_a_error"),
+                "angular_mean_deg": row.get("angular_mean_deg"),
+                "angular_p90_deg": row.get("angular_p90_deg"),
+                "radial_rmse": row.get("radial_rmse"),
+                "cross_rmse": row.get("cross_rmse"),
+            }
+            for row in csv.DictReader(handle)
+        ]
     return rows
 
 
@@ -3052,10 +3022,8 @@ def _aggregate_angular_csv(split: str, eval_dir: Path) -> list[dict[str, Any]]:
     path = eval_dir / "angular_error_by_altitude.csv"
     if not path.exists():
         return []
-    rows: list[dict[str, Any]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            rows.append({"split": split, **row})
+        rows: list[dict[str, Any]] = [{"split": split, **row} for row in csv.DictReader(handle)]
     return rows
 
 
@@ -3063,10 +3031,8 @@ def _aggregate_radial_cross_csv(split: str, eval_dir: Path) -> list[dict[str, An
     path = eval_dir / "acceleration_decomposition.csv"
     if not path.exists():
         return []
-    rows: list[dict[str, Any]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            rows.append({"split": split, **row})
+        rows: list[dict[str, Any]] = [{"split": split, **row} for row in csv.DictReader(handle)]
     return rows
 
 

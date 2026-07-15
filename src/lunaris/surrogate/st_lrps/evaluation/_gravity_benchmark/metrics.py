@@ -77,7 +77,7 @@ def compute_trajectory_metrics(
 
     # Validation
     if not np.isfinite(r_test).all():
-        return {f: None for f in _METRICS_FIELDNAMES} | {
+        return dict.fromkeys(_METRICS_FIELDNAMES) | {
             "scenario_id": scenario.scenario_id,
             "model": model_name, "status": "failed_nonfinite",
         }

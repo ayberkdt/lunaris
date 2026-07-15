@@ -195,6 +195,8 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
+import contextlib
+
 from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import (
     CompactSearchField,
     KeyValueList,
@@ -1618,7 +1620,7 @@ class STLRPSTrainTab(QWidget):
         ):
             self.model_preset.addItem(_label, _val)
         _mp_default = self.model_preset.findData("recommended_physical_radial_decay")
-        self.model_preset.setCurrentIndex(_mp_default if _mp_default >= 0 else 0)
+        self.model_preset.setCurrentIndex(max(_mp_default, 0))
         self.model_preset.setToolTip(
             "Input-encoding representation preset.\n"
             "Non-custom presets fully control the representation; the manual flags\n"
@@ -3001,16 +3003,12 @@ class STLRPSTrainTab(QWidget):
         }
         for key, widget in _map_int.items():
             if key in cfg:
-                try:
+                with contextlib.suppress(Exception):
                     widget.setValue(int(cfg[key]))
-                except Exception:
-                    pass
         for key, widget in _map_float.items():
             if key in cfg:
-                try:
+                with contextlib.suppress(Exception):
                     widget.setValue(float(cfg[key]))
-                except Exception:
-                    pass
         if "activation" in cfg:
             self.activation.setCurrentText(str(cfg["activation"]))
         if "gradnorm_mode" in cfg:
@@ -3049,10 +3047,8 @@ class STLRPSTrainTab(QWidget):
             if key in cfg:
                 widget.setChecked(bool(cfg[key]))
         if "physical_radial_decay_max_power" in cfg:
-            try:
+            with contextlib.suppress(Exception):
                 self.physical_radial_decay_max_power.setValue(int(cfg["physical_radial_decay_max_power"]))
-            except Exception:
-                pass
         if "model_preset" in cfg:
             idx = self.model_preset.findData(str(cfg["model_preset"]))
             if idx >= 0:
@@ -3120,10 +3116,8 @@ class STLRPSTrainTab(QWidget):
             ("periodic_eval_batch_size", self.periodic_eval_batch_size),
         ):
             if _pk in cfg:
-                try:
+                with contextlib.suppress(Exception):
                     _spin.setValue(int(cfg[_pk]))
-                except Exception:
-                    pass
         if "periodic_eval_enabled" in cfg:
             self.periodic_eval_enabled.setChecked(bool(cfg["periodic_eval_enabled"]))
         if "periodic_eval_continue_on_fail" in cfg:
@@ -3603,16 +3597,12 @@ class STLRPSTrainTab(QWidget):
                     cfg[k] = str(cfg[k]).lower() == "true"
             for k in _int_keys:
                 if k in cfg:
-                    try:
+                    with contextlib.suppress(Exception):
                         cfg[k] = int(cfg[k])
-                    except Exception:
-                        pass
             for k in _float_keys:
                 if k in cfg:
-                    try:
+                    with contextlib.suppress(Exception):
                         cfg[k] = float(cfg[k])
-                    except Exception:
-                        pass
             self._apply_config(cfg)
         if s.contains("device_hint"):
             self.device_hint.setCurrentText(str(s.value("device_hint", "auto")))
@@ -4013,7 +4003,7 @@ class STLRPSTrainTab(QWidget):
 
         self._live_plot.clear()
         self._live_plot.set_patience(self.patience.value())
-        self.runner.set_output_dir(out_dir if out_dir else "")
+        self.runner.set_output_dir(out_dir or "")
         self._set_history_poll_dir(out_dir)
         self._update_run_dir_label(out_dir)
         self._save_settings()
@@ -4178,10 +4168,8 @@ class STLRPSTrainTab(QWidget):
         self._live_plot.load_history_file(str(path))
         # Feed the same per-epoch history into the structured History table.
         if _HAS_DASHBOARD_V2 and self._structured_log is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._structured_log.load_history_file(str(path))
-            except Exception:
-                pass
 
     # -----------------------------------------------------------------
     # Post-run hook

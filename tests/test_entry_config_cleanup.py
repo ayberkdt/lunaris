@@ -59,7 +59,7 @@ def test_importing_config_does_not_warn_or_load(tmp_path: Path) -> None:
         [sys.executable, "-c", "import lunaris.core.config as config; print('OK')"],
         cwd=str(REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
@@ -289,7 +289,7 @@ def test_cli_common_args_is_lightweight() -> None:
         [sys.executable, "-c", code],
         cwd=str(REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "", f"cli.common_args imported heavy modules: {proc.stdout!r}"

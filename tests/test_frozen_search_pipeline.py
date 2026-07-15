@@ -9,6 +9,7 @@ frozen, and the tests stay backend- and torch-independent.
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -109,7 +110,7 @@ class KeplerScreeningPropagator:
     """Analytic two-body screening backend (elements exactly constant)."""
 
     backend_name = "test_kepler_batch"
-    provenance = {"backend": "test_kepler_batch", "physics": "two-body analytic"}
+    provenance: ClassVar[dict[str, str]] = {"backend": "test_kepler_batch", "physics": "two-body analytic"}
 
     def propagate(self, Y0, duration_s, output_dt_s):
         from lunaris.core.state import cartesian_to_keplerian
@@ -638,7 +639,7 @@ def test_pipeline_resume_reuses_stage_files(tmp_path):
 
     class ExplodingScreening:
         backend_name = "must_not_run"
-        provenance = {}
+        provenance: ClassVar[dict[str, str]] = {}
 
         def propagate(self, *args, **kwargs):
             raise AssertionError("stage 1 must be loaded from disk on resume")

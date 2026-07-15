@@ -492,9 +492,11 @@ class ArtifactContract:
         if not isinstance(self.dataset_contract, Mapping) or not self.dataset_contract:
             errors.append("dataset_contract is required")
         else:
-            for key in ("target_mode", "degree_min", "degree_max"):
-                if self.dataset_contract.get(key) is None:
-                    errors.append(f"dataset_contract.{key} is required")
+            errors.extend(
+                f"dataset_contract.{key} is required"
+                for key in ("target_mode", "degree_min", "degree_max")
+                if self.dataset_contract.get(key) is None
+            )
         if errors:
             raise ArtifactContractError("; ".join(errors))
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 from collections.abc import Mapping
@@ -390,10 +391,8 @@ class MultiScaleSirenMLP(nn.Module):
         key = prefix + "w0_bands_tensor"
         incoming = state_dict.get(key)
         if incoming is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
-            except Exception:
-                pass
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
@@ -488,10 +487,8 @@ class AdditiveMultiBandSirenMLP(nn.Module):
         key = prefix + "w0_bands_tensor"
         incoming = state_dict.get(key)
         if incoming is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
-            except Exception:
-                pass
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
@@ -848,7 +845,7 @@ class RealSHBasisEncoding(nn.Module):
         for m in range(1, L + 1):
             sec *= math.sqrt((2 * m + 1) / (2 * m))   # constant sectoral seed (no sinθ)
             Q[(m, m)] = sec * ones
-        for m in range(0, L + 1):
+        for m in range(L + 1):
             for l in range(m + 1, L + 1):  # noqa: E741  # l = SH degree (standard notation)
                 a = math.sqrt((2 * l - 1) * (2 * l + 1) / ((l - m) * (l + m)))
                 if l - 2 >= m:
@@ -864,7 +861,7 @@ class RealSHBasisEncoding(nn.Module):
         feats: list[torch.Tensor] = []
         if self.include_radial:
             feats.append(r)
-        for l in range(0, L + 1):  # noqa: E741  # l = SH degree (standard notation)
+        for l in range(L + 1):  # noqa: E741  # l = SH degree (standard notation)
             feats.append(Q[(l, 0)])                       # Y_{l,0}
             for m in range(1, l + 1):
                 base = sqrt2 * Q[(l, m)]
@@ -950,7 +947,7 @@ def _encoding_flags_from_preset(cfg: Any) -> dict[str, bool]:
     preset = str(preset_raw or "custom").strip().lower()
     if preset == "custom":
         return flags
-    implied = {name: False for name in flags}
+    implied = dict.fromkeys(flags, False)
     if preset == "baseline_raw":
         pass
     elif preset == "recommended_physical_radial_decay":

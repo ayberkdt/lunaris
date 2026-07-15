@@ -387,19 +387,25 @@ class DatasetContract:
         rhs = other if isinstance(other, DatasetContract) else DatasetContract.from_dict(other)
         errors: list[str] = []
         warnings: list[str] = []
-        for key in ("target_mode", "baseline_kind", "degree_min", "degree_max", "coordinate_frame"):
-            if getattr(self, key) != getattr(rhs, key):
-                errors.append(f"{key} mismatch: {getattr(self, key)!r} != {getattr(rhs, key)!r}")
-        for key in ("mu_si", "r_ref_m", "a_sign"):
-            if abs(float(getattr(self, key)) - float(getattr(rhs, key))) > (1.0 if key != "a_sign" else 0.0):
-                errors.append(f"{key} mismatch: {getattr(self, key)!r} != {getattr(rhs, key)!r}")
+        errors.extend(
+            f"{key} mismatch: {getattr(self, key)!r} != {getattr(rhs, key)!r}"
+            for key in ("target_mode", "baseline_kind", "degree_min", "degree_max", "coordinate_frame")
+            if getattr(self, key) != getattr(rhs, key)
+        )
+        errors.extend(
+            f"{key} mismatch: {getattr(self, key)!r} != {getattr(rhs, key)!r}"
+            for key in ("mu_si", "r_ref_m", "a_sign")
+            if abs(float(getattr(self, key)) - float(getattr(rhs, key))) > (1.0 if key != "a_sign" else 0.0)
+        )
         if self.units != rhs.units:
             errors.append("units mismatch")
         if self.derivative_convention != rhs.derivative_convention:
             errors.append("derivative_convention mismatch")
-        for key in ("spherical_harmonic_convention", "gravity_label_engine_version"):
-            if getattr(self, key) != getattr(rhs, key):
-                errors.append(f"{key} mismatch: {getattr(self, key)!r} != {getattr(rhs, key)!r}")
+        errors.extend(
+            f"{key} mismatch: {getattr(self, key)!r} != {getattr(rhs, key)!r}"
+            for key in ("spherical_harmonic_convention", "gravity_label_engine_version")
+            if getattr(self, key) != getattr(rhs, key)
+        )
         if self.content_sha256 and rhs.content_sha256 and self.content_sha256 != rhs.content_sha256:
             errors.append("content_sha256 mismatch")
         if not self.source_gravity_file_sha256:

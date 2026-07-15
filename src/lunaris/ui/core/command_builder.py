@@ -405,7 +405,7 @@ def build_command(
 
         rtol_value, atol_value = choose_solver_tolerances(
             integrator_label,
-            rtol=(rtol_raw if rtol_raw else getattr(solver_cfg, "rtol", None)),
+            rtol=(rtol_raw or getattr(solver_cfg, "rtol", None)),
             atol=atol_raw,
         )
         command.extend(["--rtol", str(rtol_value)])

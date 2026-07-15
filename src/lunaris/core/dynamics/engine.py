@@ -676,9 +676,10 @@ class DynamicsEngine:
             # against the @njit SH kernel; the surrogate only amortizes that
             # overhead in the GPU batch path. See the dynamics path asymmetry note.
             logger.info(
-                f"[Dynamics] RHS ready. (build={dt_build:.3f}s | surrogate gravity, "
-                "interpreted Python+autograd path -- not @njit; single-trajectory CPU "
-                "timings are not comparable to the SH kernel)"
+                "[Dynamics] RHS ready. (build=%.3fs | surrogate gravity, interpreted "
+                "Python+autograd path -- not @njit; single-trajectory CPU timings are not "
+                "comparable to the SH kernel)",
+                dt_build,
             )
             return rhs
 
@@ -763,7 +764,7 @@ class DynamicsEngine:
             self._prep["rhs_path"] = "sh_only_numba"
 
             dt_build = time.perf_counter() - t0
-            logger.info(f"[Dynamics] RHS ready. (build={dt_build:.3f}s | sh-only numba fast path)")
+            logger.info("[Dynamics] RHS ready. (build=%.3fs | sh-only numba fast path)", dt_build)
 
             return rhs
 
@@ -1151,7 +1152,7 @@ class DynamicsEngine:
         self._prep["rhs_path"] = "general_numba"
 
         dt_build = time.perf_counter() - t0
-        logger.info(f"[Dynamics] RHS ready. (build={dt_build:.3f}s)")
+        logger.info("[Dynamics] RHS ready. (build=%.3fs)", dt_build)
 
         return rhs
 

@@ -167,9 +167,11 @@ def validate_error_decomposition(block: Mapping[str, Any]) -> list[str]:
 
     provenance = block.get("provenance")
     if isinstance(provenance, Mapping):
-        for key in _REQUIRED_PROVENANCE_KEYS:
-            if key not in provenance:
-                problems.append(f"provenance is missing {key!r}")
+        problems.extend(
+            f"provenance is missing {key!r}"
+            for key in _REQUIRED_PROVENANCE_KEYS
+            if key not in provenance
+        )
         if bool(provenance.get("synthetic", False)) and bool(
             block.get("scientific_evidence", True)
         ):

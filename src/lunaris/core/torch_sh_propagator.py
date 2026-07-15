@@ -458,10 +458,19 @@ class TorchSHBatchPropagator:
         log_backend = "torch_cuda_sh" if self._device.type == "cuda" else "torch_cpu_sh"
 
         logger.info(
-            f"[BATCH][{log_backend}] N={N}  device={self._device} ({self._device_name})  "
-            f"degree={self._actual_degree}  dtype={str(self._dtype).replace('torch.', '')}  "
-            f"chunk={chunk}  chunks={n_chunks}  dt={dt_eff:.1f}s  snaps={n_snaps}  "
-            f"frame={'moon-fixed' if self._frame.uses_rotation else 'identity'}"
+            "[BATCH][%s] N=%s  device=%s (%s)  degree=%s  dtype=%s  chunk=%s  chunks=%s  dt=%.1fs  "
+            "snaps=%s  frame=%s",
+            log_backend,
+            N,
+            self._device,
+            self._device_name,
+            self._actual_degree,
+            str(self._dtype).replace('torch.', ''),
+            chunk,
+            n_chunks,
+            dt_eff,
+            n_snaps,
+            'moon-fixed' if self._frame.uses_rotation else 'identity',
         )
 
         result = run_batched_fixed_step(
@@ -511,9 +520,11 @@ class TorchSHBatchPropagator:
             "oom_recoveries": result.metrics["oom_recoveries"],
         }
         logger.info(
-            f"[BATCH][{log_backend}] done: {elapsed:.2f}s  "
-            f"{self._throughput_metrics['raw_batch_state_steps_per_second']:,.0f} raw-steps/s  "
-            f"{self._throughput_metrics['active_state_steps_per_second']:,.0f} active-steps/s"
+            "[BATCH][%s] done: %.2fs  %s raw-steps/s  %s active-steps/s",
+            log_backend,
+            elapsed,
+            f"{self._throughput_metrics['raw_batch_state_steps_per_second']:,.0f}",
+            f"{self._throughput_metrics['active_state_steps_per_second']:,.0f}",
         )
         self._last_impact_positions_inertial = impact_positions
         return t_out, Y_out, impact_flags, t_impact

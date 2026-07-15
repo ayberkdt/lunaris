@@ -124,9 +124,11 @@ def test_no_stale_project_identity():
     for filepath in iter_doc_files(root):
         try:
             content = filepath.read_text(encoding='utf-8')
-            for banned in BANNED_PROJECT_NAMES:
-                if banned in content:
-                    found_issues.append(f"Found '{banned}' in {filepath.relative_to(root)}")
+            found_issues.extend(
+                f"Found '{banned}' in {filepath.relative_to(root)}"
+                for banned in BANNED_PROJECT_NAMES
+                if banned in content
+            )
         except Exception:
             pass
 

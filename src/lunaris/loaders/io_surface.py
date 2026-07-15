@@ -404,9 +404,9 @@ def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> t
     candidates: list[Path] = []
 
     # Priority A: explicit names from label
-    for name in (ptr_file, explicit_file_name):
-        if name:
-            candidates.append(label_path.parent / name)
+    candidates.extend(
+        label_path.parent / name for name in (ptr_file, explicit_file_name) if name
+    )
 
     # Priority B: implicit convention (same stem)
     stem = _strip_known_label_suffixes(label_path)
@@ -1632,7 +1632,7 @@ def sample_topo_radius_m(payload: dict[str, Any], lat_deg: float, lon_deg: float
     sample is non-finite (void pixel).
     """
     const_m = float(payload.get("radius_const_m", float(R_MOON_MEAN)))
-    dn = payload.get("dn", None)
+    dn = payload.get("dn")
     if dn is None:
         return const_m
 

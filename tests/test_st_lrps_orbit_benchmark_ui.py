@@ -336,7 +336,7 @@ def test_harness_help_lists_gpu_finite_check_mode():
     proc = subprocess.run(
         [sys.executable, "-m",
          "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models", "--help"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=180,
+        cwd=str(ROOT), capture_output=True, text=True, timeout=180, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert "--gpu-finite-check-mode" in proc.stdout
@@ -926,7 +926,7 @@ def test_publication_plots_importable_and_parses():
     # --help imports the module (and pandas) then exits 0; no args -> SystemExit.
     help_p = subprocess.run(
         [sys.executable, "-m", "lunaris.surrogate.st_lrps.evaluation.publication_plots", "--help"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=180,
+        cwd=str(ROOT), capture_output=True, text=True, timeout=180, check=False,
     )
     combined = (help_p.stdout + help_p.stderr).lower()
     if "requires pandas" in combined:
@@ -936,7 +936,7 @@ def test_publication_plots_importable_and_parses():
 
     noargs_p = subprocess.run(
         [sys.executable, "-m", "lunaris.surrogate.st_lrps.evaluation.publication_plots"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=180,
+        cwd=str(ROOT), capture_output=True, text=True, timeout=180, check=False,
     )
     assert noargs_p.returncode != 0  # clean SystemExit ("Provide --run ..."), not a crash
 
@@ -975,7 +975,7 @@ def test_report_pager_renders_pdf(tmp_path):
         """
     )
     p = subprocess.run([sys.executable, "-c", code, str(pdf_path)],
-                       cwd=str(ROOT), capture_output=True, text=True, timeout=180)
+                       cwd=str(ROOT), capture_output=True, text=True, timeout=180, check=False)
     assert p.returncode == 0, (p.stdout + p.stderr)
     assert "REPORT_OK" in p.stdout
     assert pdf_path.exists()
@@ -1546,7 +1546,7 @@ def test_harness_help_lists_metadata_flags():
     proc = subprocess.run(
         [sys.executable, "-m",
          "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models", "--help"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=180,
+        cwd=str(ROOT), capture_output=True, text=True, timeout=180, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert "--refresh-metadata" in proc.stdout

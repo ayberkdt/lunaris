@@ -94,7 +94,7 @@ def test_top_level_import_is_lightweight() -> None:
         "print(repr(heavy)); print(repr(eng)); print(st_lrps.__version__)"
     )
     proc = subprocess.run(
-        [sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True, text=True
+        [sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True, text=True, check=False
     )
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.strip().splitlines()
@@ -134,7 +134,7 @@ def test_runtime_does_not_depend_on_training() -> None:
         "print(repr(bad))"
     )
     proc = subprocess.run(
-        [sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True, text=True
+        [sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True, text=True, check=False
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "[]", f"runtime leaked training deps: {proc.stdout!r}"
@@ -171,7 +171,7 @@ def test_cli_help_exits_zero(module: str) -> None:
     pytest.importorskip("torch")
     proc = subprocess.run(
         [sys.executable, "-m", module, "--help"],
-        cwd=str(REPO_ROOT), capture_output=True, text=True,
+        cwd=str(REPO_ROOT), capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 0, f"{module} --help failed:\n{proc.stderr}"
     assert "usage" in (proc.stdout + proc.stderr).lower()

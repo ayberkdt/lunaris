@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -72,10 +73,8 @@ def atomic_write_text(path: str | os.PathLike[str], text: str) -> None:
             handle.write(text)
         os.replace(tmp, dst)
     finally:
-        try:
+        with contextlib.suppress(Exception):
             tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def atomic_write_json(path: str | os.PathLike[str], payload: Any) -> None:

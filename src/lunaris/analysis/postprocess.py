@@ -1044,7 +1044,6 @@ def compute_history(
             if strict:
                 raise
             # keep core history valid even if optional product fails
-            pass
 
     if compute_groundtrack:
         try:
@@ -1054,7 +1053,6 @@ def compute_history(
         except Exception:
             if strict:
                 raise
-            pass
 
     if compute_eclipse:
         try:
@@ -1066,7 +1064,6 @@ def compute_history(
         except Exception:
             if strict:
                 raise
-            pass
 
     # Preserve downsampling index if downstream wants to relate to original arrays
     if idx is not None:

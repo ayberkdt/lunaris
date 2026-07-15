@@ -48,7 +48,7 @@ import re
 import sys
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from lunaris.common.paths import project_root_from_file
 from lunaris.ui_foundation import THEME
@@ -184,6 +184,8 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     DEFAULT_SPATIAL_CLOUD_CONFIG = None  # type: ignore[assignment]
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
+
+import contextlib
 
 from .common_widgets import (
     ImageGallery,
@@ -374,7 +376,7 @@ def _set_path_label(label: QLabel, path: str, *, empty_text: str) -> None:
         label.setText(empty_text)
         return
     p = Path(path)
-    shown = p.name if p.name else path
+    shown = p.name or path
     label.setText(f"{shown}\n{path}")
 
 
@@ -1148,9 +1150,11 @@ class CloudGenTab(QWidget):
                 candidates.append(out)
         if self._last_suite_dir:
             files = self._suite_manifest_files(Path(self._last_suite_dir))
-            for key in ("train", "val", "test", "ood_combined", "ood_high", "ood_low"):
-                if files.get(key):
-                    candidates.append(files[key])
+            candidates.extend(
+                files[key]
+                for key in ("train", "val", "test", "ood_combined", "ood_high", "ood_low")
+                if files.get(key)
+            )
         candidates.extend([
             self.analysis_input.text().strip(),
             self.out_path.text().strip() if hasattr(self, "out_path") else "",
@@ -1738,10 +1742,8 @@ class CloudGenTab(QWidget):
             return
         # Try to find the suite dir from the runner output
         log_text = ""
-        try:
+        with contextlib.suppress(Exception):
             log_text = self.runner.log.toPlainText()
-        except Exception:
-            pass
         suite_dir: str | None = None
         for line in reversed(log_text.splitlines()):
             m = re.search(r"suite dir\s*[:\->]+\s*(.+)", line, re.IGNORECASE)
@@ -2177,20 +2179,16 @@ class CloudAnalysisTab(QWidget):
         ]:
             v = s.value(key)
             if v is not None:
-                try:
+                with contextlib.suppress(Exception):
                     getattr(self, attr).setValue(cast(v))
-                except Exception:
-                    pass
         for attr, key, cast, _default in [
             ("alt_min_km", "alt_min_km", float, -1.0),
             ("alt_max_km", "alt_max_km", float, -1.0),
         ]:
             v = s.value(key)
             if v is not None:
-                try:
+                with contextlib.suppress(Exception):
                     getattr(self, attr).setValue(cast(v))
-                except Exception:
-                    pass
         for attr, key, _default in [
             ("no_plots", "no_plots", False),
             ("dump_json", "dump_json", True),
@@ -2354,7 +2352,7 @@ class DatasetInspectionPanel(QWidget):
 
     # Level -> (shared resultBanner kind, label). Colors live in the
     # #resultBanner[kind=...] rules; the label text carries the state.
-    _STATUS_KINDS = {
+    _STATUS_KINDS: ClassVar[dict[str, tuple[str, str]]] = {
         "ready":   ("success", "Ready"),
         "warning": ("warning", "Warning"),
         "error":   ("error", "Error"),

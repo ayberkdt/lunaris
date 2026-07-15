@@ -7,6 +7,7 @@ propagation is run.
 
 from __future__ import annotations
 
+import itertools
 import os
 import sys
 from pathlib import Path
@@ -191,7 +192,7 @@ def test_overall_progress_is_monotonic():
     seq.append(ov.update("gpu", 1.0))
     seq.append(ov.update("report", 0.5))
     seq.append(ov.update("report", 1.0))
-    assert all(b >= a - 1e-9 for a, b in zip(seq, seq[1:], strict=False)), seq
+    assert all(b >= a - 1e-9 for a, b in itertools.pairwise(seq)), seq
     assert seq[-1] == pytest.approx(100.0)
 
 

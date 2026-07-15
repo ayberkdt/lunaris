@@ -37,6 +37,7 @@ Integration with the rest of the application
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import shlex
@@ -561,10 +562,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
         out_path = str(meta.get("output_path", "outputs/ensemble/backend_compare.h5"))
 
         n_samples = "100"
-        try:
+        with contextlib.suppress(Exception):
             n_samples = str(int(float(self.ent_n_samples.text())))
-        except Exception:
-            pass
 
         cmd: list[str] = [python_exec, runner]
         cmd.extend(["--n-samples", n_samples])
@@ -591,10 +590,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         self.txt_backend_compare_cmd.setPlainText(rendered)
 
-        try:
+        with contextlib.suppress(Exception):
             QtWidgets.QApplication.clipboard().setText(rendered)
-        except Exception:
-            pass
 
     def _copy_selected_backend_command(self) -> None:
         """Copy the currently previewed command to clipboard."""
@@ -610,10 +607,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
         runner = str((Path(__file__).resolve().parents[2] / "cli" / "batch_runner.py").resolve())
         python_exec = sys.executable
         n_samples = "100"
-        try:
+        with contextlib.suppress(Exception):
             n_samples = str(int(float(self.ent_n_samples.text())))
-        except Exception:
-            pass
         all_cmds: list[str] = []
         for meta in getattr(self, "_backend_compare_meta", []):
             gravity_mode = str(meta.get("mode", "classic_sh"))
@@ -679,7 +674,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
             "space-filling designs for validation coverage."
         )
         sampling_idx = self.cb_sampling_method.findData(self.batch_cfg.sampling_method)
-        self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
+        self.cb_sampling_method.setCurrentIndex(max(sampling_idx, 0))
         grid.addWidget(self.cb_sampling_method, 1, 1)
 
         grid.addWidget(_label("Seed"), 2, 0)
@@ -944,7 +939,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_torch_dtype.addItem("float64 (reference precision)", "float64")
         self.cb_torch_dtype.addItem("float32 (faster, lower precision)", "float32")
         dtype_idx = self.cb_torch_dtype.findData(self.batch_cfg.torch_dtype)
-        self.cb_torch_dtype.setCurrentIndex(dtype_idx if dtype_idx >= 0 else 0)
+        self.cb_torch_dtype.setCurrentIndex(max(dtype_idx, 0))
         self.cb_torch_dtype.setToolTip(
             "Floating-point dtype for the torch_cuda_sh and GPU ST-LRPS paths."
         )
@@ -974,8 +969,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         layout.addWidget(self.gpu_frame)
         gravity_mode_index = self.cb_batch_gravity_mode.findData(self.batch_cfg.gravity_mode_override)
-        if gravity_mode_index < 0:
-            gravity_mode_index = 0
+        gravity_mode_index = max(gravity_mode_index, 0)
         self.cb_batch_gravity_mode.setCurrentIndex(gravity_mode_index)
         self.cb_batch_backend.setCurrentIndex(
             self._batch_backend_combo_index(str(getattr(self.batch_cfg, "batch_backend", "auto") or "auto"))
@@ -1386,10 +1380,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
     def _copy_metrics_csv(self) -> None:
         """Copy the last-run metrics (Metric,Value) to the clipboard as CSV."""
-        try:
+        with contextlib.suppress(Exception):
             QtWidgets.QApplication.clipboard().setText(self._metrics_to_csv())
-        except Exception:
-            pass
 
     def _open_report(self) -> None:
         if self._last_report_path and Path(self._last_report_path).exists():
@@ -1718,7 +1710,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         sampling_method = str(data.get("sampling_method", "random") or "random")
         self.batch_cfg.sampling_method = sampling_method
         sampling_idx = self.cb_sampling_method.findData(sampling_method)
-        self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
+        self.cb_sampling_method.setCurrentIndex(max(sampling_idx, 0))
         self.ent_sigma_r.setText(_s("sigma_r_m", 500.0))
         self.ent_sigma_v.setText(_s("sigma_v_m_s", 0.5))
         self.ent_sigma_mass.setText(_s("sigma_mass_kg", 0.0))
@@ -1733,14 +1725,13 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.ent_tpb.setText(_s("gpu_threads_per_block", 128))
         gravity_mode = str(data.get("gravity_mode_override", "follow_mission") or "follow_mission")
         gravity_idx = self.cb_batch_gravity_mode.findData(gravity_mode)
-        if gravity_idx < 0:
-            gravity_idx = 0
+        gravity_idx = max(gravity_idx, 0)
         self.cb_batch_gravity_mode.setCurrentIndex(gravity_idx)
         self.ent_batch_st_lrps_model_dir.setText(str(data.get("st_lrps_model_dir", "") or ""))
         self._on_gravity_mode_changed()
         torch_dtype = str(data.get("torch_dtype", "float64") or "float64")
         dtype_idx = self.cb_torch_dtype.findData(torch_dtype)
-        self.cb_torch_dtype.setCurrentIndex(dtype_idx if dtype_idx >= 0 else 0)
+        self.cb_torch_dtype.setCurrentIndex(max(dtype_idx, 0))
         self.ent_torch_chunk.setText(_s("torch_sh_chunk_size", 0))
         self.ent_dt.setText(_s("dt_s", 60.0))
         self.ent_vram.setText(_s("max_vram_gb", 4.0))
@@ -1880,11 +1871,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
             suffix = _preferred_output_suffix(fmt)
             lower_name = Path(out_path).name.lower()
             if not lower_name.endswith(suffix):
-                if fmt == "hdf5" and (lower_name.endswith(".h5") or lower_name.endswith(".hdf5")):
-                    pass
-                elif not lower_name.endswith((".h5", ".hdf5", ".npz")):
-                    pass
-                else:
+                is_hdf5_alias = fmt == "hdf5" and lower_name.endswith((".h5", ".hdf5"))
+                if not is_hdf5_alias and lower_name.endswith((".h5", ".hdf5", ".npz")):
                     warnings.append(f"Output path suffix does not match selected format '{fmt}'.")
 
         return ok, errors, warnings

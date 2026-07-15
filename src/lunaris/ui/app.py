@@ -146,6 +146,8 @@ class SimulationState:
 # =============================================================================
 # 7.                        CUSTOM UI PRIMITIVES
 # =============================================================================
+import contextlib
+
 from lunaris.ui.core.ui_commons import StatusBadge
 
 # =============================================================================
@@ -1215,10 +1217,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         previous = getattr(self, "_log_splitter_anim", None)
         if previous is not None:
-            try:
+            with contextlib.suppress(RuntimeError, TypeError):
                 previous.finished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
             previous.stop()
 
         sizes = self.main_splitter.sizes()
@@ -1301,7 +1301,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # 26. EXECUTION CONSOLE LOGGING (delegates to ExecutionLogPanel)
     # =========================================================================
 
-    def _log_message(self, text: str, is_error: bool = False, severity: str = None, source: str = ""):
+    def _log_message(self, text: str, is_error: bool = False, severity: str | None = None, source: str = ""):
         """
         Route a message to the Execution Console.
 
@@ -1310,7 +1310,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if text is None:
             return
-        sev = severity if severity else ("error" if is_error else "auto")
+        sev = severity or ("error" if is_error else "auto")
         self.log_panel.append(text, severity=sev, source=source)
 
     def _log_separator(self):
@@ -1389,14 +1389,10 @@ class MainWindow(QtWidgets.QMainWindow):
         proc = self.process
         if proc is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             proc.close()
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             proc.deleteLater()
-        except Exception:
-            pass
         self.process = None
 
     def _start_preflight_validation(self, _checked: bool = False):
@@ -1634,10 +1630,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # the richer shared solver config edited in the dialog.
             prop_ui = getattr(self, "page_propagation", None)
             if prop_ui is not None:
-                try:
+                with contextlib.suppress(Exception):
                     prop_ui.sync_solver_widgets_from_config()
-                except Exception:
-                    pass
 
     def _on_spacecraft_settings(self, _checked: bool = False):
         """Open Spacecraft Properties Dialog."""
@@ -1647,10 +1641,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_gravity_status(self):
         """Delegate gravity summary refresh to the dedicated force-model page."""
-        try:
+        with contextlib.suppress(Exception):
             self.page_forces._update_gravity_summary_ui()
-        except Exception:
-            pass
 
 
     # =========================================================================
@@ -1700,10 +1692,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_panel.append_run_separator()
 
         # Telemetry reset (TelemetryPage owns the plot)
-        try:
+        with contextlib.suppress(Exception):
             self.page_telemetry.telemetry_multiplot.clear_all()
-        except Exception:
-            pass
 
         self.progress_bar.setValue(0)
         self._stdout_assembler.clear()
@@ -1757,10 +1747,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # A new run supersedes the previous run's diagnostics panel; reset it
         # to the explicit empty state so stale numbers can never be read as
         # belonging to the run that is about to start.
-        try:
+        with contextlib.suppress(Exception):
             self.page_output.set_run_diagnostics(None)
-        except Exception:
-            pass
 
         # Start process. The run separator above already provides the visual
         # break, so we go straight to the launch line.
@@ -1914,10 +1902,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             QtWidgets.QMessageBox.warning(self, "Collision / Impact", reason)
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 self._log_message("[WARN] " + reason, severity="warning")
-            except Exception:
-                pass
 
     def _handle_stdout(self):
         """Assemble complete stdout lines and route them (telemetry or log)."""
@@ -1995,10 +1981,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
 
         # Pass to the telemetry plot (TelemetryPage owns the plot).
-        try:
+        with contextlib.suppress(Exception):
             self.page_telemetry.telemetry_multiplot.add_datapoint(telem)
-        except Exception:
-            pass
 
         # impact monitoring
         self._check_collision(telem)
@@ -2176,10 +2160,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
         splitter_sizes: list[int] = []
-        try:
+        with contextlib.suppress(Exception):
             splitter_sizes = list(self.main_splitter.sizes())
-        except Exception:
-            pass
 
         telemetry_plot_type = ""
         telemetry_time_unit = ""
@@ -2285,9 +2267,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if sys.platform == "win32":
                 os.startfile(path)
             elif sys.platform == "darwin":
-                subprocess.run(["open", str(path)])
+                subprocess.run(["open", str(path)], check=False)
             else:
-                subprocess.run(["xdg-open", str(path)])
+                subprocess.run(["xdg-open", str(path)], check=False)
             self._log_message(f"[UI] Opened output directory: {path}", severity="system")
         except Exception as e:
             self._log_message(f"[Error] Could not open directory: {e}", severity="error")
@@ -2311,7 +2293,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message(f"[Error] Failed to load session: {e}", severity="error")
             QtWidgets.QMessageBox.warning(
                 self, "Load Error",
-                f"Failed to load session file:\n\n{str(e)}"
+                f"Failed to load session file:\n\n{e!s}"
             )
 
     def _action_save_session(self, _checked: bool = False):
@@ -2333,7 +2315,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message(f"[Error] Failed to save session: {e}", severity="error")
             QtWidgets.QMessageBox.warning(
                 self, "Save Error",
-                f"Failed to save session file:\n\n{str(e)}"
+                f"Failed to save session file:\n\n{e!s}"
             )
 
     def _try_prefill_topography_from_config(self):
@@ -2432,10 +2414,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if found:
                 self.gravity_cfg.file_path = found
                 self._log_message(f"[UI] Auto-detected gravity model: {Path(found).name}", severity="system")
-                try:
+                with contextlib.suppress(Exception):
                     self.page_forces._update_gravity_summary_ui()
-                except Exception:
-                    pass
 
     def _update_run_visuals(self, state: str):
         """Update run state visuals."""
@@ -2499,7 +2479,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if hasattr(self, "lbl_output_status"):
                     self.lbl_output_status.setText(out_text)
                     self.lbl_output_status.setToolTip(
-                        out_dir if out_dir else "Output directory — click to choose"
+                        out_dir or "Output directory — click to choose"
                     )
         except Exception:
             pass
@@ -2540,10 +2520,8 @@ class MainWindow(QtWidgets.QMainWindow):
             message = f"[Warning] Session auto-save failed: {exc}"
             if getattr(self, "_last_autosave_error", None) != message:
                 self._last_autosave_error = message
-                try:
+                with contextlib.suppress(Exception):
                     self._log_message(message, severity="warning")
-                except Exception:
-                    pass
             if notify_on_failure:
                 QtWidgets.QMessageBox.warning(
                     self,
@@ -2605,10 +2583,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
         # Persist window geometry so the workspace reopens where the user left it.
-        try:
+        with contextlib.suppress(Exception):
             self._density_settings().setValue("ui/geometry", self.saveGeometry())
-        except Exception:
-            pass
 
         # Save the latest state after shutdown prompts/process cleanup so the
         # persisted snapshot reflects the final visible UI values.

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -67,7 +68,7 @@ def test_stream_to_file_passes_socket_timeout(tmp_path, monkeypatch):
     captured = {}
 
     class _EmptyResponse:
-        headers = {"Content-Length": "0"}
+        headers: ClassVar[dict[str, str]] = {"Content-Length": "0"}
 
         def read(self, _n):
             return b""

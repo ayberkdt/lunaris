@@ -51,11 +51,11 @@ def _committed_files(root: Path) -> list[str]:
         )
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
     except Exception:  # pragma: no cover - git nearly always present in CI
-        out: list[str] = []
-        for path in root.rglob("*"):
-            if path.is_file() and ".git" not in path.parts:
-                out.append(path.relative_to(root).as_posix())
-        return out
+        return [
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file() and ".git" not in path.parts
+        ]
 
 
 def _is_allowed(rel_posix: str) -> bool:

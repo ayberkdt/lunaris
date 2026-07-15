@@ -87,6 +87,7 @@ are purely UI-local into this page (e.g., toggle dependency sync such as
 # =============================================================================
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -524,8 +525,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self.toggle_adaptive.setChecked(self._cfg.adaptive_enabled)
 
         backend_index = self.cb_backend.findData(self._cfg.backend)
-        if backend_index < 0:
-            backend_index = 0
+        backend_index = max(backend_index, 0)
         self.cb_backend.setCurrentIndex(backend_index)
 
         if self._cfg.adaptive_preset in ADAPTIVE_GRAVITY_PROFILES:
@@ -1092,9 +1092,9 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
 
     def _load_current_config(self) -> None:
         idx = self.cb_model.findData(str(getattr(self._cfg, "model", "lambert_facets")))
-        self.cb_model.setCurrentIndex(idx if idx >= 0 else 0)
+        self.cb_model.setCurrentIndex(max(idx, 0))
         sdx = self.cb_source.findData(str(getattr(self._cfg, "source", "constant_albedo")))
-        self.cb_source.setCurrentIndex(sdx if sdx >= 0 else 0)
+        self.cb_source.setCurrentIndex(max(sdx, 0))
         self.sp_const.setValue(float(getattr(self._cfg, "albedo_const", 0.12)))
         self.sp_pcoef.setValue(float(getattr(self._cfg, "pressure_coefficient", 1.0)))
         self.sp_lat.setValue(int(getattr(self._cfg, "facet_lat_count", 18)))
@@ -1276,7 +1276,7 @@ class ThermalSettingsDialog(QtWidgets.QDialog):
 
     def _load_current_config(self) -> None:
         idx = self.cb_mode.findData(str(getattr(self._cfg, "mode", "constant_temperature")))
-        self.cb_mode.setCurrentIndex(idx if idx >= 0 else 0)
+        self.cb_mode.setCurrentIndex(max(idx, 0))
         self.sp_temperature.setValue(float(getattr(self._cfg, "temperature_k", 250.0)))
         self.sp_night_temperature.setValue(float(getattr(self._cfg, "night_temperature_k", 100.0)))
         self.sp_emissivity.setValue(float(getattr(self._cfg, "emissivity", 0.95)))
@@ -1407,7 +1407,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.ent_tide_k3.setText(str(data.get("tide_k3_value", "") or ""))
         self.ent_tide_r_ref.setText(str(data.get("tide_r_ref_m", "") or ""))
         bodies_idx = self.cb_tide_bodies.findData(str(data.get("tide_bodies", "") or ""))
-        self.cb_tide_bodies.setCurrentIndex(bodies_idx if bodies_idx >= 0 else 0)
+        self.cb_tide_bodies.setCurrentIndex(max(bodies_idx, 0))
         self.sw_relativity_1pn.setChecked(bool(data.get("relativity_1pn", False)))
 
         self._update_gravity_summary_ui()
@@ -1476,10 +1476,8 @@ class ForceModelsPage(QtWidgets.QWidget):
             self.lbl_gravity_status.setText("Gravity config updated")
 
         # cost indicator
-        try:
+        with contextlib.suppress(Exception):
             self.ind_gravity_cost.set_level(self._estimate_gravity_cost_level())
-        except Exception:
-            pass
 
     def _sync_force_dependencies(self):
         """

@@ -17,6 +17,7 @@ Design notes
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 import logging
@@ -132,9 +133,9 @@ logger = logging.getLogger(__name__)
 
 
 def _log_section(title: str, values: Mapping[str, Any]) -> None:
-    logger.info(f"=== {title} ===")
+    logger.info("=== %s ===", title)
     for key, value in values.items():
-        logger.info(f"{str(key):24s}: {value}")
+        logger.info("%s: %s", f"{key!s:24s}", value)
 
 
 def set_seed(
@@ -197,10 +198,8 @@ def set_seed(
             logger.warning("set_seed: use_deterministic_algorithms unavailable: %s", exc)
             applied["use_deterministic_algorithms"] = False
     else:
-        try:
+        with contextlib.suppress(Exception):
             torch.use_deterministic_algorithms(False)
-        except Exception:  # pragma: no cover
-            pass
         applied["use_deterministic_algorithms"] = False
 
     logger.info("set_seed applied determinism flags: %s", applied)
@@ -540,7 +539,7 @@ def _warn_batch_size_for_vram(device: torch.device, cfg: TrainConfig) -> None:
     depth = int(getattr(cfg, "depth", 6))
     n_bands = int(getattr(cfg, "n_bands", 1))
     heavy = depth >= 6 and n_bands >= 3
-    logger.info(f"CUDA device: {gpu_name} ({total_gb:.1f} GiB total VRAM)")
+    logger.info("CUDA device: %s (%.1f GiB total VRAM)", gpu_name, total_gb)
 
     suggestion = (
         "Sobolev autograd memory scales with batch_size×depth×n_bands. "
@@ -549,25 +548,27 @@ def _warn_batch_size_for_vram(device: torch.device, cfg: TrainConfig) -> None:
     if total_gb <= 8.0:
         if bs > 4096:
             logger.warning(
-                f"VRAM advisory: batch_size={bs} on a {total_gb:.1f} GiB GPU may OOM. "
-                f"Consider --batch-size 4096 with --grad-accumulation-steps 2-4. {suggestion}"
+                "VRAM advisory: batch_size=%s on a %.1f GiB GPU may OOM. Consider --batch-size "
+                "4096 with --grad-accumulation-steps 2-4. %s",
+                bs, total_gb, suggestion,
             )
     elif total_gb <= 16.0:
         if heavy and bs >= 8192:
             logger.warning(
-                f"VRAM advisory: batch_size={bs} with depth={depth}+n_bands={n_bands} on a "
-                f"{total_gb:.1f} GiB GPU is borderline. If you hit OOM, use "
-                f"--grad-accumulation-steps 2. {suggestion}"
+                "VRAM advisory: batch_size=%s with depth=%s+n_bands=%s on a %.1f GiB GPU is "
+                "borderline. If you hit OOM, use --grad-accumulation-steps 2. %s",
+                bs, depth, n_bands, total_gb, suggestion,
             )
         elif bs > 16384:
             logger.warning(
-                f"VRAM advisory: batch_size={bs} on a {total_gb:.1f} GiB GPU may be tight. {suggestion}"
+                "VRAM advisory: batch_size=%s on a %.1f GiB GPU may be tight. %s",
+                bs, total_gb, suggestion,
             )
-    else:
-        if bs > 65536:
-            logger.warning(
-                f"VRAM advisory: batch_size={bs} is very large even for {total_gb:.1f} GiB. {suggestion}"
-            )
+    elif bs > 65536:
+        logger.warning(
+            "VRAM advisory: batch_size=%s is very large even for %.1f GiB. %s",
+            bs, total_gb, suggestion,
+        )
 
 def move_batch_to_device(
     x: torch.Tensor,
@@ -737,10 +738,8 @@ class STLRPSTrainer:
 
         self.model.train(is_train)
         if self.device.type == "cuda":
-            try:
+            with contextlib.suppress(Exception):
                 torch.cuda.reset_peak_memory_stats(self.device)
-            except Exception:
-                pass
         accel_factor = self.curriculum.accel_factor(epoch) if is_train else 1.0
 
         state = _EpochState()
@@ -783,7 +782,10 @@ class STLRPSTrainer:
         if str(getattr(self.cfg, "log_every_mode", "fixed")).lower() == "auto":
             log_every = max(1, math.ceil(total_batches_est / 10))
 
-        logger.info(f"Starting epoch {epoch + 1} {'train' if is_train else 'validation'} phase...")
+        logger.info(
+            "Starting epoch %s %s phase...",
+            epoch + 1, 'train' if is_train else 'validation',
+        )
         phase_t0 = time.perf_counter()
 
         with torch.set_grad_enabled(True):  # keep grads for val: a = ∇U
@@ -865,8 +867,9 @@ class STLRPSTrainer:
                         _cl_check = float(scaled_loss.item())
                         if math.isnan(_cl_check) or math.isinf(_cl_check):
                             logger.error(
-                                f"[train] NaN/Inf after adding collocation Laplacian at epoch={epoch+1} "
-                                f"batch={state.n_batches}. Saving failure manifest and stopping."
+                                "[train] NaN/Inf after adding collocation Laplacian at epoch=%s "
+                                "batch=%s. Saving failure manifest and stopping.",
+                                epoch+1, state.n_batches,
                             )
                             self._write_failure_manifest(
                                 epoch=epoch,
@@ -1007,10 +1010,10 @@ class STLRPSTrainer:
         loss_check = float(stats.get("loss_opt", loss.item()))
         if math.isnan(loss_check) or math.isinf(loss_check):
             logger.error(
-                f"[{phase}] NaN/Inf loss detected at epoch={epoch+1} batch={batch}. "
-                "Possible derivative instability. "
-                "Suggestions: lower lr, ensure accel_min_factor>0, lower w0, increase accel_ramp_epochs. "
-                "Stopping epoch early."
+                "[%s] NaN/Inf loss detected at epoch=%s batch=%s. Possible derivative instability. "
+                "Suggestions: lower lr, ensure accel_min_factor>0, lower w0, increase "
+                "accel_ramp_epochs. Stopping epoch early.",
+                phase, epoch+1, batch,
             )
             return False
         return True
@@ -1123,8 +1126,9 @@ class STLRPSTrainer:
                         f"value {col_lap_scalar} in train mode."
                     )
                 logger.warning(
-                    "[train] collocation_laplacian_loss non-finite "
-                    f"({col_lap_scalar}); skipped this step (diagnostic mode)."
+                    "[train] collocation_laplacian_loss non-finite (%s); skipped this step "
+                    "(diagnostic mode).",
+                    col_lap_scalar,
                 )
         except Exception as col_e:
             state.col_lap_fail_count += 1
@@ -1138,7 +1142,7 @@ class STLRPSTrainer:
                     "The physics constraint cannot be silently dropped; "
                     "fix the cause or switch laplacian_mode to 'diagnostic'/'off'."
                 ) from col_e
-            logger.warning(f"[train] collocation_laplacian_loss failed: {col_e}")
+            logger.warning("[train] collocation_laplacian_loss failed: %s", col_e)
         return col_lap_loss_val, col_lap_scalar, col_lap_weight
 
     def _backward_step(
@@ -1164,9 +1168,9 @@ class STLRPSTrainer:
             state.total_grad_norm += float(grad_norm)
             if float(grad_norm) > 50.0:
                 logger.warning(
-                    f"[train] grad_norm={float(grad_norm):.1f} > 50 at epoch={epoch+1} "
-                    f"batch={state.n_batches}: possible derivative explosion. "
-                    "Consider lower lr or max_grad_norm."
+                    "[train] grad_norm=%.1f > 50 at epoch=%s batch=%s: possible derivative "
+                    "explosion. Consider lower lr or max_grad_norm.",
+                    float(grad_norm), epoch+1, state.n_batches,
                 )
 
         def _update_ema() -> None:
@@ -1301,13 +1305,22 @@ class STLRPSTrainer:
             extra_summary += " alt-balance=on"
         # loss_ref is always the full reference (val uses full weight; train uses accel_factor)
         logger.info(
-            f"[{phase}] epoch={epoch+1} done: {state.samples_done:,} samples in "
-            f"{_format_seconds(phase_time)}"
-            f" ({phase_time / n_safe * 1000:.1f}ms/batch)"
-            f" loss_opt={state.total_opt_loss/n_safe:.5e} loss_ref={state.total_loss/n_safe:.5e}"
-            f" U={state.total_u/n_safe:.3e} a={state.total_a/n_safe:.3e}"
-            f" a_norm_mean={state.total_a_norm_mean/n_safe:.3e} a_norm_max={state.a_norm_max:.3e}"
-            f" accel_f={accel_factor:.3f}{dir_summary}{extra_summary}"
+            "[%s] epoch=%s done: %s samples in %s (%.1fms/batch) loss_opt=%.5e loss_ref=%.5e "
+            "U=%.3e a=%.3e a_norm_mean=%.3e a_norm_max=%.3e accel_f=%.3f%s%s",
+            phase,
+            epoch+1,
+            f"{state.samples_done:,}",
+            _format_seconds(phase_time),
+            phase_time / n_safe * 1000,
+            state.total_opt_loss/n_safe,
+            state.total_loss/n_safe,
+            state.total_u/n_safe,
+            state.total_a/n_safe,
+            state.total_a_norm_mean/n_safe,
+            state.a_norm_max,
+            accel_factor,
+            dir_summary,
+            extra_summary,
         )
 
         n_col_diag = max(1, state.col_lap_diag_count)
@@ -1494,7 +1507,10 @@ def _save_training_plots(history: list[dict[str, float]], outdir: Path) -> None:
     try:
         epochs = np.asarray([int(item["epoch"]) + 1 for item in history], dtype=float)
     except Exception as exc:
-        logger.warning(f"training-history plots skipped because epoch values could not be read: {exc}")
+        logger.warning(
+            "training-history plots skipped because epoch values could not be read: %s",
+            exc,
+        )
         return
 
     def _series(key: str, default: float = float("nan")) -> list[float]:
@@ -1577,7 +1593,7 @@ def _save_training_plots(history: list[dict[str, float]], outdir: Path) -> None:
             fig.savefig(path, dpi=180)
             plt.close(fig)
         except Exception as exc:
-            logger.warning(f"training plot {path.name} could not be written: {exc}")
+            logger.warning("training plot %s could not be written: %s", path.name, exc)
 
     _plot_series(
         outdir / "loss_total.png",
@@ -1657,27 +1673,33 @@ def _save_training_plots(history: list[dict[str, float]], outdir: Path) -> None:
 def _log_dataset_and_model_summary(N, _effective_target, bytes_est, cfg, data_path, dataset_body_name, dset_name, independent_val, meta, n_train, n_val, resolved_mu_si, resolved_r_ref_m, train_data_path, val_data_path):
     logger.info("=== Dataset ===")
     if independent_val:
-        logger.info(f"Train file: {train_data_path.name} ({n_train:,} samples)")
-        logger.info(f"Val file  : {val_data_path.name} ({n_val:,} samples)")
+        logger.info("Train file: %s (%s samples)", train_data_path.name, f"{n_train:,}")
+        logger.info("Val file  : %s (%s samples)", val_data_path.name, f"{n_val:,}")
         if cfg.test_data:
-            logger.info(f"Test file : {cfg.test_data}")
+            logger.info("Test file : %s", cfg.test_data)
         if cfg.ood_data:
-            logger.info(f"OOD file  : {cfg.ood_data}")
+            logger.info("OOD file  : %s", cfg.ood_data)
     _sm = getattr(cfg, "suite_manifest", None)
     if _sm:
-        logger.info(f"Suite manifest: {_sm}")
+        logger.info("Suite manifest: %s", _sm)
     else:
-        logger.info(f"File: {data_path.name}")
-    logger.info(f"Target Dataset: {dset_name} | Total: [{N:,}, 7] | Size: {_human_bytes(bytes_est)}")
-    logger.info(f"Train/val split: {n_train:,} / {n_val:,}")
+        logger.info("File: %s", data_path.name)
+    logger.info(
+        "Target Dataset: %s | Total: [%s, 7] | Size: %s",
+        dset_name, f"{N:,}", _human_bytes(bytes_est),
+    )
+    logger.info("Train/val split: %s / %s", f"{n_train:,}", f"{n_val:,}")
     logger.info("=== Physics Metadata (auto-synced from HDF5) ===")
-    logger.info(f"central_body : {dataset_body_name}")
-    logger.info(f"unit_system  : {meta.unit_system}")
-    logger.info(f"mu_si        : {resolved_mu_si}  |  r_ref_m : {resolved_r_ref_m}")
-    logger.info(f"degree_max   : {meta.requested_degree}  |  degree_min : {meta.degree_min}")
-    logger.info(f"target_mode  : {meta.target_mode or 'unknown (inferred: ' + _effective_target + ')'}")
-    logger.info(f"columns      : {meta.columns or 'unknown'}")
-    logger.info(f"a_sign_conv  : {meta.a_sign_convention or 'unknown'}")
+    logger.info("central_body : %s", dataset_body_name)
+    logger.info("unit_system  : %s", meta.unit_system)
+    logger.info("mu_si        : %s  |  r_ref_m : %s", resolved_mu_si, resolved_r_ref_m)
+    logger.info("degree_max   : %s  |  degree_min : %s", meta.requested_degree, meta.degree_min)
+    logger.info(
+        "target_mode  : %s",
+        meta.target_mode or 'unknown (inferred: ' + _effective_target + ')',
+    )
+    logger.info("columns      : %s", meta.columns or 'unknown')
+    logger.info("a_sign_conv  : %s", meta.a_sign_convention or 'unknown')
     _dcv = getattr(meta, "derivative_convention_version", None)
     if _dcv is None:
         logger.warning(
@@ -1686,68 +1708,80 @@ def _log_dataset_and_model_summary(N, _effective_target, bytes_est, cfg, data_pa
             "Regenerate with the corrected spatial_cloud_generator.py."
         )
     else:
-        logger.info(f"deriv_conv   : {_dcv}")
+        logger.info("deriv_conv   : %s", _dcv)
     if meta.alt_min_km is not None and meta.alt_max_km is not None:
-        logger.info(f"alt range    : [{meta.alt_min_km}, {meta.alt_max_km}] km")
-    logger.info(f"Conversion factors (DU/TU/VU): {meta.DU_m} / {meta.TU_s} / {meta.VU_m_s}")
+        logger.info("alt range    : [%s, %s] km", meta.alt_min_km, meta.alt_max_km)
+    logger.info("Conversion factors (DU/TU/VU): %s / %s / %s", meta.DU_m, meta.TU_s, meta.VU_m_s)
     logger.info("=== Model ===")
     _n_bands_log = getattr(cfg, "n_bands", 1)
     _use_res_log = getattr(cfg, "use_residual_blocks", False)
     _grad_acc_log = getattr(cfg, "grad_accumulation_steps", 1)
-    logger.info(f"{'model.activation':24s}: {cfg.activation}")
-    logger.info(f"{'model.hidden':24s}: {cfg.hidden}")
-    logger.info(f"{'model.depth':24s}: {cfg.depth}")
-    logger.info(f"{'model.preset':24s}: {getattr(cfg, 'model_preset', 'custom')}")
-    logger.info(f"{'run.preset':24s}: {getattr(cfg, 'run_preset', 'custom')}")
-    logger.info(f"{'data.split_policy':24s}: {getattr(cfg, 'split_policy', 'seeded_random')}")
-    logger.info(f"{'model.n_bands':24s}: {_n_bands_log}")
-    logger.info(f"{'model.w0_first':24s}: {cfg.w0_first}")
-    logger.info(f"{'model.w0_hidden':24s}: {cfg.w0_hidden}")
-    logger.info(f"{'model.w0_bands':24s}: {getattr(cfg, 'w0_bands', None)}")
-    logger.info(f"{'model.residual_blocks':24s}: {_use_res_log}")
-    logger.info(f"{'grad_accum':24s}: {_grad_acc_log}")
+    logger.info("%s: %s", f"{'model.activation':24s}", cfg.activation)
+    logger.info("%s: %s", f"{'model.hidden':24s}", cfg.hidden)
+    logger.info("%s: %s", f"{'model.depth':24s}", cfg.depth)
+    logger.info("%s: %s", f"{'model.preset':24s}", getattr(cfg, 'model_preset', 'custom'))
+    logger.info("%s: %s", f"{'run.preset':24s}", getattr(cfg, 'run_preset', 'custom'))
+    logger.info(
+        "%s: %s",
+        f"{'data.split_policy':24s}", getattr(cfg, 'split_policy', 'seeded_random'),
+    )
+    logger.info("%s: %s", f"{'model.n_bands':24s}", _n_bands_log)
+    logger.info("%s: %s", f"{'model.w0_first':24s}", cfg.w0_first)
+    logger.info("%s: %s", f"{'model.w0_hidden':24s}", cfg.w0_hidden)
+    logger.info("%s: %s", f"{'model.w0_bands':24s}", getattr(cfg, 'w0_bands', None))
+    logger.info("%s: %s", f"{'model.residual_blocks':24s}", _use_res_log)
+    logger.info("%s: %s", f"{'grad_accum':24s}", _grad_acc_log)
 
 def _log_training_curriculum(_accel_min_fac, cfg):
     logger.info("=== Training Curriculum ===")
     logger.info(
-        f"potential_only_epochs={cfg.potential_only_epochs} | "
-        f"accel_ramp_epochs={cfg.accel_ramp_epochs} | "
-        f"accel_min_factor={_accel_min_fac}"
+        "potential_only_epochs=%s | accel_ramp_epochs=%s | accel_min_factor=%s",
+        cfg.potential_only_epochs, cfg.accel_ramp_epochs, _accel_min_fac,
     )
     # Derivative training note: acceleration is ∇U, so it must be constrained from epoch 0.
     if cfg.potential_only_epochs > 0:
         logger.warning(
-            "potential_only_epochs > 0 detected. "
-            "SIREN can fit dU while grad(dU) drifts because acceleration is computed via autograd. "
-            f"accel_min_factor={_accel_min_fac} keeps a floor to limit drift. "
-            "Set accel_min_factor=0.0 only if you explicitly want pure potential-only behaviour."
+            "potential_only_epochs > 0 detected. SIREN can fit dU while grad(dU) drifts because "
+            "acceleration is computed via autograd. accel_min_factor=%s keeps a floor to limit "
+            "drift. Set accel_min_factor=0.0 only if you explicitly want pure potential-only "
+            "behaviour.",
+            _accel_min_fac,
         )
     if _accel_min_fac == 0.0:
         logger.info("  Derivative training note: accel_min_factor=0.0 (pure potential-only during warm-up).")
     else:
         logger.info(
-            f"  Derivative training note: acceleration is always active (floor={_accel_min_fac}). "
-            "This prevents grad(dU) from drifting during curriculum warm-up."
+            "  Derivative training note: acceleration is always active (floor=%s). This prevents "
+            "grad(dU) from drifting during curriculum warm-up.",
+            _accel_min_fac,
         )
 
     if cfg.use_altitude_balanced_loss:
-        logger.info(f"  Altitude-Balanced Loss: ON (bins={cfg.altitude_bin_width_km}km)")
+        logger.info("  Altitude-Balanced Loss: ON (bins=%skm)", cfg.altitude_bin_width_km)
     if cfg.use_radial_cross_loss:
-        logger.info(f"  Radial/Cross Loss: ON (radial_w={cfg.radial_loss_weight}, cross_w={cfg.cross_loss_weight})")
+        logger.info(
+            "  Radial/Cross Loss: ON (radial_w=%s, cross_w=%s)",
+            cfg.radial_loss_weight, cfg.cross_loss_weight,
+        )
     if cfg.use_laplacian_regularization:
         _lap_mode_log = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
         if _lap_mode_log == "train":
             logger.info(
-                f"  In-batch Laplacian Reg: ON, mode=train (gradient backpropagates) "
-                f"(w={cfg.laplacian_weight}, every={cfg.laplacian_every_n_batches})"
+                "  In-batch Laplacian Reg: ON, mode=train (gradient backpropagates) (w=%s, "
+                "every=%s)",
+                cfg.laplacian_weight, cfg.laplacian_every_n_batches,
             )
         else:
             logger.info(
-                f"  In-batch Laplacian Reg: ON, mode={_lap_mode_log} (DIAGNOSTIC ONLY - logged, "
-                f"NOT backpropagated). For a trainable physics constraint set --laplacian-mode train "
-                f"(collocation Laplacian is the preferred trainable regulariser)."
+                "  In-batch Laplacian Reg: ON, mode=%s (DIAGNOSTIC ONLY - logged, NOT "
+                "backpropagated). For a trainable physics constraint set --laplacian-mode train "
+                "(collocation Laplacian is the preferred trainable regulariser).",
+                _lap_mode_log,
             )
-    logger.info(f"  Direction Loss: weight={cfg.direction_loss_weight}, start={cfg.direction_loss_start_epoch}, ramp={cfg.direction_loss_ramp_epochs}")
+    logger.info(
+        "  Direction Loss: weight=%s, start=%s, ramp=%s",
+        cfg.direction_loss_weight, cfg.direction_loss_start_epoch, cfg.direction_loss_ramp_epochs,
+    )
     # NOTE: best-checkpoint-metric logging moved below, after _best_metric_canonical
     # and checkpoint_selection are defined (they were referenced here before
     # assignment, which made train() raise UnboundLocalError on every run).
@@ -1765,16 +1799,22 @@ def _log_training_curriculum(_accel_min_fac, cfg):
 
 def _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_reason, cfg, dataset_mb, should_preload):
     logger.info("=== Data Loading Policy ===")
-    logger.info(f"  dataset estimated size : {dataset_mb:.1f} MB ({N:,} rows)")
-    logger.info(f"  preload_policy         : {_policy}")
-    logger.info(f"  auto_preload_mb        : {float(getattr(cfg, 'auto_preload_mb', 2048.0)):.1f} MB")
-    logger.info(f"  estimated preload RAM  : {_est_ram_mb:.0f} MB")
+    logger.info("  dataset estimated size : %.1f MB (%s rows)", dataset_mb, f"{N:,}")
+    logger.info("  preload_policy         : %s", _policy)
+    logger.info(
+        "  auto_preload_mb        : %.1f MB",
+        float(getattr(cfg, 'auto_preload_mb', 2048.0)),
+    )
+    logger.info("  estimated preload RAM  : %.0f MB", _est_ram_mb)
     if _avail_ram_mb is not None:
-        logger.info(f"  available RAM budget   : {_avail_ram_mb:.0f} MB (tightest detected limit)")
+        logger.info("  available RAM budget   : %.0f MB (tightest detected limit)", _avail_ram_mb)
     else:
         logger.info("  available RAM budget   : unknown (preload safety veto unavailable)")
-    logger.info(f"  decision               : {'RAM preload' if should_preload else 'HDF5 streaming'}")
-    logger.info(f"  reason                 : {_preload_reason}")
+    logger.info(
+        "  decision               : %s",
+        'RAM preload' if should_preload else 'HDF5 streaming',
+    )
+    logger.info("  reason                 : %s", _preload_reason)
 
 
 @dataclass
@@ -1979,7 +2019,7 @@ def _fit_residual_scalers(
     scaler_path = layout.scaler_json
     scaler_hash_info: dict[str, Any]
     if scaler_path.exists():
-        logger.info(f"Loading existing scaler from {scaler_path.name}")
+        logger.info("Loading existing scaler from %s", scaler_path.name)
         scaler = ScalerPack.load_json(scaler_path)
         # A scaler is train data, not a generic cache.  Reusing it in a fresh
         # run is safe only when its split and dataset identity match exactly.
@@ -2072,7 +2112,7 @@ def _fit_residual_scalers(
             gravity_model=_maybe_load_baseline_gravity_model(meta, target_contract),
         )
         scaler_hash_info = write_scaler_json(layout, scaler)
-    logger.info(f"[artifacts] scaler_hash={scaler_hash_info['scaler_hash']}")
+    logger.info("[artifacts] scaler_hash=%s", scaler_hash_info['scaler_hash'])
     update_run_manifest(
         layout,
         {
@@ -2135,15 +2175,15 @@ def _build_dataloaders(
     )
     _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_reason, cfg, dataset_mb, should_preload)
     if should_preload and "WARNING" in _preload_reason:
-        logger.warning(f"Preload RAM-safety: {_preload_reason}")
+        logger.warning("Preload RAM-safety: %s", _preload_reason)
 
     if should_preload:
         logger.info("Data mode: RAM preload")
         if independent_val:
-            logger.info(f"Loading train ({n_train:,}) from {train_data_path.name}...")
+            logger.info("Loading train (%s) from %s...", f"{n_train:,}", train_data_path.name)
             with h5py.File(train_data_path, "r", libver="latest", swmr=True) as _f:
                 _arr_train = np.asarray(_f[dset_name][:], dtype=np.float64)
-            logger.info(f"Loading val ({n_val:,}) from {val_data_path.name}...")
+            logger.info("Loading val (%s) from %s...", f"{n_val:,}", val_data_path.name)
             with h5py.File(val_data_path, "r", libver="latest", swmr=True) as _f:
                 _arr_val = np.asarray(_f[dset_name][:], dtype=np.float64)
 
@@ -2163,7 +2203,7 @@ def _build_dataloaders(
             )
             del _xt, _ut, _at, _xv, _uv, _av
         else:
-            logger.info(f"Loading {N:,} rows into CPU memory (~{dataset_mb:.2f} MB)...")
+            logger.info("Loading %s rows into CPU memory (~%.2f MB)...", f"{N:,}", dataset_mb)
             with h5py.File(data_path, "r", libver="latest", swmr=True) as _f:
                 _arr = np.asarray(_f[dset_name][:], dtype=np.float64)
 
@@ -2192,7 +2232,7 @@ def _build_dataloaders(
         pin = cfg.pin_memory and device.type == "cuda"
         mem_workers = max(0, cfg.num_workers)
         pf = cfg.prefetch_factor if (mem_workers > 0 and cfg.prefetch_factor is not None) else None
-        logger.info(f"Train/val split: {n_train:,} / {n_val:,}")
+        logger.info("Train/val split: %s / %s", f"{n_train:,}", f"{n_val:,}")
         logger.info(
             f"pin_memory={pin}, non_blocking={pin}, num_workers={mem_workers} (requested={cfg.num_workers})"
             + (f", prefetch_factor={pf}" if pf is not None else "")
@@ -2374,14 +2414,23 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
         _require_meta_match("target_mode", meta.target_mode, meta_val.target_mode)
         if meta_val.mu_si is not None and meta.mu_si is not None:
             if abs(meta_val.mu_si - meta.mu_si) > 1.0:
-                logger.warning(f"Train/Val mu_si mismatch: {meta.mu_si} vs {meta_val.mu_si}")
+                logger.warning("Train/Val mu_si mismatch: %s vs %s", meta.mu_si, meta_val.mu_si)
         if meta_val.r_ref_m is not None and meta.r_ref_m is not None:
             if abs(meta_val.r_ref_m - meta.r_ref_m) > 1.0:
-                logger.warning(f"Train/Val r_ref_m mismatch: {meta.r_ref_m} vs {meta_val.r_ref_m}")
+                logger.warning(
+                    "Train/Val r_ref_m mismatch: %s vs %s",
+                    meta.r_ref_m, meta_val.r_ref_m,
+                )
         if meta.unit_system != meta_val.unit_system:
-            logger.warning(f"Train/Val unit_system mismatch: {meta.unit_system} vs {meta_val.unit_system}")
+            logger.warning(
+                "Train/Val unit_system mismatch: %s vs %s",
+                meta.unit_system, meta_val.unit_system,
+            )
         if meta.degree_min != meta_val.degree_min:
-            logger.warning(f"Train/Val degree_min mismatch: {meta.degree_min} vs {meta_val.degree_min}")
+            logger.warning(
+                "Train/Val degree_min mismatch: %s vs %s",
+                meta.degree_min, meta_val.degree_min,
+            )
     else:
         with h5py.File(data_path, "r", swmr=True) as f:
             N = int(f[dset_name].shape[0])
@@ -2407,8 +2456,8 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
         cfg.altitude_min_km = float(meta.alt_min_km)
         cfg.altitude_max_km = float(meta.alt_max_km)
         logger.info(
-            "Altitude-balanced loss bounds resolved from dataset metadata: "
-            f"[{cfg.altitude_min_km:.3f}, {cfg.altitude_max_km:.3f}] km"
+            "Altitude-balanced loss bounds resolved from dataset metadata: [%.3f, %.3f] km",
+            cfg.altitude_min_km, cfg.altitude_max_km,
         )
 
     dataset_contract_obj = DatasetContract.from_hdf5(
@@ -2533,25 +2582,28 @@ def _build_model_and_optim(
         _missing = list(getattr(_load_res, "missing_keys", []) or [])
         _unexpected = list(getattr(_load_res, "unexpected_keys", []) or [])
         if _missing or _unexpected:
-            logger.warning(f"[resume] non-strict model load: missing={_missing} unexpected={_unexpected}")
-        logger.info(f"[resume] model weights restored from {_resume_ckpt_path}")
+            logger.warning(
+                "[resume] non-strict model load: missing=%s unexpected=%s",
+                _missing, _unexpected,
+            )
+        logger.info("[resume] model weights restored from %s", _resume_ckpt_path)
 
     # Log architecture details (equivalent to old manual logging, but from the built model)
     _n_bands_built = max(1, int(getattr(cfg, "n_bands", 1)))
     _use_res_built = bool(getattr(cfg, "use_residual_blocks", False))
     if cfg.use_fourier:
         logger.info(
-            f"Fourier embedding: n_features={cfg.fourier_n_features}, "
-            f"sigma={cfg.fourier_sigma}, append_raw={cfg.fourier_append_raw}"
+            "Fourier embedding: n_features=%s, sigma=%s, append_raw=%s",
+            cfg.fourier_n_features, cfg.fourier_sigma, cfg.fourier_append_raw,
         )
     if cfg.activation.lower() == "sine":
         if _n_bands_built > 1:
             # Log the EXACT bands the model was built with (resolved into cfg above),
             # not an independently recomputed value that could silently diverge.
             logger.info(
-                f"Built Multi-Scale SIREN: n_bands={_n_bands_built}, w0_bands={cfg.w0_bands}, "
-                f"degree_min={cfg.degree_min}, degree_max={cfg.degree_max}, "
-                f"depth={cfg.depth}, hidden={cfg.hidden}"
+                "Built Multi-Scale SIREN: n_bands=%s, w0_bands=%s, degree_min=%s, degree_max=%s, "
+                "depth=%s, hidden=%s",
+                _n_bands_built, cfg.w0_bands, cfg.degree_min, cfg.degree_max, cfg.depth, cfg.hidden,
             )
             # Defensive cross-check: the model's resolved bands must equal cfg's.
             _model_bands = list(getattr(model, "w0_bands", []) or [])
@@ -2562,16 +2614,17 @@ def _build_model_and_optim(
                 )
         else:
             logger.info(
-                f"Built SIREN backbone: depth={cfg.depth}, hidden={cfg.hidden}, "
-                f"w0_first={cfg.w0_first}, w0_hidden={cfg.w0_hidden}, "
-                f"residual_blocks={_use_res_built}"
+                "Built SIREN backbone: depth=%s, hidden=%s, w0_first=%s, w0_hidden=%s, "
+                "residual_blocks=%s",
+                cfg.depth, cfg.hidden, cfg.w0_first, cfg.w0_hidden, _use_res_built,
             )
     else:
         logger.info(
-            f"Built MLP backbone: depth={cfg.depth}, hidden={cfg.hidden}, activation={cfg.activation}"
+            "Built MLP backbone: depth=%s, hidden=%s, activation=%s",
+            cfg.depth, cfg.hidden, cfg.activation,
         )
     _total_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Total parameters: {_total_params:,}")
+    logger.info("Total parameters: %s", f"{_total_params:,}")
 
     # Capture model-derived architecture metadata for config.json / checkpoint
     # persistence below. (Previously this block tried to rewrite config.json
@@ -2580,8 +2633,8 @@ def _build_model_and_optim(
     _in_fdim_built = int(getattr(model, "input_feature_dim", 3))
     _arch_signature = compute_architecture_signature(cfg)
     logger.info(
-        f"Encoding: embedding_type={_emb_type_built}  input_feature_dim={_in_fdim_built}  "
-        f"builder={MODEL_BUILDER_VERSION}  arch_signature={_arch_signature}"
+        "Encoding: embedding_type=%s  input_feature_dim=%s  builder=%s  arch_signature=%s",
+        _emb_type_built, _in_fdim_built, MODEL_BUILDER_VERSION, _arch_signature,
     )
 
     weights = GradNormWeights(
@@ -2591,14 +2644,18 @@ def _build_model_and_optim(
         w_a_min=cfg.gradnorm_w_a_min,
         w_a_max=cfg.gradnorm_w_a_max,
     )
-    logger.info(f"Loss weighting: mode={cfg.gradnorm_mode}  w_u={cfg.w_u:.2f}  w_a_init={cfg.w_a:.2f}")
+    logger.info(
+        "Loss weighting: mode=%s  w_u=%.2f  w_a_init=%.2f",
+        cfg.gradnorm_mode, cfg.w_u, cfg.w_a,
+    )
 
     if _resume_requested:
         _gnw_state = (_resume_ckpt.get("training_state") or {}).get("gradnorm_weights")
         if _gnw_state:
             weights.load_state_dict(_gnw_state)
             logger.info(
-                f"[resume] GradNorm state restored (w_a={weights.w_a:.4f}, ntk_done={weights._ntk_done})."
+                "[resume] GradNorm state restored (w_a=%.4f, ntk_done=%s).",
+                weights.w_a, weights._ntk_done,
             )
         else:
             logger.warning(
@@ -2616,7 +2673,7 @@ def _build_model_and_optim(
         target_contract=target_contract,
         gravity_model=_maybe_load_baseline_gravity_model(meta, target_contract),
     ).to(device=device, dtype=DTYPE)
-    logger.info(f"Residual baseline: {target_contract.baseline_description}")
+    logger.info("Residual baseline: %s", target_contract.baseline_description)
 
     head_params = _get_output_head_params(model)
     head_param_ids = {id(param) for param in head_params}
@@ -2648,8 +2705,8 @@ def _build_model_and_optim(
     else:
         opt = AdamW(param_groups)
     logger.info(
-        f"Optimizer groups: body_lr={cfg.lr:.2e}, body_wd={cfg.weight_decay:.2e}, "
-        f"head_lr={cfg.lr * float(cfg.output_head_lr_mult):.2e}, head_wd=0.00e+00"
+        "Optimizer groups: body_lr=%.2e, body_wd=%.2e, head_lr=%.2e, head_wd=0.00e+00",
+        cfg.lr, cfg.weight_decay, cfg.lr * float(cfg.output_head_lr_mult),
     )
     for group in opt.param_groups:
         group["initial_lr"] = float(group["lr"])
@@ -2663,7 +2720,10 @@ def _build_model_and_optim(
             except Exception as _oexc:
                 if bool(getattr(cfg, "resume_strict", True)):
                     raise RuntimeError(f"[resume] optimizer state restore failed: {_oexc}") from _oexc
-                logger.warning(f"[resume] optimizer restore failed (non-strict); continuing fresh: {_oexc}")
+                logger.warning(
+                    "[resume] optimizer restore failed (non-strict); continuing fresh: %s",
+                    _oexc,
+                )
         elif bool(getattr(cfg, "resume_strict", True)):
             raise RuntimeError(
                 "[resume] checkpoint has no optimizer_state_dict (strict). "
@@ -2780,9 +2840,9 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             _n_gpu = int(torch.cuda.device_count())
             if _n_gpu > 1:
                 logger.info(
-                    f"{_n_gpu} CUDA devices are visible but ST-LRPS training uses a single "
-                    f"device ({torch.cuda.get_device_name(device)}); the extra GPUs stay idle. "
-                    "Request one GPU per job (e.g. --gres=gpu:1)."
+                    "%s CUDA devices are visible but ST-LRPS training uses a single device (%s); "
+                    "the extra GPUs stay idle. Request one GPU per job (e.g. --gres=gpu:1).",
+                    _n_gpu, torch.cuda.get_device_name(device),
                 )
         except Exception:  # pragma: no cover - driver dependent
             pass
@@ -2812,8 +2872,9 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         )
         if _resume_layout.run_dir != layout.run_dir:
             logger.warning(
-                f"[resume] --out ({layout.run_dir}) differs from the resumed run "
-                f"({_resume_layout.run_dir}); writing to the resumed run directory."
+                "[resume] --out (%s) differs from the resumed run (%s); writing to the resumed run "
+                "directory.",
+                layout.run_dir, _resume_layout.run_dir,
             )
             layout = ensure_run_layout(_resume_layout.run_dir)
             outdir = layout.run_dir
@@ -2827,7 +2888,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             try:
                 _prev_cfg = json.loads(layout.config_json.read_text(encoding="utf-8"))
             except Exception as exc:
-                logger.warning(f"[resume] could not read previous config.json: {exc}")
+                logger.warning("[resume] could not read previous config.json: %s", exc)
         if not _prev_cfg:
             _prev_cfg = dict(_resume_ckpt.get("config") or {})
 
@@ -2852,7 +2913,10 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
                     _locked_changed.append(_f)
                 setattr(cfg, _f, _prev_cfg.get(_f))
         if _locked_changed:
-            logger.info(f"[resume] locked architecture/scaler fields to previous run: {_locked_changed}")
+            logger.info(
+                "[resume] locked architecture/scaler fields to previous run: %s",
+                _locked_changed,
+            )
 
         # Continuation counters from the checkpoint.
         start_epoch = int(_resume_ckpt.get("epoch", -1)) + 1
@@ -2883,9 +2947,13 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
                 f"pass e.g. --epochs {start_epoch + 100}."
             )
         logger.info(
-            f"[resume] checkpoint={_resume_ckpt_path} | last_completed_epoch={start_epoch} "
-            f"| resuming at epoch {start_epoch + 1} | target_epochs={cfg.epochs} "
-            f"| strict={bool(getattr(cfg, 'resume_strict', True))}"
+            "[resume] checkpoint=%s | last_completed_epoch=%s | resuming at epoch %s | "
+            "target_epochs=%s | strict=%s",
+            _resume_ckpt_path,
+            start_epoch,
+            start_epoch + 1,
+            cfg.epochs,
+            bool(getattr(cfg, 'resume_strict', True)),
         )
 
     _log_section(
@@ -2972,7 +3040,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             )
             _resume_cmd_path.write_text(command_line + "\n", encoding="utf-8")
         except Exception as _rc_exc:  # pragma: no cover - defensive
-            logger.warning(f"[resume] could not write resume command provenance: {_rc_exc}")
+            logger.warning("[resume] could not write resume command provenance: %s", _rc_exc)
         update_run_manifest(
             layout,
             {
@@ -3011,7 +3079,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         _qc_epochs = (int(start_epoch) + 1) if _resume_requested else 1
         logger.info("=" * 62)
         logger.info("QUICK CHECK MODE: this is not a real training run.")
-        logger.info(f"  epochs={_qc_epochs}  max_train_batches=5  max_val_batches=2  log_every=1")
+        logger.info("  epochs=%s  max_train_batches=5  max_val_batches=2  log_every=1", _qc_epochs)
         logger.info("=" * 62)
         cfg.epochs = _qc_epochs
         cfg.log_every = 1
@@ -3080,9 +3148,9 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         _has_residual_cols = ("du" in _cols_lower or "dax" in _cols_lower)
         if degree_min_val >= 0 and not _has_residual_cols and "[x,y,z,u,ax,ay,az]" in _cols_lower:
             logger.warning(
-                f"Dataset columns are labeled full-field ({meta.columns!r}) but "
-                f"degree_min={degree_min_val} >= 0 suggests a residual dataset. "
-                "Verify dataset generation parameters."
+                "Dataset columns are labeled full-field (%r) but degree_min=%s >= 0 suggests a "
+                "residual dataset. Verify dataset generation parameters.",
+                meta.columns, degree_min_val,
             )
 
     _log_dataset_and_model_summary(N, _effective_target, bytes_est, cfg, data_path, dataset_body_name, dset_name, independent_val, meta, n_train, n_val, resolved_mu_si, resolved_r_ref_m, train_data_path, val_data_path)
@@ -3090,13 +3158,15 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     if cfg.activation.lower() == "sine":
         if cfg.lr > 5e-4:
             logger.warning(
-                f"SIREN+Sobolev stability: lr={cfg.lr:.2e} is high. "
-                "Recommended lr <= 5e-4 (1e-4 is safer) for derivative/Sobolev training."
+                "SIREN+Sobolev stability: lr=%.2e is high. Recommended lr <= 5e-4 (1e-4 is safer) "
+                "for derivative/Sobolev training.",
+                cfg.lr,
             )
         if float(cfg.output_head_lr_mult) > 1.0:
             logger.warning(
-                f"SIREN+Sobolev: output_head_lr_mult={cfg.output_head_lr_mult} > 1.0 can "
-                "destabilize the grad(U) output. Recommended value: 1.0."
+                "SIREN+Sobolev: output_head_lr_mult=%s > 1.0 can destabilize the grad(U) output. "
+                "Recommended value: 1.0.",
+                cfg.output_head_lr_mult,
             )
 
     _accel_min_fac = float(getattr(cfg, "accel_min_factor", 0.05))
@@ -3104,7 +3174,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
 
     # 5. Resolve mu_si
     mu_val = float(resolved_mu_si)
-    logger.info(f"Hierarchical base model: mu_si = {mu_val:.6e}")
+    logger.info("Hierarchical base model: mu_si = %.6e", mu_val)
 
     # 6. Infer acceleration sign
     if isinstance(cfg.a_sign, str) and cfg.a_sign.lower() == "auto":
@@ -3117,7 +3187,10 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
                 a_sign = -1.0
                 logger.info("Acceleration sign from dataset metadata: a_sign=-1.0")
             else:
-                logger.warning(f"Unrecognised a_sign_convention='{_sgn}'; falling back to auto-inference.")
+                logger.warning(
+                    "Unrecognised a_sign_convention='%s'; falling back to auto-inference.",
+                    _sgn,
+                )
                 a_sign = infer_a_sign_from_data(
                     h5_path=primary_path, dset_name=dset_name, meta=meta,
                     use_si=cfg.use_si, n_probe=50_000, seed=cfg.fit_seed + 777
@@ -3137,10 +3210,12 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         a_sign=float(a_sign),
     )
     logger.info(
-        "Target contract: "
-        f"mode={target_contract.target_mode}, baseline={target_contract.baseline_kind}, "
-        f"base_degree={target_contract.base_degree}, target_degree={target_contract.target_degree}, "
-        f"frame={target_contract.frame}"
+        "Target contract: mode=%s, baseline=%s, base_degree=%s, target_degree=%s, frame=%s",
+        target_contract.target_mode,
+        target_contract.baseline_kind,
+        target_contract.base_degree,
+        target_contract.target_degree,
+        target_contract.frame,
     )
 
     # 7. Fit isometric scalers on residuals
@@ -3291,9 +3366,12 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
                 suite_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 atomic_write_json(layout.provenance_dir / "suite_manifest_snapshot.json", suite_manifest)
             else:
-                logger.warning(f"Suite manifest not found while writing config: {suite_manifest_path}")
+                logger.warning(
+                    "Suite manifest not found while writing config: %s",
+                    suite_manifest_path,
+                )
         except Exception as exc:
-            logger.warning(f"Could not read suite manifest while writing config: {exc}")
+            logger.warning("Could not read suite manifest while writing config: %s", exc)
 
     capture_environment_snapshot(layout, extra={"device": str(device), "run_id": outdir.name})
 
@@ -3319,7 +3397,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         },
     )
     _bm = str(_best_metric_canonical)
-    logger.info(f"  Best-checkpoint metric: {_bm} | formula={checkpoint_selection['formula']}")
+    logger.info("  Best-checkpoint metric: %s | formula=%s", _bm, checkpoint_selection['formula'])
     if _bm == "direction_loss":
         logger.warning("best_metric='direction_loss' is experimental. "
                        "Early epochs may select underdeveloped checkpoints. "
@@ -3432,7 +3510,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
                 raise RuntimeError(
                     f"[resume] architecture/dataset-critical config mismatch vs checkpoint: {_vexc}"
                 ) from _vexc
-            logger.warning(f"[resume] non-strict: ignoring config mismatch vs checkpoint: {_vexc}")
+            logger.warning("[resume] non-strict: ignoring config mismatch vs checkpoint: %s", _vexc)
     update_run_manifest(
         layout,
         {
@@ -3548,10 +3626,8 @@ def _restore_stop_signal_handlers(orig: Mapping[int, Any]) -> None:
     import signal as _signal
 
     for sig, old in orig.items():
-        try:
+        with contextlib.suppress(Exception):
             _signal.signal(sig, old)
-        except Exception:  # pragma: no cover - platform/thread dependent
-            pass
 
 
 def _run_training_loop(session: _TrainingSession) -> None:
@@ -3618,9 +3694,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
         _col_r_min_m = _r_ref_col + _col_alt_min_resolved * 1000.0
         _col_r_max_m = _r_ref_col + _col_alt_max_resolved * 1000.0
         logger.info(
-            f"Collocation Laplacian: mode={_col_lmode}, r_min={_col_r_min_m:.3e} m, "
-            f"r_max={_col_r_max_m:.3e} m "
-            f"(alt [{_col_alt_min_resolved:.1f}, {_col_alt_max_resolved:.1f}] km)"
+            "Collocation Laplacian: mode=%s, r_min=%.3e m, r_max=%.3e m (alt [%.1f, %.1f] km)",
+            _col_lmode, _col_r_min_m, _col_r_max_m, _col_alt_min_resolved, _col_alt_max_resolved,
         )
 
     trainer = STLRPSTrainer(
@@ -3683,17 +3758,20 @@ def _run_training_loop(session: _TrainingSession) -> None:
         epochs_without_improve = tracker.epochs_without_improve
         global_step = _resume_global_step
         logger.info(
-            "[resume] restored counters: "
-            f"best_epoch={best_epoch + 1 if best_epoch >= 0 else 'none'}, "
-            f"best_val={best_val if math.isfinite(best_val) else 'inf'}, "
-            f"epochs_without_improve={epochs_without_improve}, global_step={global_step}"
+            "[resume] restored counters: best_epoch=%s, best_val=%s, epochs_without_improve=%s, "
+            "global_step=%s",
+            best_epoch + 1 if best_epoch >= 0 else 'none',
+            best_val if math.isfinite(best_val) else 'inf',
+            epochs_without_improve,
+            global_step,
         )
 
     if _ckpt_start > 0:
         logger.info(
-            f"[checkpoint] best tracking starts at epoch {_ckpt_start + 1} "
-            "(auto waits until direction-loss training is active, ramped, and settled; "
-            "epochs before this are excluded from best-ckpt selection)."
+            "[checkpoint] best tracking starts at epoch %s (auto waits until direction-loss "
+            "training is active, ramped, and settled; epochs before this are excluded from "
+            "best-ckpt selection).",
+            _ckpt_start + 1,
         )
     else:
         logger.info("[checkpoint] best tracking starts at epoch 1.")
@@ -3713,7 +3791,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
         },
     )
     logger.info("[artifacts] schema=st_lrps_checkpoint_v2")
-    logger.info(f"[artifacts] architecture_signature={_arch_signature}")
+    logger.info("[artifacts] architecture_signature=%s", _arch_signature)
     logger.info("Beginning training loop...")
     # Restore RNG state and decide history append-vs-overwrite for resume.
     _hist_mode = "w"
@@ -3740,16 +3818,18 @@ def _run_training_loop(session: _TrainingSession) -> None:
                             k: v for k, v in _prev_row.items()
                             if k not in ("train", "val", "checkpoint_report")
                         })
-                logger.info(f"[resume] loaded {len(history)} previous history rows (append mode).")
+                logger.info("[resume] loaded %s previous history rows (append mode).", len(history))
                 _hist_mode = "a"
             except Exception as _hexc:
-                logger.warning(f"[resume] could not read previous history ({_hexc}); writing fresh rows.")
+                logger.warning(
+                    "[resume] could not read previous history (%s); writing fresh rows.",
+                    _hexc,
+                )
                 _hist_mode = "w"
         elif log_path.exists():
             log_path.unlink()
-    else:
-        if log_path.exists():
-            log_path.unlink()
+    elif log_path.exists():
+        log_path.unlink()
 
     # Periodic Evaluation During Training (monitoring only; OFF by default).
     # Schedule is resolved from the first epoch that will actually run, so a
@@ -3760,15 +3840,19 @@ def _run_training_loop(session: _TrainingSession) -> None:
     if periodic_plan.enabled:
         _periodic_completed = completed_periodic_eval_epochs(outdir)
         logger.info(
-            f"[periodic-eval] scheduled epochs: {','.join(str(e) for e in periodic_plan.epochs)} "
-            f"| dataset={periodic_plan.dataset} checkpoint={periodic_plan.prefer_checkpoint} "
-            f"max_samples={periodic_plan.max_samples} device={periodic_plan.device} "
-            f"continue_on_fail={periodic_plan.continue_on_fail}"
+            "[periodic-eval] scheduled epochs: %s | dataset=%s checkpoint=%s max_samples=%s "
+            "device=%s continue_on_fail=%s",
+            ','.join(str(e) for e in periodic_plan.epochs),
+            periodic_plan.dataset,
+            periodic_plan.prefer_checkpoint,
+            periodic_plan.max_samples,
+            periodic_plan.device,
+            periodic_plan.continue_on_fail,
         )
         if _periodic_completed:
             _already = sorted(e for e in _periodic_completed if e in periodic_plan.epochs_set)
             if _already:
-                logger.info(f"[periodic-eval] already recorded (resume) — will skip: {_already}")
+                logger.info("[periodic-eval] already recorded (resume) — will skip: %s", _already)
 
     # Graceful, epoch-level interruption. The first stop signal sets a flag;
     # the loop finishes the current epoch, saves ckpt_last, marks the manifest
@@ -3793,8 +3877,9 @@ def _run_training_loop(session: _TrainingSession) -> None:
         except ValueError:
             _name = str(_signum)
         logger.warning(
-            f"[interrupt] Stop requested ({_name}) — will finish the current epoch, "
-            "save, and exit. Send the signal again to force-quit."
+            "[interrupt] Stop requested (%s) — will finish the current epoch, save, and exit. Send "
+            "the signal again to force-quit.",
+            _name,
         )
 
     _orig_handlers = _install_stop_signal_handlers(_on_stop_signal)
@@ -3812,7 +3897,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
             _apply_lr_multiplier(opt, lr_scale)
             _ldir_log = _direction_loss_factor(epoch, cfg)
             if _ldir_log > 0.0 or epoch == cfg.direction_loss_start_epoch:
-                logger.info(f"[epoch {epoch+1}] effective lambda_dir={_ldir_log:.4e}")
+                logger.info("[epoch %s] effective lambda_dir=%.4e", epoch+1, _ldir_log)
             tr = trainer.run_epoch(train_loader, is_train=True,  epoch=epoch, max_batches=cfg.max_train_batches)
             _total_train_samples += int(tr.get("samples_seen", 0))
 
@@ -3820,8 +3905,9 @@ def _run_training_loop(session: _TrainingSession) -> None:
             if tr.get("nan_detected"):
                 run_status = "failed"
                 logger.error(
-                    f"Training stopped at epoch {epoch+1} due to NaN/Inf loss. "
-                    f"Saving failure manifest to {outdir / 'failure_manifest.json'}."
+                    "Training stopped at epoch %s due to NaN/Inf loss. Saving failure manifest to "
+                    "%s.",
+                    epoch+1, outdir / 'failure_manifest.json',
                 )
                 atomic_write_json(
                     outdir / "failure_manifest.json",
@@ -3841,10 +3927,10 @@ def _run_training_loop(session: _TrainingSession) -> None:
             _cur_mse_a = float(tr.get("mse_a", 0.0))
             if _prev_mse_a is not None and _prev_mse_a > 1e-12 and _cur_mse_a > 100.0 * _prev_mse_a:
                 logger.warning(
-                    f"Epoch {epoch+1}: acceleration loss jumped {_cur_mse_a/_prev_mse_a:.0f}x "
-                    f"({_prev_mse_a:.3e} -> {_cur_mse_a:.3e}). "
-                    "Possible derivative instability. Consider: lower lr, ensure accel_min_factor>0, "
-                    "lower w0, increase accel_ramp_epochs."
+                    "Epoch %s: acceleration loss jumped %.0fx (%.3e -> %.3e). Possible derivative "
+                    "instability. Consider: lower lr, ensure accel_min_factor>0, lower w0, "
+                    "increase accel_ramp_epochs.",
+                    epoch+1, _cur_mse_a/_prev_mse_a, _prev_mse_a, _cur_mse_a,
                 )
             _prev_mse_a = _cur_mse_a
 
@@ -3862,10 +3948,10 @@ def _run_training_loop(session: _TrainingSession) -> None:
                 and _val_cossim_now < _prev_val_cossim - 0.005
             ):
                 logger.warning(
-                    f"Epoch {epoch+1}: val mse_a improved ({_prev_val_mse_a:.3e} → {_val_mse_a_now:.3e}) "
-                    f"but direction metric is drifting "
-                    f"(cossim: {_prev_val_cossim:.4f} → {_val_cossim_now:.4f}). "
-                    "Consider increasing direction_loss_weight or lowering direction_loss_floor_abs."
+                    "Epoch %s: val mse_a improved (%.3e → %.3e) but direction metric is drifting "
+                    "(cossim: %.4f → %.4f). Consider increasing direction_loss_weight or lowering "
+                    "direction_loss_floor_abs.",
+                    epoch+1, _prev_val_mse_a, _val_mse_a_now, _prev_val_cossim, _val_cossim_now,
                 )
             _prev_val_cossim = _val_cossim_now
             _prev_val_mse_a = _val_mse_a_now
@@ -3930,55 +4016,61 @@ def _run_training_loop(session: _TrainingSession) -> None:
             epochs_without_improve = tracker.epochs_without_improve
             if not _best_update.eligible:
                 # Burn-in phase: save last checkpoint but do not update best or count patience.
-                logger.info(f"[checkpoint] waiting: epoch {epoch+1} < start epoch {_ckpt_start + 1}")
+                logger.info(
+                    "[checkpoint] waiting: epoch %s < start epoch %s",
+                    epoch+1, _ckpt_start + 1,
+                )
                 if epoch == _ckpt_start - 1:
                     logger.info(
-                        f"[checkpoint] waiting complete: epoch {epoch+1}. "
-                        f"Best-checkpoint tracking and patience counter start from next epoch."
+                        "[checkpoint] waiting complete: epoch %s. Best-checkpoint tracking and "
+                        "patience counter start from next epoch.",
+                        epoch+1,
                     )
-            else:
-                if _best_update.is_best:
-                    checkpoint_payload["scoring"]["score"] = float(_ckpt_score)
-                    checkpoint_payload["config"]["best_val_loss"] = float(best_val)
-                    checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1)
-                    checkpoint_payload["config"]["best_score"] = float(_ckpt_score)
-                    checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
-                    checkpoint_payload["config"]["checkpoint_selection"] = dict(checkpoint_selection)
-                    checkpoint_payload["config"]["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
-                    checkpoint_payload["config"]["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
-                    checkpoint_payload["config"]["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
-                    checkpoint_payload["config"]["epochs_since_improvement"] = 0
-                    checkpoint_report["is_best_update"] = True
-                    checkpoint_report["best_epoch"] = int(best_epoch + 1)
-                    checkpoint_report["best_score"] = float(best_val)
-                    checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
-                    checkpoint_payload["scoring"].update(dict(checkpoint_report))
-                    best_save_info = save_checkpoint(
-                        layout,
-                        kind="best",
-                        payload=checkpoint_payload,
-                        epoch=epoch,
-                        return_metadata=True,
-                    )
-                    best_ckpt_hash = str(best_save_info["sha256"])
-                    logger.info(f"[artifacts] checkpoint saved: kind=best epoch={epoch + 1}")
-                    logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")
-                    update_run_manifest(
-                        layout,
-                        {
-                            "best_checkpoint_path": str(best_path),
-                            "last_checkpoint_path": str(last_path),
-                            "best_epoch": int(best_epoch + 1),
-                            "best_score": float(_ckpt_score),
-                            "checkpoint_selection": dict(checkpoint_selection),
-                            "checkpoint_report": dict(checkpoint_report),
-                            "latest_epoch": int(epoch + 1),
-                            "checkpoint_hashes": {
-                                "best": best_ckpt_hash,
-                                "last": last_ckpt_hash,
-                            },
+            elif _best_update.is_best:
+                checkpoint_payload["scoring"]["score"] = float(_ckpt_score)
+                checkpoint_payload["config"]["best_val_loss"] = float(best_val)
+                checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1)
+                checkpoint_payload["config"]["best_score"] = float(_ckpt_score)
+                checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
+                checkpoint_payload["config"]["checkpoint_selection"] = dict(checkpoint_selection)
+                checkpoint_payload["config"]["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
+                checkpoint_payload["config"]["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
+                checkpoint_payload["config"]["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
+                checkpoint_payload["config"]["epochs_since_improvement"] = 0
+                checkpoint_report["is_best_update"] = True
+                checkpoint_report["best_epoch"] = int(best_epoch + 1)
+                checkpoint_report["best_score"] = float(best_val)
+                checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
+                checkpoint_payload["scoring"].update(dict(checkpoint_report))
+                best_save_info = save_checkpoint(
+                    layout,
+                    kind="best",
+                    payload=checkpoint_payload,
+                    epoch=epoch,
+                    return_metadata=True,
+                )
+                best_ckpt_hash = str(best_save_info["sha256"])
+                logger.info("[artifacts] checkpoint saved: kind=best epoch=%s", epoch + 1)
+                logger.info(
+                    "[checkpoint] best updated: val_ref=%.6e score=%.6e epoch=%s",
+                    va['loss'], _ckpt_score, best_epoch + 1,
+                )
+                update_run_manifest(
+                    layout,
+                    {
+                        "best_checkpoint_path": str(best_path),
+                        "last_checkpoint_path": str(last_path),
+                        "best_epoch": int(best_epoch + 1),
+                        "best_score": float(_ckpt_score),
+                        "checkpoint_selection": dict(checkpoint_selection),
+                        "checkpoint_report": dict(checkpoint_report),
+                        "latest_epoch": int(epoch + 1),
+                        "checkpoint_hashes": {
+                            "best": best_ckpt_hash,
+                            "last": last_ckpt_hash,
                         },
-                    )
+                    },
+                )
                 # Non-improving eligible epochs: the tracker already advanced
                 # epochs_without_improve (mirrored into the local above).
 
@@ -4004,8 +4096,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
                 ),
             )
             last_ckpt_hash = str(last_save_info["sha256"])
-            logger.info(f"[artifacts] checkpoint saved: kind=last epoch={epoch + 1}")
-            logger.info(f"[checkpoint] last saved: epoch={epoch + 1}")
+            logger.info("[artifacts] checkpoint saved: kind=last epoch=%s", epoch + 1)
+            logger.info("[checkpoint] last saved: epoch=%s", epoch + 1)
             update_run_manifest(
                 layout,
                 {
@@ -4052,13 +4144,17 @@ def _run_training_loop(session: _TrainingSession) -> None:
                         )
                     except Exception as _peval_exc:  # pragma: no cover - defensive
                         _peval_ok = False
-                        logger.warning(f"[periodic-eval] epoch={_epoch_1based} unexpected error: {_peval_exc}")
+                        logger.warning(
+                            "[periodic-eval] epoch=%s unexpected error: %s",
+                            _epoch_1based, _peval_exc,
+                        )
                     _periodic_completed.add(_epoch_1based)
                     if not _peval_ok and not periodic_plan.continue_on_fail:
                         run_status = "failed"
                         logger.error(
-                            f"[periodic-eval] aborting training at epoch {_epoch_1based} "
-                            "because continue_on_fail is disabled."
+                            "[periodic-eval] aborting training at epoch %s because "
+                            "continue_on_fail is disabled.",
+                            _epoch_1based,
                         )
                         update_run_manifest(
                             layout,
@@ -4077,8 +4173,9 @@ def _run_training_loop(session: _TrainingSession) -> None:
 
             if tracker.should_early_stop():
                 logger.info(
-                    f"Early stopping triggered after {epochs_without_improve} epochs without validation improvement. "
-                    f"Best epoch: {best_epoch + 1} | best_val_loss={best_val:.6e}"
+                    "Early stopping triggered after %s epochs without validation improvement. Best "
+                    "epoch: %s | best_val_loss=%.6e",
+                    epochs_without_improve, best_epoch + 1, best_val,
                 )
                 break
 
@@ -4087,8 +4184,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
                 _interrupt_done = int(epoch) + 1
                 _resume_hint = f"python -m lunaris.surrogate.st_lrps.training.cli --resume-from {outdir} --epochs {cfg.epochs}"
                 logger.warning(
-                    f"[interrupt] Stopping after completed epoch {_interrupt_done}. "
-                    f"ckpt_last.pt is saved. Resume with:\n  {_resume_hint}"
+                    '[interrupt] Stopping after completed epoch %s. ckpt_last.pt is saved. Resume with:\n  %s',
+                    _interrupt_done, _resume_hint,
                 )
                 update_run_manifest(
                     layout,

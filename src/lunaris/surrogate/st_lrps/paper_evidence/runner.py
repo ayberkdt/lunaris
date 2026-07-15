@@ -394,7 +394,7 @@ def run_train_stage(
 
     print(f"[paper-evidence] TRAIN {run_key} -> {run_out_dir}")
     print(f"  command: {subprocess.list2cmdline([str(c) for c in command])}")
-    result = subprocess.run(command, cwd=str(project_root_from_file(__file__)))
+    result = subprocess.run(command, cwd=str(project_root_from_file(__file__)), check=False)
     if result.returncode != 0:
         print(f"[paper-evidence] training FAILED ({run_key}) exit={result.returncode}.", file=sys.stderr)
         _write_manifest(manifest_path, run_key, config, config_path, run_out_dir, command,

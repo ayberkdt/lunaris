@@ -27,6 +27,7 @@ Key features
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import shutil
@@ -106,13 +107,13 @@ def _pick_dark_safe_color(candidate, fallback: str, *, want_light_text: bool = F
 
 
 THEME = Theme(
-    text=_pick_dark_safe_color(_COLORS.get("text", None), "#E8EEF8", want_light_text=True),
-    hud_bg=_pick_dark_safe_color(_COLORS.get("hud_bg", None), "#0A0F1E"),
-    hud_edge=_pick_dark_safe_color(_COLORS.get("hud_edge", None), "#2B3555"),
-    orbit=_pick_dark_safe_color(_COLORS.get("orbit", None), "#5ED0FF"),
-    orbit_faint=_pick_dark_safe_color(_COLORS.get("orbit_faint", None), "#2B6C80"),
-    sun=_pick_dark_safe_color(_COLORS.get("sun", None), "#FFD166"),
-    star=_pick_dark_safe_color(_COLORS.get("star", None), "#D6E2FF"),
+    text=_pick_dark_safe_color(_COLORS.get("text"), "#E8EEF8", want_light_text=True),
+    hud_bg=_pick_dark_safe_color(_COLORS.get("hud_bg"), "#0A0F1E"),
+    hud_edge=_pick_dark_safe_color(_COLORS.get("hud_edge"), "#2B3555"),
+    orbit=_pick_dark_safe_color(_COLORS.get("orbit"), "#5ED0FF"),
+    orbit_faint=_pick_dark_safe_color(_COLORS.get("orbit_faint"), "#2B6C80"),
+    sun=_pick_dark_safe_color(_COLORS.get("sun"), "#FFD166"),
+    star=_pick_dark_safe_color(_COLORS.get("star"), "#D6E2FF"),
 )
 
 R_MOON_KM_DEFAULT = 1737.4
@@ -331,17 +332,13 @@ def _result_to_hist(result: Any, config: Any) -> dict[str, Any]:
     mu_m3s2 = float(MU_MOON_DEFAULT)
 
     if config is not None:
-        try:
+        with contextlib.suppress(Exception):
             R_body_m = float(config.body.radius_m)
-        except Exception:
-            pass
         try:
             mu_m3s2 = float(config.gravity.mu)
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 mu_m3s2 = float(config.mu_m3s2)
-            except Exception:
-                pass
 
     hist: dict[str, Any] = {
         "t_s": t_s,
@@ -403,10 +400,8 @@ def _setup_3d_axis(fig: plt.Figure) -> Any:
             axis.pane.set_edgecolor((0, 0, 0, 0))
         except Exception:
             pass
-    try:
+    with contextlib.suppress(Exception):
         ax.set_axis_off()
-    except Exception:
-        pass
     return ax
 
 
@@ -727,10 +722,8 @@ def render_orbit_animation_from_history(
         ccount=int(moon_mesh_v),
         zorder=1,
     )
-    try:
+    with contextlib.suppress(Exception):
         moon_surf.set_alpha(1.0)
-    except Exception:
-        pass
 
     # Moon reference lines (equatorial ring + prime meridian)
     _add_moon_reference_lines(ax, R_body_km)
@@ -804,10 +797,8 @@ def render_orbit_animation_from_history(
     ax.set_xlim(-max_range, max_range)
     ax.set_ylim(-max_range, max_range)
     ax.set_zlim(-max_range, max_range)
-    try:
+    with contextlib.suppress(Exception):
         ax.set_box_aspect([1, 1, 1])
-    except Exception:
-        pass
 
     # Summary title (static, built once)
     mean_alt = float(np.nanmean(alt_anim_km)) if np.any(np.isfinite(alt_anim_km)) else 0.0

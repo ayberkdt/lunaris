@@ -30,6 +30,7 @@ Notes
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -43,10 +44,8 @@ import numpy as np
 # --- Matplotlib backend selection ---
 # Must run BEFORE importing pyplot.
 if os.environ.get("STLRPS_INTERACTIVE", "0").strip().lower() not in ("1", "true", "yes", "y"):
-    try:
+    with contextlib.suppress(Exception):
         matplotlib.use("Agg")
-    except Exception:
-        pass
 
 import matplotlib.legend
 import matplotlib.pyplot as plt
@@ -58,6 +57,9 @@ try:
     from lunaris.core.dynamics import make_accel  # type: ignore
 except ImportError:
     make_accel = None
+
+import contextlib
+import itertools
 
 from lunaris.analysis.postprocess import (
     _extract_rv_vectors,
@@ -324,7 +326,7 @@ def time_colored_path(
     seg_list: list[np.ndarray] = []
     c_list: list[np.ndarray] = []
 
-    for a, b in zip(cuts[:-1], cuts[1:], strict=False):
+    for a, b in itertools.pairwise(cuts):
         if (b - a) < 2:
             continue
 
@@ -376,10 +378,8 @@ def time_colored_path(
                 fraction=float(cbar_fraction),
             )
             cbar.set_label(str(cbar_label))
-            try:
+            with contextlib.suppress(Exception):
                 apply_standard_colorbar(cbar)
-            except Exception:
-                pass
         except Exception:
             cbar = None
 
@@ -659,7 +659,7 @@ def figure_elements_timeseries(t_days: np.ndarray, elems: dict[str, np.ndarray])
     ]
 
     def _plot_1d(ax: plt.Axes, key: str, title: str, ylabel: str) -> None:
-        data = _as_np(elems.get(key, None), float, atleast_1d=True, ravel=True)
+        data = _as_np(elems.get(key), float, atleast_1d=True, ravel=True)
         if t_days.size < 2 or data.size < 2:
             ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, color="0.45")
             ax.set_title(title, loc="left", fontsize=11)
@@ -692,8 +692,8 @@ def figure_elements_timeseries(t_days: np.ndarray, elems: dict[str, np.ndarray])
 
     # Apsidal radii panel
     ax_r = axs[5]
-    a = _as_np(elems.get("a_km", None), float, atleast_1d=True, ravel=True)
-    e = _as_np(elems.get("e", None), float, atleast_1d=True, ravel=True)
+    a = _as_np(elems.get("a_km"), float, atleast_1d=True, ravel=True)
+    e = _as_np(elems.get("e"), float, atleast_1d=True, ravel=True)
 
     if t_days.size >= 2 and a.size >= 2 and e.size >= 2:
         n = int(min(t_days.size, a.size, e.size))
@@ -752,10 +752,10 @@ def figure_invariants(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt.Fig
     apply_rcparams(DEFAULT_STYLE)
 
     t_days = _as_np(t_days, float, atleast_1d=True, ravel=True)
-    r = _as_np(inv.get("r_norm_km", None), float, atleast_1d=True, ravel=True)
-    v = _as_np(inv.get("v_norm_kmps", None), float, atleast_1d=True, ravel=True)
-    E = _as_np(inv.get("energy_Jkg", None), float, atleast_1d=True, ravel=True)
-    h = _as_np(inv.get("h_norm_m2s", None), float, atleast_1d=True, ravel=True)
+    r = _as_np(inv.get("r_norm_km"), float, atleast_1d=True, ravel=True)
+    v = _as_np(inv.get("v_norm_kmps"), float, atleast_1d=True, ravel=True)
+    E = _as_np(inv.get("energy_Jkg"), float, atleast_1d=True, ravel=True)
+    h = _as_np(inv.get("h_norm_m2s"), float, atleast_1d=True, ravel=True)
 
     specs: list[tuple[str, str, np.ndarray, str]] = []
     if r.size >= 2:
@@ -942,10 +942,10 @@ def figure_relative_drift(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt
     t_days = _as_np(t_days, float, atleast_1d=True, ravel=True)
 
     def _drift(rel_key: str, abs_key: str) -> np.ndarray:
-        rel = _as_np(inv.get(rel_key, None), float, atleast_1d=True, ravel=True)
+        rel = _as_np(inv.get(rel_key), float, atleast_1d=True, ravel=True)
         if rel.size >= 2:
             return rel
-        abs_v = _as_np(inv.get(abs_key, None), float, atleast_1d=True, ravel=True)
+        abs_v = _as_np(inv.get(abs_key), float, atleast_1d=True, ravel=True)
         if abs_v.size >= 2:
             v0 = float(abs_v[0])
             denom = max(abs(v0), 1e-30)
@@ -1181,10 +1181,8 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None =
 
         cbar = fig.colorbar(lc, ax=ax, fraction=0.03, pad=0.05, shrink=0.75)
         cbar.set_label("Time [days]")
-        try:
+        with contextlib.suppress(Exception):
             apply_standard_colorbar(cbar)
-        except Exception:
-            pass
 
         c0 = None
         c1 = None
@@ -1220,10 +1218,8 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None =
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     ax.set_zlim(-lim, lim)
-    try:
+    with contextlib.suppress(Exception):
         ax.set_box_aspect((1, 1, 1))
-    except Exception:
-        pass
 
     _legend(ax, loc="upper right")
     fig.tight_layout()
@@ -1241,8 +1237,8 @@ def figure_eomega(t_days: np.ndarray, elems: dict[str, np.ndarray]) -> plt.Figur
     apply_rcparams(DEFAULT_STYLE)
 
     t = _as_np(t_days, float, atleast_1d=True, ravel=True)
-    e = _as_np(elems.get("e", None), float, atleast_1d=True, ravel=True)
-    w_deg = _as_np(elems.get("argp_deg", None), float, atleast_1d=True, ravel=True)
+    e = _as_np(elems.get("e"), float, atleast_1d=True, ravel=True)
+    w_deg = _as_np(elems.get("argp_deg"), float, atleast_1d=True, ravel=True)
 
     n = int(min(t.size, e.size, w_deg.size))
     if n < 2:
@@ -1274,10 +1270,8 @@ def figure_eomega(t_days: np.ndarray, elems: dict[str, np.ndarray]) -> plt.Figur
 
     cbar = fig.colorbar(lc, ax=ax, pad=0.10, fraction=0.045, shrink=0.85)
     cbar.set_label("Time [days]")
-    try:
+    with contextlib.suppress(Exception):
         apply_standard_colorbar(cbar)
-    except Exception:
-        pass
 
     c0 = None
     c1 = None
@@ -1459,10 +1453,8 @@ def figure_perturbation_magnitude(
         new_flags = copy.copy(flags)
         for k, v in overrides.items():
             if hasattr(new_flags, k):
-                try:
+                with contextlib.suppress(Exception):
                     setattr(new_flags, k, bool(v))
-                except Exception:
-                    pass
         new_ctx.flags = new_flags
         return new_ctx
 
@@ -2208,18 +2200,14 @@ def merge_meta_with_auto_config(
     if "mass_kg" not in sc:
         val = _first_present(history, ["mass_kg", "mass", "m"])
         if val is not None:
-            try:
+            with contextlib.suppress(Exception):
                 sc["mass_kg"] = float(_as_np(val).ravel()[0])
-            except Exception:
-                pass
 
     if "area_m2" not in sc:
         val = _first_present(history, ["area_m2", "area", "cross_section"])
         if val is not None:
-            try:
+            with contextlib.suppress(Exception):
                 sc["area_m2"] = float(_as_np(val).ravel()[0])
-            except Exception:
-                pass
 
     return merged
 

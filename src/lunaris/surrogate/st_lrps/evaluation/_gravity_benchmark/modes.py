@@ -20,6 +20,8 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import contextlib
+
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
@@ -221,7 +223,7 @@ def evaluate_forces(
 
     summary.sort(key=lambda x: x["accel_err_rms_mGal"])
     _ensure_dir(out_dir / "force_sample_summary.json")
-    with open(out_dir / "force_sample_summary.json", "w") as f:
+    with open(out_dir / "force_sample_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=4)
     _write_csv(summary, out_dir / "force_sample_summary.csv")
     _write_csv(
@@ -299,7 +301,7 @@ def run_single_orbit_mode(args: argparse.Namespace, cfg: SimConfig, ephem: Any) 
 
     summary.sort(key=lambda x: x.get("rms_pos_err_km") or 0)
 
-    with open(out_dir / "comparison_summary.json", "w") as f:
+    with open(out_dir / "comparison_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=4)
     _write_csv(summary, out_dir / "comparison_summary.csv")
 
@@ -1063,13 +1065,13 @@ def _parallel_worker_scenario(payload: tuple[Scenario, str, list[str]]) -> dict[
         try:
             res, rt = propagate_for_scenario(model, y0, args, cfg_base, ephem, cache)
         except Exception as exc:  # pragma: no cover - defensive (worker side)
-            failed = {f: None for f in _METRICS_FIELDNAMES}
+            failed = dict.fromkeys(_METRICS_FIELDNAMES)
             failed.update({"scenario_id": scenario.scenario_id, "model": model,
                            "status": "exception", "failure_reason": str(exc)})
             rows.append(failed)
             continue
         if res is None:
-            failed = {f: None for f in _METRICS_FIELDNAMES}
+            failed = dict.fromkeys(_METRICS_FIELDNAMES)
             failed.update({"scenario_id": scenario.scenario_id, "model": model, "status": "failed"})
             rows.append(failed)
             continue
@@ -1178,7 +1180,7 @@ def run_random_scenario_mode(
 
     if args.resume and metrics_path.exists() and not cache_enabled:
         try:
-            with open(metrics_path, newline="") as f:
+            with open(metrics_path, newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     try:
@@ -1188,10 +1190,8 @@ def run_random_scenario_mode(
                         converted = dict(row)
                         for k, v in converted.items():
                             if k not in ("model", "status") and v not in (None, "", "None"):
-                                try:
+                                with contextlib.suppress(ValueError, TypeError):
                                     converted[k] = float(v)
-                                except (ValueError, TypeError):
-                                    pass
                         if converted.get("status") == "ok":
                             all_metrics.append(converted)
                     except (KeyError, ValueError):
@@ -1371,7 +1371,7 @@ def run_random_scenario_mode(
                         traceback.print_exc()
                         if args.fail_fast:
                             sys.exit(1)
-                        failed_row = {f: None for f in _METRICS_FIELDNAMES}
+                        failed_row = dict.fromkeys(_METRICS_FIELDNAMES)
                         failed_row.update({"scenario_id": scenario.scenario_id,
                                            "model": model, "status": "exception"})
                         _append_metrics_csv(failed_row, metrics_path, not header_written)
@@ -1382,7 +1382,7 @@ def run_random_scenario_mode(
                     print("FAILED", flush=True)
                     if args.fail_fast:
                         sys.exit(1)
-                    failed_row = {f: None for f in _METRICS_FIELDNAMES}
+                    failed_row = dict.fromkeys(_METRICS_FIELDNAMES)
                     failed_row.update({"scenario_id": scenario.scenario_id,
                                        "model": model, "status": "failed"})
                     _append_metrics_csv(failed_row, metrics_path, not header_written)
@@ -1434,7 +1434,7 @@ def run_random_scenario_mode(
     agg      = aggregate_metrics(all_metrics, truth_runtime_mean)
     rankings = build_rankings(agg)
 
-    with open(out_dir / "aggregate_summary.json", "w") as f:
+    with open(out_dir / "aggregate_summary.json", "w", encoding="utf-8") as f:
         json.dump(agg, f, indent=4, default=str)
     _write_csv(rankings, out_dir / "ranking_summary.csv")
     agg_rows = [{"model": m, **stats} for m, stats in agg.items()]
@@ -1664,7 +1664,7 @@ def run_random_scenario_mode(
                 "frame_interpolation": batch_result.get("frame_interpolation"),
                 "uses_frame_rotation": batch_result.get("uses_frame_rotation"),
             }
-            with open(out_dir / "batch_rk4_summary.json", "w") as f:
+            with open(out_dir / "batch_rk4_summary.json", "w", encoding="utf-8") as f:
                 json.dump(batch_summary, f, indent=4, default=str)
             _write_csv(
                 [

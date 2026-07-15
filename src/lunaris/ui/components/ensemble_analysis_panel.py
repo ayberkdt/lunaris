@@ -27,6 +27,7 @@ Design goals
 
 from __future__ import annotations
 
+import contextlib
 import io
 import math
 from pathlib import Path
@@ -814,10 +815,8 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         ellipsoids = self._stats.ellipsoids
 
         archive_size_mb = "—"
-        try:
+        with contextlib.suppress(OSError):
             archive_size_mb = f"{path.stat().st_size / (1024 * 1024):.2f} MB"
-        except OSError:
-            pass
 
         def _set(key: str, value: str) -> None:
             lbl = self._summary_labels.get(key)
@@ -862,10 +861,8 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         ellipsoids = self._stats.ellipsoids
 
         archive_size_mb = "N/A"
-        try:
+        with contextlib.suppress(OSError):
             archive_size_mb = f"{path.stat().st_size / (1024 * 1024):.2f} MB"
-        except OSError:
-            pass
 
         def _set(key: str, value: str) -> None:
             lbl = self._summary_labels.get(key)

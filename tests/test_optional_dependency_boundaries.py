@@ -41,7 +41,7 @@ def _run_blocked(body: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, "-c", _blocked_import_script(body)],
         cwd=str(REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
 
 

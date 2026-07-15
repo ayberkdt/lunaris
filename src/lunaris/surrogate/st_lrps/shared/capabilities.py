@@ -199,11 +199,11 @@ def render_capability_matrix_markdown() -> str:
         "| Component | Subject | Feature | Status | Notes |",
         "|---|---|---|---|---|",
     ]
-    for cap in CAPABILITIES:
-        lines.append(
-            f"| {cap.component} | `{cap.subject}` | {cap.feature} | "
-            f"{badge[cap.status]} | {cap.reason} |"
-        )
+    lines.extend(
+        f"| {cap.component} | `{cap.subject}` | {cap.feature} | "
+        f"{badge[cap.status]} | {cap.reason} |"
+        for cap in CAPABILITIES
+    )
     lines.append("")
     return "\n".join(lines)
 

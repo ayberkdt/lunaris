@@ -22,6 +22,8 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import contextlib
+
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.common.frame_policy import (
@@ -70,7 +72,7 @@ def _write_scenarios_csv(scenarios: list[Scenario], out_dir: Path) -> None:
                   "inc_deg", "raan_deg", "argp_deg", "ta_deg"]
     p = out_dir / "scenarios.csv"
     _ensure_dir(p)
-    with open(p, "w", newline="") as f:
+    with open(p, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for s in scenarios:
@@ -440,7 +442,7 @@ def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> list[Scenario]
 
 def _append_metrics_csv(metrics: dict, path: Path, write_header: bool) -> None:
     _ensure_dir(path)
-    with open(path, "a", newline="") as f:
+    with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=_METRICS_FIELDNAMES, extrasaction="ignore")
         if write_header:
             w.writeheader()
@@ -452,7 +454,7 @@ def _write_csv(rows: list[dict], path: Path) -> None:
         return
     keys = list(rows[0].keys())
     _ensure_dir(path)
-    with open(path, "w", newline="") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
@@ -688,10 +690,8 @@ def _save_cached_trajectory(
         os.replace(tmp, path)
     finally:
         if tmp.exists():
-            try:
+            with contextlib.suppress(OSError):
                 tmp.unlink()
-            except OSError:
-                pass
     print(f"[cache] Saved model={model_name} scenario={scenario.scenario_id:06d} file={path}",
           flush=True)
     return path
@@ -965,17 +965,23 @@ def _benchmark_consistency_warnings(
     requested = breakdown.get("requested_models", [])
     in_metrics = set(breakdown.get("models_in_metrics", []))
     failed = set(breakdown.get("failed_models", []))
-    for name in breakdown.get("failed_models", []):
-        warns.append(f"Model {name} failed and is excluded from accuracy metrics.")
-    for name in breakdown.get("partial_models", []):
-        warns.append(
-            f"Model {name} has partial cache coverage; metrics cover only cached scenarios."
-        )
-    for name in breakdown.get("skipped_models", []):
-        warns.append(f"Model {name} was requested but produced no result (skipped).")
-    for name in requested:
-        if name not in in_metrics and name not in failed:
-            warns.append(f"Requested model {name} produced no aggregate metrics.")
+    warns.extend(
+        f"Model {name} failed and is excluded from accuracy metrics."
+        for name in breakdown.get("failed_models", [])
+    )
+    warns.extend(
+        f"Model {name} has partial cache coverage; metrics cover only cached scenarios."
+        for name in breakdown.get("partial_models", [])
+    )
+    warns.extend(
+        f"Model {name} was requested but produced no result (skipped)."
+        for name in breakdown.get("skipped_models", [])
+    )
+    warns.extend(
+        f"Requested model {name} produced no aggregate metrics."
+        for name in requested
+        if name not in in_metrics and name not in failed
+    )
     if requested and not in_metrics:
         warns.append("No requested model produced aggregate metrics.")
     if int(summary.get("n_scenarios_total", 0) or 0) <= 0:
@@ -1356,10 +1362,8 @@ def build_truth_trajectory_set(
             return
         rate = completed / max(elapsed_s, 1e-9)
         eta = (total - completed) / max(rate, 1e-9)
-        try:
+        with contextlib.suppress(Exception):
             on_progress(int(completed), int(total), float(elapsed_s), float(eta))
-        except Exception:
-            pass
 
     if args.reuse_truth_cache:
         cached = _load_truth_cache(truth_dir, args, scenarios)

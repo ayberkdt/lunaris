@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import itertools
 from collections.abc import Iterable, Sequence
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -194,7 +195,7 @@ def apply_tab_order(widgets: Sequence[QtWidgets.QWidget | None]) -> None:
             continue
         seen.add(id(widget))
         chain.append(widget)
-    for earlier, later in zip(chain, chain[1:], strict=False):
+    for earlier, later in itertools.pairwise(chain):
         QtWidgets.QWidget.setTabOrder(earlier, later)
 
 

@@ -63,6 +63,8 @@ from lunaris.common.frame_policy import (
 )
 
 logger = logging.getLogger(__name__)
+import contextlib
+
 from lunaris.core.batched_fixed_step import (
     query_device_memory,
     resolve_vram_aware_chunk_size,
@@ -489,12 +491,17 @@ class TorchBatchPropagator:
             or getattr(model, "config", {}).get("runtime_model_kind", "potential_autograd")
         )
         dev_name = torch.cuda.get_device_name(device.index or 0)
-        logger.info(f"[BATCH][GPU-STLRPS] N={N}  device={device} ({dev_name})")
+        logger.info("[BATCH][GPU-STLRPS] N=%s  device=%s (%s)", N, device, dev_name)
         logger.info(
-            f"[BATCH][GPU-STLRPS] degree_min={deg_min}  degree_max={deg_max}  "
-            f"runtime_model_kind={runtime_kind}  "
-            f"dt={dt_eff:.1f}s  snaps={n_snaps}  steps/snap={steps_per_snap}  "
-            f"dtype={str(self._dtype).replace('torch.', '')}"
+            "[BATCH][GPU-STLRPS] degree_min=%s  degree_max=%s  runtime_model_kind=%s  dt=%.1fs  "
+            "snaps=%s  steps/snap=%s  dtype=%s",
+            deg_min,
+            deg_max,
+            runtime_kind,
+            dt_eff,
+            n_snaps,
+            steps_per_snap,
+            str(self._dtype).replace('torch.', ''),
         )
 
         # Time one batched acceleration call for the log. Keep this diagnostic
@@ -516,19 +523,18 @@ class TorchBatchPropagator:
             accel_ms = (time.perf_counter() - _t0) * 1_000.0
             warmup_metrics["accel_warmup_ms"] = float(accel_ms)
             logger.info(
-                f"[BATCH][GPU-STLRPS] one batched accel call: {accel_ms:.2f} ms  "
-                f"warmup_state=[{warmup_n}, 6] full_N={N}"
+                "[BATCH][GPU-STLRPS] one batched accel call: %.2f ms  warmup_state=[%s, 6] "
+                "full_N=%s",
+                accel_ms, warmup_n, N,
             )
         except Exception as exc:
             if not _is_torch_cuda_oom(torch, exc):
                 raise
             warmup_metrics["accel_warmup_skipped_reason"] = "cuda_oom"
-            try:
+            # Best-effort after a diagnostic-only OOM; propagation below
+            # still gets the shared loop's chunk-halving recovery.
+            with contextlib.suppress(Exception):
                 torch.cuda.empty_cache()
-            except Exception:
-                # Best-effort after a diagnostic-only OOM; propagation below
-                # still gets the shared loop's chunk-halving recovery.
-                pass
             logger.warning(
                 "[BATCH][GPU-STLRPS] skipped warmup/timing acceleration due to "
                 "CUDA OOM at warmup_n=%d; continuing with chunked propagation.",
@@ -588,8 +594,8 @@ class TorchBatchPropagator:
         }
         self._last_impact_positions_inertial = result.impact_positions_inertial
         logger.info(
-            f"[BATCH][GPU-STLRPS] propagation complete: "
-            f"{t_prop:.2f}s  {traj_steps_per_s:,.0f} trajectory-steps/s"
+            "[BATCH][GPU-STLRPS] propagation complete: %.2fs  %s trajectory-steps/s",
+            t_prop, f"{traj_steps_per_s:,.0f}",
         )
 
         return result.t_out, result.Y_out, result.impact_flags, result.t_impact
