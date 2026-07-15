@@ -1665,7 +1665,7 @@ class LiveLossPlot(QWidget):
         self._lbl_lr.setText(_chip("Learning Rate", self._fmt_metric(latest_lr)))
 
         self._lbl_score.setText(_chip("Checkpoint Score", self._fmt_metric(self._latest_checkpoint_score)))
-        formula = self._best_formula if self._best_formula else "N/A"
+        formula = self._best_formula or "N/A"
         if len(formula) > 56:
             formula = formula[:53] + "..."
         self._lbl_formula.setText(_chip(self._best_metric_name or "Formula", formula))
@@ -2026,7 +2026,7 @@ class ProcessPane(QWidget):
         if selected:
             # QTextCursor uses U+2029 (paragraph separator) for line breaks;
             # normalize it back to real newlines for pasted output.
-            clipboard.setText(selected.replace(" ", "\n"))
+            clipboard.setText(selected.replace("\u2029", "\n"))
             return
         clipboard.setText(self.log.toPlainText())
 

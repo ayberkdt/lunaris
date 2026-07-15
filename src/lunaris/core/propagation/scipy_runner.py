@@ -107,7 +107,7 @@ def run_scipy_propagation(
             rtol=float(getattr(cfg, "rtol", 1e-9)),
             atol=atol_arg,
             max_step=float(max_step),
-            events=(events if events else None),
+            events=(events or None),
             dense_output=False,
             vectorized=False,
         )

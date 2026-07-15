@@ -920,7 +920,7 @@ def _get_backbone_shared_params(model: nn.Module) -> list[torch.Tensor]:
     params: list[torch.Tensor] = [
         p for p in model.parameters() if p.requires_grad and id(p) not in head_param_ids
     ]
-    return params if params else [p for p in model.parameters()]
+    return params or [p for p in model.parameters()]
 
 
 def _gradnorm_shared_params(model: nn.Module, mode: str) -> list[torch.Tensor]:

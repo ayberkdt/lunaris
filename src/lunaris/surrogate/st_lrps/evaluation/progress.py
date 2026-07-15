@@ -314,7 +314,7 @@ class OverallProgress:
         total = sum(positive.values())
         self._weights = {k: v / total for k, v in positive.items()}
         self._order = list(self._weights.keys())
-        self._fraction = {k: 0.0 for k in self._order}
+        self._fraction = dict.fromkeys(self._order, 0.0)
         self._last_percent = 0.0
         self._t0 = start_time if start_time is not None else time.perf_counter()
 

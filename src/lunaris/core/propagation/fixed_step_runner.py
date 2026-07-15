@@ -85,7 +85,7 @@ def run_fixed_step_propagation(
         t_impact_s=(float(t_imp) if t_imp is not None else None),
         y_impact=(np.asarray(y_imp, dtype=np.float64) if y_imp is not None else None),
         stopped_early=bool(stopped_early),
-        stop_reason=stop_reason if stop_reason else ("impact" if impacted else None),
+        stop_reason=stop_reason or ("impact" if impacted else None),
         t_stop_s=t_stop,
     )
 

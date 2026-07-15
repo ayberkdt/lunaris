@@ -140,7 +140,7 @@ def _numba_cuda_sh_limits() -> tuple[int, tuple[int, ...]]:
     """
 
     try:
-        from lunaris.core.backend_capabilities import (
+        from lunaris.core.backend_capabilities import (  # noqa: PLC0415
             numba_cuda_sh_max_degree,
             numba_cuda_sh_supported_tiers,
             numba_cuda_sh_workspace_error,
@@ -236,7 +236,7 @@ def select_classic_sh_backend(
     # --- Explicit Torch CPU -----------------------------------------------
     if req == "torch_cpu_sh":
         try:
-            import torch  # noqa: F401, F811  # availability probe only
+            import torch  # noqa: F401  # availability probe only
             return _decide("torch_cpu_sh")
         except ImportError:
             return _decide("torch_cpu_sh", applied=False, reason="PyTorch not importable for torch_cpu_sh", err=True)
@@ -826,7 +826,7 @@ def resolve_batch_backend_policy(
         )
         # R03 provenance: the selected backend's statically unsupported force
         # models, straight from the capability registry (single source, R09).
-        from lunaris.core.backend_capabilities import (  # noqa: PLC0415
+        from lunaris.core.backend_capabilities import (
             FORCE_MODEL_FLAG_ATTR,
             get_capabilities,
             resolve_effective_dtype,

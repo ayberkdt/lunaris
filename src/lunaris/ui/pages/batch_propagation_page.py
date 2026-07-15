@@ -679,7 +679,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
             "space-filling designs for validation coverage."
         )
         sampling_idx = self.cb_sampling_method.findData(self.batch_cfg.sampling_method)
-        self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
+        self.cb_sampling_method.setCurrentIndex(max(sampling_idx, 0))
         grid.addWidget(self.cb_sampling_method, 1, 1)
 
         grid.addWidget(_label("Seed"), 2, 0)
@@ -944,7 +944,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_torch_dtype.addItem("float64 (reference precision)", "float64")
         self.cb_torch_dtype.addItem("float32 (faster, lower precision)", "float32")
         dtype_idx = self.cb_torch_dtype.findData(self.batch_cfg.torch_dtype)
-        self.cb_torch_dtype.setCurrentIndex(dtype_idx if dtype_idx >= 0 else 0)
+        self.cb_torch_dtype.setCurrentIndex(max(dtype_idx, 0))
         self.cb_torch_dtype.setToolTip(
             "Floating-point dtype for the torch_cuda_sh and GPU ST-LRPS paths."
         )
@@ -974,8 +974,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         layout.addWidget(self.gpu_frame)
         gravity_mode_index = self.cb_batch_gravity_mode.findData(self.batch_cfg.gravity_mode_override)
-        if gravity_mode_index < 0:
-            gravity_mode_index = 0
+        gravity_mode_index = max(gravity_mode_index, 0)
         self.cb_batch_gravity_mode.setCurrentIndex(gravity_mode_index)
         self.cb_batch_backend.setCurrentIndex(
             self._batch_backend_combo_index(str(getattr(self.batch_cfg, "batch_backend", "auto") or "auto"))
@@ -1718,7 +1717,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         sampling_method = str(data.get("sampling_method", "random") or "random")
         self.batch_cfg.sampling_method = sampling_method
         sampling_idx = self.cb_sampling_method.findData(sampling_method)
-        self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
+        self.cb_sampling_method.setCurrentIndex(max(sampling_idx, 0))
         self.ent_sigma_r.setText(_s("sigma_r_m", 500.0))
         self.ent_sigma_v.setText(_s("sigma_v_m_s", 0.5))
         self.ent_sigma_mass.setText(_s("sigma_mass_kg", 0.0))
@@ -1733,14 +1732,13 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.ent_tpb.setText(_s("gpu_threads_per_block", 128))
         gravity_mode = str(data.get("gravity_mode_override", "follow_mission") or "follow_mission")
         gravity_idx = self.cb_batch_gravity_mode.findData(gravity_mode)
-        if gravity_idx < 0:
-            gravity_idx = 0
+        gravity_idx = max(gravity_idx, 0)
         self.cb_batch_gravity_mode.setCurrentIndex(gravity_idx)
         self.ent_batch_st_lrps_model_dir.setText(str(data.get("st_lrps_model_dir", "") or ""))
         self._on_gravity_mode_changed()
         torch_dtype = str(data.get("torch_dtype", "float64") or "float64")
         dtype_idx = self.cb_torch_dtype.findData(torch_dtype)
-        self.cb_torch_dtype.setCurrentIndex(dtype_idx if dtype_idx >= 0 else 0)
+        self.cb_torch_dtype.setCurrentIndex(max(dtype_idx, 0))
         self.ent_torch_chunk.setText(_s("torch_sh_chunk_size", 0))
         self.ent_dt.setText(_s("dt_s", 60.0))
         self.ent_vram.setText(_s("max_vram_gb", 4.0))
@@ -1880,11 +1878,8 @@ class BatchPropagationPage(QtWidgets.QWidget):
             suffix = _preferred_output_suffix(fmt)
             lower_name = Path(out_path).name.lower()
             if not lower_name.endswith(suffix):
-                if fmt == "hdf5" and (lower_name.endswith(".h5") or lower_name.endswith(".hdf5")):
-                    pass
-                elif not lower_name.endswith((".h5", ".hdf5", ".npz")):
-                    pass
-                else:
+                is_hdf5_alias = fmt == "hdf5" and lower_name.endswith((".h5", ".hdf5"))
+                if not is_hdf5_alias and lower_name.endswith((".h5", ".hdf5", ".npz")):
                     warnings.append(f"Output path suffix does not match selected format '{fmt}'.")
 
         return ok, errors, warnings

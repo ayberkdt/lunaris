@@ -331,9 +331,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
                 widget.currentIndexChanged.connect(self._update_preview)
             elif isinstance(widget, QtWidgets.QAbstractSpinBox):
                 widget.editingFinished.connect(self._update_preview)
-                if isinstance(widget, QtWidgets.QSpinBox):
-                    widget.valueChanged.connect(self._update_preview)
-                elif isinstance(widget, QtWidgets.QDoubleSpinBox):
+                if isinstance(widget, QtWidgets.QSpinBox) or isinstance(widget, QtWidgets.QDoubleSpinBox):
                     widget.valueChanged.connect(self._update_preview)
             elif isinstance(widget, QtWidgets.QCheckBox):
                 widget.toggled.connect(self._update_preview)

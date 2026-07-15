@@ -134,7 +134,7 @@ logger = logging.getLogger(__name__)
 def _log_section(title: str, values: Mapping[str, Any]) -> None:
     logger.info(f"=== {title} ===")
     for key, value in values.items():
-        logger.info(f"{str(key):24s}: {value}")
+        logger.info(f"{key!s:24s}: {value}")
 
 
 def set_seed(
@@ -563,11 +563,10 @@ def _warn_batch_size_for_vram(device: torch.device, cfg: TrainConfig) -> None:
             logger.warning(
                 f"VRAM advisory: batch_size={bs} on a {total_gb:.1f} GiB GPU may be tight. {suggestion}"
             )
-    else:
-        if bs > 65536:
-            logger.warning(
-                f"VRAM advisory: batch_size={bs} is very large even for {total_gb:.1f} GiB. {suggestion}"
-            )
+    elif bs > 65536:
+        logger.warning(
+            f"VRAM advisory: batch_size={bs} is very large even for {total_gb:.1f} GiB. {suggestion}"
+        )
 
 def move_batch_to_device(
     x: torch.Tensor,
@@ -3747,9 +3746,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
                 _hist_mode = "w"
         elif log_path.exists():
             log_path.unlink()
-    else:
-        if log_path.exists():
-            log_path.unlink()
+    elif log_path.exists():
+        log_path.unlink()
 
     # Periodic Evaluation During Training (monitoring only; OFF by default).
     # Schedule is resolved from the first epoch that will actually run, so a
@@ -3936,49 +3934,48 @@ def _run_training_loop(session: _TrainingSession) -> None:
                         f"[checkpoint] waiting complete: epoch {epoch+1}. "
                         f"Best-checkpoint tracking and patience counter start from next epoch."
                     )
-            else:
-                if _best_update.is_best:
-                    checkpoint_payload["scoring"]["score"] = float(_ckpt_score)
-                    checkpoint_payload["config"]["best_val_loss"] = float(best_val)
-                    checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1)
-                    checkpoint_payload["config"]["best_score"] = float(_ckpt_score)
-                    checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
-                    checkpoint_payload["config"]["checkpoint_selection"] = dict(checkpoint_selection)
-                    checkpoint_payload["config"]["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
-                    checkpoint_payload["config"]["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
-                    checkpoint_payload["config"]["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
-                    checkpoint_payload["config"]["epochs_since_improvement"] = 0
-                    checkpoint_report["is_best_update"] = True
-                    checkpoint_report["best_epoch"] = int(best_epoch + 1)
-                    checkpoint_report["best_score"] = float(best_val)
-                    checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
-                    checkpoint_payload["scoring"].update(dict(checkpoint_report))
-                    best_save_info = save_checkpoint(
-                        layout,
-                        kind="best",
-                        payload=checkpoint_payload,
-                        epoch=epoch,
-                        return_metadata=True,
-                    )
-                    best_ckpt_hash = str(best_save_info["sha256"])
-                    logger.info(f"[artifacts] checkpoint saved: kind=best epoch={epoch + 1}")
-                    logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")
-                    update_run_manifest(
-                        layout,
-                        {
-                            "best_checkpoint_path": str(best_path),
-                            "last_checkpoint_path": str(last_path),
-                            "best_epoch": int(best_epoch + 1),
-                            "best_score": float(_ckpt_score),
-                            "checkpoint_selection": dict(checkpoint_selection),
-                            "checkpoint_report": dict(checkpoint_report),
-                            "latest_epoch": int(epoch + 1),
-                            "checkpoint_hashes": {
-                                "best": best_ckpt_hash,
-                                "last": last_ckpt_hash,
-                            },
+            elif _best_update.is_best:
+                checkpoint_payload["scoring"]["score"] = float(_ckpt_score)
+                checkpoint_payload["config"]["best_val_loss"] = float(best_val)
+                checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1)
+                checkpoint_payload["config"]["best_score"] = float(_ckpt_score)
+                checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
+                checkpoint_payload["config"]["checkpoint_selection"] = dict(checkpoint_selection)
+                checkpoint_payload["config"]["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
+                checkpoint_payload["config"]["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
+                checkpoint_payload["config"]["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
+                checkpoint_payload["config"]["epochs_since_improvement"] = 0
+                checkpoint_report["is_best_update"] = True
+                checkpoint_report["best_epoch"] = int(best_epoch + 1)
+                checkpoint_report["best_score"] = float(best_val)
+                checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
+                checkpoint_payload["scoring"].update(dict(checkpoint_report))
+                best_save_info = save_checkpoint(
+                    layout,
+                    kind="best",
+                    payload=checkpoint_payload,
+                    epoch=epoch,
+                    return_metadata=True,
+                )
+                best_ckpt_hash = str(best_save_info["sha256"])
+                logger.info(f"[artifacts] checkpoint saved: kind=best epoch={epoch + 1}")
+                logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")
+                update_run_manifest(
+                    layout,
+                    {
+                        "best_checkpoint_path": str(best_path),
+                        "last_checkpoint_path": str(last_path),
+                        "best_epoch": int(best_epoch + 1),
+                        "best_score": float(_ckpt_score),
+                        "checkpoint_selection": dict(checkpoint_selection),
+                        "checkpoint_report": dict(checkpoint_report),
+                        "latest_epoch": int(epoch + 1),
+                        "checkpoint_hashes": {
+                            "best": best_ckpt_hash,
+                            "last": last_ckpt_hash,
                         },
-                    )
+                    },
+                )
                 # Non-improving eligible epochs: the tracker already advanced
                 # epochs_without_improve (mirrored into the local above).
 

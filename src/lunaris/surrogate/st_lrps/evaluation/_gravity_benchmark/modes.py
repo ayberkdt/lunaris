@@ -1063,13 +1063,13 @@ def _parallel_worker_scenario(payload: tuple[Scenario, str, list[str]]) -> dict[
         try:
             res, rt = propagate_for_scenario(model, y0, args, cfg_base, ephem, cache)
         except Exception as exc:  # pragma: no cover - defensive (worker side)
-            failed = {f: None for f in _METRICS_FIELDNAMES}
+            failed = dict.fromkeys(_METRICS_FIELDNAMES)
             failed.update({"scenario_id": scenario.scenario_id, "model": model,
                            "status": "exception", "failure_reason": str(exc)})
             rows.append(failed)
             continue
         if res is None:
-            failed = {f: None for f in _METRICS_FIELDNAMES}
+            failed = dict.fromkeys(_METRICS_FIELDNAMES)
             failed.update({"scenario_id": scenario.scenario_id, "model": model, "status": "failed"})
             rows.append(failed)
             continue
@@ -1371,7 +1371,7 @@ def run_random_scenario_mode(
                         traceback.print_exc()
                         if args.fail_fast:
                             sys.exit(1)
-                        failed_row = {f: None for f in _METRICS_FIELDNAMES}
+                        failed_row = dict.fromkeys(_METRICS_FIELDNAMES)
                         failed_row.update({"scenario_id": scenario.scenario_id,
                                            "model": model, "status": "exception"})
                         _append_metrics_csv(failed_row, metrics_path, not header_written)
@@ -1382,7 +1382,7 @@ def run_random_scenario_mode(
                     print("FAILED", flush=True)
                     if args.fail_fast:
                         sys.exit(1)
-                    failed_row = {f: None for f in _METRICS_FIELDNAMES}
+                    failed_row = dict.fromkeys(_METRICS_FIELDNAMES)
                     failed_row.update({"scenario_id": scenario.scenario_id,
                                        "model": model, "status": "failed"})
                     _append_metrics_csv(failed_row, metrics_path, not header_written)

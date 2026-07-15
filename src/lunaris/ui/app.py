@@ -1310,7 +1310,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if text is None:
             return
-        sev = severity if severity else ("error" if is_error else "auto")
+        sev = severity or ("error" if is_error else "auto")
         self.log_panel.append(text, severity=sev, source=source)
 
     def _log_separator(self):
@@ -2311,7 +2311,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message(f"[Error] Failed to load session: {e}", severity="error")
             QtWidgets.QMessageBox.warning(
                 self, "Load Error",
-                f"Failed to load session file:\n\n{str(e)}"
+                f"Failed to load session file:\n\n{e!s}"
             )
 
     def _action_save_session(self, _checked: bool = False):
@@ -2333,7 +2333,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message(f"[Error] Failed to save session: {e}", severity="error")
             QtWidgets.QMessageBox.warning(
                 self, "Save Error",
-                f"Failed to save session file:\n\n{str(e)}"
+                f"Failed to save session file:\n\n{e!s}"
             )
 
     def _try_prefill_topography_from_config(self):
@@ -2499,7 +2499,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if hasattr(self, "lbl_output_status"):
                     self.lbl_output_status.setText(out_text)
                     self.lbl_output_status.setToolTip(
-                        out_dir if out_dir else "Output directory — click to choose"
+                        out_dir or "Output directory — click to choose"
                     )
         except Exception:
             pass

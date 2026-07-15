@@ -1632,7 +1632,7 @@ def sample_topo_radius_m(payload: dict[str, Any], lat_deg: float, lon_deg: float
     sample is non-finite (void pixel).
     """
     const_m = float(payload.get("radius_const_m", float(R_MOON_MEAN)))
-    dn = payload.get("dn", None)
+    dn = payload.get("dn")
     if dn is None:
         return const_m
 

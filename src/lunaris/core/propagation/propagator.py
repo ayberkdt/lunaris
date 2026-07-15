@@ -236,15 +236,14 @@ def propagate(
                 step_plan.limiting_reason,
                 step_plan.sh_degree,
             )
-    else:
-        if verbose:
-            logger.info(
-                "[STEP] user_max_step=%gs, nyquist=%0.6fs -> using %0.6fs (reason=%s)",
-                step_plan.user_max_step_s,
-                step_plan.nyquist_max_step_s,
-                max_step,
-                step_plan.limiting_reason,
-            )
+    elif verbose:
+        logger.info(
+            "[STEP] user_max_step=%gs, nyquist=%0.6fs -> using %0.6fs (reason=%s)",
+            step_plan.user_max_step_s,
+            step_plan.nyquist_max_step_s,
+            max_step,
+            step_plan.limiting_reason,
+        )
 
     integration_plan = resolve_integration_plan(cfg, duration_s=dur_s)
     max_internal_steps = int(getattr(cfg, "max_internal_steps", 1_000_000))

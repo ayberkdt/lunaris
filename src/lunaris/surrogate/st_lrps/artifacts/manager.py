@@ -1126,9 +1126,7 @@ def load_scaler_for_run(
         file_payload = json.loads(layout.scaler_json.read_text(encoding="utf-8"))
 
     ckpt_payload = ckpt.get("scaler")
-    if not isinstance(ckpt_payload, dict):
-        ckpt_payload = None
-    elif not {"x", "u", "a"}.issubset(set(ckpt_payload.keys())):
+    if not isinstance(ckpt_payload, dict) or not {"x", "u", "a"}.issubset(set(ckpt_payload.keys())):
         ckpt_payload = None
 
     if file_payload is None and ckpt_payload is None:

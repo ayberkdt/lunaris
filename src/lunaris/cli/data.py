@@ -637,7 +637,7 @@ def cmd_list(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace
         for d in by_group[group]:
             req = "required" if d.get("required") else "optional"
             avail = "url" if d.get("url") else "manual"
-            print(f"  - {str(d.get('name')):28s} {req:8s} {avail:6s} {d.get('filename')}")
+            print(f"  - {d.get('name')!s:28s} {req:8s} {avail:6s} {d.get('filename')}")
     return 0
 
 
@@ -698,7 +698,7 @@ def cmd_verify(manifest: dict[str, Any], data_root: Path, args: argparse.Namespa
         required = _entry_required_for_mode(entry, strict=strict)
         target = detail["target"]
         print(f"[{'required' if required else 'optional':8s}] "
-              f"{str(entry.get('name')):28s} {labels[status]:36s} {target}"
+              f"{entry.get('name')!s:28s} {labels[status]:36s} {target}"
               f"{_format_match_note(detail)}")
         if status in _FAIL_STATUSES and required:
             failures += 1

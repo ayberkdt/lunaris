@@ -659,7 +659,7 @@ def figure_elements_timeseries(t_days: np.ndarray, elems: dict[str, np.ndarray])
     ]
 
     def _plot_1d(ax: plt.Axes, key: str, title: str, ylabel: str) -> None:
-        data = _as_np(elems.get(key, None), float, atleast_1d=True, ravel=True)
+        data = _as_np(elems.get(key), float, atleast_1d=True, ravel=True)
         if t_days.size < 2 or data.size < 2:
             ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, color="0.45")
             ax.set_title(title, loc="left", fontsize=11)
@@ -692,8 +692,8 @@ def figure_elements_timeseries(t_days: np.ndarray, elems: dict[str, np.ndarray])
 
     # Apsidal radii panel
     ax_r = axs[5]
-    a = _as_np(elems.get("a_km", None), float, atleast_1d=True, ravel=True)
-    e = _as_np(elems.get("e", None), float, atleast_1d=True, ravel=True)
+    a = _as_np(elems.get("a_km"), float, atleast_1d=True, ravel=True)
+    e = _as_np(elems.get("e"), float, atleast_1d=True, ravel=True)
 
     if t_days.size >= 2 and a.size >= 2 and e.size >= 2:
         n = int(min(t_days.size, a.size, e.size))
@@ -752,10 +752,10 @@ def figure_invariants(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt.Fig
     apply_rcparams(DEFAULT_STYLE)
 
     t_days = _as_np(t_days, float, atleast_1d=True, ravel=True)
-    r = _as_np(inv.get("r_norm_km", None), float, atleast_1d=True, ravel=True)
-    v = _as_np(inv.get("v_norm_kmps", None), float, atleast_1d=True, ravel=True)
-    E = _as_np(inv.get("energy_Jkg", None), float, atleast_1d=True, ravel=True)
-    h = _as_np(inv.get("h_norm_m2s", None), float, atleast_1d=True, ravel=True)
+    r = _as_np(inv.get("r_norm_km"), float, atleast_1d=True, ravel=True)
+    v = _as_np(inv.get("v_norm_kmps"), float, atleast_1d=True, ravel=True)
+    E = _as_np(inv.get("energy_Jkg"), float, atleast_1d=True, ravel=True)
+    h = _as_np(inv.get("h_norm_m2s"), float, atleast_1d=True, ravel=True)
 
     specs: list[tuple[str, str, np.ndarray, str]] = []
     if r.size >= 2:
@@ -942,10 +942,10 @@ def figure_relative_drift(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt
     t_days = _as_np(t_days, float, atleast_1d=True, ravel=True)
 
     def _drift(rel_key: str, abs_key: str) -> np.ndarray:
-        rel = _as_np(inv.get(rel_key, None), float, atleast_1d=True, ravel=True)
+        rel = _as_np(inv.get(rel_key), float, atleast_1d=True, ravel=True)
         if rel.size >= 2:
             return rel
-        abs_v = _as_np(inv.get(abs_key, None), float, atleast_1d=True, ravel=True)
+        abs_v = _as_np(inv.get(abs_key), float, atleast_1d=True, ravel=True)
         if abs_v.size >= 2:
             v0 = float(abs_v[0])
             denom = max(abs(v0), 1e-30)
@@ -1241,8 +1241,8 @@ def figure_eomega(t_days: np.ndarray, elems: dict[str, np.ndarray]) -> plt.Figur
     apply_rcparams(DEFAULT_STYLE)
 
     t = _as_np(t_days, float, atleast_1d=True, ravel=True)
-    e = _as_np(elems.get("e", None), float, atleast_1d=True, ravel=True)
-    w_deg = _as_np(elems.get("argp_deg", None), float, atleast_1d=True, ravel=True)
+    e = _as_np(elems.get("e"), float, atleast_1d=True, ravel=True)
+    w_deg = _as_np(elems.get("argp_deg"), float, atleast_1d=True, ravel=True)
 
     n = int(min(t.size, e.size, w_deg.size))
     if n < 2:

@@ -758,7 +758,7 @@ def main() -> None:
     print(f"[degrees]  degree_min={meta.degree_min} | degree_max={meta.degree_max}")
     print(f"[units]    unit_system={meta.unit_system} | r_ref_m={meta.r_ref_m} | DU_m={meta.DU_m}")
     print(f"[analyzed] sampled_rows={X.shape[0]:,} | after_filter={X_f.shape[0]:,} | filter={filter_info}")
-    print("")
+    print()
 
     stats = {
         "file": str(in_path),
@@ -907,7 +907,7 @@ def main() -> None:
         print(f"[plots] saved to: {outdir}")
         for k, v in plot_paths.items():
             print(f"  - {k}: {v}")
-        print("")
+        print()
 
     stats["plots"] = plot_paths
 

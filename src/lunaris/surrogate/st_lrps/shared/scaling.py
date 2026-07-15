@@ -139,8 +139,7 @@ class OnlineIsometricStats:
         centered = batch - self.mean  # use latest mean estimate
         norms = np.linalg.norm(centered, axis=1)
         batch_max = float(np.max(norms))
-        if batch_max > self.max_norm:
-            self.max_norm = batch_max
+        self.max_norm = max(self.max_norm, batch_max)
 
     def finalize(
         self,
@@ -428,8 +427,7 @@ def fit_scaler_streaming(
 
         # Track max ‖x‖ from origin (not from running mean) for SH-correct scaling
         batch_max_r = float(np.max(np.linalg.norm(x, axis=1)))
-        if batch_max_r > max_r_from_origin:
-            max_r_from_origin = batch_max_r
+        max_r_from_origin = max(max_r_from_origin, batch_max_r)
 
         # Subtract baseline so scaler is fitted on residuals (single SH pass).
         x_t = torch.as_tensor(x, dtype=torch.float64)

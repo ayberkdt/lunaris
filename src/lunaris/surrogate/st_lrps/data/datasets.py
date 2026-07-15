@@ -116,7 +116,7 @@ def _safe_str(d: dict[str, Any], key: str) -> str | None:
         if isinstance(val, bytes):
             val = val.decode("utf-8")
         s = str(val).strip()
-        return s if s else None
+        return s or None
     except (ValueError, TypeError, UnicodeDecodeError):
         return None
 
@@ -266,8 +266,8 @@ class DatasetMeta:
         alt_max: float | None = None
         if cloud_cfg is not None:
             try:
-                alt_min = float(cloud_cfg.get("alt_min_km", attrs.get("alt_min_km", None) or 0))
-                alt_max = float(cloud_cfg.get("alt_max_km", attrs.get("alt_max_km", None) or 0))
+                alt_min = float(cloud_cfg.get("alt_min_km", attrs.get("alt_min_km") or 0))
+                alt_max = float(cloud_cfg.get("alt_max_km", attrs.get("alt_max_km") or 0))
             except (TypeError, ValueError):
                 pass
         else:
@@ -499,13 +499,12 @@ def validate_training_dataset_convention(
             "whether labels are residual or full-field."
         )
         raise ValueError(msg)
-    else:
-        tmode = str(meta.target_mode).strip().lower()
-        if tmode not in ("residual", "full"):
-            raise ValueError(
-                f"Dataset {name!r} has target_mode={meta.target_mode!r}; expected "
-                "'residual' or 'full'."
-            )
+    tmode = str(meta.target_mode).strip().lower()
+    if tmode not in ("residual", "full"):
+        raise ValueError(
+            f"Dataset {name!r} has target_mode={meta.target_mode!r}; expected "
+            "'residual' or 'full'."
+        )
 
     # --- degree ordering ---
     dmax = meta.degree_max if meta.degree_max is not None else meta.requested_degree
@@ -535,7 +534,7 @@ def validate_training_dataset_convention(
     if meta.alt_min_km is None or meta.alt_max_km is None:
         msg = f"Dataset {name!r} is missing altitude bounds."
         raise ValueError(msg)
-    elif float(meta.alt_max_km) <= float(meta.alt_min_km):
+    if float(meta.alt_max_km) <= float(meta.alt_min_km):
         raise ValueError(
             f"Dataset {name!r} has invalid altitude bounds: "
             f"{meta.alt_min_km} >= {meta.alt_max_km}."

@@ -57,9 +57,7 @@ def classify_field_metrics(metrics: dict[str, Any], comparison: dict[str, Any]) 
         abs_tol.get("acceleration_component_m_s2"),
     )
 
-    if origin == "report_only":
-        status = REPORT_ONLY
-    elif not checks:
+    if origin == "report_only" or not checks:
         status = REPORT_ONLY
     elif all(check["passed"] for check in checks):
         status = PASS

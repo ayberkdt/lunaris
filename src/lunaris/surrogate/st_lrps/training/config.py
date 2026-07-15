@@ -413,7 +413,7 @@ def apply_model_preset(cfg: TrainConfig) -> TrainConfig:
     if preset == "custom":
         return cfg
 
-    implied: dict[str, bool] = {name: False for name in _ENCODING_FLAGS}
+    implied: dict[str, bool] = dict.fromkeys(_ENCODING_FLAGS, False)
     if preset == "recommended_physical_radial_decay":
         implied["use_physical_radial_decay_encoding"] = True
         cfg.physical_radial_decay_max_power = 4
@@ -930,7 +930,7 @@ def parse_args() -> TrainConfig:
         help="Disable SH angular polynomial encoding (default).",
     )
     group_enc.add_argument(
-        "--sh-encoding-degree", type=int, choices=range(0, 17),
+        "--sh-encoding-degree", type=int, choices=range(17),
         default=_TC_DEFAULTS.get("sh_encoding_degree", 4),
         help="Max polynomial degree for SH-inspired angular encoding (0..16).",
     )
@@ -1063,7 +1063,7 @@ def parse_args() -> TrainConfig:
         help="Disable real SH basis encoding (default).",
     )
     group_enc.add_argument(
-        "--real-sh-degree", type=int, choices=range(0, 9),
+        "--real-sh-degree", type=int, choices=range(9),
         default=_TC_DEFAULTS.get("real_sh_degree", 4),
         help="Max degree L for RealSHBasisEncoding ((L+1)^2 angular terms, 0..8).",
     )

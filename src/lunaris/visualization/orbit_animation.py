@@ -106,13 +106,13 @@ def _pick_dark_safe_color(candidate, fallback: str, *, want_light_text: bool = F
 
 
 THEME = Theme(
-    text=_pick_dark_safe_color(_COLORS.get("text", None), "#E8EEF8", want_light_text=True),
-    hud_bg=_pick_dark_safe_color(_COLORS.get("hud_bg", None), "#0A0F1E"),
-    hud_edge=_pick_dark_safe_color(_COLORS.get("hud_edge", None), "#2B3555"),
-    orbit=_pick_dark_safe_color(_COLORS.get("orbit", None), "#5ED0FF"),
-    orbit_faint=_pick_dark_safe_color(_COLORS.get("orbit_faint", None), "#2B6C80"),
-    sun=_pick_dark_safe_color(_COLORS.get("sun", None), "#FFD166"),
-    star=_pick_dark_safe_color(_COLORS.get("star", None), "#D6E2FF"),
+    text=_pick_dark_safe_color(_COLORS.get("text"), "#E8EEF8", want_light_text=True),
+    hud_bg=_pick_dark_safe_color(_COLORS.get("hud_bg"), "#0A0F1E"),
+    hud_edge=_pick_dark_safe_color(_COLORS.get("hud_edge"), "#2B3555"),
+    orbit=_pick_dark_safe_color(_COLORS.get("orbit"), "#5ED0FF"),
+    orbit_faint=_pick_dark_safe_color(_COLORS.get("orbit_faint"), "#2B6C80"),
+    sun=_pick_dark_safe_color(_COLORS.get("sun"), "#FFD166"),
+    star=_pick_dark_safe_color(_COLORS.get("star"), "#D6E2FF"),
 )
 
 R_MOON_KM_DEFAULT = 1737.4

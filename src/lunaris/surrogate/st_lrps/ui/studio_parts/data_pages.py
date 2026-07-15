@@ -374,7 +374,7 @@ def _set_path_label(label: QLabel, path: str, *, empty_text: str) -> None:
         label.setText(empty_text)
         return
     p = Path(path)
-    shown = p.name if p.name else path
+    shown = p.name or path
     label.setText(f"{shown}\n{path}")
 
 

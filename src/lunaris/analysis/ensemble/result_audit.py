@@ -316,9 +316,9 @@ def audit_root(root: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
 
     for path in sorted(root.rglob("*")):
-        if path.suffix.lower() in (".h5", ".hdf5") and _is_batch_hdf5(path):
-            entries.append(_audit_batch_archive(path))
-        elif path.suffix.lower() == ".npz" and _is_batch_npz(path):
+        is_batch_h5 = path.suffix.lower() in (".h5", ".hdf5") and _is_batch_hdf5(path)
+        is_batch_npz = path.suffix.lower() == ".npz" and _is_batch_npz(path)
+        if is_batch_h5 or is_batch_npz:
             entries.append(_audit_batch_archive(path))
 
     for cfg_path in sorted(root.rglob("config.json")):

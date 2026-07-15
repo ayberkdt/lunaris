@@ -1618,7 +1618,7 @@ class STLRPSTrainTab(QWidget):
         ):
             self.model_preset.addItem(_label, _val)
         _mp_default = self.model_preset.findData("recommended_physical_radial_decay")
-        self.model_preset.setCurrentIndex(_mp_default if _mp_default >= 0 else 0)
+        self.model_preset.setCurrentIndex(max(_mp_default, 0))
         self.model_preset.setToolTip(
             "Input-encoding representation preset.\n"
             "Non-custom presets fully control the representation; the manual flags\n"
@@ -4013,7 +4013,7 @@ class STLRPSTrainTab(QWidget):
 
         self._live_plot.clear()
         self._live_plot.set_patience(self.patience.value())
-        self.runner.set_output_dir(out_dir if out_dir else "")
+        self.runner.set_output_dir(out_dir or "")
         self._set_history_poll_dir(out_dir)
         self._update_run_dir_label(out_dir)
         self._save_settings()

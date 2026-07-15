@@ -176,19 +176,12 @@ def report_topography_max(
             if not np.isfinite(seg_ext):
                 continue
 
-            if best_val_dn is None:
+            if best_val_dn is None or (want_max and float(seg_ext) > best_val_dn) or ((not want_max) and float(seg_ext) < best_val_dn):
                 best_val_dn = float(seg_ext)
                 k = int(np.nanargmax(view) if want_max else np.nanargmin(view))
                 ii, jj = np.unravel_index(k, view.shape)
                 best_i = int(sl_lat.start) + int(ii)
                 best_j = int(sl_lon.start) + int(jj)
-            else:
-                if (want_max and float(seg_ext) > best_val_dn) or ((not want_max) and float(seg_ext) < best_val_dn):
-                    best_val_dn = float(seg_ext)
-                    k = int(np.nanargmax(view) if want_max else np.nanargmin(view))
-                    ii, jj = np.unravel_index(k, view.shape)
-                    best_i = int(sl_lat.start) + int(ii)
-                    best_j = int(sl_lon.start) + int(jj)
 
     if best_val_dn is None or best_i is None or best_j is None:
         raise ValueError("Selected window contains no finite height samples.")
@@ -423,9 +416,8 @@ def run_surface_explorer(args: argparse.Namespace) -> int:
             print("Plotting Topography 3D...")
             p = plot_topography_3d(topo, out_dir, stride=args.stride_3d, show=args.show)
             print(f"  Saved to {p}")
-    else:
-        if args.plot_2d or args.plot_3d:
-            print("Warning: Topography arguments missing, skipping topography plots.", file=sys.stderr)
+    elif args.plot_2d or args.plot_3d:
+        print("Warning: Topography arguments missing, skipping topography plots.", file=sys.stderr)
 
     # 2. Albedo
     if args.plot_albedo:

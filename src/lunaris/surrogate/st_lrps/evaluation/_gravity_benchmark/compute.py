@@ -1011,19 +1011,18 @@ def run_st_lrps_batch_rk4(
         return _run_batch_rk4_gpu(surrogate_model, y0_batch, duration_s, dt_eff,
                                    output_dt_s, args, ephem=ephem,
                                    frame=frame)
-    else:
-        fallback = getattr(args, "gpu_fallback", "cpu")
-        if fallback == "error":
-            raise RuntimeError(
-                "GPU batch RK4 requested but CUDA is unavailable. "
-                "Use --gpu-fallback cpu."
-            )
-        print("[batch-rk4] CUDA unavailable; using CPU batch RK4.", flush=True)
-        return _run_batch_rk4_cpu(
-            surrogate_model, y0_batch, duration_s, dt_eff, output_dt_s,
-            ephem=ephem,
-            frame=frame,
+    fallback = getattr(args, "gpu_fallback", "cpu")
+    if fallback == "error":
+        raise RuntimeError(
+            "GPU batch RK4 requested but CUDA is unavailable. "
+            "Use --gpu-fallback cpu."
         )
+    print("[batch-rk4] CUDA unavailable; using CPU batch RK4.", flush=True)
+    return _run_batch_rk4_cpu(
+        surrogate_model, y0_batch, duration_s, dt_eff, output_dt_s,
+        ephem=ephem,
+        frame=frame,
+    )
 
 
 def _run_batch_rk4_gpu(

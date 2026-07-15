@@ -422,7 +422,6 @@ class TrainingLogParser:
 
         # ── Phase detection ───────────────────────────────────────
         is_val = bool(self._RE_VAL_HEADER.search(line))
-        is_train = bool(self._RE_TRAIN_HEADER.search(line))
 
         # ── Batch progress ────────────────────────────────────────
         m_batch = self._RE_BATCH.search(line)
@@ -489,9 +488,6 @@ class TrainingLogParser:
         if is_val and has_metrics:
             rec.phase = "val"
             rec.event = "val_summary"
-        elif is_train and has_metrics:
-            rec.phase = "train"
-            rec.event = "batch"
         elif has_metrics:
             rec.phase = "train"
             rec.event = "batch"
