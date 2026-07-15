@@ -30,8 +30,9 @@ class MonitorWidgetSpec:
     supports_replay: bool = True
     #: Singleton widgets can be open at most once per dashboard tab.
     singleton: bool = True
-    #: ``factory(controller) -> QWidget``; None marks a reserved/unimplemented
-    #: widget that restores as a placeholder.
+    #: ``factory(spec, controller) -> QWidget`` (MonitorWidgetFrame subclasses
+    #: satisfy this directly); None marks a reserved/unimplemented widget that
+    #: restores as a placeholder.
     factory: Callable[..., Any] | None = None
 
     def __post_init__(self) -> None:

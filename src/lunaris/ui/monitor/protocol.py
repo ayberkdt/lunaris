@@ -136,6 +136,15 @@ class TelemetryLineClassifier:
             return None
         if not isinstance(payload, dict):
             return None
+        return self.adapt_legacy_mapping(payload)
+
+    def adapt_legacy_mapping(self, payload: dict) -> SampleMessage | None:
+        """Adopt an already-parsed legacy telemetry mapping.
+
+        Exists for the desktop UI's python-repr fallback path
+        (``ast.literal_eval`` lines that are not valid JSON), so those samples
+        share the same synthetic run/sequence space as JSON legacy lines.
+        """
         sample = sample_from_legacy_dict(
             payload, run_id=self._legacy_run_id, sequence_id=self._legacy_seq
         )

@@ -19,7 +19,7 @@ def spec(widget_id: str = "altitude", **overrides) -> MonitorWidgetSpec:
         category="Trajectory",
         description="Altitude history",
         required_channels=("altitude_m",),
-        factory=lambda controller: object(),
+        factory=lambda spec, controller: object(),
     )
     base.update(overrides)
     return MonitorWidgetSpec(**base)

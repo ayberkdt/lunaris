@@ -160,6 +160,15 @@ def _add_numerics_args(parser: argparse.ArgumentParser) -> None:
     g_num.add_argument("--enable-telemetry", type=str2bool, help="Stream JSON telemetry to stdout (on/off)")
     g_num.add_argument("--telem-cadence-s", type=float, help="Telemetry stdout cadence [s]")
     g_num.add_argument(
+        "--telemetry-artifact",
+        type=str2bool,
+        help=(
+            "Also write the emitted telemetry lines into the run directory as "
+            "telemetry.ndjson (the Mission Monitor replay artifact). Requires "
+            "--enable-telemetry (on/off; default off)"
+        ),
+    )
+    g_num.add_argument(
         "--telemetry-cadence-s",
         dest="telem_cadence_s",
         type=float,

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Added the Mission Monitor (phases 1–3): a live/replay observation console.**
+  New navigation page with a dockable widget workspace (Altitude/Radius,
+  Orbital Elements, Integrator Health, Event Timeline, Backend & Provenance),
+  workspace presets, and a shared-cursor replay timeline (play/pause, step,
+  event jump, 0.25×–20×). Backed by a typed, versioned telemetry protocol
+  (`lunaris_telemetry_v1`, `lunaris.common.telemetry_contract`): the propagator
+  now emits `[TELEMETRY] {json}` samples (SI state, osculating elements with
+  singularity-honest omission, sequence ids) and the CLI emits one
+  `[TELEMETRY_META]` provenance line (config hash, git commit, gravity
+  model/degree, μ). `--telemetry-artifact on` mirrors the stream into
+  `telemetry.ndjson` in the run directory for replay (UI runs enable it).
+  UI memory is bounded (ring-buffer store + min/max-envelope display
+  downsampling); paint cadence is decoupled from telemetry cadence; legacy
+  bare-JSON telemetry keeps working through a compatibility adapter. New
+  import-linter contract keeps `lunaris.ui.monitor` off the physics hot path.
+  Docs: `docs/MISSION_MONITOR.md`.
+
 Merged to `main` after 0.1.0rc1 (#115–#119): 100 files, ~12.6k insertions.
 This is not a formatting-only delta — it adds a new `lunaris.validation`
 convergence module, a full algorithm-traceability system, and widens the lint

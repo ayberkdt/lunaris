@@ -27,6 +27,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.telemetry_contract import (
+    TELEMETRY_ARTIFACT_NAME as _TELEMETRY_ARTIFACT_NAME,
+)
+
 __all__ = ["RunRecord", "index_runs", "run_kpis"]
 
 _RUN_CONFIG_NAME = "run_config.json"
@@ -55,6 +59,9 @@ class RunRecord:
     figures: tuple[Path, ...] = ()
     reports: tuple[Path, ...] = ()
     is_demo: bool = False
+    #: True when the run carries a telemetry.ndjson replay artifact the
+    #: Mission Monitor can re-open.
+    has_telemetry: bool = False
 
 
 def _load_json(path: Path) -> tuple[dict[str, Any], bool]:
@@ -106,6 +113,12 @@ def _record_for(run_dir: Path) -> RunRecord:
     except OSError:
         created = datetime.fromtimestamp(0)
 
+    telemetry_path = run_dir / _TELEMETRY_ARTIFACT_NAME
+    try:
+        has_telemetry = telemetry_path.is_file() and not telemetry_path.is_symlink()
+    except OSError:
+        has_telemetry = False
+
     return RunRecord(
         run_dir=run_dir,
         label=run_dir.name,
@@ -117,6 +130,7 @@ def _record_for(run_dir: Path) -> RunRecord:
         figures=tuple(figures),
         reports=tuple(reports),
         is_demo=_looks_demo(run_dir),
+        has_telemetry=has_telemetry,
     )
 
 

@@ -7,7 +7,6 @@ point and owns the propagation orchestration surface.
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import time
@@ -55,7 +54,7 @@ from lunaris.core.propagation.result import _as_state_array
 from lunaris.core.propagation.scipy_runner import run_scipy_propagation
 from lunaris.core.propagation.telemetry import (
     _build_surface_radius_sampler,
-    _make_telem_dict,
+    _make_telem_dict,  # noqa: F401  # canonical import path for tests/back-compat
 )
 from lunaris.core.propagation.time_grid import (
     _get_ref_radius_and_mu,
@@ -191,6 +190,20 @@ def propagate(
             telem_cadence_s = max(60.0, float(dt_out) * 60.0)
 
     if enable_telem_json and telem_cadence_s > 0.0:
+        # Structured lunaris_telemetry_v1 emission ([TELEMETRY] {json} lines).
+        # The cadence gate stays here — one float comparison per RHS call —
+        # while sample construction/serialization lives in the emitter and
+        # runs only when the gate opens.
+        from lunaris.core.propagation.telemetry_emitter import build_emitter_from_config
+
+        telem_emitter = build_emitter_from_config(
+            cfg,
+            t0_s=float(t0),
+            reference_radius_m=float(R_ref_m),
+            mu_m3s2=float(mu_m3s2),
+            r_i_to_bf=telem_r_i_to_bf,
+            surface_radius_m=telem_surface_radius_m,
+        )
         last_telem_t = float(t0) - float(telem_cadence_s)
         rhs_base = rhs
 
@@ -198,17 +211,7 @@ def propagate(
             nonlocal last_telem_t
             dy = rhs_base(t, y)
             if (float(t) - float(last_telem_t)) >= float(telem_cadence_s):
-                telem = _make_telem_dict(
-                    t_s=float(t - t0),
-                    y=y,
-                    R_ref_m=float(R_ref_m),
-                    mu_m3s2=float(mu_m3s2),
-                    t_frame_s=float(t),
-                    r_i_to_bf=telem_r_i_to_bf,
-                    surface_radius_m=telem_surface_radius_m,
-                )
-                if telem is not None:
-                    print(json.dumps(telem, separators=(",", ":")), flush=True)
+                telem_emitter.emit(float(t), y)
                 last_telem_t = float(t)
             return dy
 
