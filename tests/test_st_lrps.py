@@ -18,6 +18,7 @@ Run
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -81,10 +82,8 @@ def _looks_like_root(p: Path) -> bool:
 
 def find_project_root() -> Path:
     bases = []
-    try:
+    with contextlib.suppress(Exception):
         bases.append(Path(__file__).resolve().parent)
-    except Exception:
-        pass
     bases.append(Path.cwd().resolve())
     for base in bases:
         for parent in [base, *base.parents]:

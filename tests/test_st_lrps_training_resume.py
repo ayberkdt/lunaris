@@ -286,7 +286,7 @@ def test_engine_resume_smoke(tmp_path):
     # Initial run: target 1 epoch.
     p1 = subprocess.run(
         _train_cmd("--data", str(data), "--out", str(run_dir), "--epochs", "1", *common),
-        cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=900,
+        cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=900, check=False,
     )
     if p1.returncode != 0:
         pytest.skip(f"initial training did not complete in this environment:\n{p1.stdout[-2000:]}\n{p1.stderr[-2000:]}")
@@ -297,7 +297,7 @@ def test_engine_resume_smoke(tmp_path):
     # Resume: total target 2 epochs (continue from epoch 1 -> run epoch 2).
     p2 = subprocess.run(
         _train_cmd("--resume-from", str(run_dir), "--epochs", "2", *common),
-        cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=900,
+        cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=900, check=False,
     )
     if p2.returncode != 0:
         pytest.skip(f"resume training did not complete in this environment:\n{p2.stdout[-2000:]}\n{p2.stderr[-2000:]}")

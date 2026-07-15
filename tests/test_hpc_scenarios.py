@@ -78,8 +78,7 @@ def _parse_lines(path: Path):
 def _all_scenarios():
     out = []
     for path in _iter_scenario_files():
-        for obj in _parse_lines(path):
-            out.append((path.name, obj))
+        out.extend((path.name, obj) for obj in _parse_lines(path))
     return out
 
 
@@ -214,7 +213,7 @@ def test_dry_run_prints_command_without_launching(tmp_path):
         ],
         cwd=str(_REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
     out = result.stdout
@@ -244,7 +243,7 @@ def test_common_flag_output_override_is_rejected(tmp_path):
         ],
         cwd=str(_REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert result.returncode == 2
     assert "must not set an output flag" in result.stderr
@@ -263,7 +262,7 @@ def test_index_out_of_range_fails_cleanly(tmp_path):
         ],
         cwd=str(_REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert result.returncode == 2
     assert "out of range" in result.stderr

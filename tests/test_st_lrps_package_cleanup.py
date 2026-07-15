@@ -89,7 +89,7 @@ def _tracked_files(pathspec: str) -> list[str]:
         ["git", "ls-files", pathspec],
         cwd=str(REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     if proc.returncode != 0:
         pytest.skip(f"git ls-files unavailable: {proc.stderr}")
@@ -112,7 +112,7 @@ def test_import_st_lrps_is_lightweight() -> None:
         [sys.executable, "-c", code],
         cwd=str(REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.strip().splitlines()
@@ -173,11 +173,11 @@ def test_no_committed_generated_artifacts_under_st_lrps() -> None:
         if any(norm.startswith(prefix) for prefix in FIXTURE_PREFIXES):
             continue
         name = norm.rsplit("/", 1)[-1]
-        if "gececi_kod" in norm.split("/"):
-            offenders.append(rel_path)
-        elif name in ARTIFACT_NAMES:
-            offenders.append(rel_path)
-        elif any(fnmatch.fnmatch(name, g) for g in ARTIFACT_GLOBS):
+        if (
+            "gececi_kod" in norm.split("/")
+            or name in ARTIFACT_NAMES
+            or any(fnmatch.fnmatch(name, g) for g in ARTIFACT_GLOBS)
+        ):
             offenders.append(rel_path)
     assert not offenders, f"Generated artifacts committed under lunaris.surrogate.st_lrps: {offenders}"
 
@@ -193,7 +193,7 @@ def test_module_help_exits_zero(module: str) -> None:
         [sys.executable, "-m", module, "--help"],
         cwd=str(REPO_ROOT),
         capture_output=True,
-        text=True,
+        text=True, check=False,
     )
     assert proc.returncode == 0, f"{module} --help failed:\n{proc.stderr}"
     assert "usage" in (proc.stdout + proc.stderr).lower()

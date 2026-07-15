@@ -95,8 +95,10 @@ def _build_synthetic_model(degree: int, seed: int):
 def _spread_points():
     pts = []
     for alt in (100e3, 400e3, 2000e3):
-        for vec in ([1, 0.2, 0.3], [0.4, -0.9, 0.2], [0.1, 0.1, 1.0], [-0.7, 0.3, -0.5]):
-            pts.append(_point_at(vec, R_REF + alt))
+        pts.extend(
+            _point_at(vec, R_REF + alt)
+            for vec in ([1, 0.2, 0.3], [0.4, -0.9, 0.2], [0.1, 0.1, 1.0], [-0.7, 0.3, -0.5])
+        )
     return np.array(pts)
 
 

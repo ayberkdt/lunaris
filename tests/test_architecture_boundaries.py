@@ -80,9 +80,11 @@ def _violations(package: str, forbidden_prefixes: Iterable[str]) -> list[tuple[s
     blocked = tuple(forbidden_prefixes)
     found: list[tuple[str, str]] = []
     for path in _python_files(package):
-        for imported in sorted(_imports_for(path)):
-            if _matches_prefix(imported, blocked):
-                found.append((path.relative_to(REPO_ROOT).as_posix(), imported))
+        found.extend(
+            (path.relative_to(REPO_ROOT).as_posix(), imported)
+            for imported in sorted(_imports_for(path))
+            if _matches_prefix(imported, blocked)
+        )
     return found
 
 

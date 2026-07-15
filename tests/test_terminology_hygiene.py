@@ -96,9 +96,11 @@ def test_no_banned_mc_terminology_in_active_sources() -> None:
         except UnicodeDecodeError:
             continue
         lowered = content.lower()
-        for banned in BANNED_SUBSTRINGS:
-            if banned.lower() in lowered:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}: {banned}")
+        offenders.extend(
+            f"{path.relative_to(REPO_ROOT)}: {banned}"
+            for banned in BANNED_SUBSTRINGS
+            if banned.lower() in lowered
+        )
         for label, pattern in BANNED_REGEXES:
             if path.name == "test_terminology_hygiene.py" and label == "banned backend-name construction":
                 continue
