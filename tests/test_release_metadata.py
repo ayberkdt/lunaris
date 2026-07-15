@@ -15,10 +15,10 @@ to the lint, type, or test gates.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
-import sys
 
 if sys.version_info >= (3, 11):
     import tomllib
