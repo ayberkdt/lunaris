@@ -19,6 +19,7 @@ Safety contract (Results-zone risk decisions)
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import os
 from dataclasses import dataclass, field
@@ -119,25 +120,47 @@ def _record_for(run_dir: Path) -> RunRecord:
     )
 
 
+#: Hard cap on directories examined during a single scan. Bounds the cost of a
+#: mistakenly selected huge tree while staying far above any realistic run count.
+_MAX_DIRS_VISITED = 20_000
+
+
 def index_runs(root: Path | str, *, max_depth: int = 2, limit: int = 200) -> list[RunRecord]:
-    """Scan ``root`` for run directories, newest first.
+    """Scan ``root`` for run directories and return the newest ``limit``.
 
     ``max_depth`` counts directory levels below ``root`` (the root itself is
     depth 0 and is also considered — a flat layout that writes straight into
     the results directory is a valid single run).
+
+    The scan collects *all* candidate run directories (up to a directory-visit
+    cap) and only then keeps the newest ``limit`` by modification time. Ranking
+    after collection is what makes "newest first" a real guarantee: stopping the
+    walk at the first ``limit`` matches would drop newer runs that happen to sort
+    late alphabetically.
     """
 
     root_path = Path(root)
     if not root_path.is_dir():
         return []
 
-    records: list[RunRecord] = []
+    # (mtime, run_dir) candidates; records are built only for the survivors so a
+    # huge tree does not pay JSON-parse + hash cost for runs it will discard.
+    candidates: list[tuple[float, Path]] = []
+    visited = 0
+
+    def _mtime(directory: Path) -> float:
+        try:
+            return (directory / _RUN_CONFIG_NAME).stat().st_mtime
+        except OSError:
+            return 0.0
 
     def _scan(directory: Path, depth: int) -> None:
-        if len(records) >= int(limit):
+        nonlocal visited
+        if visited >= _MAX_DIRS_VISITED:
             return
+        visited += 1
         if (directory / _RUN_CONFIG_NAME).is_file():
-            records.append(_record_for(directory))
+            candidates.append((_mtime(directory), directory))
             # A run directory is a leaf: runs are not nested inside runs.
             return
         if depth >= int(max_depth):
@@ -152,11 +175,14 @@ def index_runs(root: Path | str, *, max_depth: int = 2, limit: int = 200) -> lis
         except OSError:
             return
         for entry in sorted(subdirs, key=lambda e: e.name):
-            if len(records) >= int(limit):
+            if visited >= _MAX_DIRS_VISITED:
                 return
             _scan(Path(entry.path), depth + 1)
 
     _scan(root_path, 0)
+
+    newest = heapq.nlargest(int(limit), candidates, key=lambda item: item[0])
+    records = [_record_for(run_dir) for _, run_dir in newest]
     records.sort(key=lambda record: record.created_at, reverse=True)
     return records
 

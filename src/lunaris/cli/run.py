@@ -438,6 +438,21 @@ def build_run_meta(
     }
 
 
+def create_canonical_run_dir(out_dir: Path) -> Path:
+    """Create the single timestamped leaf that holds *all* artifacts of one run.
+
+    Config, diagnostics, PNGs, the PDF report, and any 3D render are written into
+    this one directory so the Results indexer sees a self-contained run: a
+    ``run_config.json`` sibling to its own figures and reports. Writing config to
+    ``out_dir`` while reporting created its own timestamped subdirectory used to
+    split every run across two directories, leaving the gallery empty and letting
+    re-used output roots overwrite the top-level config.
+    """
+    from lunaris.analysis.reporting.manager import create_run_directory
+
+    return Path(create_run_directory(str(out_dir), prefix="run"))
+
+
 def render_reports(
     *,
     result: PropagationResult,
@@ -456,7 +471,7 @@ def render_reports(
         meta=meta,
         ctx=engine,
         title_prefix="Lunaris",
-        use_run_subdir=True,
+        use_run_subdir=False,
         visual_cfg=cfg.visual,
         save_pdf=True,
     )
@@ -510,10 +525,26 @@ def run_pipeline(args: Namespace) -> int:
         ),
     )
 
+    # One canonical run directory holds every artifact of this run (config,
+    # diagnostics, PNGs, PDF, 3D). Falls back to out_dir if creation fails so a
+    # completed propagation still writes something.
+    run_dir = out_dir
+    try:
+        run_dir = create_canonical_run_dir(out_dir)
+    except OSError:
+        print("[WARN] Could not create canonical run directory; using output root.")
+
     diag_payload = build_run_diagnostics_payload(run.result, cfg.propagator.method)
+    # SPICE provenance chain (kernels/hashes/ET window) into the run diagnostics,
+    # so a single run's ephemeris evidence sits alongside its config and figures.
+    if ephem_mgr is not None and hasattr(ephem_mgr, "kernel_provenance"):
+        try:
+            diag_payload["spice_kernels"] = ephem_mgr.kernel_provenance()
+        except Exception:
+            pass
     _warn_optional_failure(
         "Could not write run artifacts",
-        lambda: write_run_artifacts(out_dir, cfg, diag_payload),
+        lambda: write_run_artifacts(run_dir, cfg, diag_payload),
     )
 
     meta = build_run_meta(cfg, run.result, mu=mu, propagation_time_s=run.elapsed_s)
@@ -524,7 +555,7 @@ def run_pipeline(args: Namespace) -> int:
             result=run.result,
             engine=engine,
             cfg=cfg,
-            out_dir=out_dir,
+            out_dir=run_dir,
             meta=meta,
         ),
         debug_tracebacks=debug_tracebacks,
@@ -533,7 +564,7 @@ def run_pipeline(args: Namespace) -> int:
 
     _run_optional_output(
         "3D render failed",
-        lambda: render_optional_3d(run.result, cfg, out_dir),
+        lambda: render_optional_3d(run.result, cfg, run_dir),
         debug_tracebacks=debug_tracebacks,
         import_warning="[WARN] visualization.orbit_animation not found; skipping 3D render.",
     )
@@ -567,6 +598,7 @@ __all__ = [
     "build_run_diagnostics_payload",
     "build_run_meta",
     "build_surface_provider_if_needed",
+    "create_canonical_run_dir",
     "init_ephemeris",
     "load_runtime_config",
     "main",

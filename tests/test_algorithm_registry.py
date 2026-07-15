@@ -142,3 +142,56 @@ def test_bib_records_have_identifiers(bib) -> None:
         assert any(record.get(field) for field in TOOL._IDENTIFIER_FIELDS), (
             f"references.bib: {key} has no persistent identifier"
         )
+
+
+# ---------------------------------------------------------------------------
+# Coverage audit (symbol-level, not file-level)
+# ---------------------------------------------------------------------------
+
+def test_audit_masks_only_the_registered_symbol_lines() -> None:
+    """A registered symbol masks its own lines; a sibling def stays visible.
+
+    This is the symbol-level upgrade: registering one function in a file must not
+    mark a second, unregistered algorithm in the same file as covered.
+    """
+    import ast
+
+    source = (
+        "def registered_kahan_sum(values):\n"
+        "    return sum(values)\n"
+        "\n"
+        "def unregistered_pefrl_step(state):\n"
+        "    return state\n"
+    )
+    tree = ast.parse(source)
+    covered_lines = TOOL._covered_line_span(tree, {"registered_kahan_sum"})
+    assert 1 in covered_lines and 2 in covered_lines  # registered def masked
+    assert 4 not in covered_lines  # sibling def still scannable
+
+    idents = TOOL._uncovered_identifiers(tree, covered_lines)
+    assert any("pefrl" in i for i in idents)  # sibling surfaces
+    assert all("kahan" not in i for i in idents)  # registered def hidden
+
+
+def test_audit_ignores_keyword_mentions_in_strings() -> None:
+    """String/enum/docstring mentions are not implementations and must not flag."""
+    import ast
+
+    source = (
+        "def choose(method):\n"
+        '    """Supports dop853 and other integrators."""\n'
+        '    return method == "dop853"\n'
+    )
+    tree = ast.parse(source)
+    idents = TOOL._uncovered_identifiers(tree, set())
+    # 'dop853' appears only inside a docstring and a string literal -> no identifier.
+    assert all("dop853" not in i for i in idents)
+
+
+def test_audit_reports_unregistered_sibling_implementation() -> None:
+    """End-to-end: the real tree flags a genuine unpinned schwarzschild variant."""
+    hits = TOOL.run_audit()
+    joined = "\n".join(hits)
+    # calc_schwarzschild_accel_out is a real implementation not pinned to a symbol;
+    # the old file-level audit masked it because sibling symbols were registered.
+    assert "relativity_effects.py" in joined

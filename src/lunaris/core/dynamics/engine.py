@@ -162,6 +162,7 @@ class DynamicsEngine:
         *,
         gravity_model: Any = None,
         gravity_adaptive: Any = None,
+        strict_fixed_degree: bool = False,
         ephem_manager: Any = None,
         surface_provider: Any = None,
         earth_j2: Any = None,
@@ -177,6 +178,9 @@ class DynamicsEngine:
 
         self.grav = gravity_model
         self.gravity_adaptive = gravity_adaptive
+        # Paper-safe / benchmark / strict runs forbid adaptive-degree blending
+        # (fixed reference degree only); enforced in prepare_gravity below.
+        self.strict_fixed_degree = bool(strict_fixed_degree)
         self.ephem = ephem_manager
         self.surf = surface_provider
         self.earth_j2 = earth_j2
@@ -243,7 +247,11 @@ class DynamicsEngine:
         ephemeris can actually provide.
         """
         req = self._requirements()
-        gp = prepare_gravity(self.grav, gravity_adaptive=self.gravity_adaptive)
+        gp = prepare_gravity(
+            self.grav,
+            gravity_adaptive=self.gravity_adaptive,
+            strict_fixed_degree=self.strict_fixed_degree,
+        )
         ep = prepare_ephem(self.ephem, req)
         # Raw config-derived requirements -> effective runtime requirements.
         # Kept as an explicit, side-effect-free step: prepare_ephem never

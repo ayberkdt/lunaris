@@ -113,6 +113,24 @@ def test_index_orders_newest_first(tmp_path: Path) -> None:
     assert records[0].run_dir == new
 
 
+def test_index_keeps_newest_across_the_limit(tmp_path: Path) -> None:
+    """The ``limit`` must retain the newest runs, not the first ``limit`` found.
+
+    Regression for the alphabetical-DFS early-stop bug: a newer run whose name
+    sorts late must not be dropped in favour of older, alphabetically-earlier
+    runs. Here ``zzz_new`` is newest but sorts last; with limit=1 it must win.
+    """
+    older = _make_run(tmp_path, "aaa_old")
+    newer = _make_run(tmp_path, "zzz_new")
+    old_t = 1_000_000_000
+    new_t = 2_000_000_000
+    os.utime(older / "run_config.json", (old_t, old_t))
+    os.utime(newer / "run_config.json", (new_t, new_t))
+
+    records = index_runs(tmp_path, limit=1)
+    assert [r.label for r in records] == ["zzz_new"]
+
+
 def test_demo_marker_from_directory_name(tmp_path: Path) -> None:
     _make_run(tmp_path, "smoke_test_run")
     _make_run(tmp_path, "mission_2026")

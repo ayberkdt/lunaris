@@ -34,9 +34,17 @@ R_REF = 1738000.0    # m
 R_EVAL = R_REF + 30e3  # 30 km altitude: high-degree terms strongest
 
 # Latitudes cover the equator, the underflow-margin band (u ~ 0.3-0.6), and
-# the pole approach.
-LATS_DEG = (0.0, 30.0, 55.0, 60.0, 65.0, 70.0, 80.0, 89.0, 89.9, 89.999)
+# BOTH pole approaches. The negative branch guards against a north-only pole
+# guard: the kernel must be finite and stable approaching the south pole too.
+LATS_DEG = (
+    0.0, 30.0, 55.0, 60.0, 65.0, 70.0, 80.0, 89.0, 89.9, 89.999,
+    -30.0, -60.0, -80.0, -89.9, -89.999,
+)
 LON_DEG = 37.0
+# Longitude sweep: the longitudinal (m-dependent) recomposition is the most
+# pole-sensitive part, and longitude is degenerate at the poles. Include the
+# ±180 seam and the four cardinal meridians.
+LONS_DEG = (0.0, 45.0, 90.0, 179.999, -179.999, 270.0)
 
 
 @pytest.fixture(scope="module")
@@ -127,6 +135,42 @@ def test_deg1800_exact_pole_matches_limit(model_1800: GravityModel) -> None:
     # part at 89.9999 deg is real field, not a numerical artifact).
     rel_axial = abs(a_pole[2] - a_near[2]) / abs(a_near[2])
     assert rel_axial < 1e-6, f"pole axial discontinuity rel={rel_axial:.3e}"
+
+
+def test_deg1800_exact_south_pole_matches_limit(model_1800: GravityModel) -> None:
+    """The exact SOUTH pole must be finite and continuous with the lat -> -90 limit.
+
+    Mirror of the north-pole test: a pole guard that only special-cases +90 would
+    leave the -90 branch divergent or discontinuous.
+    """
+    a_pole = model_1800.accel_fixed(np.array([0.0, 0.0, -R_EVAL]))
+    assert np.isfinite(a_pole).all()
+    assert a_pole[0] == pytest.approx(0.0, abs=1e-15)
+    assert a_pole[1] == pytest.approx(0.0, abs=1e-15)
+
+    a_near = model_1800.accel_fixed(_point(-89.9999, lon_deg=0.0))
+    rel_axial = abs(a_pole[2] - a_near[2]) / abs(a_near[2])
+    assert rel_axial < 1e-6, f"south-pole axial discontinuity rel={rel_axial:.3e}"
+
+
+def test_deg1800_kernels_agree_across_longitudes(model_1800: GravityModel) -> None:
+    """Two-kernel agreement must hold across the full longitude sweep near a pole.
+
+    Longitude is degenerate at the poles, so the m-dependent recomposition is
+    exercised at a high latitude (89.999 deg) over every meridian, including the
+    ±180 seam, to catch a longitude-specific pole artifact.
+    """
+    c = np.asarray(model_1800.c_coeffs)
+    s = np.asarray(model_1800.s_coeffs)
+    for lat in (80.0, 89.999, -89.999):
+        for lon in LONS_DEG:
+            p = _point(lat, lon_deg=lon)
+            a_run = model_1800.accel_fixed(p)
+            _, a_batch = sh_potential_accel_fixed(p[None, :], c, s, MU, R_REF, DEG, -1)
+            assert np.isfinite(a_run).all(), f"lat={lat} lon={lon}: runtime not finite"
+            assert np.isfinite(a_batch).all(), f"lat={lat} lon={lon}: batch not finite"
+            rel = np.linalg.norm(a_run - a_batch[0]) / np.linalg.norm(a_batch[0])
+            assert rel < 1e-12, f"lat={lat} lon={lon}: disagreement rel={rel:.3e}"
 
 
 @pytest.mark.requires_pyshtools

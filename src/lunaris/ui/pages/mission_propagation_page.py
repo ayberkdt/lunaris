@@ -12,6 +12,7 @@ Mission Propagation Page (Page 3)
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -504,7 +505,10 @@ class MissionPropagationPage(QtWidgets.QWidget):
         text = self.ent_duration.text().strip()
         message: str | None = None
         try:
-            if not text or float(text) <= 0.0:
+            # Reject nan/inf explicitly: ``nan <= 0`` is False and ``inf > 0`` is
+            # True, so a bare ``<= 0`` gate would pass them through — while the
+            # core config rejects non-finite values via ``np.isfinite``.
+            if not text or not math.isfinite(float(text)) or float(text) <= 0.0:
                 message = "Enter a duration greater than zero."
         except ValueError:
             message = f"'{text}' is not a number."
@@ -518,7 +522,9 @@ class MissionPropagationPage(QtWidgets.QWidget):
         text = editor.text().strip()
         message: str | None = None
         try:
-            if not text or float(text) <= 0.0:
+            # nan/inf must fail here too (see _validate_duration_field): the core
+            # tolerance contract requires finite, strictly positive values.
+            if not text or not math.isfinite(float(text)) or float(text) <= 0.0:
                 message = f"Enter a {name} greater than zero (e.g. 1e-9)."
         except ValueError:
             message = f"'{text}' is not a number."

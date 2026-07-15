@@ -671,23 +671,100 @@ _AUDIT_KEYWORDS: tuple[str, ...] = (
 )
 
 
+_DEF_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _covered_line_span(tree: ast.AST, covered_names: set[str]) -> set[int]:
+    """Return the 1-based line numbers spanned by registered symbols in a file.
+
+    Symbol-level (not file-level) coverage: the audit masks out exactly the
+    definitions the registry already accounts for and keeps scanning the rest of
+    the file, instead of declaring the whole file "covered" the moment any single
+    symbol in it is registered. ``ast.walk`` reaches nested defs, so a nested
+    helper can carry its own registered symbol.
+    """
+    covered_lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, _DEF_NODES) and node.name in covered_names:
+            end = getattr(node, "end_lineno", node.lineno)
+            covered_lines.update(range(node.lineno, int(end) + 1))
+    return covered_lines
+
+
+def _uncovered_identifiers(tree: ast.AST, covered_lines: set[int]) -> set[str]:
+    """Lowercased identifier tokens that live outside any registered symbol.
+
+    Only *identifiers* count — def/class/arg names, ``Name`` references, and
+    attribute accesses. String constants, docstrings, and comments are ignored on
+    purpose: an algorithm keyword inside a config enum value (``"dop853"``), a
+    ``Literal[...]`` annotation, a help string, or a prose comment is a *mention*,
+    not an unregistered implementation, and flagging those buries the real signal.
+    """
+    idents: set[str] = set()
+    for node in ast.walk(tree):
+        lineno = getattr(node, "lineno", None)
+        if lineno is None or lineno in covered_lines:
+            continue
+        if isinstance(node, _DEF_NODES):
+            idents.add(node.name.lower())
+        elif isinstance(node, ast.Name):
+            idents.add(node.id.lower())
+        elif isinstance(node, ast.Attribute):
+            idents.add(node.attr.lower())
+        elif isinstance(node, ast.arg):
+            idents.add(node.arg.lower())
+    return idents
+
+
 def run_audit(repo_root: Path = REPO_ROOT) -> list[str]:
+    """List source files containing algorithm-ish code not covered by symbols.
+
+    Coverage is evaluated at the *symbol* level, not the file level: a file with
+    one registered function no longer masks a second, unregistered algorithm in
+    the same file. Registered symbols' line spans are removed before the scan, and
+    matching is restricted to identifier tokens (see :func:`_uncovered_identifiers`)
+    so keyword mentions in strings/comments do not produce false positives. An
+    entry whose ``symbol`` is ``null`` covers the whole file (an intentional
+    file-wide registration), preserving that acknowledgement.
+    """
     registry = load_registry()
-    covered: set[str] = set()
+    covered_names: dict[str, set[str]] = {}
+    whole_file_covered: set[str] = set()
     for entry in registry.get("entries", []):
         for sym in entry.get("symbols", []):
-            covered.add((repo_root / sym["path"]).resolve().as_posix())
+            resolved = (repo_root / sym["path"]).resolve().as_posix()
+            name = sym.get("symbol")
+            if name:
+                covered_names.setdefault(resolved, set()).add(name)
+            else:
+                whole_file_covered.add(resolved)
+
     src = repo_root / "src" / "lunaris"
     hits: list[str] = []
     for py in sorted(src.rglob("*.py")):
         resolved = py.resolve().as_posix()
-        if resolved in covered:
+        if resolved in whole_file_covered:
             continue
         try:
-            text = py.read_text(encoding="utf-8", errors="ignore").lower()
+            source = py.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        matched = sorted({kw for kw in _AUDIT_KEYWORDS if kw in text})
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            # Unparseable file: fall back to a whole-file text scan so a keyword
+            # is never missed just because the AST could not be built.
+            scan_text = source.lower()
+            matched = sorted({kw for kw in _AUDIT_KEYWORDS if kw in scan_text})
+            if matched:
+                hits.append(f"{py.relative_to(repo_root).as_posix()}: {', '.join(matched)}")
+            continue
+
+        covered_lines = _covered_line_span(tree, covered_names.get(resolved, set()))
+        identifiers = _uncovered_identifiers(tree, covered_lines)
+        matched = sorted(
+            {kw for kw in _AUDIT_KEYWORDS if any(kw in ident for ident in identifiers)}
+        )
         if matched:
             rel = py.relative_to(repo_root).as_posix()
             hits.append(f"{rel}: {', '.join(matched)}")
@@ -703,7 +780,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("validate", help="schema + referential integrity checks")
     gen = sub.add_parser("generate", help="render docs/ALGORITHM_CATALOG.md")
     gen.add_argument("--check", action="store_true", help="fail if catalogue is stale")
-    sub.add_parser("audit", help="list uncovered algorithm-ish source hits")
+    aud = sub.add_parser("audit", help="list uncovered algorithm-ish source hits")
+    aud.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero when any uncovered hit is found (for CI gating)",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "validate":
@@ -734,7 +816,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(hits)} file(s) with algorithm-ish keywords not covered by symbols:")
         for hit in hits:
             print(f"  - {hit}")
-        return 0
+        # Advisory by default (authoring aid); --strict lets CI gate on it.
+        return 1 if args.strict else 0
 
     return 2
 

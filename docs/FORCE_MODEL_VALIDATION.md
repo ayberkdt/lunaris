@@ -119,6 +119,47 @@ Central differences of each potential vs the analytic acceleration kernel; bar i
 
 Locked by `tests/test_force_gradients.py`.
 
+### 3.1 Solid-tide system convention
+
+The elastic solid tide (`physics/solid_tides.py`) is an additive, time-varying
+perturbation on the static SH field. It assumes the loaded gravity coefficients
+are a **tide-free** field, so the permanent tidal deformation is not double
+counted. GRAIL GRGM / jggrx products are tide-free, which is the intended
+pairing. A *zero-tide* or *mean-tide* coefficient set would need its permanent
+tidal term converted to tide-free before use. Lunaris does not auto-detect a
+file's tide system — this is a per-product modelling assumption, documented here
+and in the module, not enforced in code.
+
+Deliberately deferred (not oversights): tidal time lag / dissipation
+(imaginary Love number, k2/Q — only matters for multi-month arcs), and
+propagation of k2 measurement uncertainty (a UQ input, not a force change).
+Ocean and thermal tides do not apply to the Moon.
+
+### 3.2 Adaptive SH degree blend — policy and quantitative cost
+
+The altitude-aware dual-fidelity blend (`GravityModel.accel_adaptive`) smoothly
+transitions the evaluated SH degree with altitude. It is a **speed option for
+exploratory use only**: reference / paper runs must use a single fixed degree so
+the result's error is attributable to one model. This is enforced fail-closed —
+enabling adaptive degree under a paper-safe / benchmark / strict posture raises
+(`core/dynamics/preparation.prepare_adaptive_gravity_policy`), it is never a
+silent downgrade.
+
+Quantitative study (`tools/blend_error_study.py`, synthetic degree-64 field,
+5–400 km, transition band 50–250 km):
+
+| Metric | Blend | Hard degree switch |
+|---|---|---|
+| Max rel. accel error vs fixed degree | ~1.7e-5 | ~4.3e-5 |
+| Max residual gradient (discontinuity proxy, per km) | ~5.4e-7 | ~1.1e-5 |
+
+The blend is ~20× smoother across the transition than a hard switch, but it is
+still a two-degree approximation of the full field (~1.7e-5 relative; ~9 m
+integrated end-of-orbit position difference over one period against the fixed
+degree). Hence the fixed-degree requirement for reference runs. Re-run the study
+with `python tools/blend_error_study.py` (artifacts land under the git-ignored
+`outputs/blend_study/`).
+
 ## 4. Integration invariants
 
 - **Energy conservation:** circular lunar orbit, RK4 over one period at

@@ -42,6 +42,8 @@ from lunaris.physics.ephemeris import (
     EphemerisManager,
     EphemerisTables,
     _build_time_grid,
+    _capture_kernel_provenance,
+    _classify_kernel,
     _try_fill_spkpos_table_m,
     get_ephem_state,
     interp_vec3_derivative_safe,
@@ -317,6 +319,49 @@ def _valid_table_kwargs(n: int = 4, dt: float = 60.0) -> dict:
 
 def test_tables_valid_construction_passes():
     EphemerisTables(**_valid_table_kwargs())
+
+
+# -----------------------------------------------------------------------------
+# SPICE kernel provenance (P1a): kernels in the manifest chain
+# -----------------------------------------------------------------------------
+def test_classify_kernel_by_extension():
+    assert _classify_kernel("naif0012.tls") == "LSK"
+    assert _classify_kernel("de440.bsp") == "SPK"
+    assert _classify_kernel("moon_pa_de440_200625.bpc") == "PCK"
+    assert _classify_kernel("moon_080317.tf") == "FK"
+    assert _classify_kernel("de440.bsp.txt") == "SPK"  # detached-label style
+    assert _classify_kernel("mystery.xyz") == "UNKNOWN"
+
+
+def test_capture_kernel_provenance_hashes_files(tmp_path):
+    k1 = tmp_path / "naif0012.tls"
+    k1.write_text("LEAPSECONDS", encoding="utf-8")
+    missing = tmp_path / "de440.bsp"  # never created
+
+    prov = _capture_kernel_provenance([str(k1), str(missing)])
+    assert prov[0]["name"] == "naif0012.tls"
+    assert prov[0]["kind"] == "LSK"
+    assert prov[0]["sha256"] and len(prov[0]["sha256"]) == 64
+    # Missing file: hash is None, capture still succeeds (never aborts a build).
+    assert prov[1]["kind"] == "SPK"
+    assert prov[1]["sha256"] is None
+
+
+def test_manager_kernel_provenance_reports_window_and_kernels():
+    kwargs = _valid_table_kwargs(n=5, dt=60.0)
+    kwargs["et0"] = 1000.0
+    kwargs["kernel_provenance"] = (
+        {"name": "naif0012.tls", "path": "/k/naif0012.tls", "kind": "LSK", "sha256": "ab"},
+    )
+    kwargs["time_scale_note"] = "UTC->ET via LSK"
+    mgr = EphemerisManager.from_tables(EphemerisTables(**kwargs))
+
+    prov = mgr.kernel_provenance()
+    assert prov["kernels"][0]["kind"] == "LSK"
+    assert prov["time_scale_note"] == "UTC->ET via LSK"
+    assert prov["et_start"] == 1000.0
+    # et_end = et0 + last table time (4 * 60 s).
+    assert prov["et_end"] == 1000.0 + 240.0
 
 
 def test_tables_reject_empty_time_grid():

@@ -89,3 +89,43 @@ def test_worker_backend_capability_passes_for_cpu() -> None:
     worker = _worker({"gravity_backend": "classic_sh", "albedo_enabled": True, "earth_j2_enabled": True})
     ok, _msg = worker._validate_backend_capability()
     assert ok is True
+
+
+def _finite_numeric_command() -> dict:
+    return {
+        "mass_kg": 1000.0,
+        "area_m2": 5.0,
+        "cd": 2.2,
+        "cr": 1.5,
+        "rtol": 1e-12,
+        "atol": 1e-14,
+        "duration_val": 10.0,
+    }
+
+
+def test_numeric_ranges_pass_for_finite_positive_values() -> None:
+    worker = _worker(_finite_numeric_command())
+    ok, _msg = worker._validate_numeric_ranges()
+    assert ok is True
+
+
+@pytest.mark.parametrize("field", ["rtol", "atol", "duration_val", "mass_kg"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_numeric_ranges_reject_non_finite(field: str, bad: float) -> None:
+    # nan/inf slip past a bare ``<= 0`` gate; the finite guard must catch them so
+    # the UI matches the core config contract (np.isfinite rejection).
+    command = _finite_numeric_command()
+    command[field] = bad
+    worker = _worker(command)
+    ok, msg = worker._validate_numeric_ranges()
+    assert ok is False
+    assert "finite" in msg.lower()
+
+
+def test_numeric_ranges_reject_non_finite_max_step() -> None:
+    command = _finite_numeric_command()
+    command["max_step"] = float("inf")
+    worker = _worker(command)
+    ok, msg = worker._validate_numeric_ranges()
+    assert ok is False
+    assert "finite" in msg.lower()

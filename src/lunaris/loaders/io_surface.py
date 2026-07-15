@@ -1554,6 +1554,66 @@ def _grid_topo_payload(
     }
 
 
+def _grid_dem_provenance(
+    topo: Any,
+    *,
+    r_moon_m: float = float(R_MOON_MEAN),
+) -> dict[str, Any] | None:
+    """DEM/datum provenance for the run manifest (separate from the kernel payload).
+
+    The kernel payload (:func:`_grid_topo_payload`) is deliberately POD-only for
+    Numba/torch consumption; provenance strings (label/product name, source hash,
+    datum) do not belong there. This companion records what a reader needs to
+    judge an impact result: which DEM product, at what resolution and datum, and
+    the ground sample distance that bounds impact-location certainty.
+
+    Returns ``None`` when no DEM grid is present (constant-sphere surface), so the
+    caller can simply omit terrain provenance from the manifest.
+    """
+    if topo is None:
+        return None
+    info = getattr(topo, "info", None)
+    if info is None:
+        return None
+
+    from lunaris.common.provenance import sha256_file
+
+    label_path = getattr(topo, "label_path", None)
+    img_path = getattr(topo, "img_path", None)
+
+    ppd = float(getattr(info, "map_resolution_ppd", 0.0) or 0.0)
+    res_deg = (1.0 / ppd) if ppd > 0.0 else None
+
+    datum_a_km = getattr(info, "a_axis_radius_km", None)
+    # Ground sample distance at the equator: one pixel of arc on the datum sphere.
+    # This is the floor on impact-location resolution, reported so an impact
+    # coordinate is never read as finer than the terrain grid supports.
+    gsd_m: float | None = None
+    if res_deg is not None:
+        base_r_m = float(datum_a_km) * 1000.0 if datum_a_km else float(r_moon_m)
+        gsd_m = math.radians(res_deg) * base_r_m
+
+    return {
+        "label_name": Path(label_path).name if label_path else None,
+        "label_path": str(label_path) if label_path else None,
+        "img_name": Path(img_path).name if img_path else None,
+        "img_sha256": (
+            sha256_file(img_path, missing_ok=True, suppress_errors=True) if img_path else None
+        ),
+        "map_resolution_ppd": ppd or None,
+        "res_deg": res_deg,
+        "ground_sample_distance_m": gsd_m,
+        "projection": getattr(info, "map_projection_type", None),
+        "datum_a_axis_radius_km": datum_a_km,
+        "datum_b_axis_radius_km": getattr(info, "b_axis_radius_km", None),
+        "datum_c_axis_radius_km": getattr(info, "c_axis_radius_km", None),
+        "lat_min_deg": float(info.min_lat_deg),
+        "lat_max_deg": float(info.max_lat_deg),
+        "lon_west_deg": float(info.west_lon_deg),
+        "lon_east_deg": float(info.east_lon_deg),
+    }
+
+
 def sample_topo_radius_m(payload: dict[str, Any], lat_deg: float, lon_deg: float) -> float:
     """
     Reference (pure-NumPy) terrain-radius sampler for a :func:`_grid_topo_payload`.
