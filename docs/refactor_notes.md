@@ -224,3 +224,31 @@ P5-P6 smoke checks run after the split:
 | `.venv\Scripts\python.exe -m pytest ...` | Blocked: `No module named pytest`. |
 | `.venv\Scripts\python.exe -m ruff check ...` | Blocked: `No module named ruff`. |
 | `.venv\Scripts\python.exe -m mypy ...` | Blocked: `No module named mypy`. |
+
+## 2026-07-16 API-Boundary And Underscore-Naming Cleanup
+
+Scope: repository-wide audit of single-underscore symbols vs actual
+consumption (see `docs/PUBLIC_API.md` "Naming And Boundary Policy" and
+`docs/api_snapshot.json`).
+
+- All 17 cross-unit imports of `_`-prefixed symbols in `src/lunaris` were
+  eliminated by renaming the helper public in its defining module (bilinear
+  JIT kernels, terrain-freeze payload, relativity components, postprocess
+  extraction helpers, ST-LRPS dataset/split/network helpers, core
+  time-grid/provider accessors), moving it to a shared home
+  (`osculating_elements_vec` -> `common.math_utils`), or relocating it to the
+  app-neutral foundation (`NoWheelOnSpinFilter` ->
+  `ui_foundation.event_filters`).
+- Deliberately NOT renamed: intra-package underscore helpers (the
+  `core.propagation` integrator internals pinned by
+  `test_propagation_import_compat.py`), the `_gravity_benchmark` internal
+  package behind its `compare_gravity_models` facade, torch-serialized
+  classes (`_TorchMoonFrame`, `_STLRPS*Provider`, `_EphemPack`), and
+  white-box test imports.
+- Compat surfaces with a removal target (the MINOR after the renames ship):
+  the `training.cli` fold's underscore keys (`_COMPAT_RENAMES`) and the
+  `splits._hash_indices` alias.
+- Gates added: `tests/test_api_snapshot.py`, `tests/test_public_api_doc_sync.py`,
+  `tests/test_api_boundaries.py` (empty allowlist), import-linter contract
+  `mission UI does not import ST-LRPS studio widget internals`
+  (direct imports only).
