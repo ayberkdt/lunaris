@@ -13,28 +13,14 @@ from lunaris.ui.monitor.widgets.backend_provenance import BACKEND_PROVENANCE_SPE
 from lunaris.ui.monitor.widgets.base import MonitorWidgetFrame
 from lunaris.ui.monitor.widgets.event_timeline import EVENT_TIMELINE_SPEC
 from lunaris.ui.monitor.widgets.integrator_health import INTEGRATOR_HEALTH_SPEC
+from lunaris.ui.monitor.widgets.orbit_view import ORBIT_VIEW_SPEC
 from lunaris.ui.monitor.widgets.orbital_elements import ORBITAL_ELEMENTS_SPEC
+from lunaris.ui.monitor.widgets.state_vector import STATE_VECTOR_SPEC
 
 #: Widgets that are part of the roadmap (presets may reference them) but have
 #: no implementation yet. They restore as honest placeholders — never as
 #: decorative stand-ins with fake content.
 RESERVED_SPECS: tuple[MonitorWidgetSpec, ...] = (
-    MonitorWidgetSpec(
-        widget_id="orbit_view",
-        title="3D Orbit View",
-        category="Trajectory",
-        description="Moon, trajectory trace, current position and event markers (Phase 4).",
-        required_channels=("state_inertial",),
-        factory=None,
-    ),
-    MonitorWidgetSpec(
-        widget_id="state_vector",
-        title="State Vector",
-        category="Trajectory",
-        description="Cartesian position/velocity inspector with frame selection (Phase 4).",
-        required_channels=("state_inertial",),
-        factory=None,
-    ),
     MonitorWidgetSpec(
         widget_id="invariant_monitor",
         title="Invariant Monitor",
@@ -73,8 +59,10 @@ RESERVED_SPECS: tuple[MonitorWidgetSpec, ...] = (
 def register_all_specs() -> None:
     """Idempotently register implemented + reserved specs."""
     for spec in (
+        ORBIT_VIEW_SPEC,
         ALTITUDE_SPEC,
         ORBITAL_ELEMENTS_SPEC,
+        STATE_VECTOR_SPEC,
         INTEGRATOR_HEALTH_SPEC,
         EVENT_TIMELINE_SPEC,
         BACKEND_PROVENANCE_SPEC,
@@ -92,7 +80,9 @@ __all__ = [
     "EVENT_TIMELINE_SPEC",
     "INTEGRATOR_HEALTH_SPEC",
     "ORBITAL_ELEMENTS_SPEC",
+    "ORBIT_VIEW_SPEC",
     "RESERVED_SPECS",
+    "STATE_VECTOR_SPEC",
     "MonitorWidgetFrame",
     "register_all_specs",
 ]

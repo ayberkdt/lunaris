@@ -261,6 +261,90 @@ class TestErrorBoundary:
         assert not widget._errored
 
 
+class TestStateVector:
+    def _state(self, scale: float = 1.0) -> tuple[float, ...]:
+        return (1.8e6 * scale, 2.0e5, -3.0e5, 100.0, -1600.0, 30.0)
+
+    def test_values_norms_and_epoch(self, controller):
+        from lunaris.ui.monitor.widgets.state_vector import (
+            STATE_VECTOR_SPEC,
+            StateVectorWidget,
+        )
+
+        widget = _shown(StateVectorWidget(STATE_VECTOR_SPEC, controller))
+        feed_samples(controller, make_sample(
+            0, 120.0, state_inertial=self._state(), frame_inertial="moon_centered_inertial",
+        ))
+        widget._do_refresh()
+        assert widget._stack.currentWidget() is widget._content
+        assert widget.value_labels["x"].text().endswith("km")
+        assert "1,800.000000 km" == widget.value_labels["x"].text()
+        assert widget.value_labels["v_norm"].text().endswith("km/s")
+        assert "2.0 min" in widget.value_labels["epoch"].text()
+        assert "moon_centered_inertial" in widget.badge_label.text()
+
+    def test_body_fixed_segment_disabled_when_channel_missing(self, controller):
+        from lunaris.ui.monitor.widgets.state_vector import (
+            STATE_VECTOR_SPEC,
+            StateVectorWidget,
+        )
+
+        widget = _shown(StateVectorWidget(STATE_VECTOR_SPEC, controller))
+        feed_samples(controller, make_sample(0, 1.0, state_inertial=self._state()))
+        widget._do_refresh()
+        fixed_button = widget.frame_control.buttons[1]
+        assert not fixed_button.isEnabled()
+        assert "unavailable" in fixed_button.toolTip().lower()
+
+    def test_body_fixed_channel_enables_the_segment(self, controller):
+        from lunaris.ui.monitor.widgets.state_vector import (
+            STATE_VECTOR_SPEC,
+            StateVectorWidget,
+        )
+
+        widget = _shown(StateVectorWidget(STATE_VECTOR_SPEC, controller))
+        feed_samples(controller, make_sample(
+            0, 1.0, state_inertial=self._state(), state_fixed=self._state(2.0),
+            frame_fixed="moon_fixed",
+        ))
+        widget._do_refresh()
+        assert widget.frame_control.buttons[1].isEnabled()
+        widget.frame_control.set_current_index(1)
+        widget._do_refresh()
+        assert "3,600.000000 km" == widget.value_labels["x"].text()
+        assert "moon_fixed" in widget.badge_label.text()
+
+
+class TestOrbitView:
+    def test_offscreen_platform_gets_an_explicit_fallback(self, controller):
+        from lunaris.ui.monitor.widgets.orbit_view import ORBIT_VIEW_SPEC, OrbitViewWidget
+
+        widget = _shown(OrbitViewWidget(ORBIT_VIEW_SPEC, controller))
+        # Offscreen CI: no GL surface -> honest note, no fake scene, no crash.
+        assert widget.gl_widget is None
+        feed_samples(controller, make_sample(
+            0, 0.0, state_inertial=(1.8e6, 0.0, 0.0, 0.0, 1600.0, 0.0),
+        ))
+        widget._do_refresh()  # refresh with data must stay safe without GL
+        assert not widget._errored
+        assert "km" in widget.badge_label.text()
+
+    def test_impact_marker_position_comes_from_nearest_state(self, controller):
+        from lunaris.common.telemetry_contract import TelemetryEvent
+        from lunaris.ui.monitor.widgets.orbit_view import ORBIT_VIEW_SPEC, OrbitViewWidget
+
+        widget = _shown(OrbitViewWidget(ORBIT_VIEW_SPEC, controller))
+        feed_samples(
+            controller,
+            make_sample(0, 0.0, state_inertial=(1.8e6, 0.0, 0.0, 0.0, 1600.0, 0.0)),
+            make_sample(1, 60.0, state_inertial=(1.75e6, 1.0e5, 0.0, 0.0, 1600.0, 0.0)),
+        )
+        controller.store.add_event(TelemetryEvent("impact", 60.0, "hit", "critical"))
+        pos = widget._impact_position(controller.store)
+        assert pos is not None
+        assert pos[0] == pytest.approx(1750.0)  # km
+
+
 class TestModeBadge:
     def test_live_then_ended(self, controller):
         widget = _shown(IntegratorHealthWidget(INTEGRATOR_HEALTH_SPEC, controller))

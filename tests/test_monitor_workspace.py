@@ -47,23 +47,34 @@ class TestPresetIntegrity:
         assert len(ids) == len(set(ids))
 
     def test_split_preset_separates_reserved_widgets(self):
-        preset = preset_by_id("orbit_overview")
+        preset = preset_by_id("numerical_health")
         assert preset is not None
         openable, skipped = split_preset(preset, DEFAULT_REGISTRY)
         open_ids = [s.widget_id for s in openable]
-        assert "altitude" in open_ids
-        assert "orbital_elements" in open_ids
-        assert "orbit_view" in skipped  # Phase 4 widget: declared, not faked
+        assert "integrator_health" in open_ids
+        assert "state_vector" in open_ids  # implemented in Phase 4
+        assert "invariant_monitor" in skipped  # still reserved, never faked
+
+    def test_orbit_overview_preset_is_fully_implemented(self):
+        preset = preset_by_id("orbit_overview")
+        assert preset is not None
+        openable, skipped = split_preset(preset, DEFAULT_REGISTRY)
+        assert [s.widget_id for s in openable] == list(preset.widget_ids)
+        assert skipped == ()
 
 
 class TestWorkspace:
     def test_default_preset_opens_implemented_widgets(self, workspace):
         assert workspace.active_preset_id == DEFAULT_PRESET_ID
         open_ids = set(workspace._docks)
-        assert {"altitude", "orbital_elements", "event_timeline"} <= open_ids
-        # The skipped 3D widget is reported honestly on the toolbar.
+        assert {"orbit_view", "altitude", "orbital_elements", "event_timeline"} <= open_ids
+        # Nothing in the default preset is missing anymore.
+        assert not workspace.skipped_label.isVisibleTo(workspace)
+
+    def test_preset_with_reserved_widget_reports_it(self, workspace):
+        workspace.apply_preset("numerical_health")
         assert workspace.skipped_label.isVisibleTo(workspace)
-        assert "orbit_view" in workspace.skipped_label.text()
+        assert "invariant_monitor" in workspace.skipped_label.text()
 
     def test_unknown_widget_id_restores_as_placeholder(self, workspace):
         dock = workspace.add_widget("widget_removed_in_v9")
@@ -71,7 +82,7 @@ class TestWorkspace:
         assert "widget_removed_in_v9" in dock.windowTitle() or dock.windowTitle()
 
     def test_reserved_widget_opens_as_placeholder_not_fake_ui(self, workspace):
-        dock = workspace.add_widget("orbit_view")
+        dock = workspace.add_widget("invariant_monitor")
         assert isinstance(dock.widget(), MissingWidgetPlaceholder)
 
     def test_singleton_widget_is_reshown_not_duplicated(self, workspace):
