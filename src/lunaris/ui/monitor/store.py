@@ -33,7 +33,9 @@ from lunaris.ui.monitor.channels import ELEMENT_CHANNEL_PREFIX, SCALAR_SAMPLE_FI
 from lunaris.ui.monitor.downsample import decimate_indices, envelope_downsample
 
 StoreMode = Literal["idle", "live", "replay"]
-AppendStatus = Literal["appended", "duplicate", "out_of_order", "foreign_run"]
+AppendStatus = Literal[
+    "appended", "rhs_probe", "uncertain_sample", "duplicate", "out_of_order", "foreign_run"
+]
 
 DEFAULT_CAPACITY = 50_000
 DEFAULT_MAX_EVENTS = 10_000
@@ -51,6 +53,8 @@ class StoreCounters:
     #: Samples rejected because they belong to a different run_id.
     foreign_run: int = 0
     events_dropped: int = 0
+    rhs_probes: int = 0
+    uncertain_samples: int = 0
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,8 @@ class TelemetryStore:
     provenance: TelemetryProvenance | None = None
     counters: StoreCounters = field(default_factory=StoreCounters)
     latest_sample: TelemetrySample | None = None
+    #: Most recent transient solver observation; never copied into trajectory buffers.
+    latest_probe: TelemetrySample | None = None
     #: Latest per-sample diagnostics, merged key-wise as samples arrive.
     latest_diagnostics: dict[str, Any] = field(default_factory=dict)
     #: End-of-run engine diagnostics ([DIAG] payload), set once when available.
@@ -100,6 +106,7 @@ class TelemetryStore:
         self._states: dict[str, np.ndarray] = {}
         self._stored = 0
         self._last_seq: int | None = None
+        self._last_probe_seq: int | None = None
         self._events: list[TelemetryEvent] = []
         self._event_keys: set[tuple[str, float, str]] = set()
 
@@ -118,6 +125,7 @@ class TelemetryStore:
         self.provenance = None
         self.counters = StoreCounters()
         self.latest_sample = None
+        self.latest_probe = None
         self.latest_diagnostics = {}
         self.run_diagnostics = None
         self.outcome = None
@@ -156,6 +164,22 @@ class TelemetryStore:
             else:
                 self.counters.foreign_run += 1
                 return "foreign_run"
+
+        if sample.sample_kind == "rhs_probe":
+            self.latest_probe = sample
+            self._last_probe_seq = sample.sequence_id
+            self.counters.rhs_probes += 1
+            for key, value in sample.diagnostics.items():
+                self.latest_diagnostics[key] = value
+            for event in sample.events:
+                self.add_event(event)
+            return "rhs_probe"
+        if sample.sample_kind == "legacy_unknown":
+            # Old v1 samples may be rejected RK stages/RHS probes.  Preserve
+            # observability of their existence without feeding trajectory,
+            # cursor, state-vector, altitude, or element channels.
+            self.counters.uncertain_samples += 1
+            return "uncertain_sample"
 
         seq = sample.sequence_id
         if self._last_seq is not None:

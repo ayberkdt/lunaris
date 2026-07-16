@@ -126,7 +126,13 @@ class MonitorController(QtCore.QObject):
         if message is None:
             return None
         if isinstance(message, SampleMessage):
-            self.store.append(message.sample)
+            status = self.store.append(message.sample)
+            if status == "uncertain_sample" and "uncertain_semantics" not in self._problem_kinds_warned:
+                self._problem_kinds_warned.add("uncertain_semantics")
+                self.protocol_problem.emit(
+                    "Legacy telemetry sample semantics are uncertain; it was excluded from "
+                    "scientific trajectory widgets."
+                )
             self._mark_dirty()
         elif isinstance(message, MetaMessage):
             self.store.set_provenance(message.provenance)
@@ -172,6 +178,26 @@ class MonitorController(QtCore.QObject):
                 event_type="terminal_event",
                 simulation_time_s=bounds[1] if bounds else 0.0,
                 message=stop_reason,
+                severity="warning",
+            ))
+        dropped = payload.get("telemetry_dropped_samples")
+        sink_failures = payload.get("telemetry_sink_write_failures")
+        if (
+            isinstance(dropped, int | float)
+            and float(dropped) > 0.0
+        ) or (
+            isinstance(sink_failures, int | float)
+            and float(sink_failures) > 0.0
+        ):
+            bounds = self.store.time_bounds()
+            detail = str(payload.get("telemetry_first_failure_type") or "telemetry output failure")
+            self.store.add_event(TelemetryEvent(
+                event_type="telemetry_warning",
+                simulation_time_s=bounds[1] if bounds else 0.0,
+                message=(
+                    f"Telemetry was incomplete ({int(float(dropped or 0))} dropped; "
+                    f"{int(float(sink_failures or 0))} sink failures). First failure: {detail}."
+                ),
                 severity="warning",
             ))
         self._mark_dirty()
@@ -220,6 +246,7 @@ class MonitorController(QtCore.QObject):
         loader.batch_ready.connect(self._on_replay_batch)
         loader.finished_ok.connect(self._on_replay_finished)
         loader.failed.connect(self._on_replay_failed)
+        loader.warning.connect(self._on_replay_warning)
         self._replay_loader = loader
         loader.start()
 
@@ -260,6 +287,10 @@ class MonitorController(QtCore.QObject):
 
     def _on_replay_failed(self, detail: str) -> None:
         self.replay_failed.emit(detail)
+        self._mark_dirty()
+
+    def _on_replay_warning(self, detail: str) -> None:
+        self.protocol_problem.emit(detail)
         self._mark_dirty()
 
     # -------------------------------------------------------------- plumbing

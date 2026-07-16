@@ -163,8 +163,9 @@ def _add_numerics_args(parser: argparse.ArgumentParser) -> None:
         "--telemetry-artifact",
         type=str2bool,
         help=(
-            "Also write the emitted telemetry lines into the run directory as "
-            "telemetry.ndjson (the Mission Monitor replay artifact). Requires "
+            "Write solver-returned output states into the run directory as "
+            "telemetry.ndjson (the Mission Monitor replay artifact). Live RHS "
+            "probes are excluded. Requires "
             "--enable-telemetry (on/off; default off)"
         ),
     )

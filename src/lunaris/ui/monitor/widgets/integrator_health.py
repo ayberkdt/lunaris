@@ -29,6 +29,12 @@ _DIAG_ROWS: tuple[tuple[str, str, str], ...] = (
     ("max_step_s", "Max step", "duration"),
     ("max_step_limiting_reason", "Max-step limited by", "text"),
     ("stop_reason", "Stop reason", "text"),
+    ("telemetry_dropped_samples", "Telemetry samples dropped", "count"),
+    ("telemetry_sink_write_failures", "Telemetry sink failures", "count"),
+    ("telemetry_terrain_enrichment_failures", "Terrain enrichment failures", "count"),
+    ("telemetry_first_failure_type", "First telemetry failure", "text"),
+    ("telemetry_first_failure_message", "Telemetry failure detail", "text"),
+    ("telemetry_sink_disabled", "Telemetry sink disabled", "text"),
 )
 
 
@@ -72,7 +78,7 @@ class IntegratorHealthWidget(MonitorWidgetFrame):
         self._row_order.append(key)
 
     def refresh(self, store: TelemetryStore) -> None:
-        sample = store.latest_sample
+        sample = store.latest_sample or store.latest_probe
         counters = store.counters
 
         if sample is not None:
@@ -92,6 +98,14 @@ class IntegratorHealthWidget(MonitorWidgetFrame):
                     self._set_row("eta", "Estimated remaining", format_duration(eta))
 
         self._set_row("samples", "Telemetry samples received", format_count(counters.accepted))
+        if counters.rhs_probes:
+            self._set_row("rhs_probes", "Transient RHS probes", format_count(counters.rhs_probes))
+        if counters.uncertain_samples:
+            self._set_row(
+                "uncertain_samples",
+                "Legacy samples with uncertain semantics",
+                format_count(counters.uncertain_samples),
+            )
         if counters.gap_samples:
             self._set_row("gaps", "Missing samples (sequence gaps)",
                           format_count(counters.gap_samples))
