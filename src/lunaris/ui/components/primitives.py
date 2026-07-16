@@ -21,6 +21,123 @@ def _repolish(widget: QtWidgets.QWidget) -> None:
     widget.update()
 
 
+class ElidedLabel(QtWidgets.QLabel):
+    """A label that renders ``…`` instead of a half glyph when squeezed.
+
+    A plain ``QLabel`` in a crowded ``QHBoxLayout`` clips mid-glyph once the
+    layout drops it below its size hint, which reads as a broken app rather
+    than as truncation. This paints the elided form of the text at whatever
+    width it is actually given, and reports ``minimumSizeHint`` width 0 so a
+    layout can shrink it without first squeezing its neighbours.
+
+    ``full_text`` stays authoritative: it is what the tooltip and accessible
+    name expose, so the elided pixels never become the only copy of the value.
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        *,
+        mode: QtCore.Qt.TextElideMode = QtCore.Qt.ElideRight,
+        parent: QtWidgets.QWidget | None = None,
+    ):
+        super().__init__(text, parent)
+        self._full_text = text
+        self._elide_mode = mode
+        # Preferred, not Ignored: Ignored lets a sibling stretch claim *all*
+        # the space, so the label renders at width 0 and the text disappears
+        # even when the layout had room for it. Preferred asks for the full
+        # text (sizeHint) and yields it only under pressure — the shrink is
+        # unbounded because minimumSizeHint below reports width 0.
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred
+        )
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt override
+        self._full_text = text
+        super().setText(text)
+        self.setToolTip(text)
+        self.updateGeometry()
+        self.update()
+
+    def full_text(self) -> str:
+        """Return the unelided text (what the label *means*, not what it shows)."""
+        return self._full_text
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt override
+        # Width 0: the label yields space rather than forcing siblings to clip.
+        return QtCore.QSize(0, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 - Qt override
+        metrics = QtGui.QFontMetrics(self.font())
+        return QtCore.QSize(
+            metrics.horizontalAdvance(self._full_text),
+            super().sizeHint().height(),
+        )
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override
+        painter = QtGui.QPainter(self)
+        metrics = QtGui.QFontMetrics(self.font())
+        rect = self.contentsRect()
+        elided = metrics.elidedText(self._full_text, self._elide_mode, rect.width())
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(rect, int(self.alignment()), elided)
+
+
+def cap_input_width(
+    *widgets: QtWidgets.QWidget, width: int | None = None
+) -> None:
+    """Cap single-value form inputs at the standard input width.
+
+    Form panes stretch to fill their page, and an uncapped input stretches with
+    them: a 400px box for a seed of ``42`` or a 590px box for ``10.00`` breaks
+    the value's visual attachment to its label and makes the form read as
+    unfinished. Capping turns that slack into a right margin instead.
+
+    Apply to scalars (numbers, short strings, units). Do *not* apply to inputs
+    whose content genuinely earns the width — filesystem paths, long free
+    text — where a cap would just force scrolling inside the field.
+
+    ``width`` overrides the token for the rare field that needs a different
+    cap; prefer the default so the pages stay visually consistent.
+    """
+    capped = width if width is not None else DESIGN_TOKENS.controls.input_width_standard
+    for widget in widgets:
+        widget.setMaximumWidth(capped)
+
+
+def scrollable(
+    content: QtWidgets.QWidget, *, parent: QtWidgets.QWidget | None = None
+) -> QtWidgets.QScrollArea:
+    """Wrap ``content`` in a transparent, frameless vertical scroll area.
+
+    Use this for any dialog tab or panel whose content can outgrow its box.
+    Without it, a ``QVBoxLayout`` that cannot reach its minimum height does not
+    scroll — Qt compresses the children past their minimum and they *overlap*,
+    which reads as a rendering bug rather than as "there is more below". Labels
+    with ``setWordWrap(True)`` make this worse, because their height-for-width
+    minimum is unreliable, so they are usually where the collision lands.
+
+    The scroll area is styled to disappear: no frame, transparent viewport, so
+    the wrapped content keeps the surface it was designed against.
+
+    Both scrollbars are ``AsNeeded``. Pinning the horizontal one off is
+    tempting — content "should" compress to the viewport — but content with an
+    incompressible minimum (a row of fixed chips, say) then gets silently
+    clipped at the right edge instead, which is the same class of defect this
+    helper exists to remove. A scrollbar that appears only when the content
+    genuinely cannot fit is honest; a clipped control is not. Size the host so
+    that it is rare, not so that it is hidden.
+    """
+    area = QtWidgets.QScrollArea(parent)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QtWidgets.QFrame.NoFrame)
+    area.viewport().setAutoFillBackground(False)
+    content.setAutoFillBackground(False)
+    area.setWidget(content)
+    return area
+
+
 class PageHeader(QtWidgets.QFrame):
     def __init__(
         self,
@@ -745,6 +862,7 @@ __all__ = [
     "apply_tab_order",
     "CompactSearchField",
     "DataTable",
+    "ElidedLabel",
     "EmptyState",
     "FormGrid",
     "InlineNotice",
@@ -760,4 +878,6 @@ __all__ = [
     "Subsection",
     "Toolbar",
     "UnitField",
+    "cap_input_width",
+    "scrollable",
 ]

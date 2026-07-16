@@ -33,6 +33,7 @@ try:
         Section,
         SegmentedControl,
         Subsection,
+        cap_input_width,
     )
     from lunaris.ui.core.integrator_catalog import (
         IntegratorSpec,
@@ -116,8 +117,11 @@ class SolverSettingsDialog(QtWidgets.QDialog):
         self.setWindowTitle("Solver Configuration")
         self.setObjectName("settingsDialog")
         self.setModal(True)
-        self.resize(500, 400)
-        self.setMinimumSize(460, 360)
+        # Sized to the measured styled content (374x426) plus headroom for a
+        # wider fallback UI font. At 400px tall the layout was 26px short and
+        # answered by compressing the tolerance rows.
+        self.resize(620, 500)
+        self.setMinimumSize(460, 400)
         self._cfg = cfg
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -138,34 +142,37 @@ class SolverSettingsDialog(QtWidgets.QDialog):
 
         tol_frame = QtWidgets.QFrame()
         tol_frame.setObjectName("section")
-        tol_layout = QtWidgets.QVBoxLayout(tol_frame)
+        # A grid, not three independent QHBoxLayouts: each row previously sized
+        # its own label, so the value column started at a different x on every
+        # row (190 / 198 / 167) and the form visibly zigzagged. A shared label
+        # column (0) and value column (1) align them; column 3 takes the slack.
+        tol_layout = QtWidgets.QGridLayout(tol_frame)
         tol_layout.setContentsMargins(16, 16, 16, 16)
-        tol_layout.setSpacing(12)
+        tol_layout.setVerticalSpacing(12)
+        tol_layout.setHorizontalSpacing(DESIGN_TOKENS.spacing.md)
 
-        rtol_row = QtWidgets.QHBoxLayout()
-        rtol_row.addWidget(QtWidgets.QLabel("Relative Tolerance (rtol):"))
+        def _tol_row(row: int, caption: str, field: QtWidgets.QWidget,
+                     unit: str = "") -> None:
+            label = QtWidgets.QLabel(caption)
+            label.setBuddy(field)
+            field.setFixedWidth(140)
+            if not field.accessibleName():
+                field.setAccessibleName(caption.rstrip(": ").strip())
+            tol_layout.addWidget(label, row, 0)
+            tol_layout.addWidget(field, row, 1)
+            if unit:
+                tol_layout.addWidget(QtWidgets.QLabel(unit), row, 2)
+
         self.ent_rtol = NumericDragLineEdit(f"{self._cfg.rtol:g}", step=1e-13, min_value=1e-20, max_value=1e-3, decimals=0)
-        self.ent_rtol.setFixedWidth(140)
-        rtol_row.addWidget(self.ent_rtol)
-        rtol_row.addStretch()
-        tol_layout.addLayout(rtol_row)
+        _tol_row(0, "Relative Tolerance (rtol):", self.ent_rtol)
 
-        atol_row = QtWidgets.QHBoxLayout()
-        atol_row.addWidget(QtWidgets.QLabel("Absolute Tolerance (atol):"))
         self.ent_atol = NumericDragLineEdit(f"{self._cfg.atol:g}", step=1e-15, min_value=1e-30, max_value=1e-5, decimals=0)
-        self.ent_atol.setFixedWidth(140)
-        atol_row.addWidget(self.ent_atol)
-        atol_row.addStretch()
-        tol_layout.addLayout(atol_row)
+        _tol_row(1, "Absolute Tolerance (atol):", self.ent_atol)
 
-        maxstep_row = QtWidgets.QHBoxLayout()
-        maxstep_row.addWidget(QtWidgets.QLabel("Maximum Step Size:"))
         self.ent_maxstep = NumericDragLineEdit(f"{self._cfg.max_step:.1f}", step=10.0, min_value=0.1, max_value=DAY_S, decimals=1)
-        self.ent_maxstep.setFixedWidth(140)
-        maxstep_row.addWidget(self.ent_maxstep)
-        maxstep_row.addWidget(QtWidgets.QLabel("s"))
-        maxstep_row.addStretch()
-        tol_layout.addLayout(maxstep_row)
+        _tol_row(2, "Maximum Step Size:", self.ent_maxstep, "s")
+
+        tol_layout.setColumnStretch(3, 1)
 
         layout.addWidget(tol_frame)
         layout.addStretch(1)
@@ -212,8 +219,13 @@ class SpacecraftBusDialog(QtWidgets.QDialog):
         self.setWindowTitle("Spacecraft Properties")
         self.setObjectName("settingsDialog")
         self.setModal(True)
-        self.resize(500, 400)
-        self.setMinimumSize(460, 360)
+        # Sized to the measured styled content (443x472) plus headroom: at
+        # 400px tall the four property rows were compressed into each other.
+        # The margin is deliberate — the UI font is not guaranteed (Segoe UI
+        # may be absent and fall back to something wider), and this dialog must
+        # not be one metric away from overlapping again.
+        self.resize(620, 540)
+        self.setMinimumSize(460, 440)
         self._cfg = cfg
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -596,17 +608,23 @@ class MissionPropagationPage(QtWidgets.QWidget):
             "Mission start time is kept in UTC so saved runs, results, and reports stay aligned."
         )
         self.dt_epoch.setAccessibleName("Mission start epoch in UTC")
+        # The form pane fills the page, so an uncapped epoch field stretched to
+        # ~680px for a 23-character timestamp. Cap it and let the slack become
+        # a right margin.
+        cap_input_width(self.dt_epoch)
         form.add_row("Start epoch", self.dt_epoch, "UTC")
 
         duration_field, value_row = self._row_container()
         self.ent_duration = NumericDragLineEdit("10.0", step=0.1, min_value=0.001, decimals=2)
         self.ent_duration.setAccessibleName("Propagation duration")
-        value_row.addWidget(self.ent_duration, 1)
+        cap_input_width(self.ent_duration)
+        value_row.addWidget(self.ent_duration)
 
         self.cb_duration_unit = NoWheelComboBox()
         self.cb_duration_unit.addItems(["Days", "Hours"])
         self.cb_duration_unit.setAccessibleName("Propagation duration unit")
         value_row.addWidget(self.cb_duration_unit)
+        value_row.addStretch(1)
         form.add_row("Duration", duration_field)
         self._duration_row = duration_field
         section.add_widget(form)

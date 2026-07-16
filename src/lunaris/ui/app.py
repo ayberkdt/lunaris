@@ -25,7 +25,7 @@ from typing import Any
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.common.constants import DAY_S
-from lunaris.ui.components import PageShell
+from lunaris.ui.components import ElidedLabel, PageShell
 
 # =============================================================================
 # 1.                            UI CONFIGURATION
@@ -363,13 +363,22 @@ class MainWindow(QtWidgets.QMainWindow):
         h_layout.setContentsMargins(_sp.lg, _sp.sm, _sp.lg, _sp.sm)
         h_layout.setSpacing(_sp.md)
 
-        # App Title
-        title_lbl = QtWidgets.QLabel(APP_NAME)
+        # App Title. Elided rather than plain: when a run starts the header
+        # gains ~450px of progress/stop chrome, and a plain QLabel answers that
+        # squeeze by clipping mid-glyph ("Lunaris Mis") instead of eliding.
+        title_lbl = ElidedLabel(APP_NAME)
         title_lbl.setObjectName("title")
+        self.lbl_app_title = title_lbl
         h_layout.addWidget(title_lbl)
 
-        # Page Indicator (StatusBadge)
+        # Page Indicator (StatusBadge). Fixed horizontally: a centred badge
+        # answers a squeeze by clipping *both* ends ("PROPAGATION" ->
+        # "ROPAGATIO"), which is unreadable. It must never shrink; the header
+        # sheds lower-priority items instead (see _apply_header_breakpoint).
         self.badge_page = StatusBadge("Orbit", "info")
+        self.badge_page.setSizePolicy(
+            QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
+        )
         h_layout.addWidget(self.badge_page)
 
         # Header context chips. The separate mission-status ribbon (which showed
@@ -386,6 +395,12 @@ class MainWindow(QtWidgets.QMainWindow):
             chip.setCursor(QtCore.Qt.PointingHandCursor)
             chip.setIcon(get_icon(icon_name, THEME['fg_muted']))
             chip.clicked.connect(lambda _=False: on_click())
+            # QPushButton has no elide mode, so a squeezed chip clips its label.
+            # Chips hold their size and are hidden wholesale at the narrow
+            # breakpoint instead.
+            chip.setSizePolicy(
+                QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
+            )
             return chip
 
         h_layout.addSpacing(DESIGN_TOKENS.spacing.md)
@@ -418,6 +433,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "orbital elements shown in the app use this frame."
             )
             frame_chip.setAccessibleName("Working reference frame")
+            frame_chip.setSizePolicy(
+                QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
+            )
             self.lbl_frame_status = frame_chip
             h_layout.addWidget(frame_chip)
 
@@ -445,10 +463,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
         self._progress_is_determinate = False
         h_layout.addWidget(self.progress_bar)
-        # Extra progress text (t/T + ETA)
-        self.lbl_progress = QtWidgets.QLabel("")
+        # Extra progress text (t/T + ETA). A *maximum* rather than the previous
+        # 155px minimum: as a minimum it forced the label to hold width it could
+        # not fill, and its unelided text painted over the run-state chip to its
+        # right. Elided + capped, it degrades to "…" and never overlaps.
+        self.lbl_progress = ElidedLabel("")
         self.lbl_progress.setObjectName("progressText")
-        self.lbl_progress.setMinimumWidth(155)
+        self.lbl_progress.setMaximumWidth(200)
         h_layout.addWidget(self.lbl_progress)
         h_layout.addSpacing(8)
 
@@ -469,6 +490,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.state_frame = QtWidgets.QFrame()
         self.state_frame.setObjectName("stateFrame")
         self.state_frame.setLayout(state_container)
+        self.state_frame.setSizePolicy(
+            QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
+        )
         h_layout.addWidget(self.state_frame)
 
         h_layout.addSpacing(16)
@@ -493,6 +517,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # header (via the PageShell action slot), so it disappeared on every
         # other workspace. Run stays primary and always visible; Stop sits to
         # its right and only appears while a run is active.
+        # The run actions are the header's highest-priority items: they hold
+        # their full size at every width and everything else yields around them.
+        for _btn in (self.btn_run, self.btn_stop):
+            _btn.setSizePolicy(
+                QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
+            )
         h_layout.addWidget(self.btn_run)
         h_layout.addWidget(self.btn_stop)
 
@@ -502,6 +532,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.hide()
         self.lbl_progress.hide()
         self.state_frame.hide()
+
+        self._header_frame = header_frame
+        self._in_header_breakpoint = False
+        # Re-run the width budget whenever the header's contents change, not
+        # only on resize. Showing the run chrome adds ~450px but emits no
+        # resizeEvent, and callers show it *after* flipping the run state, so
+        # any hook hung off the state transition would measure the old header.
+        # LayoutRequest fires on child show/hide/sizeHint changes, which is
+        # exactly the condition the budget depends on.
+        header_frame.installEventFilter(self)
+        self._apply_header_breakpoint()
 
         root.addWidget(header_frame)
 
@@ -1549,6 +1590,142 @@ class MainWindow(QtWidgets.QMainWindow):
                 else DESIGN_TOKENS.layout.nav_width
             )
             self.nav_list.setFixedWidth(nav_width)
+        # The header re-budgets itself from its own Resize/LayoutRequest events
+        # (see eventFilter); doing it here would read the header's pre-resize
+        # width and shed chips that actually fit.
+
+    def eventFilter(  # noqa: N802 - Qt override
+        self, watched: QtCore.QObject, event: QtCore.QEvent
+    ) -> bool:
+        """Re-budget the header whenever its contents change size or visibility."""
+        if watched is getattr(self, "_header_frame", None) and event.type() in (
+            # LayoutRequest: a child was shown/hidden or changed its hint (the
+            # run chrome appearing). Resize: the header itself got wider or
+            # narrower. Both change the width budget, and neither is reliably
+            # reported by MainWindow.resizeEvent — that fires before the header
+            # child has been resized, so reading its width there is stale.
+            QtCore.QEvent.LayoutRequest,
+            QtCore.QEvent.Resize,
+        ):
+            self._apply_header_breakpoint()
+        return super().eventFilter(watched, event)
+
+    def _header_optional_chips(self) -> list[QtWidgets.QWidget]:
+        """Header chips in shed order (first to go, first in the list).
+
+        These three are informational and each is shown in full on the page
+        that owns it, so dropping them costs the user nothing they cannot get
+        elsewhere. Everything not in this list — Run/Stop, the progress
+        cluster, the page badge — is load-bearing and always stays.
+        """
+        ordered = (self.lbl_frame_status, self.lbl_output_status,
+                   self.lbl_gravity_status)
+        return [c for c in ordered if c is not None]
+
+    def _apply_header_breakpoint(self) -> None:
+        """Shed low-priority header chips before anything is forced to clip.
+
+        The header is a priority list, not a row of equals. Every item except
+        the app title is horizontally fixed, so when a run starts and the
+        header gains ~450px of progress/stop chrome there is no give: Qt
+        squeezes the fixed widgets below their size hint and their labels clip
+        (the page badge, being centred, loses characters from *both* ends).
+
+        The budget is measured rather than guessed from a magic width, because
+        the required width depends on the run state, the density setting and
+        the user's font — a single hard-coded breakpoint is wrong in most of
+        those combinations. Chips are restored in reverse order as soon as the
+        space comes back, so widening the window is not a one-way door.
+        """
+        if not hasattr(self, "_header_frame") or self._in_header_breakpoint:
+            return
+        available = self._header_frame.width()
+        if available <= 0:
+            # Freshly built: no geometry yet. Keep the roomy layout; the first
+            # real resizeEvent decides.
+            return
+
+        self._in_header_breakpoint = True
+        try:
+            self._pin_header_minimums()
+            chips = self._header_optional_chips()
+            # Show everything, then drop chips one at a time until the fixed
+            # items fit. The title is elided (size policy Ignored) and so is
+            # not part of the budget: it absorbs whatever is left over.
+            for chip in chips:
+                chip.setVisible(True)
+            for chip in chips:
+                if self._header_required_width() <= available:
+                    break
+                chip.setVisible(False)
+        finally:
+            self._in_header_breakpoint = False
+
+    def _header_compressible(self) -> tuple[QtWidgets.QWidget, ...]:
+        """Header items allowed to shrink instead of forcing a shed.
+
+        Both are :class:`ElidedLabel`: they report a minimum width of 0 and
+        degrade to an ellipsis, so they are the header's slack. Everything else
+        either renders at its full size or is hidden outright.
+        """
+        return (self.lbl_app_title, self.lbl_progress)
+
+    def _pin_header_minimums(self) -> None:
+        """Make the load-bearing header items genuinely incompressible.
+
+        ``QSizePolicy.Fixed`` is not enough on its own: when a layout cannot
+        fit its items it shrinks them toward ``minimumSizeHint``, and a
+        QPushButton's minimum sits well below its label width — it is willing
+        to clip itself. Pinning each item's minimum width to its size hint
+        removes that willingness, so the deficit lands entirely on the two
+        elided labels (title, progress text), which report a minimum of 0 and
+        degrade to "…" as designed.
+
+        Recomputed on every pass rather than pinned once at construction: the
+        hints move with the UI font and the density setting.
+        """
+        layout = self._header_frame.layout()
+        compressible = self._header_compressible()
+        for i in range(layout.count()):
+            widget = layout.itemAt(i).widget()
+            if widget is None or widget in compressible or widget.isHidden():
+                continue
+            widget.setMinimumWidth(widget.sizeHint().width())
+
+    def _header_required_width(self) -> int:
+        """Width the header's non-elastic items need to render without clipping.
+
+        Deliberately summed from ``sizeHint`` rather than read from the
+        layout's ``minimumSize``: QPushButton reports a minimum well below its
+        size hint (it is willing to clip its own label), so the layout happily
+        certifies a header as "fitting" at a width where every button is
+        chopped. The size hint is the width at which the text actually renders.
+
+        ``isHidden`` rather than ``isVisible``: the latter is False whenever an
+        ancestor is not yet shown, which is exactly the case during
+        construction and in offscreen rendering, and would make this return
+        near-zero and never shed anything.
+        """
+        layout = self._header_frame.layout()
+        compressible = self._header_compressible()
+        margins = layout.contentsMargins()
+        total = margins.left() + margins.right()
+        gaps = max(0, layout.count() - 1)
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            widget = item.widget()
+            if widget is not None:
+                # The elided labels are the header's slack, not part of the
+                # budget: counting their full text width would make the header
+                # shed chips to buy room for text that was going to elide
+                # anyway.
+                if widget.isHidden() or widget in compressible:
+                    continue
+                total += widget.sizeHint().width()
+            elif item.spacerItem() is not None:
+                # The stretch collapses to nothing first; fixed spacers do not.
+                total += item.spacerItem().sizeHint().width()
+        return total + layout.spacing() * gaps
 
     def _switch_page(self, key: str):
         """Switch between main pages."""
@@ -2538,6 +2715,11 @@ class MainWindow(QtWidgets.QMainWindow):
         label_text = status_map.get(state, "")
         self.lbl_run_state.setText(label_text)
         self.sim_state.message = label_text
+
+        # The console's status chip reads as execution status to users, so it
+        # must not say "Idle" while the header is showing run progress.
+        if hasattr(self, "log_panel"):
+            self.log_panel.set_run_status(state)
 
         if hasattr(self, "state_frame"):
             self.state_frame.setVisible(bool(label_text))

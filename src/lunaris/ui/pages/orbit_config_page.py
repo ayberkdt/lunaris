@@ -1245,7 +1245,14 @@ class OrbitPage(QtWidgets.QWidget):
 
         # Input Fields - All are NumericDragLineEdit
         self.ent_hp = NumericDragLineEdit("100.0", step=5.0, min_value=0.0, decimals=1)
-        self.ent_ha = NumericDragLineEdit("", step=5.0, min_value=0.0, decimals=1)
+        # Seeded to hp, not "": NumericDragLineEdit coerces an empty initial
+        # value to 0.0 (it has no blank state), so "" did not mean "circular at
+        # hp" as intended — it booted the page at hp=100 / ha=0. That is an
+        # inverted orbit, which _update_ghost_orbit then silently swapped, so
+        # the form read "Periselene 100 / Aposelene 0" while the preview beside
+        # it read "Periselene 0 / Aposelene 100". Defaulting to a circular
+        # 100 km orbit keeps the two panels telling the same story on boot.
+        self.ent_ha = NumericDragLineEdit("100.0", step=5.0, min_value=0.0, decimals=1)
         self.ent_ha.setPlaceholderText("Circular (same as hp)")
 
         self.ent_a = NumericDragLineEdit("", step=10.0, min_value=1.0, decimals=2)

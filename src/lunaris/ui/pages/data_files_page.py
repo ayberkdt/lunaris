@@ -240,10 +240,14 @@ class DataPage(QtWidgets.QWidget):
         # Connect path change to content-aware badge update
         self.ent_ldem_root.textChanged.connect(lambda _: self._update_ldem_badge())
 
-        # Resolution control
+        # Resolution control. The label stacks above the control like every
+        # other field in this card: an inline left label here meant one card
+        # mixed two form idioms, so the eye had to re-find the label position
+        # halfway down.
+        layout.addWidget(self._field_label("LDEM resolution"))
+
         res_row = QtWidgets.QHBoxLayout()
         res_row.setSpacing(DESIGN_TOKENS.spacing.sm)
-        res_row.addWidget(self._field_label("LDEM resolution"))
 
         self.spin_ldem_ppd = NoWheelSpinBox()
         self.spin_ldem_ppd.setRange(1, 128)
@@ -254,9 +258,14 @@ class DataPage(QtWidgets.QWidget):
         self.spin_ldem_ppd.valueChanged.connect(lambda _: self._state_changed())
         res_row.addWidget(self.spin_ldem_ppd)
 
-        unit_hint = QtWidgets.QLabel("pixels per degree")
-        unit_hint.setObjectName("fieldUnit")
-        res_row.addWidget(unit_hint)
+        # The spin box already renders the " ppd" suffix, so a "pixels per
+        # degree" label beside it stated the unit twice. The expansion is worth
+        # keeping for anyone who does not know the abbreviation, but it belongs
+        # in the tooltip and the accessible name, not in a second visible chip.
+        self.spin_ldem_ppd.setToolTip(
+            "LDEM resolution in pixels per degree (ppd): samples of elevation "
+            "data per degree of latitude/longitude."
+        )
         res_row.addStretch()
         layout.addLayout(res_row)
 
