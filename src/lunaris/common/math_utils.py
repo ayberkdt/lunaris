@@ -1567,9 +1567,10 @@ def sample_2d_bilinear(
     ))
 
 
-# Used by: math_utils
+# Used by: math_utils, dynamics (JIT-callable from njit hot paths; skips the
+# Python-level validation that the sample_grid_bilinear wrapper performs)
 @njit(cache=True)
-def _sample_grid_bilinear_kernel(
+def sample_grid_bilinear_kernel(
     lat_deg: float,
     lon_deg: float,
     data: np.ndarray,
@@ -1621,7 +1622,7 @@ def sample_grid_bilinear(
     if res_deg <= 0.0 or not np.isfinite(res_deg):
         raise ValueError(f"res_deg must be finite and > 0, got {res_deg}")
     data_f = _validate_grid_data(data, int(nlines), int(nsamples), row_label="nlines", col_label="nsamples")
-    return float(_sample_grid_bilinear_kernel(
+    return float(sample_grid_bilinear_kernel(
         float(lat_deg), float(lon_deg), data_f,
         int(nlines), int(nsamples), float(res_deg),
         float(lon0_deg), float(lat0_deg)
@@ -1695,9 +1696,10 @@ def sample_2d_scaled_nearest(
     ))
 
 
-# Used by: math_utils
+# Used by: math_utils, dynamics (JIT-callable from njit hot paths; skips the
+# Python-level validation that the sample_2d_scaled_bilinear wrapper performs)
 @njit(cache=True)
-def _sample_2d_scaled_bilinear_kernel(
+def sample_2d_scaled_bilinear_kernel(
     data: np.ndarray,
     row_f: float,
     col_f: float,
@@ -1790,7 +1792,7 @@ def sample_2d_scaled_bilinear(
     Public API: Scaled bilinear sampler (with missing-value robustness).
     """
     data_f = _validate_grid_data(data, int(n_rows), int(n_cols))
-    return float(_sample_2d_scaled_bilinear_kernel(
+    return float(sample_2d_scaled_bilinear_kernel(
         data_f, float(row_f), float(col_f),
         int(n_rows), int(n_cols),
         float(scale), float(offset), float(missing_val)
@@ -1801,6 +1803,44 @@ def sample_2d_scaled_bilinear(
 # =============================================================================
 # 9.                             PUBLIC API
 # =============================================================================
+
+# Used by: batch.summary (screening), analysis.frozen (candidate validation)
+def osculating_elements_vec(
+    r: np.ndarray, v: np.ndarray, mu: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorized osculating ``(a_m, e, i_rad, argp_rad)`` for ``(..., 3)`` states.
+
+    Pure NumPy over arbitrary leading dimensions. Near-equatorial orbits have
+    no ascending node (``|n| ~ 0``): the argument of periapsis falls back to
+    the longitude of periapsis there so apsidal-drift screening keeps working.
+    Invalid states (``r = 0``) propagate NaNs instead of raising.
+    """
+    rn = np.linalg.norm(r, axis=-1)
+    v2 = np.sum(v * v, axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        eps = 0.5 * v2 - mu / rn
+        a = -mu / (2.0 * eps)
+    h = np.cross(r, v)
+    hn = np.linalg.norm(h, axis=-1)
+    e_vec = np.cross(v, h) / mu - r / rn[..., None]
+    e = np.linalg.norm(e_vec, axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inc = np.arccos(np.clip(h[..., 2] / np.where(hn > 0.0, hn, np.nan), -1.0, 1.0))
+    # Node vector n = z x h; argp = angle(n -> e_vec) with quadrant from e_z.
+    n_vec = np.stack([-h[..., 1], h[..., 0], np.zeros_like(hn)], axis=-1)
+    nn = np.linalg.norm(n_vec, axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cos_argp = np.sum(n_vec * e_vec, axis=-1) / (
+            np.where(nn > 0.0, nn, np.nan) * np.where(e > 0.0, e, np.nan)
+        )
+    argp = np.arccos(np.clip(cos_argp, -1.0, 1.0))
+    argp = np.where(e_vec[..., 2] < 0.0, 2.0 * np.pi - argp, argp)
+    # Near-equatorial fallback: longitude of periapsis (see docstring).
+    equatorial = nn <= 1e-12 * np.maximum(hn, 1.0)
+    lon_peri = np.mod(np.arctan2(e_vec[..., 1], e_vec[..., 0]), 2.0 * np.pi)
+    argp = np.where(equatorial, lon_peri, argp)
+    return a, e, inc, argp
+
 
 __all__ = (
 
@@ -1838,6 +1878,7 @@ __all__ = (
     # ------------------------------
     "rv_to_coe_select",          # Public: single RV->elements selector (coe6/coe10/kepler5)
     "batch_y_to_elements",       # Public: batch RV->elements selector (coe6/coe10/kepler5)
+    "osculating_elements_vec",   # Public: vectorized (a_m, e, i_rad, argp_rad) over (..., 3)
     "coe_to_rv",                 # Public: inverse COE->(r, v) via the perifocal frame
 
     # ------------------------------
@@ -1854,4 +1895,8 @@ __all__ = (
     "sample_grid_bilinear",      # Public: lat/lon -> indices -> bilinear sample
     "sample_2d_scaled_nearest",  # Public: nearest + scale/offset + missing handling
     "sample_2d_scaled_bilinear", # Public: bilinear + scale/offset + missing fallback
+
+    # JIT-callable kernel variants (no Python-level validation; for njit hot paths)
+    "sample_grid_bilinear_kernel",      # Kernel behind sample_grid_bilinear
+    "sample_2d_scaled_bilinear_kernel", # Kernel behind sample_2d_scaled_bilinear
 )

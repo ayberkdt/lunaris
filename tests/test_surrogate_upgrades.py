@@ -39,9 +39,9 @@ from lunaris.surrogate.st_lrps.data.datasets import (
 from lunaris.surrogate.st_lrps.networks.models import (
     RadialDecayEncoding,
     RealSHBasisEncoding,
-    _compute_harmonic_w0_bands,
     build_model_from_config,
     compute_architecture_signature,
+    compute_harmonic_w0_bands,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
@@ -384,7 +384,7 @@ def _inner_multiscale(module):
 
 
 def test_multiscale_siren_w0_bands_are_persisted():
-    bands = _compute_harmonic_w0_bands(3, 20, 200)
+    bands = compute_harmonic_w0_bands(3, 20, 200)
     cfg = _ms_cfg(w0_bands=bands)
     model = build_model_from_config(cfg, device=torch.device("cpu"), dtype=torch.float32)
     assert len(model.w0_bands) == 3

@@ -769,13 +769,13 @@ def test_sampler_kernels_reject_nonpositive_dims_directly():
     assert math.isnan(math_utils._sample_2d_nearest_kernel(dummy, 0.0, 0.0, 0, 1))
     assert math.isnan(math_utils._sample_2d_bilinear_kernel(dummy, 0.0, 0.0, 0, 1))
     assert math.isnan(
-        math_utils._sample_grid_bilinear_kernel(0.0, 0.0, dummy, 0, 1, 1.0, 0.0, 0.0)
+        math_utils.sample_grid_bilinear_kernel(0.0, 0.0, dummy, 0, 1, 1.0, 0.0, 0.0)
     )
     assert math.isnan(
         math_utils._sample_2d_scaled_nearest_kernel(dummy, 0.0, 0.0, 0, 1, 1.0, 0.0, -9999.0)
     )
     assert math.isnan(
-        math_utils._sample_2d_scaled_bilinear_kernel(dummy, 0.0, 0.0, 0, 1, 1.0, 0.0, -9999.0)
+        math_utils.sample_2d_scaled_bilinear_kernel(dummy, 0.0, 0.0, 0, 1, 1.0, 0.0, -9999.0)
     )
 
 

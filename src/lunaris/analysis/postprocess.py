@@ -175,7 +175,7 @@ def _detect_impact_index(alt_km: np.ndarray, impact_alt_km: float | None) -> int
 # 2.                 HISTORY NORMALIZATION / EXTRACTORS
 # =============================================================================
 
-def _first_present(d: Mapping[str, Any], keys: Sequence[str]) -> Any | None:
+def first_present(d: Mapping[str, Any], keys: Sequence[str]) -> Any | None:
     """Return the first key that exists in `d` with a non-None value."""
     for k in keys:
         if k in d:
@@ -298,11 +298,11 @@ def extract_time_seconds(history: Mapping[str, Any]) -> np.ndarray:
       - "t_s" (preferred)
       - "t_days" (converted to seconds)
     """
-    t_s = _first_present(history, ["t_s"])
+    t_s = first_present(history, ["t_s"])
     if t_s is not None:
         return _as_np(t_s, dtype=float)
 
-    t_days = _first_present(history, ["t_days"])
+    t_days = first_present(history, ["t_days"])
     if t_days is not None:
         return _as_np(t_days, dtype=float) * DAY_S
 
@@ -317,11 +317,11 @@ def extract_time_days(history: Mapping[str, Any]) -> np.ndarray:
       - "t_days" (preferred)
       - "t_s" (converted to days)
     """
-    t_days = _first_present(history, ["t_days"])
+    t_days = first_present(history, ["t_days"])
     if t_days is not None:
         return _as_np(t_days, dtype=float)
 
-    t_s = _first_present(history, ["t_s"])
+    t_s = first_present(history, ["t_s"])
     t_s = _as_np(t_s, dtype=float)
     if t_s.size == 0:
         return t_s
@@ -366,7 +366,7 @@ def _maybe_v_mps(v: np.ndarray) -> np.ndarray:
     return v
 
 
-def _extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+def extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     """
     Return position/velocity histories as (N, 3) arrays in SI units:
       - r: meters
@@ -378,7 +378,7 @@ def _extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndar
       - history["r_m"] shaped (N, 3) or (3, N)
       - history["v_mps"] shaped (N, 3) or (3, N)
     """
-    y = _first_present(history, ["y"])
+    y = first_present(history, ["y"])
     y = _as_np(y, dtype=float)
 
     if y.ndim == 2:
@@ -395,8 +395,8 @@ def _extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndar
             return _maybe_r_m(r), _maybe_v_mps(v)
 
     # Explicit r/v fallbacks (canonical names only)
-    r = _as_np(_first_present(history, ["r_m"]), dtype=float)
-    v = _as_np(_first_present(history, ["v_mps"]), dtype=float)
+    r = _as_np(first_present(history, ["r_m"]), dtype=float)
+    v = _as_np(first_present(history, ["v_mps"]), dtype=float)
 
     def _to_N3(a: np.ndarray) -> np.ndarray:
         if a.ndim != 2:
@@ -438,18 +438,18 @@ def extract_elements(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
     If any are missing, elements are derived from history["y"] using batch_y_to_elements
     with mu taken from history["meta"] (mu_m3s2) or history["mu_m3s2"].
     """
-    a = _as_np(_first_present(history, ["a_km"]), dtype=float)
-    e = _as_np(_first_present(history, ["e"]), dtype=float)
-    i = _as_np(_first_present(history, ["i_deg"]), dtype=float)
-    raan = _as_np(_first_present(history, ["raan_deg"]), dtype=float)
-    argp = _as_np(_first_present(history, ["argp_deg"]), dtype=float)
+    a = _as_np(first_present(history, ["a_km"]), dtype=float)
+    e = _as_np(first_present(history, ["e"]), dtype=float)
+    i = _as_np(first_present(history, ["i_deg"]), dtype=float)
+    raan = _as_np(first_present(history, ["raan_deg"]), dtype=float)
+    argp = _as_np(first_present(history, ["argp_deg"]), dtype=float)
 
     need = (a.size == 0) or (e.size == 0) or (i.size == 0) or (raan.size == 0) or (argp.size == 0)
     if not need:
         return {"a_km": a, "e": e, "i_deg": i, "raan_deg": raan, "argp_deg": argp}
 
     # Derive from state if possible
-    y = _first_present(history, ["y"])
+    y = first_present(history, ["y"])
     y = _as_np(y, dtype=float)
 
     y6N = None
@@ -464,7 +464,7 @@ def extract_elements(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
     if isinstance(meta, Mapping):
         mu = _meta_get(meta, "mu_m3s2", "mu", "GM", default=None)
     if mu is None:
-        mu = _first_present(history, ["mu_m3s2", "mu", "GM"])
+        mu = first_present(history, ["mu_m3s2", "mu", "GM"])
 
     if y6N is not None and y6N.size and mu is not None:
         try:
@@ -504,8 +504,8 @@ def extract_invariants(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
 
     If norms are missing, they are derived from r/v vectors.
     """
-    r_norm = _maybe_km(_as_np(_first_present(history, ["r_norm_km"]), dtype=float))
-    v_norm = _as_np(_first_present(history, ["v_norm_kmps"]), dtype=float)
+    r_norm = _maybe_km(_as_np(first_present(history, ["r_norm_km"]), dtype=float))
+    v_norm = _as_np(first_present(history, ["v_norm_kmps"]), dtype=float)
 
     # If velocity norm looks like m/s, convert to km/s
     if v_norm.size:
@@ -514,7 +514,7 @@ def extract_invariants(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
                 v_norm = v_norm / 1000.0
 
     if r_norm.size == 0 or v_norm.size == 0:
-        r_vec, v_vec = _extract_rv_vectors(history)
+        r_vec, v_vec = extract_rv_vectors(history)
         if r_vec.size and r_norm.size == 0:
             r_norm = _maybe_km(np.linalg.norm(r_vec, axis=1))
         if v_vec.size and v_norm.size == 0:
@@ -524,11 +524,11 @@ def extract_invariants(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
                     vn = vn / 1000.0
             v_norm = vn
 
-    energy = _as_np(_first_present(history, ["energy_Jkg"]), dtype=float)
-    h = _as_np(_first_present(history, ["h_norm_m2s"]), dtype=float)
+    energy = _as_np(first_present(history, ["energy_Jkg"]), dtype=float)
+    h = _as_np(first_present(history, ["h_norm_m2s"]), dtype=float)
 
-    relE = _as_np(_first_present(history, ["rel_energy_drift"]), dtype=float)
-    relh = _as_np(_first_present(history, ["rel_h_drift"]), dtype=float)
+    relE = _as_np(first_present(history, ["rel_energy_drift"]), dtype=float)
+    relh = _as_np(first_present(history, ["rel_h_drift"]), dtype=float)
 
     return {
         "r_norm_km": r_norm,
@@ -551,11 +551,11 @@ def extract_altitude_km(history: Mapping[str, Any], meta: Mapping[str, Any] | No
       - r extracted from history["y"] (meters)
       - R_ref from meta/body_radius_m or history["body_radius_m"]
     """
-    alt = _first_present(history, ["alt_km"])
+    alt = first_present(history, ["alt_km"])
     if alt is not None:
         return _as_np(alt, dtype=float)
 
-    r_vec, _ = _extract_rv_vectors(history)
+    r_vec, _ = extract_rv_vectors(history)
     if r_vec.size == 0:
         return np.empty((0,), dtype=float)
 
@@ -565,7 +565,7 @@ def extract_altitude_km(history: Mapping[str, Any], meta: Mapping[str, Any] | No
     if meta is not None:
         Rm = _meta_get(meta, "body_radius_m", "R_ref_m", default=None)
     if Rm is None:
-        Rm = _first_present(history, ["body_radius_m", "R_ref_m"])
+        Rm = first_present(history, ["body_radius_m", "R_ref_m"])
 
     if Rm is None:
         return np.empty((0,), dtype=float)
@@ -586,7 +586,7 @@ def extract_events(history: Mapping[str, Any]) -> dict[str, Any]:
     Preferred canonical structure:
       history["events"] = {"peri_idx": [...], "apo_idx": [...], "impact_idx": int|None}
     """
-    ev = _first_present(history, ["events"])
+    ev = first_present(history, ["events"])
     if isinstance(ev, Mapping):
         peri = _as_np(ev.get("peri_idx", []), dtype=int)
         apo = _as_np(ev.get("apo_idx", []), dtype=int)
@@ -724,7 +724,7 @@ def _accel_breakdown_if_available(
     return {k: _as_np(v, dtype=float) for k, v in mags.items()}
 
 
-def _groundtrack_if_available(
+def groundtrack_if_available(
     ctx: Any,
     t_s: np.ndarray,
     y: np.ndarray,
@@ -1047,7 +1047,7 @@ def compute_history(
 
     if compute_groundtrack:
         try:
-            gt = _groundtrack_if_available(ctx, t, ys, max_samples=int(max_samples))
+            gt = groundtrack_if_available(ctx, t, ys, max_samples=int(max_samples))
             if gt is not None:
                 hist["groundtrack"] = gt
         except Exception:

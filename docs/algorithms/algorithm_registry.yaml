@@ -2085,7 +2085,7 @@ entries:
         symbol: AdditiveMultiBandSirenMLP
         role: torch_implementation
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
-        symbol: _compute_harmonic_w0_bands
+        symbol: compute_harmonic_w0_bands
         role: torch_implementation
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
         symbol: RealSHBasisEncoding
@@ -2506,7 +2506,7 @@ entries:
         and geodesic terms handled separately/omitted).
     symbols:
       - path: src/lunaris/physics/relativity_effects.py
-        symbol: _schwarzschild_components
+        symbol: schwarzschild_components
         role: numba_implementation
       - path: src/lunaris/physics/relativity_effects.py
         symbol: calc_schwarzschild_accel
@@ -2568,7 +2568,7 @@ entries:
         geodetic precession; regression in tests/test_de_sitter_precession.py.
     symbols:
       - path: src/lunaris/physics/relativity_effects.py
-        symbol: _de_sitter_components
+        symbol: de_sitter_components
         role: numba_implementation
     mathematical_contract:
       inputs: spacecraft velocity and the Moon->body position/velocity
@@ -2627,10 +2627,10 @@ entries:
         composition is a Lunaris adaptation of the single-body IERS forms.
     symbols:
       - path: src/lunaris/physics/relativity_effects.py
-        symbol: _external_schwarzschild_diff_components
+        symbol: external_schwarzschild_diff_components
         role: numba_implementation
       - path: src/lunaris/physics/relativity_effects.py
-        symbol: _external_1pn_components
+        symbol: external_1pn_components
         role: numba_implementation
       - path: src/lunaris/physics/relativity_effects.py
         symbol: calc_external_1pn_accel

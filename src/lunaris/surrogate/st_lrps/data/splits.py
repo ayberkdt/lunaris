@@ -13,9 +13,14 @@ import numpy as np
 from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract, utc_now_iso
 
 
-def _hash_indices(indices: np.ndarray) -> str:
+def hash_indices(indices: np.ndarray) -> str:
     arr = np.asarray(indices, dtype=np.int64)
     return hashlib.sha256(np.ascontiguousarray(arr).view(np.uint8).tobytes()).hexdigest()
+
+
+# compat: retired underscore spelling; remove in the MINOR release after the
+# rename ships (docs/PUBLIC_API.md "Naming And Boundary Policy").
+_hash_indices = hash_indices
 
 
 def _split_counts(n_rows: int, val_fraction: float, test_fraction: float = 0.0) -> tuple[int, int, int]:
@@ -325,7 +330,7 @@ def build_split_manifest(
         "test_count": int(len(splits.get("test", []))),
         "ood_count": int(len(splits.get("ood", []))),
         "index_hashes": {
-            name: _hash_indices(np.asarray(indices, dtype=np.int64))
+            name: hash_indices(np.asarray(indices, dtype=np.int64))
             for name, indices in splits.items()
         },
         "altitude_range_per_split": _range_per_split(splits, altitude_km),
@@ -381,7 +386,7 @@ def load_verified_train_indices(
     """Load and hash-verify the persisted training indices, or return ``None``.
 
     Returns the ``train`` index array only when the sidecar exists, contains a
-    ``train`` array, and its :func:`_hash_indices` digest matches
+    ``train`` array, and its :func:`hash_indices` digest matches
     ``expected_train_hash`` exactly. Any mismatch or read error returns ``None``
     so the caller can fall back without ever trusting an unverified sidecar.
     """
@@ -395,7 +400,7 @@ def load_verified_train_indices(
             train = np.asarray(data["train"], dtype=np.int64).reshape(-1)
     except Exception:
         return None
-    if not expected_train_hash or _hash_indices(train) != str(expected_train_hash):
+    if not expected_train_hash or hash_indices(train) != str(expected_train_hash):
         return None
     return train
 
@@ -531,6 +536,7 @@ __all__ = [
     "SPLIT_INDICES_FILENAME",
     "SUPPORTED_SPLIT_POLICIES",
     "build_split_manifest",
+    "hash_indices",
     "load_verified_train_indices",
     "make_altitude_stratified_split",
     "make_ood_altitude_split",

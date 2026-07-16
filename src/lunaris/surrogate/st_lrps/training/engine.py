@@ -67,13 +67,13 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     H5BlockDataset,
     TensorBatchSampler,
     TensorMemoryDataset,
-    _discover_dataset_name,
-    _resolve_loader_worker_count,
-    _resolve_lunar_dataset_contract,
     build_dataset_contract,
     collate_xyz_u_a,
+    discover_dataset_name,
     identity_collate,
     infer_a_sign_from_data,
+    resolve_loader_worker_count,
+    resolve_lunar_dataset_contract,
     validate_training_dataset_convention,
 )
 from lunaris.surrogate.st_lrps.data.splits import (
@@ -85,10 +85,10 @@ from lunaris.surrogate.st_lrps.data.splits import (
 )
 from lunaris.surrogate.st_lrps.networks.models import (
     MODEL_BUILDER_VERSION,
-    _compute_harmonic_w0_bands,
-    _get_output_head_params,
     build_model_from_config,
     compute_architecture_signature,
+    compute_harmonic_w0_bands,
+    get_output_head_params,
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract, resolve_dataset_hash
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
@@ -2279,7 +2279,7 @@ def _build_dataloaders(
         train_sampler = BlockShuffleSampler(len(train_ds), cfg.sampler_block_size, cfg.seed + 100)
         val_sampler   = BlockShuffleSampler(len(val_ds),   cfg.sampler_block_size, cfg.seed + 200)
         _streaming_path = train_data_path if independent_val else data_path
-        train_workers = _resolve_loader_worker_count(_streaming_path, cfg.num_workers)
+        train_workers = resolve_loader_worker_count(_streaming_path, cfg.num_workers)
         if train_workers == 0 and int(cfg.num_workers) > 0:
             logger.warning(
                 "Windows HDF5 safety: num_workers forced to 0 for HDF5 streaming. "
@@ -2375,7 +2375,7 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
         with h5py.File(primary_path, "r") as f:
             _ = f[dset_name]
     except (KeyError, OSError):
-        dset_name = _discover_dataset_name(primary_path, preferred=cfg.dataset_name)
+        dset_name = discover_dataset_name(primary_path, preferred=cfg.dataset_name)
 
     # 3. Read Metadata (SSOT)
     meta = DatasetMeta.from_h5(primary_path)
@@ -2390,7 +2390,7 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
         bytes_est = bytes_est_train + bytes_est_val
         N = N_train_file + N_val_file
         meta_val = DatasetMeta.from_h5(val_data_path)
-        _resolve_lunar_dataset_contract(meta_val, data_path=val_data_path)
+        resolve_lunar_dataset_contract(meta_val, data_path=val_data_path)
 
         def _require_meta_match(name: str, left: Any, right: Any) -> None:
             if left is None or right is None:
@@ -2560,7 +2560,7 @@ def _build_model_and_optim(
                 "Regenerate the dataset with degree_max recorded, or use n_bands=1."
             )
         cfg.w0_bands = [
-            float(w) for w in _compute_harmonic_w0_bands(
+            float(w) for w in compute_harmonic_w0_bands(
                 int(cfg.n_bands), int(cfg.degree_min), int(cfg.degree_max)
             )
         ]
@@ -2675,7 +2675,7 @@ def _build_model_and_optim(
     ).to(device=device, dtype=DTYPE)
     logger.info("Residual baseline: %s", target_contract.baseline_description)
 
-    head_params = _get_output_head_params(model)
+    head_params = get_output_head_params(model)
     head_param_ids = {id(param) for param in head_params}
     body_params = [param for param in model.parameters() if id(param) not in head_param_ids]
     param_groups: list[dict[str, Any]] = []
@@ -3129,7 +3129,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     # 4b. Validate metadata contract
     degree_min_val = int(meta.degree_min) if meta.degree_min is not None else -1
     _effective_target = meta.target_mode or ("residual" if degree_min_val >= 0 else "full")
-    dataset_body_name, resolved_mu_si, resolved_r_ref_m = _resolve_lunar_dataset_contract(
+    dataset_body_name, resolved_mu_si, resolved_r_ref_m = resolve_lunar_dataset_contract(
         meta, data_path=primary_path,
     )
     # Hard convention guard: reject sign-flipped legacy datasets and other

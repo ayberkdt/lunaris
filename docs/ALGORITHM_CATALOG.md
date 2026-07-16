@@ -375,7 +375,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - Exactness: exact_1pn_with_beta_gamma_unity
   - Preserves: reproduces the relativistic perihelion advance
 - **Implementing symbols**:
-  - `src/lunaris/physics/relativity_effects.py` -- `_schwarzschild_components` (numba_implementation)
+  - `src/lunaris/physics/relativity_effects.py` -- `schwarzschild_components` (numba_implementation)
   - `src/lunaris/physics/relativity_effects.py` -- `calc_schwarzschild_accel` (api_entry_point)
   - `src/lunaris/physics/relativity_effects.py` -- `RelativityModel` (api_entry_point)
 - **Lunaris modifications**:
@@ -404,7 +404,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - Exactness: exact_1pn_geodesic
   - Preserves: prograde precession of the orbit plane at |Omega_dS|
 - **Implementing symbols**:
-  - `src/lunaris/physics/relativity_effects.py` -- `_de_sitter_components` (numba_implementation)
+  - `src/lunaris/physics/relativity_effects.py` -- `de_sitter_components` (numba_implementation)
 - **Lunaris modifications**:
   - Coriolis-like +2 Omega x v application in the Moon-centred frame
 - **Assumptions**:
@@ -432,8 +432,8 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - Exactness: differential_1pn
   - Preserves: subtracts the Moon-origin 1PN term for the relative EOM
 - **Implementing symbols**:
-  - `src/lunaris/physics/relativity_effects.py` -- `_external_schwarzschild_diff_components` (numba_implementation)
-  - `src/lunaris/physics/relativity_effects.py` -- `_external_1pn_components` (numba_implementation)
+  - `src/lunaris/physics/relativity_effects.py` -- `external_schwarzschild_diff_components` (numba_implementation)
+  - `src/lunaris/physics/relativity_effects.py` -- `external_1pn_components` (numba_implementation)
   - `src/lunaris/physics/relativity_effects.py` -- `calc_external_1pn_accel` (api_entry_point)
 - **Lunaris modifications**:
   - differential Moon-centred composition of the IERS single-body terms
@@ -1236,7 +1236,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
 - **Implementing symbols**:
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `MultiScaleSirenMLP` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `AdditiveMultiBandSirenMLP` (torch_implementation)
-  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `_compute_harmonic_w0_bands` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `compute_harmonic_w0_bands` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `RealSHBasisEncoding` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `PhysicalRadialDecayEncoding` (torch_implementation)
 - **Lunaris modifications**:

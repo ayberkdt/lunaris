@@ -773,7 +773,7 @@ def propagate_for_scenario(
         # criterion to demand ~5s steps.  We disable Nyquist by:
         # 1. Setting use_nyquist_max_step=False in PropagatorConfig
         # 2. Temporarily overriding grav.degree_max = grav.degree_min so that
-        #    _get_sh_degree() returns the base degree (e.g. 10) as a belt-and-suspenders.
+        #    get_sh_degree() returns the base degree (e.g. 10) as a belt-and-suspenders.
         new_prop = replace(cfg_base.propagator, use_nyquist_max_step=False)
         cfg = replace_sim_config(cfg_base, propagator=new_prop)
 

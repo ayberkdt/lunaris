@@ -210,7 +210,7 @@ class TestSurrogateGravityModelDegreeAttributes:
         assert model.effective_degree_max == 100
 
     def test_degree_max_satisfies_propagator_contract(self, tmp_path: Path) -> None:
-        """Confirm _get_sh_degree() in core.propagation.propagator no longer raises for ST-LRPS."""
+        """Confirm get_sh_degree() in core.propagation.propagator no longer raises for ST-LRPS."""
         run_dir = _make_tiny_run(tmp_path, "run_propagator_compat")
         sgm = SurrogateGravityModel.from_model_dir(
             run_dir,
@@ -219,7 +219,7 @@ class TestSurrogateGravityModelDegreeAttributes:
             device_preference="cpu",
         )
 
-        # Simulate what core.propagation.propagator._get_sh_degree() does.
+        # Simulate what core.propagation.propagator.get_sh_degree() does.
         assert hasattr(sgm, "degree_max"), "degree_max must be present for propagator"
         assert int(sgm.degree_max) > 0
 

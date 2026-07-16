@@ -53,9 +53,9 @@ _DEFAULT_ALT_MAX_KM: float = float(getattr(_CLOUD_CFG, "alt_max_km", 1000.0))
 
 
 def _load_dataset_helpers() -> tuple[Any, Any]:
-    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, _find_latest_dataset
+    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, find_latest_dataset
 
-    return DatasetMeta, _find_latest_dataset
+    return DatasetMeta, find_latest_dataset
 
 
 @dataclass

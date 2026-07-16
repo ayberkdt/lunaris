@@ -68,7 +68,6 @@ from .qt_common import (
     QComboBox,
     QDesktopServices,
     QDoubleSpinBox,
-    QEvent,
     QFont,
     QFormLayout,
     QFrame,
@@ -77,7 +76,6 @@ from .qt_common import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QObject,
     QPixmap,
     QPlainTextEdit,
     QProcess,
@@ -441,17 +439,9 @@ def _apply_status_tips(root: QWidget) -> None:
                 w.setStatusTip(tip.replace("\n", "  ·  "))
 
 
-class _NoWheelOnSpinFilter(QObject):
-    """App-level event filter: prevents accidental spinbox value changes via scroll wheel."""
-
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        if (
-            event.type() == QEvent.Type.Wheel
-            and isinstance(obj, QSpinBox | QDoubleSpinBox)
-        ):
-            event.ignore()
-            return True
-        return False
+# The spinbox wheel guard moved to lunaris.ui_foundation.event_filters
+# (NoWheelOnSpinFilter): it is shared with the mission launcher, so its
+# canonical home is the app-neutral foundation package.
 
 
 class ValidatedPathEdit(QLineEdit):

@@ -25,7 +25,7 @@ import numpy as np
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.data.splits import (
-    _hash_indices,
+    hash_indices,
     radius_lat_lon_deg,
     split_dataset_indices,
 )
@@ -195,7 +195,7 @@ def _dataset_content_sha(dataset_path: str | Path | None, dataset_name: str = "d
         return None
     try:
         from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
-        from lunaris.surrogate.st_lrps.data.datasets import _discover_dataset_name
+        from lunaris.surrogate.st_lrps.data.datasets import discover_dataset_name
 
         path = Path(dataset_path)
         name = dataset_name
@@ -204,7 +204,7 @@ def _dataset_content_sha(dataset_path: str | Path | None, dataset_name: str = "d
 
             with h5py.File(path, "r") as f:
                 if name not in f:
-                    name = _discover_dataset_name(path, dataset_name)
+                    name = discover_dataset_name(path, dataset_name)
         except Exception:
             pass
         return content_sha256_for_hdf5_dataset(path, dataset_name=name)
@@ -385,7 +385,7 @@ def _resolve_training_heldout_guard(
             options=opts or None,
         )
         train_recon = np.asarray(recon.get("train", []), dtype=np.int64)
-        recon_hash = _hash_indices(train_recon)
+        recon_hash = hash_indices(train_recon)
     except Exception as exc:
         return {
             "status": "unverified",
@@ -431,12 +431,12 @@ def _load_residual_rows(dataset_path: Path, dataset_name: str = "data") -> tuple
     """Load (xyz, u, a) residual rows in SI plus the reference radius."""
     import h5py
 
-    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, _discover_dataset_name
+    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, discover_dataset_name
 
     path = Path(dataset_path)
     meta = DatasetMeta.from_h5(path)
     with h5py.File(path, "r") as f:
-        name = dataset_name if dataset_name in f else _discover_dataset_name(path, dataset_name)
+        name = dataset_name if dataset_name in f else discover_dataset_name(path, dataset_name)
         arr = np.asarray(f[name][:], dtype=np.float64)
     xyz, u, a = arr[:, 0:3], arr[:, 3:4], arr[:, 4:7]
     if meta.unit_system == "canonical":

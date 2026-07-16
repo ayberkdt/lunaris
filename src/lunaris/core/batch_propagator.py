@@ -840,7 +840,7 @@ if _CUDA_AVAILABLE:
         oz = scale * (rx_b * vy_b - ry_b * vx_b)
 
         # a = +2 * (Omega x v): prograde geodetic precession (must match the CPU
-        # kernel lunaris.physics.relativity_effects._de_sitter_components).
+        # kernel lunaris.physics.relativity_effects.de_sitter_components).
         out[0] = 2.0 * (oy * vz - oz * vy)
         out[1] = 2.0 * (oz * vx - ox * vz)
         out[2] = 2.0 * (ox * vy - oy * vx)
@@ -1603,12 +1603,12 @@ class GPUBatchPropagator:
         self._last_time_grid_metrics: dict[str, Any] = {}
 
         # Physical constants
-        from lunaris.core.dynamics.preparation import _provider_get
+        from lunaris.core.dynamics.preparation import provider_get
 
         ep = getattr(dynamics_engine, "ephem", None)
         prov: Any = getattr(ep, "get_data_provider", lambda: {})() if ep is not None else {}
-        self._mu_sun = float(_provider_get(prov, "mu_sun_m3s2", MU_SUN))
-        self._mu_earth = float(_provider_get(prov, "mu_earth_m3s2", MU_EARTH))
+        self._mu_sun = float(provider_get(prov, "mu_sun_m3s2", MU_SUN))
+        self._mu_earth = float(provider_get(prov, "mu_earth_m3s2", MU_EARTH))
         self._r_moon = float(R_MOON)
         self._r_earth = float(R_EARTH_MEAN)
         self._au = float(AU)
@@ -2236,7 +2236,7 @@ class CPUBatchPropagator:
             missing a required attribute such as ``degree_max``.
         """
 
-        from lunaris.core.propagation.time_grid import _get_ref_radius_and_mu, _get_sh_degree
+        from lunaris.core.propagation.time_grid import get_ref_radius_and_mu, get_sh_degree
 
         dyn = self._make_sample_dynamics(
             mass_kg=float(self._sim_cfg.spacecraft.mass_kg),
@@ -2245,8 +2245,8 @@ class CPUBatchPropagator:
             cr=float(self._sim_cfg.spacecraft.cr),
         )
         try:
-            _get_ref_radius_and_mu(dyn)
-            _get_sh_degree(dyn)
+            get_ref_radius_and_mu(dyn)
+            get_sh_degree(dyn)
         except AttributeError as exc:
             grav = getattr(dyn, "grav", None)
             kind = getattr(grav, "model_kind", "unknown")

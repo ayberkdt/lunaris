@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+- **Changed: API-boundary cleanup — internal helpers consumed across
+  subsystem boundaries got public names.** (The Python module surface is not
+  a stable API at 0.x — see `docs/VERSIONING.md` — so no deprecation aliases
+  beyond those noted.) Renames, old → new:
+  `lunaris.common.math_utils._sample_grid_bilinear_kernel` →
+  `sample_grid_bilinear_kernel`; `._sample_2d_scaled_bilinear_kernel` →
+  `sample_2d_scaled_bilinear_kernel`;
+  `lunaris.loaders.io_surface._grid_topo_payload` / `._grid_dem_provenance` →
+  `grid_topo_payload` / `grid_dem_provenance`;
+  `lunaris.physics.relativity_effects._schwarzschild_components`,
+  `._external_schwarzschild_diff_components`, `._de_sitter_components`,
+  `._external_1pn_components` → same names without the underscore;
+  `lunaris.analysis.postprocess._extract_rv_vectors`,
+  `._groundtrack_if_available`, `._first_present` → public names;
+  `lunaris.core.propagation.time_grid._get_ref_radius_and_mu` /
+  `._get_sh_degree` → `get_ref_radius_and_mu` / `get_sh_degree`;
+  `lunaris.core.dynamics.preparation._provider_get` / `._provider_has` →
+  `provider_get` / `provider_has`;
+  `lunaris.surrogate.st_lrps.data.datasets._discover_dataset_name`,
+  `._find_latest_dataset`, `._resolve_loader_worker_count`,
+  `._resolve_lunar_dataset_contract`, `._build_train_val_indices` → public
+  names (the `training.cli` fold keeps the old keys working for one MINOR);
+  `lunaris.surrogate.st_lrps.data.splits._hash_indices` → `hash_indices`
+  (compat alias kept for one MINOR);
+  `lunaris.surrogate.st_lrps.networks.models._compute_harmonic_w0_bands` /
+  `._get_output_head_params` → public names. Moves:
+  `lunaris.batch.summary._osculating_elements` →
+  `lunaris.common.math_utils.osculating_elements_vec`; the spinbox wheel
+  guard `_NoWheelOnSpinFilter` →
+  `lunaris.ui_foundation.event_filters.NoWheelOnSpinFilter`.
+- **Added: machine-checkable API boundary.** `docs/PUBLIC_API.md` gains a
+  "Naming And Boundary Policy" section and now documents the full exported
+  surface of `lunaris.core.propagation` and `lunaris.surrogate.runtime`
+  (previously exported via `__all__` but undocumented). New gates:
+  `tools/api_inventory.py` + `docs/api_snapshot.json` snapshot
+  (`tests/test_api_snapshot.py`), PUBLIC_API-table ↔ `__all__` sync
+  (`tests/test_public_api_doc_sync.py`), a ban on cross-unit imports of
+  `_`-prefixed symbols in `src/lunaris` (`tests/test_api_boundaries.py`),
+  and the import-linter contract `mission UI does not import ST-LRPS studio
+  widget internals`.
+
 - **Added the Mission Monitor (phases 1–3): a live/replay observation console.**
   New navigation page with a dockable widget workspace (Altitude/Radius,
   Orbital Elements, Integrator Health, Event Timeline, Backend & Provenance),

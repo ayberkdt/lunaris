@@ -1,7 +1,7 @@
 """
 Terrain-aware impact freeze - Phase A & B.
 
-Phase A: ``loaders.io_surface._grid_topo_payload`` packages a topography grid into
+Phase A: ``loaders.io_surface.grid_topo_payload`` packages a topography grid into
 a plain POD dict, and ``sample_topo_radius_m`` reconstructs the surface radius
 [m] from it using the *exact* indexing convention the batch impact kernels use.
 The reference sampler must round-trip against the loader's own
@@ -29,8 +29,8 @@ from lunaris.loaders.io_surface import (
     ConstantTopography,
     InMemorySurfaceProvider,
     TopographyGrid,
-    _grid_dem_provenance,
-    _grid_topo_payload,
+    grid_dem_provenance,
+    grid_topo_payload,
     sample_topo_radius_m,
 )
 
@@ -106,7 +106,7 @@ _INTERIOR_POINTS = [(15.0, 40.0), (12.3, 33.7), (18.9, 47.1), (11.0, 31.0), (19.
 
 def test_dem_provenance_records_product_resolution_and_hash(tmp_path):
     topo = _write_synthetic_ldem(tmp_path)
-    prov = _grid_dem_provenance(topo, r_moon_m=float(R_MOON))
+    prov = grid_dem_provenance(topo, r_moon_m=float(R_MOON))
 
     assert prov is not None
     assert prov["label_name"] == "synthetic.lbl"
@@ -123,14 +123,14 @@ def test_dem_provenance_records_product_resolution_and_hash(tmp_path):
 
 
 def test_dem_provenance_none_for_constant_and_missing_grid():
-    assert _grid_dem_provenance(None) is None
+    assert grid_dem_provenance(None) is None
     # ConstantTopography has no `.info`, so there is no DEM provenance to record.
-    assert _grid_dem_provenance(ConstantTopography(R_MOON + 100.0)) is None
+    assert grid_dem_provenance(ConstantTopography(R_MOON + 100.0)) is None
 
 
 def test_topo_payload_round_trips_against_loader(tmp_path):
     topo = _write_synthetic_ldem(tmp_path)
-    payload = _grid_topo_payload(topo, r_moon_m=float(R_MOON))
+    payload = grid_topo_payload(topo, r_moon_m=float(R_MOON))
 
     # Sanity: it is a real grid payload, not the constant fallback.
     assert "dn" in payload
@@ -147,7 +147,7 @@ def test_topo_payload_round_trips_against_loader(tmp_path):
 
 def test_topo_payload_envelope_matches_dn_extremes(tmp_path):
     topo = _write_synthetic_ldem(tmp_path)
-    payload = _grid_topo_payload(topo, r_moon_m=float(R_MOON))
+    payload = grid_topo_payload(topo, r_moon_m=float(R_MOON))
 
     dn = np.asarray(_synthetic_dn(), dtype=np.float64)
     scale_m = _SCALING_KM * 1000.0
@@ -186,7 +186,7 @@ def test_topo_payload_prefers_explicit_ddeg_over_info_ppd(tmp_path):
         _lat_centers_deg = topo._lat_centers_deg
         _flip_lat = topo._flip_lat
 
-    payload = _grid_topo_payload(_GridLikeTopo(), r_moon_m=float(R_MOON))
+    payload = grid_topo_payload(_GridLikeTopo(), r_moon_m=float(R_MOON))
 
     assert "dn" in payload
     assert payload["res_deg"] == pytest.approx(topo.ddeg)
@@ -194,12 +194,12 @@ def test_topo_payload_prefers_explicit_ddeg_over_info_ppd(tmp_path):
 
 def test_topo_payload_none_and_constant_fall_back_to_radius_const():
     # No grid at all.
-    p_none = _grid_topo_payload(None, r_moon_m=float(R_MOON))
+    p_none = grid_topo_payload(None, r_moon_m=float(R_MOON))
     assert p_none == {"radius_const_m": pytest.approx(float(R_MOON))}
     assert sample_topo_radius_m(p_none, 12.0, 34.0) == pytest.approx(float(R_MOON))
 
     # A non-grid provider (ConstantTopography lacks .info/.dn_km) -> constant.
-    p_const = _grid_topo_payload(ConstantTopography(R_MOON + 1234.0), r_moon_m=float(R_MOON))
+    p_const = grid_topo_payload(ConstantTopography(R_MOON + 1234.0), r_moon_m=float(R_MOON))
     assert p_const == {"radius_const_m": pytest.approx(float(R_MOON))}
 
 
@@ -230,7 +230,7 @@ class _FakeEphem:
 
 class _FakeDynamics:
     """Minimal duck for build_events: point-mass ref radius + a rotation table."""
-    grav = None  # -> _get_ref_radius_and_mu falls back to (R_MOON, MU_MOON)
+    grav = None  # -> get_ref_radius_and_mu falls back to (R_MOON, MU_MOON)
     ephem = _FakeEphem()
 
 

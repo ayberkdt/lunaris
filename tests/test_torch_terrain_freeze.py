@@ -44,7 +44,7 @@ def _varied_dn() -> np.ndarray:
 
 
 def _payload(dn: np.ndarray) -> dict:
-    """Build a `_grid_topo_payload`-shaped dict for a non-flipped regional grid."""
+    """Build a `grid_topo_payload`-shaped dict for a non-flipped regional grid."""
     lat_centers = np.linspace(_LAT_MAX - 0.5 * _RES, _LAT_MIN + 0.5 * _RES, _LINES)
     lon0 = _LON_W + 0.5 * _RES
     r = _SCALE_M * dn + _BIAS_M

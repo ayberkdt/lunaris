@@ -51,7 +51,7 @@ def siren_init_hidden_(layer: nn.Linear, w0: float) -> None:
 # Harmonic-band utilities
 # ---------------------------------------------------------------------------
 
-def _compute_harmonic_w0_bands(
+def compute_harmonic_w0_bands(
     n_bands: int,
     degree_min: int,
     degree_max: int,
@@ -304,7 +304,7 @@ class MultiScaleSirenMLP(nn.Module):
     ----------
     w0_bands:
         Per-band SIREN frequencies.  Length determines ``n_bands``.  Use
-        ``_compute_harmonic_w0_bands`` to derive these from the SH degree range.
+        ``compute_harmonic_w0_bands`` to derive these from the SH degree range.
     use_residual:
         Use ``SirenResBlock`` for shared layers.  Always ``True`` for this
         class; the parameter exists for API symmetry.
@@ -903,7 +903,7 @@ class PhysicsNet(nn.Module):
 # Parameter helpers
 # ---------------------------------------------------------------------------
 
-def _get_output_head_params(model: nn.Module) -> list[nn.Parameter]:
+def get_output_head_params(model: nn.Module) -> list[nn.Parameter]:
     """
     Return the parameters of the final scalar output head.
 
@@ -1152,7 +1152,7 @@ def build_model_from_config(
                     )
                 degree_min_cfg = max(-1, int(dmin_raw))
                 degree_max_cfg = max(1,  int(dmax_raw))
-                w0_bands = _compute_harmonic_w0_bands(n_bands, degree_min_cfg, degree_max_cfg)
+                w0_bands = compute_harmonic_w0_bands(n_bands, degree_min_cfg, degree_max_cfg)
             resolved_w0_bands = [float(w) for w in w0_bands]
             multiscale_mode = str(_cfg_value(cfg, "multiscale_mode", "concat_shared")).lower()
             if multiscale_mode not in ("concat_shared", "additive"):
@@ -1486,8 +1486,8 @@ __all__ = [
     "PhysicsNet",
     "siren_init_first_",
     "siren_init_hidden_",
-    "_compute_harmonic_w0_bands",
-    "_get_output_head_params",
+    "compute_harmonic_w0_bands",
+    "get_output_head_params",
     "build_model_from_config",
     "MODEL_BUILDER_VERSION",
     "ARCH_SIGNATURE_FIELDS",

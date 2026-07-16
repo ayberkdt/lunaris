@@ -23,6 +23,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.math_utils import osculating_elements_vec
+
 BATCH_SUMMARY_SCHEMA_VERSION = 1
 
 # Screening score v1 (lower = more frozen): eccentricity envelope width plus
@@ -35,38 +37,6 @@ SCORE_DEFINITION = (
 )
 
 _DAY_S = 86_400.0
-
-
-def _osculating_elements(
-    r: np.ndarray, v: np.ndarray, mu: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Vectorized osculating ``(a_m, e, i_rad, argp_rad)`` for ``(..., 3)`` states."""
-    rn = np.linalg.norm(r, axis=-1)
-    v2 = np.sum(v * v, axis=-1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        eps = 0.5 * v2 - mu / rn
-        a = -mu / (2.0 * eps)
-    h = np.cross(r, v)
-    hn = np.linalg.norm(h, axis=-1)
-    e_vec = np.cross(v, h) / mu - r / rn[..., None]
-    e = np.linalg.norm(e_vec, axis=-1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        inc = np.arccos(np.clip(h[..., 2] / np.where(hn > 0.0, hn, np.nan), -1.0, 1.0))
-    # Node vector n = z x h; argp = angle(n -> e_vec) with quadrant from e_z.
-    n_vec = np.stack([-h[..., 1], h[..., 0], np.zeros_like(hn)], axis=-1)
-    nn = np.linalg.norm(n_vec, axis=-1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        cos_argp = np.sum(n_vec * e_vec, axis=-1) / (
-            np.where(nn > 0.0, nn, np.nan) * np.where(e > 0.0, e, np.nan)
-        )
-    argp = np.arccos(np.clip(cos_argp, -1.0, 1.0))
-    argp = np.where(e_vec[..., 2] < 0.0, 2.0 * np.pi - argp, argp)
-    # Near-equatorial orbits have no ascending node (|n| ~ 0): fall back to the
-    # longitude of periapsis so apsidal-drift screening still works there.
-    equatorial = nn <= 1e-12 * np.maximum(hn, 1.0)
-    lon_peri = np.mod(np.arctan2(e_vec[..., 1], e_vec[..., 0]), 2.0 * np.pi)
-    argp = np.where(equatorial, lon_peri, argp)
-    return a, e, inc, argp
 
 
 def _linear_trend_per_day(t_s: np.ndarray, series: np.ndarray, valid: np.ndarray) -> float:
@@ -125,7 +95,7 @@ def summarize_ensemble(
         else np.asarray(valid_mask, dtype=np.float64) > 0.5
     )
 
-    a_m, e, inc, argp = _osculating_elements(Y_arr[:, :, :3], Y_arr[:, :, 3:], float(mu_m3s2))
+    a_m, e, inc, argp = osculating_elements_vec(Y_arr[:, :, :3], Y_arr[:, :, 3:], float(mu_m3s2))
     h_peri_km = (a_m * (1.0 - e) - float(r_ref_m)) / 1_000.0
 
     # Snapshot validity: finite AND pre-impact (frozen post-impact rows would

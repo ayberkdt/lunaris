@@ -19,7 +19,7 @@ from lunaris.common.constants import C_LIGHT, MU_MOON
 from lunaris.common.force_requirements import force_requirements
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 from lunaris.core.dynamics import DynamicsEngine
-from lunaris.physics.relativity_effects import _schwarzschild_components
+from lunaris.physics.relativity_effects import schwarzschild_components
 from lunaris.physics.spherical_harmonics import compute_point_mass_acceleration
 from lunaris.physics.third_body_effects import (
     EarthJ2Params,
@@ -211,7 +211,7 @@ def test_dynamics_uses_ephemeris_provider_gm_for_third_body_and_earth_j2() -> No
 def test_schwarzschild_matches_closed_form() -> None:
     r = np.array([1.95e6, 3.0e5, -1.2e5])
     v = np.array([50.0, 1500.0, -200.0])
-    a = np.array(_schwarzschild_components(r[0], r[1], r[2], v[0], v[1], v[2], MU_MOON))
+    a = np.array(schwarzschild_components(r[0], r[1], r[2], v[0], v[1], v[2], MU_MOON))
 
     rn = np.linalg.norm(r)
     v2 = float(v @ v)
@@ -221,5 +221,5 @@ def test_schwarzschild_matches_closed_form() -> None:
 
 
 def test_schwarzschild_guards_singularity() -> None:
-    a = _schwarzschild_components(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, MU_MOON)
+    a = schwarzschild_components(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, MU_MOON)
     assert a == (0.0, 0.0, 0.0)

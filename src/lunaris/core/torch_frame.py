@@ -82,7 +82,7 @@ def line_sphere_alpha(p_prev: Any, p_curr: Any, r_impact: Any) -> Any:
 
 
 def sample_topo_radius_torch(topo: dict[str, Any], lat_deg: Any, lon_deg: Any) -> Any:
-    """Vectorised terrain-radius sampler for a ``loaders._grid_topo_payload``.
+    """Vectorised terrain-radius sampler for a ``loaders.grid_topo_payload``.
 
     Torch counterpart of ``loaders.io_surface.sample_topo_radius_m`` and the Numba
     ``_sample_topo_radius_cuda`` device function: longitude wrapped to ``[0, 360)``,
@@ -143,7 +143,7 @@ def topo_payload_to_torch(
     device: Any,
     dtype: Any,
 ) -> dict[str, Any] | None:
-    """Move a ``loaders._grid_topo_payload`` onto a torch device for the kernels.
+    """Move a ``loaders.grid_topo_payload`` onto a torch device for the kernels.
 
     Returns ``None`` when ``payload`` is missing or carries no grid (constant
     fallback), signalling the caller to keep the constant-sphere impact path.

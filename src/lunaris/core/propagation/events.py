@@ -20,7 +20,7 @@ from lunaris.core.events import (
     make_periselene_event,
 )
 from lunaris.core.propagation.checkpoint import _stop_requested
-from lunaris.core.propagation.time_grid import _get_ref_radius_and_mu
+from lunaris.core.propagation.time_grid import get_ref_radius_and_mu
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,7 +415,7 @@ def build_events(
     add_stop_event: bool = True,
 ) -> list[Callable[[float, np.ndarray], float]]:
     """Build SciPy-compatible event callables based on PropagatorConfig (+ optional topo grid)."""
-    R_ref, _mu = _get_ref_radius_and_mu(dynamics)
+    R_ref, _mu = get_ref_radius_and_mu(dynamics)
 
     detect_impact = _get_detect_impact(cfg)
     impact_alt_km = _get_impact_alt_km(cfg)

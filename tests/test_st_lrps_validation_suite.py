@@ -123,7 +123,7 @@ def test_run_field_validation_smoke(tmp_path):
 def test_run_field_validation_excludes_training_rows(tmp_path):
     """A verified split_manifest must force a held-out evaluation even when the
     evaluation re-split seed differs from the training seed (Risk 1)."""
-    from lunaris.surrogate.st_lrps.data.splits import _hash_indices, make_seeded_random_split
+    from lunaris.surrogate.st_lrps.data.splits import hash_indices, make_seeded_random_split
 
     run = make_contract_run(tmp_path, degree_min=20, degree_max=60, alt_min_km=100.0, alt_max_km=500.0)
     n = 400
@@ -140,7 +140,7 @@ def test_run_field_validation_excludes_training_rows(tmp_path):
         "val_count": int(splits["val"].size),
         "test_count": int(splits["test"].size),
         "ood_count": 0,
-        "index_hashes": {name: _hash_indices(idx) for name, idx in splits.items()},
+        "index_hashes": {name: hash_indices(idx) for name, idx in splits.items()},
     }
     prov = run["run_dir"] / "provenance"
     prov.mkdir(parents=True, exist_ok=True)
@@ -194,7 +194,7 @@ def test_persisted_indices_bypass_fragile_reconstruction(tmp_path):
     """split_indices.npz makes held-out filtering deterministic even when the
     policy/seed reconstruction would NOT reproduce the same split (Risk: rounding
     fragility for altitude_stratified etc.)."""
-    from lunaris.surrogate.st_lrps.data.splits import _hash_indices, write_split_indices
+    from lunaris.surrogate.st_lrps.data.splits import hash_indices, write_split_indices
 
     run = make_contract_run(tmp_path, degree_min=20, degree_max=60, alt_min_km=100.0, alt_max_km=500.0)
     n = 400
@@ -208,7 +208,7 @@ def test_persisted_indices_bypass_fragile_reconstruction(tmp_path):
     _write_manifest(prov, {
         "schema_version": 1, "split_policy": "seeded_random", "split_seed": 999,
         "train_count": 300, "val_count": 100, "test_count": 0, "ood_count": 0,
-        "index_hashes": {name: _hash_indices(idx) for name, idx in splits.items()},
+        "index_hashes": {name: hash_indices(idx) for name, idx in splits.items()},
     })
     write_split_indices(prov / "split_indices.npz", splits)
 
@@ -228,7 +228,7 @@ def test_dataset_identity_mismatch_is_unverified(tmp_path):
     """A manifest whose dataset_content_sha256 does not match the eval dataset
     must be flagged (and hard-fail under strict): index values alone cannot catch
     a wrong/modified dataset with the same row count."""
-    from lunaris.surrogate.st_lrps.data.splits import _hash_indices, write_split_indices
+    from lunaris.surrogate.st_lrps.data.splits import hash_indices, write_split_indices
 
     run = make_contract_run(tmp_path, degree_min=20, degree_max=60, alt_min_km=100.0, alt_max_km=500.0)
     n = 400
@@ -240,7 +240,7 @@ def test_dataset_identity_mismatch_is_unverified(tmp_path):
     _write_manifest(prov, {
         "schema_version": 1, "split_policy": "seeded_random", "split_seed": 1,
         "train_count": 320, "val_count": 80, "test_count": 0, "ood_count": 0,
-        "index_hashes": {name: _hash_indices(idx) for name, idx in splits.items()},
+        "index_hashes": {name: hash_indices(idx) for name, idx in splits.items()},
         "dataset_content_sha256": "0" * 64,  # deliberately wrong
     })
     write_split_indices(prov / "split_indices.npz", splits)
@@ -263,7 +263,7 @@ def test_dataset_identity_mismatch_is_unverified(tmp_path):
 def test_dataset_identity_verified_with_matching_hash(tmp_path):
     """A matching dataset_content_sha256 yields dataset_identity='verified'."""
     from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
-    from lunaris.surrogate.st_lrps.data.splits import _hash_indices, write_split_indices
+    from lunaris.surrogate.st_lrps.data.splits import hash_indices, write_split_indices
 
     run = make_contract_run(tmp_path, degree_min=20, degree_max=60, alt_min_km=100.0, alt_max_km=500.0)
     n = 400
@@ -276,7 +276,7 @@ def test_dataset_identity_verified_with_matching_hash(tmp_path):
     _write_manifest(prov, {
         "schema_version": 1, "split_policy": "seeded_random", "split_seed": 1,
         "train_count": 320, "val_count": 80, "test_count": 0, "ood_count": 0,
-        "index_hashes": {name: _hash_indices(idx) for name, idx in splits.items()},
+        "index_hashes": {name: hash_indices(idx) for name, idx in splits.items()},
         "dataset_content_sha256": real_sha,
     })
     write_split_indices(prov / "split_indices.npz", splits)

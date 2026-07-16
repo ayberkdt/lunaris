@@ -1453,7 +1453,7 @@ def _topo_radius_envelope(
     return float(r_min), float(r_max)
 
 
-def _grid_topo_payload(
+def grid_topo_payload(
     topo: Any,
     *,
     r_moon_m: float = float(R_MOON_MEAN),
@@ -1554,14 +1554,14 @@ def _grid_topo_payload(
     }
 
 
-def _grid_dem_provenance(
+def grid_dem_provenance(
     topo: Any,
     *,
     r_moon_m: float = float(R_MOON_MEAN),
 ) -> dict[str, Any] | None:
     """DEM/datum provenance for the run manifest (separate from the kernel payload).
 
-    The kernel payload (:func:`_grid_topo_payload`) is deliberately POD-only for
+    The kernel payload (:func:`grid_topo_payload`) is deliberately POD-only for
     Numba/torch consumption; provenance strings (label/product name, source hash,
     datum) do not belong there. This companion records what a reader needs to
     judge an impact result: which DEM product, at what resolution and datum, and
@@ -1616,7 +1616,7 @@ def _grid_dem_provenance(
 
 def sample_topo_radius_m(payload: dict[str, Any], lat_deg: float, lon_deg: float) -> float:
     """
-    Reference (pure-NumPy) terrain-radius sampler for a :func:`_grid_topo_payload`.
+    Reference (pure-NumPy) terrain-radius sampler for a :func:`grid_topo_payload`.
 
     Replicates *exactly* the indexing convention the batch impact kernels use
     (see ``core.dynamics._sample_albedo_dn_scaled``): longitude wrapped to
@@ -1779,7 +1779,7 @@ class FileBackedSurfaceProvider:
 
     def topo_payload(self) -> dict[str, Any]:
         """Topography payload for terrain-aware impact freeze (Numba/torch-side)."""
-        return _grid_topo_payload(self._grids.topo, r_moon_m=self.default_radius_m)
+        return grid_topo_payload(self._grids.topo, r_moon_m=self.default_radius_m)
 
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
         topo = self._grids.topo
@@ -1834,7 +1834,7 @@ class InMemorySurfaceProvider:
 
     def topo_payload(self) -> dict[str, Any]:
         # Only expose grid payload if the injected topo is grid-like (TopographyGrid).
-        return _grid_topo_payload(self.topo, r_moon_m=self.default_radius_m)
+        return grid_topo_payload(self.topo, r_moon_m=self.default_radius_m)
 
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
         if self.topo is None:
@@ -1914,6 +1914,8 @@ __all__ = (
 
     # Terrain-aware impact (freeze) payload + reference sampler
     "sample_topo_radius_m",
+    "grid_topo_payload",
+    "grid_dem_provenance",
 
     # PDS3 parsing utilities
     "PDS3ParseError",

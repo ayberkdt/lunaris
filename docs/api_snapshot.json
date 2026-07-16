@@ -1,0 +1,52 @@
+{
+  "cross_unit_underscore_imports": [],
+  "facade_all": {
+    "lunaris": [
+      "__version__"
+    ],
+    "lunaris.api": [
+      "BatchPropagationConfig",
+      "BatchPropagationEngine",
+      "BatchPropagationResult",
+      "DynamicsEngine",
+      "load_default_config",
+      "propagate",
+      "replace_sim_config"
+    ],
+    "lunaris.batch": [
+      "BatchPropagationConfig",
+      "BatchPropagationEngine",
+      "BatchPropagationResult",
+      "HDF5TrajectoryView",
+      "batch_entry",
+      "generate_standard_normal_design",
+      "load_batch_result",
+      "sample_initial_states",
+      "sample_spacecraft_props"
+    ],
+    "lunaris.core.propagation": [
+      "EventOutcome",
+      "EventSpec",
+      "IntegrationPlan",
+      "PropagationResult",
+      "StepSizePlan",
+      "TimeGridPlan",
+      "build_events",
+      "event_outcome_from_solver_events",
+      "make_time_grid",
+      "propagate",
+      "resolve_integration_plan",
+      "resolve_step_size_policy",
+      "resolve_time_grid_plan"
+    ],
+    "lunaris.surrogate.runtime": [
+      "DEFAULT_ST_LRPS_RUNS_DIR",
+      "SurrogateGravityMetadata",
+      "SurrogateGravityModel",
+      "discover_st_lrps_model_dirs",
+      "find_checkpoint_for_st_lrps_run",
+      "find_latest_st_lrps_model_dir"
+    ]
+  },
+  "schema": "lunaris_api_snapshot_v1"
+}

@@ -15,7 +15,7 @@ from lunaris.core.propagation.integrators.fixed_step import _is_fixed_step_metho
 from lunaris.core.propagation.integrators.scipy import _resolve_scipy_method
 from lunaris.core.propagation.time_grid import (
     _clamp_output_dt,
-    _get_ref_radius_and_mu,
+    get_ref_radius_and_mu,
     make_time_grid,
 )
 
@@ -114,7 +114,7 @@ def resolve_time_grid_plan(
 
     dt_out_raw = getattr(time_cfg, "output_dt_s", None)
     if dt_out_raw is None:
-        _, mu = _get_ref_radius_and_mu(dynamics)
+        _, mu = get_ref_radius_and_mu(dynamics)
         mu = float(mu)
 
         r0 = float(np.linalg.norm(y0[:3]))

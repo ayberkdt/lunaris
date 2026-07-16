@@ -22,11 +22,11 @@ from lunaris.physics.relativity_effects import (
     C_SQ,
     EPS_1E12,
     MU_MOON,
-    _de_sitter_components,
-    _external_1pn_components,
-    _external_schwarzschild_diff_components,
     calc_external_1pn_accel,
     calc_schwarzschild_accel,
+    de_sitter_components,
+    external_1pn_components,
+    external_schwarzschild_diff_components,
 )
 
 # ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ def test_external_schwarzschild_differential_matches_subtraction() -> None:
     mu = float(MU_SUN)
 
     got = np.array(
-        _external_schwarzschild_diff_components(
+        external_schwarzschild_diff_components(
             float(r[0]), float(r[1]), float(r[2]),
             float(v[0]), float(v[1]), float(v[2]),
             float(body[0]), float(body[1]), float(body[2]),
@@ -170,7 +170,7 @@ def test_de_sitter_components_match_precession_formula() -> None:
     mu = float(MU_SUN)
 
     got = np.array(
-        _de_sitter_components(
+        de_sitter_components(
             float(v[0]), float(v[1]), float(v[2]),
             float(body[0]), float(body[1]), float(body[2]),
             float(body_v[0]), float(body_v[1]), float(body_v[2]),
@@ -198,7 +198,7 @@ def test_external_1pn_wrapper_matches_kernel_sum() -> None:
 
     wrapper = calc_external_1pn_accel(r, v, body, body_v, mu)
     kernel = np.array(
-        _external_1pn_components(
+        external_1pn_components(
             float(r[0]), float(r[1]), float(r[2]),
             float(v[0]), float(v[1]), float(v[2]),
             float(body[0]), float(body[1]), float(body[2]),

@@ -44,7 +44,7 @@ def _clamp_output_dt(t0: float, tf: float, dt_out: float, cap: int, verbose: boo
             logger.info("[OUT] max_points_cap exceeded -> increasing output_dt_s to %g s", dt)
     return dt
 
-def _get_ref_radius_and_mu(dynamics: DynamicsEngine) -> tuple[float, float]:
+def get_ref_radius_and_mu(dynamics: DynamicsEngine) -> tuple[float, float]:
     """
     STRICT gravity SSOT:
       - grav.R_ref_m
@@ -65,7 +65,7 @@ def _get_ref_radius_and_mu(dynamics: DynamicsEngine) -> tuple[float, float]:
 
     return float(grav.R_ref_m), float(grav.GM_m3s2)
 
-def _get_sh_degree(dynamics: DynamicsEngine) -> int:
+def get_sh_degree(dynamics: DynamicsEngine) -> int:
     """
     STRICT gravity SSOT:
       - grav.degree_max
@@ -82,4 +82,4 @@ def _get_sh_degree(dynamics: DynamicsEngine) -> int:
     return max(1, d)
 
 
-__all__ = ["_norm_method", "make_time_grid", "_clamp_output_dt", "_get_ref_radius_and_mu", "_get_sh_degree"]
+__all__ = ["_norm_method", "make_time_grid", "_clamp_output_dt", "get_ref_radius_and_mu", "get_sh_degree"]
