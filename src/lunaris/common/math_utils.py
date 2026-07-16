@@ -1804,6 +1804,44 @@ def sample_2d_scaled_bilinear(
 # 9.                             PUBLIC API
 # =============================================================================
 
+# Used by: batch.summary (screening), analysis.frozen (candidate validation)
+def osculating_elements_vec(
+    r: np.ndarray, v: np.ndarray, mu: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorized osculating ``(a_m, e, i_rad, argp_rad)`` for ``(..., 3)`` states.
+
+    Pure NumPy over arbitrary leading dimensions. Near-equatorial orbits have
+    no ascending node (``|n| ~ 0``): the argument of periapsis falls back to
+    the longitude of periapsis there so apsidal-drift screening keeps working.
+    Invalid states (``r = 0``) propagate NaNs instead of raising.
+    """
+    rn = np.linalg.norm(r, axis=-1)
+    v2 = np.sum(v * v, axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        eps = 0.5 * v2 - mu / rn
+        a = -mu / (2.0 * eps)
+    h = np.cross(r, v)
+    hn = np.linalg.norm(h, axis=-1)
+    e_vec = np.cross(v, h) / mu - r / rn[..., None]
+    e = np.linalg.norm(e_vec, axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inc = np.arccos(np.clip(h[..., 2] / np.where(hn > 0.0, hn, np.nan), -1.0, 1.0))
+    # Node vector n = z x h; argp = angle(n -> e_vec) with quadrant from e_z.
+    n_vec = np.stack([-h[..., 1], h[..., 0], np.zeros_like(hn)], axis=-1)
+    nn = np.linalg.norm(n_vec, axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cos_argp = np.sum(n_vec * e_vec, axis=-1) / (
+            np.where(nn > 0.0, nn, np.nan) * np.where(e > 0.0, e, np.nan)
+        )
+    argp = np.arccos(np.clip(cos_argp, -1.0, 1.0))
+    argp = np.where(e_vec[..., 2] < 0.0, 2.0 * np.pi - argp, argp)
+    # Near-equatorial fallback: longitude of periapsis (see docstring).
+    equatorial = nn <= 1e-12 * np.maximum(hn, 1.0)
+    lon_peri = np.mod(np.arctan2(e_vec[..., 1], e_vec[..., 0]), 2.0 * np.pi)
+    argp = np.where(equatorial, lon_peri, argp)
+    return a, e, inc, argp
+
+
 __all__ = (
 
     # Core tiny math (public wrappers)
@@ -1840,6 +1878,7 @@ __all__ = (
     # ------------------------------
     "rv_to_coe_select",          # Public: single RV->elements selector (coe6/coe10/kepler5)
     "batch_y_to_elements",       # Public: batch RV->elements selector (coe6/coe10/kepler5)
+    "osculating_elements_vec",   # Public: vectorized (a_m, e, i_rad, argp_rad) over (..., 3)
     "coe_to_rv",                 # Public: inverse COE->(r, v) via the perifocal frame
 
     # ------------------------------

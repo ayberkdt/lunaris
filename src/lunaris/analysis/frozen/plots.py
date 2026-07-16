@@ -345,7 +345,7 @@ def generate_frozen_report_figures(
     # Element histories for the top candidates, recomputed from the screening
     # block (histories are not persisted per-sample; the screening npz is).
     if candidates and elements is not None and (Y_out is not None or topk_Y_out is not None):
-        from lunaris.batch.summary import _osculating_elements
+        from lunaris.common.math_utils import osculating_elements_vec
 
         histories: list[dict[str, Any]] = []
         topk_lookup = (
@@ -361,7 +361,7 @@ def generate_frozen_report_figures(
                 y = topk_Y_out[:, topk_lookup[j], :]
             else:
                 continue
-            a_m, e, _inc, argp = _osculating_elements(y[:, :3], y[:, 3:], mu)
+            a_m, e, _inc, argp = osculating_elements_vec(y[:, :3], y[:, 3:], mu)
             histories.append(
                 {
                     "t_s": t_out,
