@@ -194,7 +194,15 @@ def _active_flags(config: Any) -> dict[str, bool]:
 
 
 def _to_ric(vector: np.ndarray, state: np.ndarray) -> np.ndarray:
-    """Project one inertial acceleration vector into the local RIC frame."""
+    """Project one inertial vector into the state's right-handed local RIC frame.
+
+    ``state`` is ``[r, v]`` with shape ``(6,)`` in one central-body inertial
+    frame. The input vector is shape ``(3,)`` in the same axes and keeps its
+    original units. Basis rows are ``R=r/|r|``, ``C=(r×v)/|r×v|``, and
+    ``I=C×R``; the returned component order is radial, in-track, cross-track.
+    Zero radius or angular momentum makes the frame undefined and raises
+    ``ValueError`` rather than inventing an orientation.
+    """
     r = np.asarray(state[:3], dtype=np.float64)
     v = np.asarray(state[3:6], dtype=np.float64)
     r_norm = float(np.linalg.norm(r))

@@ -981,10 +981,17 @@ def sh_accel_fixed(
     parallel_threshold: int = SERIAL_PARALLEL_THRESHOLD,
 ) -> tuple[float, float, float]:
     """
-    Fixed-degree acceleration with explicit caller-controlled dispatch.
+    Evaluate fixed-degree SH acceleration in the coefficient body-fixed frame.
 
-    Chooses between the high-precision Serial kernel (Kahan) and the
-    high-speed Parallel kernel (Fastmath) based on the degree threshold.
+    Position and reference radius are metres, ``mu`` is m³/s², and the returned
+    tuple is acceleration [m/s²]. Coefficients and Legendre tables must use the
+    fully normalized geodesy convention without the Condon–Shortley phase.
+    ``degree`` is safely bounded by the supplied coefficient arrays.
+
+    The default serial path uses compensated summation. The optional parallel
+    path uses a deterministic block reduction with ``fastmath`` and is selected
+    only above ``parallel_threshold``; it can differ at floating-point roundoff
+    level, not in the represented gravity model.
     """
     # 1. Determine safe evaluation degree
     max_safe_n = _determine_effective_degree(c_coeffs, s_coeffs)
@@ -1293,6 +1300,15 @@ def compute_point_mass_acceleration(
 # generator now imports these back from here (single source of SH math).
 
 def precompute_legendre_constants(N: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build fully normalized Legendre-recurrence tables through degree ``N``.
+
+    The returned ``(a_nm, b_nm, diag_f, subdiag_f, k_ratio)`` arrays are
+    dimensionless and use the geodesy/GRAIL 4-pi normalization without the
+    Condon–Shortley ``(-1)^m`` phase. Shapes are ``(N+1, N+1)`` for the matrix
+    tables and ``(N+1,)`` for the diagonal tables. They are consumed by the
+    potential/acceleration batch kernel below; changing their convention would
+    change every tesseral and sectoral term.
+    """
     N = int(N)
     a_nm = np.zeros((N + 1, N + 1), dtype=np.float64)
     b_nm = np.zeros_like(a_nm)
@@ -1343,6 +1359,22 @@ def sh_potential_accel_batch_serial(
     degree_max: int,
     degree_min: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Evaluate body-fixed SH potential and acceleration for ``M`` positions.
+
+    ``xyz_m`` has shape ``(M, 3)`` in the coefficient field's body-fixed frame
+    [m]. ``C`` and ``S`` are square, fully normalized coefficient arrays using
+    the geodesy/GRAIL convention without the Condon–Shortley phase. The result
+    is ``(V, a)`` with shapes ``(M,)`` [m²/s²] and ``(M, 3)`` [m/s²], using
+    the convention ``a = +grad(V)``. Terms in ``(degree_min, degree_max]`` are
+    included; ``degree_min < 0`` includes the structural ``mu/r`` monopole and
+    intentionally ignores stored ``C[0,0]``.
+
+    The pole branch fixes longitude at zero and suppresses the singular
+    longitudinal component. Positions within the kernel's near-origin guard
+    return zero rather than a singular field. This serial Numba kernel performs
+    no shape validation; callers must provide recurrence tables through
+    ``degree_max``.
+    """
     M = xyz_m.shape[0]
     N = degree_max
     V_out = np.empty(M, dtype=np.float64)

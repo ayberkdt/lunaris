@@ -670,7 +670,7 @@ class BatchPropagationEngine:
             except Exception as exc:
                 note = (
                     f"[BATCH] GPU ST-LRPS backend initialization failed ({exc}). "
-                    "Falling back to the CPU full-fidelity backend."
+                    "Falling back to the complete supported-force CPU backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
 
@@ -693,7 +693,7 @@ class BatchPropagationEngine:
             except Exception as exc:
                 note = (
                     f"[BATCH] GPU classic-SH backend initialization failed ({exc}). "
-                    "Falling back to the CPU full-fidelity backend."
+                    "Falling back to the complete supported-force CPU backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
 
@@ -722,7 +722,7 @@ class BatchPropagationEngine:
             except Exception as exc:
                 note = (
                     f"[BATCH] torch_cuda_sh backend initialization failed ({exc}). "
-                    "Falling back to the CPU full-fidelity backend."
+                    "Falling back to the complete supported-force CPU backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
 
@@ -748,7 +748,7 @@ class BatchPropagationEngine:
             except Exception as exc:
                 note = (
                     f"[BATCH] torch_cpu_sh backend initialization failed ({exc}). "
-                    "Falling back to the CPU full-fidelity backend."
+                    "Falling back to the complete supported-force CPU backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
 

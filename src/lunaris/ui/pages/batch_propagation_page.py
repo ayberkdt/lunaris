@@ -107,7 +107,7 @@ class UIBatchPropagationConfig:
     use_gpu: bool = True
     batch_backend: str = "auto"
     gpu_device_id: int = 0
-    sh_degree: int = 10        # requested; true GPU classic-SH currently supports <=24
+    sh_degree: int = 10        # requested; Numba CUDA <=24, Torch CUDA has no hard-coded ceiling
     gpu_threads_per_block: int = 128
     gravity_mode_override: str = "follow_mission"
     st_lrps_model_dir: str = ""
@@ -838,7 +838,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_batch_backend.setToolTip(
             "Explicit backend selector recorded verbatim in ensemble metadata.\n"
             "Numba CUDA SH: degree ≤ 24 (kernel-workspace limit). Torch CUDA SH: "
-            "arbitrary degree on PyTorch CUDA, gravity-only.\n"
+            "no hard-coded degree ceiling on PyTorch CUDA, gravity-only.\n"
             "GPU ST-LRPS + Third Body keeps Earth/Sun third-body terms on the torch path.\n"
             "Auto uses safe GPU paths when available and records any fallback."
         )
@@ -923,8 +923,9 @@ class BatchPropagationPage(QtWidgets.QWidget):
         )
         self.ent_sh_degree.setToolTip(
             "Requested spherical-harmonic degree.\n"
-            "The current true GPU classic-SH kernel supports degree <= 24.\n"
-            "Higher values fall back to CPU SH with metadata, not silent clipping."
+            "Numba CUDA supports degree <= 24 (workspace limit).\n"
+            "Higher values use gravity-only Torch CUDA SH when compatible and available, "
+            "otherwise fall back explicitly to CPU SH; the degree is never clipped."
         )
         gpu_grid.addWidget(self.ent_sh_degree, 0, 1)
 
@@ -976,7 +977,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         warn_lbl = _label(
             "- Classic-SH GPU uses Numba CUDA and supports true SH through degree 24.\n"
             "- ST-LRPS Potential is gravity-only; ST-LRPS + Third Body adds analytic Sun/Earth terms.\n"
-            "- Full-fidelity non-gravity perturbations can force CPU fallback depending on selected physics.",
+            "- Force models unsupported by the selected GPU route trigger an explicit CPU fallback.",
             muted=True,
         )
         warn_lbl.setWordWrap(True)
@@ -994,7 +995,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         # CPU hint
         self.cpu_hint = _label(
-            "• CPU mode is slower but uses the full-fidelity propagation path.",
+            "• CPU mode is slower but supports every currently implemented force flag.",
             muted=True,
         )
         self.cpu_hint.setWordWrap(True)
@@ -1857,7 +1858,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
                 )
 
         if not gpu_enabled:
-            warnings.append("GPU disabled: CPU full-fidelity mode may be slower.")
+            warnings.append("GPU disabled: the complete supported-force CPU mode may be slower.")
             if batch_backend.startswith("gpu_") or batch_backend in {"numba_cuda_sh", "torch_cuda_sh"}:
                 warnings.append("Explicit GPU batch backend selected; backend policy will record the resolved fallback or GPU override.")
 

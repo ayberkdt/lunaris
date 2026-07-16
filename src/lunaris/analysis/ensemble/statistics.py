@@ -102,9 +102,13 @@ def _position_ellipsoid_axes(P_pos: F64Array) -> tuple[F64Array, F64Array]:
 
 def _binomial_ci_wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """
-    Wilson score 95% confidence interval for a Binomial proportion k/n.
+    Return the uncorrected Wilson score interval for a binomial proportion.
 
-    Returns (lower, upper) as probabilities in [0, 1].
+    ``k`` is the number of successes, ``n`` the number of valid Bernoulli
+    trials, and ``z`` the standard-normal quantile (1.96 gives a nominal 95%
+    interval). Bounds are clipped to ``[0, 1]``; ``n == 0`` returns ``(0, 1)``.
+    The frequentist coverage interpretation assumes IID binomial trials, which
+    does not generally hold for deterministic or correlated QMC designs.
     """
     if n == 0:
         return 0.0, 1.0

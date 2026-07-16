@@ -141,8 +141,10 @@ gravity, Earth-J2, solid tides, relativity, radiation pressure), interpolation
 and frames (Catmull-Rom, SLERP, Hamilton quaternion rotation, SPICE/DE440, lunar
 PA frame), integrators and event handling, sampling, orbital-element
 conversions, the ST-LRPS neural architectures and optimization, scientific data
-products (GRAIL GL1800F, CODATA 2018), and the phase-drift diagnostic.
-Deliberately not yet itemised (candidates for future entries): ensemble UQ
-covariance statistics, frozen-orbit search, generic bilinear/nearest grid
-sampling, and terrain-aware impact DEM lookup. Add them following the procedure
-above; never remove an existing ID.
+products (GRAIL GL1800F, CODATA 2018), the phase-drift/RIC diagnostic, ensemble
+UQ covariance and Wilson interval reporting, frozen-orbit candidate screening,
+planetary-grid interpolation policy, and terrain-aware impact localization.
+These newer areas are registered as `LUNARIS-ALG-UQ-001/002`,
+`LUNARIS-HEUR-FRZ-001`, `LUNARIS-HEUR-INTP-001`, and
+`LUNARIS-HEUR-IMP-001`. Continue adding only real implemented algorithms with
+symbol/test evidence; never remove or reuse an existing ID.

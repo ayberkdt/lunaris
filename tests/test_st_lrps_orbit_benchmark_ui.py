@@ -5,7 +5,7 @@ Covers:
   (``lunaris.surrogate.st_lrps.evaluation.compare_gravity_models``) and no longer at the old
   ``validation.gravity`` path;
 - the Studio benchmark tab builds correct command-line arguments for both run
-  modes (per-model DOP853/RK8 and GPU batch RK4);
+  modes (per-model adaptive DOP853 and GPU batch RK4);
 - the benchmark page is registered in the Studio navigation.
 """
 

@@ -123,7 +123,7 @@ developed and tested, not aspiration:
 
 | Platform | Status |
 |---|---|
-| Windows 10/11 (x86-64) | Supported — primary development platform; Python 3.11 core/wheel smoke CI |
+| Windows 10/11 (x86-64) | Supported — primary development platform; manually exercised (no Windows CI job currently) |
 | Ubuntu LTS (x86-64) | Supported — full CI (tests, lint, type, architecture gates) runs here headless |
 | Other Linux distros | Expected to work (pure-Python + wheels); not routinely tested |
 | macOS | **Untested** — no CI, no manual validation; try at your own risk |

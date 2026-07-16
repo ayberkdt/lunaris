@@ -32,7 +32,7 @@ class IntegratorSpec:
 
     key: str            # backend method token (propagator.py)
     label: str          # combobox display label (must start with ``key``)
-    family: str         # "adaptive" | "symplectic" | "nystrom" | "runge_kutta"
+    family: str         # "adaptive" | "symplectic" | "nystrom" | "runge_kutta" | "extrapolation"
     family_label: str   # short badge text
     badge_kind: str     # StatusBadge kind (themed)
     title: str          # full method name shown as the card subtitle
@@ -141,9 +141,9 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         notice_kind="info",
     ),
     IntegratorSpec(
-        key="YOSHIDA6", label="YOSHIDA6 (Symplectic)", family="symplectic",
+        key="YOSHIDA6", label="YOSHIDA6 (Recursive triple-jump, order 6)", family="symplectic",
         family_label="Symplectic", badge_kind="success",
-        title="Yoshida (6th order)", order="6",
+        title="Recursive triple-jump composition (6th order)", order="6",
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
         recommended="High-precision long-arc symplectic propagation for conservative "
                     "forces only (gravity, third-body, J2). SRP, albedo, thermal IR or "
@@ -151,9 +151,9 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         notice_kind="info",
     ),
     IntegratorSpec(
-        key="YOSHIDA8", label="YOSHIDA8 (Symplectic)", family="symplectic",
+        key="YOSHIDA8", label="YOSHIDA8 (Recursive triple-jump, order 8)", family="symplectic",
         family_label="Symplectic", badge_kind="success",
-        title="Yoshida (8th order)", order="8",
+        title="Recursive triple-jump composition (8th order)", order="8",
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
         recommended="Maximum-precision symplectic integration for very long arcs — "
                     "conservative forces only (gravity, third-body, J2). SRP, albedo, "
@@ -183,12 +183,12 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         notice_kind="info",
     ),
     IntegratorSpec(
-        key="RK8", label="RK8 (Fixed-step)", family="runge_kutta",
-        family_label="Fixed-step RK", badge_kind="completed",
+        key="RK8", label="RK8 (Legacy token — GBS extrapolation)", family="extrapolation",
+        family_label="Extrapolation", badge_kind="completed",
         title="8th-order extrapolation (Gragg–Bulirsch–Stoer)", order="8",
         metric_type="Extrapolation", step_mode="Fixed", metric_error="None",
-        recommended="High-order fixed-step reference for tight non-symplectic accuracy "
-                    "without adaptivity.",
+        recommended="Fixed-step Gragg–Bulirsch–Stoer extrapolation retained under the "
+                    "legacy RK8 configuration token; it is not a Runge–Kutta tableau.",
         notice_kind="info",
     ),
 )

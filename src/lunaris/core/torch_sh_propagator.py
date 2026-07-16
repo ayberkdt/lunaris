@@ -14,8 +14,9 @@ Why this module exists
 The Numba CUDA classic-SH kernel (``numba_cuda_sh``) is capped at degree 24 by
 its compile-time thread-local Legendre workspace.  That ceiling is a kernel
 limitation, **not** a physical one.  This module provides the high-degree GPU
-path: arbitrary SH degree bounded only by the loaded coefficient file, GPU
-memory, batch size, dtype, and step size.
+path: no hard-coded SH-degree ceiling; usable degree is bounded by the loaded
+coefficient file, GPU memory, batch size, dtype, and step size. This is not an
+unlimited-degree or unlimited-accuracy guarantee.
 
 Contract (matches :class:`lunaris.core.batch_propagator.GPUBatchPropagator`)
 ------------------------------------------------------------------------

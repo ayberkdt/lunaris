@@ -112,10 +112,14 @@ def solid_tide_potential_degree_numba(
     degree: int,
 ) -> float:
     """
-    Disturbing potential dU_l for l=2 or l=3.
+    Evaluate the degree-2 or degree-3 elastic solid-tide disturbing potential.
 
-    Inputs are Moon-centered vectors in the same frame, normally Moon-fixed.
-    Returns zero for disabled/degenerate cases and for unsupported degrees.
+    Spacecraft ``r`` and tide-raising-body ``b`` vectors are Moon-centred [m]
+    in one frame, normally the lunar principal-axis body-fixed frame.
+    ``mu_body`` is m³/s², ``r_ref_m`` is the lunar reference radius [m], and
+    ``k_l`` is a dimensionless Love number. The returned potential is [m²/s²]
+    under the module convention ``a = +grad(dU)``. Disabled, unsupported, or
+    near-degenerate inputs return zero.
     """
     if mu_body == 0.0 or k_l == 0.0 or r_ref_m <= 0.0:
         return 0.0
@@ -162,9 +166,12 @@ def solid_tide_accel_degree_numba(
     degree: int,
 ) -> tuple[float, float, float]:
     """
-    Analytical gradient of the degree-l tide potential for l=2 or l=3.
+    Return the analytic gradient of the degree-2 or degree-3 tide potential.
 
-    Returned acceleration is in the same frame as the inputs.
+    Inputs follow :func:`solid_tide_potential_degree_numba`; the acceleration
+    tuple is [m/s²] in the same Moon-centred frame and uses ``a = +grad(dU)``.
+    This is an elastic, instantaneous Love-number response: frequency dependence,
+    phase lag/dissipation, and tide-induced coefficient feedback are excluded.
     """
     if mu_body == 0.0 or k_l == 0.0 or r_ref_m <= 0.0:
         return 0.0, 0.0, 0.0
@@ -229,10 +236,12 @@ def accel_solid_tides_numba(
     use_k3: bool,
 ) -> tuple[float, float, float]:
     """
-    Sum enabled degree-2 and degree-3 elastic solid-tide accelerations.
+    Sum enabled degree-2 and degree-3 elastic solid-tide accelerations [m/s²].
 
     ``k2 == 0`` and ``k3 == 0`` produce exactly zero contributions because the
     corresponding degree is skipped before any floating-point algebra is done.
+    All vectors are Moon-centred [m] in one frame, normally lunar body-fixed;
+    ``mu_body`` is m³/s² and Love numbers are dimensionless.
     """
     ax = 0.0
     ay = 0.0
@@ -276,7 +285,13 @@ def solid_tide_potential_degree(
     k_l: float,
     degree: int,
 ) -> float:
-    """Python wrapper for ``solid_tide_potential_degree_numba``."""
+    """Return one degree of elastic solid-tide disturbing potential [m²/s²].
+
+    ``r_sc`` and ``r_body`` are shape-``(3,)`` Moon-centred position vectors [m]
+    in the same frame, normally lunar body-fixed. ``mu_body`` is m³/s²,
+    ``r_ref_m`` is metres, and ``k_l`` is dimensionless. Only degrees 2 and 3
+    are implemented; other degrees return zero through the kernel contract.
+    """
     r = _as_vec3(r_sc, "r_sc")
     b = _as_vec3(r_body, "r_body")
     return float(
@@ -306,7 +321,13 @@ def calc_solid_tide_accel(
     use_k2: bool = True,
     use_k3: bool = False,
 ) -> Vec3:
-    """Convenience wrapper returning a newly allocated (3,) acceleration array."""
+    """Return summed elastic degree-2/3 tide acceleration [m/s²].
+
+    Input vectors are shape ``(3,)``, Moon-centred [m], and expressed in one
+    frame (normally lunar body-fixed). The newly allocated output is in that
+    same frame. The model is instantaneous and elastic; no Love-number phase
+    lag, frequency dependence, or dissipative tide is represented.
+    """
     r = _as_vec3(r_sc, "r_sc")
     b = _as_vec3(r_body, "r_body")
     ax, ay, az = accel_solid_tides_numba(

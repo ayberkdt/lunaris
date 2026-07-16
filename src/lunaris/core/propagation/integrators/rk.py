@@ -10,6 +10,14 @@ from lunaris.core.propagation.integrators.symplectic import _pack6
 
 
 def _rkn4_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    """Advance one classical fourth-order Runge–Kutta–Nyström step.
+
+    ``y6`` is ``[r, v]`` with position [m] and velocity [m/s], ``t`` and ``h``
+    are seconds, and ``accel(t, state)`` returns a shape-``(3,)`` acceleration
+    [m/s²]. The method assumes a second-order equation whose acceleration is
+    independent of velocity; velocity-dependent forces violate its RKN order
+    conditions. A new float64 shape-``(6,)`` state is returned.
+    """
     r = np.asarray(y6[:3], dtype=np.float64)
     v = np.asarray(y6[3:6], dtype=np.float64)
     h2 = h * h
@@ -27,6 +35,12 @@ def _rkn4_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: n
     return _pack6(r_next, v_next)
 
 def _rk4_step_full(rhs: Callable[[float, np.ndarray], np.ndarray], t: float, y: np.ndarray, h: float) -> np.ndarray:
+    """Advance one classical four-stage RK4 step for an arbitrary state vector.
+
+    The RHS output must have the same shape and units-per-second as ``y``;
+    ``t``/``h`` are seconds. This fixed-step kernel has no embedded error
+    estimate or adaptive controller and returns a new float64 array.
+    """
     y = np.asarray(y, dtype=np.float64)
     k1 = np.asarray(rhs(t, y), dtype=np.float64)
     k2 = np.asarray(rhs(t + 0.5 * h, y + 0.5 * h * k1), dtype=np.float64)
@@ -49,6 +63,14 @@ def _modified_midpoint(
     return 0.5 * (z0 + z1 + h * np.asarray(rhs(t + H, z1), dtype=np.float64))
 
 def _rk8_step_full(rhs: Callable[[float, np.ndarray], np.ndarray], t: float, y: np.ndarray, h: float) -> np.ndarray:
+    """Advance one fixed macro-step by Gragg–Bulirsch–Stoer extrapolation.
+
+    The public/configuration token remains ``RK8`` for compatibility, but this
+    is not a Runge–Kutta order-8 tableau. It applies the symmetric modified
+    midpoint rule with sub-step counts ``(2, 4, 6, 8)`` and polynomial
+    extrapolation to zero sub-step. The smooth RHS must return the same shape
+    and units-per-second as ``y``; no adaptive error controller is present.
+    """
     seq = _RK8_SEQUENCE
     table = [_modified_midpoint(rhs, t, y, h, n) for n in seq]
     # Bulirsch-Stoer extrapolation to sub-step -> 0 (Deuflhard recurrence).

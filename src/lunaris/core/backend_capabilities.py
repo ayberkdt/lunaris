@@ -15,9 +15,9 @@ are kept **separate** here:
   fixed thread-local Legendre workspace. The degree-24 ceiling is a *kernel
   workspace* limit (``cuda.local.array``), not a physical one. Intended for
   low-degree, high-throughput batch screening.
-* ``torch_cuda_sh`` — PyTorch tensors on CUDA (or CPU), evaluating arbitrary
-  degrees (SH25/50/100/200…) bounded only by the loaded coefficient file, GPU
-  memory, batch size, dtype, and step size — **no** hard degree-24 cap.
+* ``torch_cuda_sh`` — PyTorch tensors on CUDA with no hard-coded SH-degree
+  ceiling. Usable degree is bounded by the loaded coefficient file, GPU memory,
+  batch size, dtype, and step size; this is not an unlimited-accuracy claim.
 
 The Numba force-model support matrix here is locked to the existing batch
 behavior by the consistency tests in ``tests/test_backend_capabilities.py``; do
@@ -162,7 +162,10 @@ _CPU_SH = BackendCapabilities(
     integrator="adaptive (DOP853)",
     default_dtype="float64",
     fidelity_class="full",
-    description="CPU full-fidelity per-sample scipy DOP853. All force models supported.",
+    description=(
+        "CPU per-sample SciPy DOP853 route. Supports every currently implemented "
+        "force flag; individual force-model approximations remain disclosed."
+    ),
 )
 
 _NUMBA_CUDA_SH = BackendCapabilities(
@@ -214,8 +217,8 @@ _TORCH_CUDA_SH = BackendCapabilities(
     default_dtype="float64",
     fidelity_class="high_degree",
     description=(
-        "PyTorch CUDA classic-SH, arbitrary degree (SH25/50/100/200…) bounded by "
-        "the coefficient file, GPU memory, batch size, dtype, and step size. "
+        "PyTorch CUDA classic-SH with no hard-coded degree ceiling; usable degree "
+        "is bounded by the coefficient file, GPU memory, batch size, dtype, and step size. "
         "First runtime form is gravity-only."
     ),
 )
@@ -304,7 +307,7 @@ _GPU_ST_LRPS_THIRD_BODY = BackendCapabilities(
 # experimental/force-direct-archive branch. Only the conservative
 # potential_autograd surrogate is a supported ST-LRPS runtime.
 
-# CPU ST-LRPS full-fidelity path (the actual_backend emitted when an ST-LRPS GPU
+# CPU ST-LRPS complete supported-force path (the actual_backend emitted when an ST-LRPS GPU
 # run is forced back to CPU).
 _CPU_ST_LRPS = BackendCapabilities(
     name="cpu_st_lrps",
@@ -324,7 +327,10 @@ _CPU_ST_LRPS = BackendCapabilities(
     integrator="adaptive (DOP853)",
     default_dtype="float64",
     fidelity_class="full",
-    description="CPU full-fidelity DOP853 with the ST-LRPS surrogate as the gravity model.",
+    description=(
+        "CPU DOP853 route with the ST-LRPS surrogate as gravity; supports every "
+        "currently implemented perturbation flag."
+    ),
 )
 
 # Meta request: the policy resolver picks the concrete backend at runtime.

@@ -3,7 +3,7 @@ Regression tests for batch GPU backend selection and tuning helpers.
 
 These tests stay CPU-only; they validate the decision logic that determines
 when the CUDA backend is allowed, how launch widths are normalized, and when
-the engine deliberately falls back to the CPU full-fidelity path.
+the engine deliberately falls back to the complete supported-force CPU path.
 
 New in this revision
 --------------------

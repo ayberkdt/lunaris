@@ -422,6 +422,16 @@ def accel_j2_oblate_diff_numba(
     j2: float,
     kx: float, ky: float, kz: float,  # UNIT
 ) -> tuple[float, float, float]:
+    """Return differential external-body J2 acceleration in Moon-centred inertial axes.
+
+    ``r=(rx,ry,rz)`` is spacecraft relative to the Moon and
+    ``b=(bx,by,bz)`` is the oblate body's Moon-relative position [m], expressed
+    in the same inertial frame. ``mu_body`` is m³/s², ``r_ref`` is the body's
+    equatorial reference radius [m], ``j2`` is dimensionless, and ``k`` is a
+    unit spin-axis vector in that frame. The tuple [m/s²] is
+    ``a_J2(body→spacecraft) - a_J2(body→Moon)``. This Numba entry point assumes
+    ``k`` is already normalized; use the Python wrapper when that is not known.
+    """
     return _accel_j2_oblate_diff_unit_k(
         rx, ry, rz, bx, by, bz, mu_body, r_ref, j2, kx, ky, kz
     )
