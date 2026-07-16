@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from lunaris.common.constants import C_LIGHT, MU_MOON, MU_SUN
-from lunaris.physics.relativity_effects import C_SQ, _de_sitter_components
+from lunaris.physics.relativity_effects import C_SQ, de_sitter_components
 
 _RAD_TO_MAS = 180.0 / np.pi * 3600.0 * 1000.0
 _SEC_PER_YEAR = 365.25 * 86400.0
@@ -48,7 +48,7 @@ def test_de_sitter_rate_matches_canonical_19_mas_per_year() -> None:
     # Tie the rate to the kernel: for v perpendicular to Omega, |a| = 2|Omega||v|.
     v = np.array([0.0, 1600.0, 0.0])  # in xy-plane; Omega is along z here
     assert abs(float(omega[0])) < 1e-30 and abs(float(omega[1])) < 1e-30  # Omega || z
-    a = np.array(_de_sitter_components(
+    a = np.array(de_sitter_components(
         float(v[0]), float(v[1]), float(v[2]),
         float(body[0]), float(body[1]), float(body[2]),
         float(body_v[0]), float(body_v[1]), float(body_v[2]),
@@ -78,7 +78,7 @@ def test_de_sitter_precesses_the_orbit_prograde() -> None:
         r = state[:3]
         v = state[3:]
         ag = -MU_MOON * r / np.linalg.norm(r) ** 3
-        dsx, dsy, dsz = _de_sitter_components(
+        dsx, dsy, dsz = de_sitter_components(
             v[0], v[1], v[2],
             body[0], body[1], body[2],
             body_v[0], body_v[1], body_v[2],

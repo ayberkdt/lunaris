@@ -97,7 +97,7 @@ from lunaris.physics.ephemeris import get_ephem_state, interp_vec3_derivative_sa
 from lunaris.physics.lunar_albedo import (
     accel_albedo_facets_numba,
 )
-from lunaris.physics.relativity_effects import _external_1pn_components, _schwarzschild_components
+from lunaris.physics.relativity_effects import external_1pn_components, schwarzschild_components
 from lunaris.physics.solar_effects import SRPConfig, accel_srp
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 from lunaris.physics.spherical_harmonics import (
@@ -628,13 +628,13 @@ class DynamicsEngine:
                     az += athz
 
                 if USE_REL:
-                    arx, ary, arz = _schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
+                    arx, ary, arz = schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
                     ax += arx
                     ay += ary
                     az += arz
                     if USE_REL_EXTERNAL:
                         svx, svy, svz = interp_vec3_derivative_safe(float(t), EPH_DT_S, EPH_SUN)
-                        erx, ery, erz = _external_1pn_components(
+                        erx, ery, erz = external_1pn_components(
                             rx, ry, rz, vx, vy, vz,
                             sunx, suny, sunz,
                             svx, svy, svz,
@@ -645,7 +645,7 @@ class DynamicsEngine:
                         az += erz
 
                         evx, evy, evz = interp_vec3_derivative_safe(float(t), EPH_DT_S, EPH_EARTH)
-                        erx, ery, erz = _external_1pn_components(
+                        erx, ery, erz = external_1pn_components(
                             rx, ry, rz, vx, vy, vz,
                             earthx, earthy, earthz,
                             evx, evy, evz,
@@ -1106,13 +1106,13 @@ class DynamicsEngine:
 
             # G) Relativity
             if USE_REL:
-                arx, ary, arz = _schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
+                arx, ary, arz = schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
                 ax += arx
                 ay += ary
                 az += arz
                 if USE_REL_EXTERNAL:
                     svx, svy, svz = interp_vec3_derivative_safe(t, EPH_DT_S, EPH_SUN)
-                    erx, ery, erz = _external_1pn_components(
+                    erx, ery, erz = external_1pn_components(
                         rx, ry, rz, vx, vy, vz,
                         sunx, suny, sunz,
                         svx, svy, svz,
@@ -1123,7 +1123,7 @@ class DynamicsEngine:
                     az += erz
 
                     evx, evy, evz = interp_vec3_derivative_safe(t, EPH_DT_S, EPH_EARTH)
-                    erx, ery, erz = _external_1pn_components(
+                    erx, ery, erz = external_1pn_components(
                         rx, ry, rz, vx, vy, vz,
                         earthx, earthy, earthz,
                         evx, evy, evz,
@@ -1532,7 +1532,7 @@ class DynamicsEngine:
 
         # Relativity
         if req.use_rel:
-            arx, ary, arz = _schwarzschild_components(r[0], r[1], r[2], v[0], v[1], v[2], float(mu_m))
+            arx, ary, arz = schwarzschild_components(r[0], r[1], r[2], v[0], v[1], v[2], float(mu_m))
             rel_x = arx
             rel_y = ary
             rel_z = arz
@@ -1544,7 +1544,7 @@ class DynamicsEngine:
                     float(ep.dt_s),
                     np.ascontiguousarray(ep.r_sun_tab_m, dtype=np.float64),
                 )
-                exx, exy, exz = _external_1pn_components(
+                exx, exy, exz = external_1pn_components(
                     float(r[0]), float(r[1]), float(r[2]),
                     float(v[0]), float(v[1]), float(v[2]),
                     float(sun[0]), float(sun[1]), float(sun[2]),
@@ -1556,7 +1556,7 @@ class DynamicsEngine:
                     float(ep.dt_s),
                     np.ascontiguousarray(ep.r_earth_tab_m, dtype=np.float64),
                 )
-                eex, eey, eez = _external_1pn_components(
+                eex, eey, eez = external_1pn_components(
                     float(r[0]), float(r[1]), float(r[2]),
                     float(v[0]), float(v[1]), float(v[2]),
                     float(earth[0]), float(earth[1]), float(earth[2]),

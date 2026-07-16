@@ -840,7 +840,7 @@ if _CUDA_AVAILABLE:
         oz = scale * (rx_b * vy_b - ry_b * vx_b)
 
         # a = +2 * (Omega x v): prograde geodetic precession (must match the CPU
-        # kernel lunaris.physics.relativity_effects._de_sitter_components).
+        # kernel lunaris.physics.relativity_effects.de_sitter_components).
         out[0] = 2.0 * (oy * vz - oz * vy)
         out[1] = 2.0 * (oz * vx - ox * vz)
         out[2] = 2.0 * (ox * vy - oy * vx)

@@ -20,8 +20,8 @@ import pytest
 from lunaris.common.constants import AU, C_LIGHT, MU_MOON, MU_SUN
 from lunaris.physics.relativity_effects import (
     EPS_1E12,
-    _external_schwarzschild_diff_components,
-    _schwarzschild_components,
+    external_schwarzschild_diff_components,
+    schwarzschild_components,
 )
 
 C_SQ = float(C_LIGHT) * float(C_LIGHT)
@@ -74,7 +74,7 @@ def _external_schwarzschild_kernel(
     mu_body: float,
 ) -> np.ndarray:
     return np.array(
-        _external_schwarzschild_diff_components(
+        external_schwarzschild_diff_components(
             float(r[0]),
             float(r[1]),
             float(r[2]),
@@ -131,8 +131,8 @@ def test_external_schwarzschild_is_two_central_terms_difference(
 
     np.testing.assert_allclose(got, expected, rtol=2e-13, atol=1e-27)
 
-    sc_kernel = np.array(_schwarzschild_components(*(r - body), *(v - body_v), mu_body))
-    moon_kernel = np.array(_schwarzschild_components(*(-body), *(-body_v), mu_body))
+    sc_kernel = np.array(schwarzschild_components(*(r - body), *(v - body_v), mu_body))
+    moon_kernel = np.array(schwarzschild_components(*(-body), *(-body_v), mu_body))
     np.testing.assert_allclose(got, sc_kernel - moon_kernel, rtol=2e-13, atol=1e-27)
 
 
@@ -143,7 +143,7 @@ def test_solar_external_schwarzschild_is_small_for_lunar_orbiter() -> None:
     body_v = np.zeros(3, dtype=np.float64)
 
     external = _external_schwarzschild_kernel(r, v, body, body_v, float(MU_SUN))
-    central_moon = np.array(_schwarzschild_components(*r, *v, float(MU_MOON)), dtype=np.float64)
+    central_moon = np.array(schwarzschild_components(*r, *v, float(MU_MOON)), dtype=np.float64)
 
     external_norm = float(np.linalg.norm(external))
     central_norm = float(np.linalg.norm(central_moon))

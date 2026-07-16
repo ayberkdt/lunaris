@@ -73,7 +73,7 @@ C_SQ: float = C_LIGHT * C_LIGHT
 # =============================================================================
 
 @njit(cache=True, nogil=True, inline="always")
-def _schwarzschild_components(
+def schwarzschild_components(
     rx: float, ry: float, rz: float,
     vx: float, vy: float, vz: float,
     mu: float,
@@ -104,7 +104,7 @@ def _schwarzschild_components(
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _external_schwarzschild_diff_components(
+def external_schwarzschild_diff_components(
     rx: float, ry: float, rz: float,
     vx: float, vy: float, vz: float,
     body_x: float, body_y: float, body_z: float,
@@ -125,7 +125,7 @@ def _external_schwarzschild_diff_components(
     if b2 <= EPS_1E12:
         return 0.0, 0.0, 0.0
 
-    sc_ax, sc_ay, sc_az = _schwarzschild_components(
+    sc_ax, sc_ay, sc_az = schwarzschild_components(
         rx - body_x,
         ry - body_y,
         rz - body_z,
@@ -134,7 +134,7 @@ def _external_schwarzschild_diff_components(
         vz - body_vz,
         mu_body,
     )
-    moon_ax, moon_ay, moon_az = _schwarzschild_components(
+    moon_ax, moon_ay, moon_az = schwarzschild_components(
         -body_x,
         -body_y,
         -body_z,
@@ -147,7 +147,7 @@ def _external_schwarzschild_diff_components(
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _de_sitter_components(
+def de_sitter_components(
     vx: float, vy: float, vz: float,
     body_x: float, body_y: float, body_z: float,
     body_vx: float, body_vy: float, body_vz: float,
@@ -202,7 +202,7 @@ def _de_sitter_components(
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _external_1pn_components(
+def external_1pn_components(
     rx: float, ry: float, rz: float,
     vx: float, vy: float, vz: float,
     body_x: float, body_y: float, body_z: float,
@@ -210,14 +210,14 @@ def _external_1pn_components(
     mu_body: float,
 ) -> tuple[float, float, float]:
     """Combined external-body Schwarzschild differential + de Sitter terms."""
-    sx, sy, sz = _external_schwarzschild_diff_components(
+    sx, sy, sz = external_schwarzschild_diff_components(
         rx, ry, rz,
         vx, vy, vz,
         body_x, body_y, body_z,
         body_vx, body_vy, body_vz,
         mu_body,
     )
-    dx, dy, dz = _de_sitter_components(
+    dx, dy, dz = de_sitter_components(
         vx, vy, vz,
         body_x, body_y, body_z,
         body_vx, body_vy, body_vz,
@@ -231,7 +231,7 @@ def calc_schwarzschild_accel_out(r_vec: np.ndarray, v_vec: np.ndarray, mu: float
     """
     Allocation-free API for tight loops: writes result into `out` (shape (3,)).
     """
-    ax, ay, az = _schwarzschild_components(
+    ax, ay, az = schwarzschild_components(
         r_vec[0], r_vec[1], r_vec[2],
         v_vec[0], v_vec[1], v_vec[2],
         mu,
@@ -263,7 +263,7 @@ def calc_external_1pn_accel(
     v = np.asarray(v_vec, dtype=np.float64)
     b = np.asarray(body_pos_m, dtype=np.float64)
     bv = np.asarray(body_vel_m_s, dtype=np.float64)
-    ax, ay, az = _external_1pn_components(
+    ax, ay, az = external_1pn_components(
         float(r[0]), float(r[1]), float(r[2]),
         float(v[0]), float(v[1]), float(v[2]),
         float(b[0]), float(b[1]), float(b[2]),
@@ -313,11 +313,11 @@ __all__ = (
 
     "calc_external_1pn_accel",        # External-body Schwarzschild + de Sitter wrapper
 
-    "_external_schwarzschild_diff_components",
+    "external_schwarzschild_diff_components",
 
-    "_de_sitter_components",
+    "de_sitter_components",
 
-    "_external_1pn_components",
+    "external_1pn_components",
 
     # --- Model interface ---
     "RelativityModel",                # Convenience wrapper class (holds mu)
