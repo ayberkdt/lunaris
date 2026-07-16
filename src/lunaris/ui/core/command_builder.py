@@ -267,6 +267,10 @@ def build_command(
     telemetry_dt = None if output_mode == "spp" else dt_out
     command.extend(["--enable-telemetry", "on"])
     command.extend(["--telem-cadence-s", f"{_ui_telemetry_cadence_s(timeline, telemetry_dt):g}"])
+    # UI-launched runs keep the streamed telemetry as a replay artifact
+    # (telemetry.ndjson in the run directory) so the Mission Monitor can
+    # re-open the run after it finishes.
+    command.extend(["--telemetry-artifact", "on"])
 
     gravity_section = forces.get("gravity", {}) or {}
     gravity_enabled = bool(gravity_section.get("enabled", True))
@@ -415,6 +419,7 @@ def build_command(
         command.extend(["--out-dir", output.output_dir.strip()])
 
     command.extend(["--make-3d-plots", bool_to_onoff(bool(output.generate_3d_plots))])
+    command.extend(["--report-preset", str(getattr(output, "report_preset", "standard"))])
     if output.generate_3d_plots and int(output.downsample_3d) > 1:
         command.extend(["--downsample-3d", str(int(output.downsample_3d))])
 

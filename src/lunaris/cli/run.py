@@ -30,8 +30,8 @@ from lunaris.cli.summary import median_dt, print_summary
 from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON
 from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.state_vector import normalize_cartesian_state
-from lunaris.common.type_defs import PropagationResult
-from lunaris.core.config import SimConfig, load_default_config
+from lunaris.common.type_defs import InitialState, PropagationResult
+from lunaris.core.config import SimConfig, load_default_config, replace_sim_config
 
 if TYPE_CHECKING:
     from lunaris.physics.ephemeris import EphemerisManager
@@ -117,7 +117,7 @@ def _warn_optional_failure(stage: str, operation: Callable[[], None]) -> None:
 
 def _run_optional_output(
     stage: str,
-    operation: Callable[[], None],
+    operation: Callable[[], Any],
     *,
     debug_tracebacks: bool,
     import_warning: str,
@@ -387,6 +387,146 @@ def run_propagation(
     return PropagationRun(result=result, elapsed_s=elapsed_s)
 
 
+def _telemetry_enabled(cfg: SimConfig) -> bool:
+    propagator = cfg.propagator
+    cadence = float(getattr(propagator, "telem_cadence_s", 0.0) or 0.0)
+    return bool(getattr(propagator, "enable_telemetry", False)) or cadence > 0.0
+
+
+def _prepare_telemetry_run(
+    cfg: SimConfig,
+    *,
+    out_dir: Path | None = None,
+    artifact_requested: bool = False,
+) -> tuple[SimConfig, str | None]:
+    """Assign the run id that ties [TELEMETRY] samples to the meta line.
+
+    When the replay artifact is requested, the emitter additionally mirrors
+    every line into a hidden ``.part`` file under ``out_dir``;
+    :func:`_finalize_telemetry_artifact` moves it into the canonical run
+    directory once that directory exists (it is only created after the
+    propagation finishes).
+    """
+    if not _telemetry_enabled(cfg):
+        return cfg, None
+    from lunaris.core.config import replace_sim_config
+    from lunaris.core.propagation.telemetry_emitter import generate_run_id
+
+    run_id = cfg.propagator.telemetry_run_id or generate_run_id()
+    sink_path = cfg.propagator.telemetry_sink_path
+    if artifact_requested and not sink_path and out_dir is not None:
+        sink_path = str(out_dir / f".telemetry_{run_id}.ndjson.part")
+    if run_id == cfg.propagator.telemetry_run_id and sink_path == cfg.propagator.telemetry_sink_path:
+        return cfg, run_id
+    cfg = replace_sim_config(
+        cfg,
+        propagator=replace(
+            cfg.propagator,
+            telemetry_run_id=run_id,
+            telemetry_sink_path=sink_path,
+        ),
+    )
+    return cfg, run_id
+
+
+def _finalize_telemetry_artifact(cfg: SimConfig, run_dir: Path) -> None:
+    """Move the streamed ``.part`` telemetry mirror into the run directory."""
+    part = str(cfg.propagator.telemetry_sink_path or "")
+    if not part:
+        return
+    from lunaris.common.telemetry_contract import TELEMETRY_ARTIFACT_NAME
+
+    part_path = Path(part)
+    if not part_path.is_file():
+        return
+    try:
+        target = run_dir / TELEMETRY_ARTIFACT_NAME
+        part_path.replace(target)
+    except OSError:
+        print("[WARN] Could not finalize telemetry.ndjson artifact.")
+
+
+def _git_commit_or_none() -> str | None:
+    """Best-effort short commit hash (None for wheel installs / no git)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    commit = proc.stdout.strip()
+    return commit if proc.returncode == 0 and commit else None
+
+
+def build_telemetry_provenance(cfg: SimConfig, run_id: str, *, mu: float | None) -> Any:
+    """Run-level provenance for the [TELEMETRY_META] line.
+
+    Only facts known *before* propagation are claimed here; effective-runtime
+    facts (rhs_path, integration backend, wall time) arrive with the end-of-run
+    [DIAG] payload and are merged by the consumer. Absent knowledge stays
+    absent — the monitor renders it as "Unavailable".
+    """
+    from lunaris.common.provenance import sha256_text
+    from lunaris.common.telemetry_contract import TelemetryProvenance
+    from lunaris.core.propagation.telemetry_emitter import INERTIAL_FRAME_LABEL
+
+    config_sha256: str | None = None
+    with contextlib.suppress(TypeError, ValueError):
+        config_sha256 = sha256_text(
+            json.dumps(asdict(cfg), sort_keys=True, default=str)
+        )[:12]
+
+    gravity = cfg.gravity
+    gravity_model: str | None = None
+    st_lrps_artifact: str | None = None
+    if gravity.uses_st_lrps:
+        st_lrps_artifact = gravity.st_lrps_model_dir or None
+        gravity_model = Path(gravity.st_lrps_model_dir).name if gravity.st_lrps_model_dir else None
+    elif gravity.file_path:
+        gravity_model = Path(gravity.file_path).name
+
+    cadence = float(cfg.propagator.telem_cadence_s or 0.0)
+    return TelemetryProvenance(
+        run_id=run_id,
+        integrator=str(cfg.propagator.method),
+        gravity_backend=str(gravity.backend),
+        gravity_model=gravity_model,
+        sh_degree=gravity.degree,
+        adaptive_degree=bool(getattr(gravity.adaptive, "enabled", False)) or None,
+        st_lrps_artifact=st_lrps_artifact,
+        config_sha256=config_sha256,
+        git_commit=_git_commit_or_none(),
+        frame_inertial=INERTIAL_FRAME_LABEL,
+        mu_m3s2=mu,
+        telemetry_cadence_s=cadence if cadence > 0.0 else None,
+    )
+
+
+def _emit_telemetry_meta(cfg: SimConfig, run_id: str | None, *, mu: float | None) -> None:
+    """Print the [TELEMETRY_META] line (best-effort; never fails the run)."""
+    if run_id is None:
+        return
+    try:
+        from lunaris.common.telemetry_contract import encode_meta_line
+
+        line = encode_meta_line(build_telemetry_provenance(cfg, run_id, mu=mu))
+        print(line, flush=True)
+        sink = str(cfg.propagator.telemetry_sink_path or "")
+        if sink:
+            with contextlib.suppress(OSError):
+                with open(sink, "a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(line + "\n")
+    except Exception:
+        print("[WARN] Could not emit telemetry meta line.")
+
+
 def write_run_artifacts(
     out_dir: Path,
     cfg: SimConfig,
@@ -428,6 +568,7 @@ def build_run_meta(
         "output_points_cap": int(cfg.time.max_points_cap),
         "degree": cfg.gravity.degree,
         "mu_m3s2": mu,
+        "body_radius_m": float(R_MOON),
         "spacecraft": {
             "mass_kg": cfg.spacecraft.mass_kg,
             "area_m2": cfg.spacecraft.area_m2,
@@ -461,21 +602,28 @@ def render_reports(
     cfg: SimConfig,
     out_dir: Path,
     meta: dict[str, Any],
-) -> None:
-    from lunaris.analysis.postprocess import process_simulation_results
-    from lunaris.analysis.reporting.manager import plot_all
+    preset: str = "standard",
+) -> dict[str, Any]:
+    from lunaris.analysis.reporting.manager import generate_run_package
 
-    hist = process_simulation_results(result, ctx=engine, cfg=cfg)
-    plot_all(
-        history=hist,
-        out_dir=str(out_dir),
-        meta=meta,
+    outputs = generate_run_package(
+        result=result,
+        config=cfg,
+        out_dir=out_dir,
         ctx=engine,
-        title_prefix="Lunaris",
-        use_run_subdir=False,
-        visual_cfg=cfg.visual,
-        save_pdf=True,
+        meta=meta,
+        preset=preset,
     )
+    notification = {
+        "status": "success",
+        "run_dir": str(out_dir.resolve()),
+        "report_pdf": str(Path(outputs["pdf"]).resolve()),
+        "report_markdown": str(Path(outputs["report_markdown"]).resolve()),
+        "metrics_json": str(Path(outputs["metrics"]).resolve()),
+        "preset": preset,
+    }
+    print("[REPORT] " + json.dumps(notification, sort_keys=True))
+    return outputs
 
 
 def render_optional_3d(result: PropagationResult, cfg: SimConfig, out_dir: Path) -> None:
@@ -497,6 +645,11 @@ def run_pipeline(args: Namespace) -> int:
 
     cfg = _run_stage("Config init failed", lambda: load_runtime_config(args))
     out_dir = _run_stage("Output directory failure", lambda: Path(cfg.output.ensure_out_dir()))
+    cfg, telemetry_run_id = _prepare_telemetry_run(
+        cfg,
+        out_dir=out_dir,
+        artifact_requested=bool(getattr(args, "telemetry_artifact", None)),
+    )
     gravity_core, mu = _run_stage("Gravity model init failed", lambda: build_gravity_provider(cfg))
     surface = _run_stage("Surface grids load failed", lambda: build_surface_provider_if_needed(cfg, args))
     ephem_mgr = _run_stage(
@@ -504,6 +657,18 @@ def run_pipeline(args: Namespace) -> int:
         lambda: build_ephemeris_if_needed(cfg, topo_requested=surface.topo_requested),
     )
     y0, orbit_params = _run_stage("Orbit init failed", lambda: resolve_initial_state(cfg, args, mu=mu))
+    effective_y0 = _y0_to_array(y0)[:6]
+    cfg = replace_sim_config(
+        cfg,
+        initial_state=InitialState(
+            x=float(effective_y0[0]),
+            y=float(effective_y0[1]),
+            z=float(effective_y0[2]),
+            vx=float(effective_y0[3]),
+            vy=float(effective_y0[4]),
+            vz=float(effective_y0[5]),
+        ),
+    )
     _run_stage("Run summary failed", lambda: print_summary(cfg, orbit_params, y0))
 
     engine = _run_stage(
@@ -515,6 +680,8 @@ def run_pipeline(args: Namespace) -> int:
             surface_provider=surface.provider,
         ),
     )
+
+    _emit_telemetry_meta(cfg, telemetry_run_id, mu=float(mu))
 
     run = _run_stage(
         "Propagation failed",
@@ -541,12 +708,20 @@ def run_pipeline(args: Namespace) -> int:
     if ephem_mgr is not None and hasattr(ephem_mgr, "kernel_provenance"):
         with contextlib.suppress(Exception):
             diag_payload["spice_kernels"] = ephem_mgr.kernel_provenance()
+    run.result.diagnostics = dict(diag_payload)
     _warn_optional_failure(
         "Could not write run artifacts",
         lambda: write_run_artifacts(run_dir, cfg, diag_payload),
     )
+    _finalize_telemetry_artifact(cfg, run_dir)
 
     meta = build_run_meta(cfg, run.result, mu=mu, propagation_time_s=run.elapsed_s)
+    meta.update(
+        {
+            "ldem_root": getattr(args, "ldem_root", None),
+            "albedo_root": getattr(args, "albedo_root", None),
+        }
+    )
 
     _run_optional_output(
         "Plot/report failed",
@@ -556,6 +731,7 @@ def run_pipeline(args: Namespace) -> int:
             cfg=cfg,
             out_dir=run_dir,
             meta=meta,
+            preset=str(getattr(args, "report_preset", "standard")),
         ),
         debug_tracebacks=debug_tracebacks,
         import_warning="[WARN] analysis.reporting.manager not found; skipping plots.",

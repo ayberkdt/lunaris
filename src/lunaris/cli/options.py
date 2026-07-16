@@ -160,6 +160,15 @@ def _add_numerics_args(parser: argparse.ArgumentParser) -> None:
     g_num.add_argument("--enable-telemetry", type=str2bool, help="Stream JSON telemetry to stdout (on/off)")
     g_num.add_argument("--telem-cadence-s", type=float, help="Telemetry stdout cadence [s]")
     g_num.add_argument(
+        "--telemetry-artifact",
+        type=str2bool,
+        help=(
+            "Also write the emitted telemetry lines into the run directory as "
+            "telemetry.ndjson (the Mission Monitor replay artifact). Requires "
+            "--enable-telemetry (on/off; default off)"
+        ),
+    )
+    g_num.add_argument(
         "--telemetry-cadence-s",
         dest="telem_cadence_s",
         type=float,
@@ -173,6 +182,12 @@ def _add_io_args(parser: argparse.ArgumentParser) -> None:
     g_io.add_argument("--out-dir", type=str, help="Output directory")
     g_io.add_argument("--make-3d-plots", type=str2bool, help="Generate 3D plots/animation outputs (on/off)")
     g_io.add_argument("--downsample-3d", type=int, help="3D plot downsample factor")
+    g_io.add_argument(
+        "--report-preset",
+        choices=("quick", "standard", "paper"),
+        default="standard",
+        help="Analysis/report fidelity preset",
+    )
     g_io.add_argument("--kernel-dir", type=str, help="Directory containing SPICE kernels (renames by filename match)")
     g_io.add_argument("--ldem-root", type=str, help="LOLA LDEM root directory")
     g_io.add_argument("--albedo-root", type=str, help="LOLA Albedo root directory")

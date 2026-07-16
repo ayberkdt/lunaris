@@ -107,3 +107,74 @@ def test_demo_run_is_badged(tmp_path: Path) -> None:
         assert page.badge_run_demo.isVisibleTo(page)
     finally:
         page.deleteLater()
+
+
+def test_analysis_actions_follow_selected_run_artifacts(tmp_path: Path) -> None:
+    run_dir = _write_run(tmp_path / "missions", "analysis_run")
+    figures = run_dir / "figures"
+    figures.mkdir()
+    for name, contents in (
+        ("metrics.json", "{}"),
+        ("config.json", "{}"),
+        ("diagnostics.json", "{}"),
+        ("provenance.json", "{}"),
+        ("events.csv", "event_id\n"),
+        ("orbital_elements.csv", "simulation_time_s\n"),
+        ("force_budget.csv", "force_id\n"),
+    ):
+        (run_dir / name).write_text(contents, encoding="utf-8")
+
+    page = _page(tmp_path)
+    opened: list[Path] = []
+    page._open_path_externally = lambda path: opened.append(Path(path))  # type: ignore[method-assign]
+    try:
+        page.refresh_runs()
+        assert page.btn_open_analysis_report.isVisibleTo(page)
+        assert page.btn_open_analysis_report.isEnabled()
+        assert page.btn_regenerate_report.isEnabled()
+        assert page.btn_open_figures.isEnabled()
+        assert page.btn_open_metrics.isEnabled()
+        assert page.btn_open_budget.isEnabled()
+        assert not page.btn_compare_runs.isEnabled()
+
+        page.btn_open_budget.click()
+        assert opened[-1] == run_dir / "force_budget.csv"
+        page.btn_open_metrics.click()
+        assert opened[-1] == run_dir / "metrics.json"
+    finally:
+        page.deleteLater()
+
+
+def test_missing_analysis_artifacts_disable_specific_actions(tmp_path: Path) -> None:
+    _write_run(tmp_path / "missions", "legacy_run")
+    page = _page(tmp_path)
+    try:
+        page.refresh_runs()
+        assert page.btn_open_analysis_report.isEnabled()
+        assert not page.btn_regenerate_report.isEnabled()
+        assert not page.btn_open_metrics.isEnabled()
+        assert not page.btn_open_budget.isEnabled()
+    finally:
+        page.deleteLater()
+
+
+def test_compare_action_enables_for_two_analysis_ready_runs(tmp_path: Path) -> None:
+    for name in ("baseline", "candidate"):
+        run_dir = _write_run(tmp_path / "missions", name)
+        for artifact, contents in (
+            ("metrics.json", "{}"),
+            ("config.json", "{}"),
+            ("diagnostics.json", "{}"),
+            ("provenance.json", "{}"),
+            ("events.csv", "event_id\n"),
+            ("orbital_elements.csv", "simulation_time_s\n"),
+        ):
+            (run_dir / artifact).write_text(contents, encoding="utf-8")
+
+    page = _page(tmp_path)
+    try:
+        page.refresh_runs()
+        assert page.list_runs.count() == 2
+        assert page.btn_compare_runs.isEnabled()
+    finally:
+        page.deleteLater()

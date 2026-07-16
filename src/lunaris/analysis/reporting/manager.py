@@ -109,10 +109,10 @@ def _noop_apply_rcparams(*_: Any, **__: Any) -> None:
 
 # --- Optional styling helpers (soft dependency) ---
 try:
-    from .styling import DEFAULT_STYLE, apply_rcparams  # type: ignore
+    from .styling import DEFAULT_STYLE, apply_rcparams
 except ImportError:  # styling is optional
-    DEFAULT_STYLE = None  # type: ignore[assignment]
-    apply_rcparams = _noop_apply_rcparams  # type: ignore[assignment]
+    DEFAULT_STYLE = None
+    apply_rcparams = _noop_apply_rcparams
 
 
 # --- Postprocess extractors (hard dependency) ---
@@ -123,7 +123,7 @@ from lunaris.analysis.formatting import (
     format_km,
     format_sci_or_na,
 )
-from lunaris.analysis.postprocess import (  # type: ignore
+from lunaris.analysis.postprocess import (
     extract_altitude_km,
     extract_elements,
     extract_events,
@@ -133,7 +133,7 @@ from lunaris.analysis.postprocess import (  # type: ignore
 )
 
 # --- Plotting API (hard dependency) ---
-from .plotting import (  # type: ignore
+from .plotting import (
     draw_kv_block,
     draw_kv_table,
     # --- Layout & Data Helpers (Shared API) ---
@@ -172,7 +172,7 @@ def _as_1d_float_array(x: Any) -> np.ndarray:
     # Fast path: ndarray
     if isinstance(x, np.ndarray):
         try:
-            arr = x.astype(float, copy=False)
+            arr: np.ndarray[Any, Any] = x.astype(float, copy=False)
         except (TypeError, ValueError):
             arr = np.asarray(x, dtype=float)
         return np.ravel(arr)
@@ -186,7 +186,7 @@ def _as_1d_float_array(x: Any) -> np.ndarray:
 
     # Iterable fallback (generators etc.)
     try:
-        arr = np.fromiter((float(v) for v in x), dtype=float)  # type: ignore[arg-type]
+        arr = np.fromiter((float(v) for v in x), dtype=float)
         return np.ravel(arr)
     except Exception:
         return np.array([], dtype=float)
@@ -938,6 +938,49 @@ def plot_all(
         return results
 
 
+def generate_run_package(
+    *,
+    result: Any,
+    config: Any,
+    out_dir: str | Path,
+    ctx: Any = None,
+    meta: Mapping[str, Any] | None = None,
+    preset: str = "standard",
+) -> dict[str, Any]:
+    """Generate the canonical typed analysis package for a completed run.
+
+    This is the stable boundary used by the CLI and UI.  The legacy ``plot_all``
+    entry point remains available for callers that already own a normalized
+    history mapping, while new code should pass the authoritative propagation
+    result here so metrics and events are derived once from full-resolution
+    state history.
+    """
+    from lunaris.analysis.orbit_analysis import build_orbit_analysis
+
+    from .mission_report import generate_analysis_package
+
+    analysis = build_orbit_analysis(
+        result,
+        config=config,
+        ctx=ctx,
+        meta=dict(meta or {}),
+        preset=preset,
+        run_id=Path(out_dir).name,
+    )
+    return generate_analysis_package(analysis, Path(out_dir))
+
+
+def regenerate_run_package(
+    run_dir: str | Path,
+    *,
+    preset: str | None = None,
+) -> dict[str, Any]:
+    """Public UI-safe report regeneration boundary (no propagation rerun)."""
+    from .mission_report import regenerate_analysis_package
+
+    return regenerate_analysis_package(run_dir, preset=preset)
+
+
 
 # =============================================================================
 # 6.                           SELF TEST
@@ -992,6 +1035,8 @@ if __name__ == "__main__":  # pragma: no cover
 
 __all__ = [
     # High-level entrypoint
+    "generate_run_package",
+    "regenerate_run_package",
     "plot_all",
     # Run-directory management
     "create_run_directory",

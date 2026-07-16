@@ -576,6 +576,13 @@ class PropagatorConfig:
     heartbeat_hours: float = 6.0
     enable_telemetry: bool = False
     telem_cadence_s: float = 0.0
+    # Structured telemetry (lunaris_telemetry_v1). The run id ties every
+    # [TELEMETRY] stdout sample to the [TELEMETRY_META] provenance line the CLI
+    # emits; empty means "generate one" (library callers without a CLI run).
+    # The sink path optionally mirrors the emitted lines into an ndjson file
+    # (the replay artifact); emission stays best-effort and never fails a run.
+    telemetry_run_id: str = ""
+    telemetry_sink_path: str = ""
 
     # Cooperative stop
     stop_file: str | None = None

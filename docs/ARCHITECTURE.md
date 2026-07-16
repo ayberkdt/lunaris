@@ -146,6 +146,7 @@ Alongside the four layers:
 | Analysis and visualization do not import desktop UI | import-linter: `analysis and visualization do not import the desktop UI` |
 | ST-LRPS Studio consumes only the published UI foundation | import-linter: `ST-LRPS studio does not import mission-UI internals` |
 | The shared UI foundation imports neither desktop application | import-linter: `UI foundation stays independent of both desktop applications` |
+| The Mission Monitor observes runs only through the shared telemetry contract, stdout protocol lines, and run artifacts | import-linter: `mission monitor UI stays off the physics hot path` |
 | All full simulation config construction/replacement is validated | `tests/test_sim_config_ssot.py` |
 | Bare package import and every console `--help` survive missing optional dependencies | `tests/test_optional_dependency_boundaries.py` |
 | Removed Studio-to-`data_pages` wildcard edges stay removed | `tests/test_st_lrps_ui_modularity.py` |

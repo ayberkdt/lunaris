@@ -27,6 +27,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.telemetry_contract import (
+    TELEMETRY_ARTIFACT_NAME as _TELEMETRY_ARTIFACT_NAME,
+)
+
 __all__ = ["RunRecord", "index_runs", "run_kpis"]
 
 _RUN_CONFIG_NAME = "run_config.json"
@@ -54,7 +58,27 @@ class RunRecord:
     diagnostics: dict[str, Any] = field(default_factory=dict)
     figures: tuple[Path, ...] = ()
     reports: tuple[Path, ...] = ()
+    report_markdown: Path | None = None
+    metrics_json: Path | None = None
+    force_budget_csv: Path | None = None
+    figures_dir: Path | None = None
     is_demo: bool = False
+    #: True when the run carries a telemetry.ndjson replay artifact the
+    #: Mission Monitor can re-open.
+    has_telemetry: bool = False
+
+    @property
+    def analysis_ready(self) -> bool:
+        """Whether persisted canonical inputs can support report regeneration."""
+        required = (
+            "metrics.json",
+            "config.json",
+            "diagnostics.json",
+            "provenance.json",
+            "events.csv",
+            "orbital_elements.csv",
+        )
+        return all((self.run_dir / name).is_file() for name in required)
 
 
 def _load_json(path: Path) -> tuple[dict[str, Any], bool]:
@@ -89,8 +113,12 @@ def _record_for(run_dir: Path) -> RunRecord:
 
     figures: list[Path] = []
     reports: list[Path] = []
+    figures_dir = run_dir / "figures"
     try:
-        for entry in sorted(run_dir.iterdir()):
+        entries = list(run_dir.iterdir())
+        if figures_dir.is_dir() and not figures_dir.is_symlink():
+            entries.extend(figures_dir.iterdir())
+        for entry in sorted(entries):
             if not entry.is_file() or entry.is_symlink():
                 continue
             suffix = entry.suffix.lower()
@@ -106,6 +134,12 @@ def _record_for(run_dir: Path) -> RunRecord:
     except OSError:
         created = datetime.fromtimestamp(0)
 
+    telemetry_path = run_dir / _TELEMETRY_ARTIFACT_NAME
+    try:
+        has_telemetry = telemetry_path.is_file() and not telemetry_path.is_symlink()
+    except OSError:
+        has_telemetry = False
+
     return RunRecord(
         run_dir=run_dir,
         label=run_dir.name,
@@ -116,7 +150,12 @@ def _record_for(run_dir: Path) -> RunRecord:
         diagnostics=diagnostics,
         figures=tuple(figures),
         reports=tuple(reports),
+        report_markdown=(run_dir / "report.md") if (run_dir / "report.md").is_file() else None,
+        metrics_json=(run_dir / "metrics.json") if (run_dir / "metrics.json").is_file() else None,
+        force_budget_csv=(run_dir / "force_budget.csv") if (run_dir / "force_budget.csv").is_file() else None,
+        figures_dir=figures_dir if figures_dir.is_dir() else None,
         is_demo=_looks_demo(run_dir),
+        has_telemetry=has_telemetry,
     )
 
 

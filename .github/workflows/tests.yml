@@ -281,9 +281,11 @@ jobs:
       - name: Verify lock freshness (linux + py3.11)
         run: |
           set -euo pipefail
+          cp locks/requirements-hpc-linux-py311.lock.txt /tmp/hpc.lock.txt
           uv pip compile pyproject.toml --extra hpc \
             --python-version 3.11 --python-platform linux --generate-hashes \
             -o /tmp/hpc.lock.txt
+          cp locks/requirements-all-linux-py311.lock.txt /tmp/all.lock.txt
           uv pip compile pyproject.toml --extra all \
             --python-version 3.11 --python-platform linux --generate-hashes \
             -o /tmp/all.lock.txt

@@ -196,7 +196,7 @@ def collect_session_snapshot(
     propagation_payload = _safe_call({"timeline": {}, "integrator": {}}, lambda: propagation_page.to_dict() or {})
     forces_payload = _safe_call({}, lambda: force_page.get_data() or {})
     output_state = _safe_call(
-        OutputPageState(output_dir="", generate_3d_plots=False, downsample_3d=1),
+        OutputPageState(output_dir="", generate_3d_plots=False, downsample_3d=1, report_preset="standard"),
         lambda: output_page.get_state(),
     )
     data_state = _safe_call(DataFilesState(), lambda: data_page.get_state())
@@ -229,6 +229,7 @@ def collect_session_snapshot(
             "dir": output_state.output_dir,
             "anim3d": bool(output_state.generate_3d_plots),
             "downsample_3d": int(output_state.downsample_3d),
+            "report_preset": str(getattr(output_state, "report_preset", "standard")),
             # Preserved for compatibility with older session files, even though
             # the dedicated CSV toggle was removed from the UI.
             "csv": True,
@@ -338,6 +339,7 @@ def apply_session_snapshot(
             output_dir=str(output_payload.get("dir", str(project_root / "outputs" / "missions"))),
             generate_3d_plots=bool(output_payload.get("anim3d", False)),
             downsample_3d=max(1, int(output_payload.get("downsample_3d", 1) or 1)),
+            report_preset=str(output_payload.get("report_preset", "standard") or "standard"),
         )
     )
 

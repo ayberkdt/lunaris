@@ -503,3 +503,14 @@ name = "UI foundation stays independent of both desktop applications"
 type = "forbidden"
 source_modules = ["lunaris.ui_foundation"]
 forbidden_modules = ["lunaris.ui", "lunaris.surrogate.st_lrps.ui"]
+
+# The Mission Monitor observes runs exclusively through the shared telemetry
+# contract (lunaris.common.telemetry_contract), stdout protocol lines, and run
+# artifacts. It must never reach into the physics kernels or the dynamics
+# engine internals — that would couple UI repaint cadence to the scientific
+# hot path.
+[[tool.importlinter.contracts]]
+name = "mission monitor UI stays off the physics hot path"
+type = "forbidden"
+source_modules = ["lunaris.ui.monitor"]
+forbidden_modules = ["lunaris.physics", "lunaris.core.dynamics"]

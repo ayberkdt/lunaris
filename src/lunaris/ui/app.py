@@ -61,6 +61,7 @@ NAV_PAGES = [
     ("Propagation", "Propagation",       "fa6s.hourglass-half"),
     ("Output",      "Results & Export",  "fa6s.folder-open"),
     ("Telemetry",   "Live Telemetry",    "fa6s.chart-line"),
+    ("Monitor",     "Mission Monitor",   "fa6s.gauge-high"),
     ("Data",        "Data & Files",      "fa6s.database"),
     ("BatchPropagation",  "Batch Propagation", "fa6s.dice"),
     ("FrozenSearch", "Frozen Search",    "fa6s.snowflake"),
@@ -72,6 +73,7 @@ PAGE_DESCRIPTIONS = {
     "Propagation": "Set the mission timeline, integrator, and output cadence.",
     "Output": "Choose result destinations and inspect generated artifacts.",
     "Telemetry": "Signals from the active run.",
+    "Monitor": "Mission observation console: live telemetry widgets with provenance.",
     "Data": "Locate, validate, and manage mission data sources.",
     "BatchPropagation": "Configure ensemble sampling, execute batch propagation, and inspect distributions.",
     "FrozenSearch": "Run the staged frozen-orbit search and inspect its output contract.",
@@ -123,6 +125,8 @@ from lunaris.ui.core.solver_policy import normalize_solver_config_object
 # 5.                          UTILITY HELPERS
 # =============================================================================
 from lunaris.ui.core.ui_commons import get_icon, normalize_path
+from lunaris.ui.monitor.protocol import MetaMessage, ProtocolProblem, SampleMessage
+from lunaris.ui.monitor.workspace import MonitorController, MonitorPage
 from lunaris.ui.pages.force_models_page import find_best_gravity_file
 
 # =============================================================================
@@ -605,6 +609,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_propagation = self._build_page_propagation()
         self.page_output = self._build_page_output()
         self.page_telemetry = self._build_page_telemetry()
+        self.page_monitor = self._build_page_monitor()
         self.page_data = self._build_page_data()
         self.page_batch = self._build_page_batch()
         self.page_frozen_search = self._build_page_frozen_search()
@@ -639,6 +644,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Live Telemetry",
                 PAGE_DESCRIPTIONS["Telemetry"],
                 content=self.page_telemetry,
+                scrollable=False,
+            ),
+            "Monitor": PageShell(
+                "Mission Monitor",
+                PAGE_DESCRIPTIONS["Monitor"],
+                content=self.page_monitor,
+                # The monitor owns a dockable workspace with internal geometry
+                # management; wrapping it in the shell's scroll/max-width column
+                # would fight the dock layout.
                 scrollable=False,
             ),
             "Data": PageShell(
@@ -959,6 +973,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_telemetry = TelemetryPage()
         return self.page_telemetry
 
+    def _build_page_monitor(self) -> QtWidgets.QWidget:
+        """Mission Monitor: dockable live/replay observation workspace."""
+        self.monitor_controller = MonitorController(self)
+        page = MonitorPage(self.monitor_controller)
+        self._restore_monitor_layout(page)
+        return page
+
+    def _monitor_layout_path(self) -> Path:
+        from lunaris.ui.monitor.persistence import MONITOR_LAYOUT_FILENAME
+
+        return self.app_data_dir / MONITOR_LAYOUT_FILENAME
+
+    def _restore_monitor_layout(self, page: QtWidgets.QWidget) -> None:
+        """Apply the saved monitor layout; a broken file is quarantined and
+        the default preset opens instead (startup can never fail here)."""
+        try:
+            from lunaris.ui.monitor.persistence import load_layout_or_quarantine
+
+            layout = load_layout_or_quarantine(
+                self._monitor_layout_path(),
+                log_warning=lambda msg: self._log_message(
+                    f"[Monitor] {msg}", severity="warning"
+                ),
+            )
+            if layout is not None:
+                page.restore_layout(layout)
+        except Exception:
+            # Layout restoration is strictly best-effort.
+            pass
+
+    def _save_monitor_layout(self) -> None:
+        try:
+            from lunaris.ui.monitor.persistence import save_layout
+
+            page = getattr(self, "page_monitor", None)
+            if page is not None:
+                save_layout(self._monitor_layout_path(), page.capture_layout())
+        except Exception:
+            pass
+
 
     # =========================================================================
     # 24. PAGE BUILDERS: DATA & FILES (PAGE 6)
@@ -1042,6 +1096,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "lbl_backend_status", None) is not None:
             self.lbl_backend_status.hide()
 
+        # A fresh batch subprocess supersedes the previous batch observability
+        # in the Mission Monitor (its own store/run state is untouched).
+        with contextlib.suppress(Exception):
+            self.monitor_controller.begin_batch_run()
+
         self.batch_process = QtCore.QProcess(self)
         self.batch_process.readyReadStandardOutput.connect(self._on_batch_stdout)
         self.batch_process.readyReadStandardError.connect(self._on_batch_stderr)
@@ -1092,6 +1151,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     if hasattr(self, "page_batch"):
                         self.page_batch.update_progress_payload(payload)
+                    # Mirror into the Mission Monitor's batch observability.
+                    with contextlib.suppress(Exception):
+                        self.monitor_controller.set_batch_progress(payload)
                 continue
 
             if line.startswith("[BATCH_METRICS]"):
@@ -1100,6 +1162,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._batch_metrics = json.loads(payload)
                 except Exception:
                     self._log_message("[BATCH] Ignored malformed metrics payload.", severity="warning")
+                else:
+                    with contextlib.suppress(Exception):
+                        self.monitor_controller.set_batch_metrics(self._batch_metrics)
                 continue
 
             self._log_message(line, severity="info", source="batch")
@@ -1910,6 +1975,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 except ValueError:
                     self.sim_state.total_duration = 0.0
 
+        # Reset the Mission Monitor for the new run (fresh store + sequence
+        # space; the run's own [TELEMETRY_META] line pins the real run id).
+        with contextlib.suppress(Exception):
+            self.monitor_controller.begin_live_run(
+                expected_duration_s=self.sim_state.total_duration or None
+            )
+
         # Prepare output directory
         out_dir_txt = self.page_output.get_state().output_dir.strip()
         try:
@@ -2105,6 +2177,49 @@ class MainWindow(QtWidgets.QMainWindow):
         if not clean_line:
             return
 
+        # Mission Monitor structured telemetry ([TELEMETRY] / [TELEMETRY_META]
+        # v1 lines and legacy bare-JSON telemetry). The classifier returns None
+        # for every ordinary log line — including the [REPORT] control line
+        # below — so the existing routing stays authoritative for anything
+        # that is not telemetry.
+        monitor_msg = None
+        controller = getattr(self, "monitor_controller", None)
+        if controller is not None:
+            try:
+                monitor_msg = controller.feed_line(clean_line)
+            except Exception:
+                monitor_msg = None
+        if isinstance(monitor_msg, SampleMessage):
+            # Keep the legacy telemetry surfaces (Live Telemetry plots,
+            # collision watchdog, progress bar) fed from the same sample.
+            self._apply_telemetry_sample(monitor_msg.sample)
+            return
+        if isinstance(monitor_msg, MetaMessage):
+            self._log_message(
+                "[Monitor] Run provenance received — see Mission Monitor.",
+                severity="system",
+            )
+            return
+        if isinstance(monitor_msg, ProtocolProblem):
+            # Fail-closed: the payload claimed to be telemetry but could not be
+            # decoded; surface it in the console instead of guessing.
+            self._log_message(clean_line, severity="warning")
+            return
+
+        # Analysis-report completion payload from the run subprocess.
+        if clean_line.startswith("[REPORT]"):
+            try:
+                payload = json.loads(clean_line[len("[REPORT]"):].strip())
+                if isinstance(payload, dict):
+                    self.page_output.set_generated_report(payload)
+                    self._log_message(
+                        f"[Run] Analysis report ready: {payload.get('report_pdf', 'path unavailable')}",
+                        severity="system",
+                    )
+                    return
+            except Exception:
+                pass
+
         # Structured engine diagnostics emitted once at the end of a run.
         # Routed to the Results page panel; a malformed payload falls through
         # to the plain log so nothing is silently dropped.
@@ -2112,6 +2227,9 @@ class MainWindow(QtWidgets.QMainWindow):
             try:
                 payload = json.loads(clean_line[len("[DIAG]"):].strip())
                 if isinstance(payload, dict):
+                    if controller is not None:
+                        with contextlib.suppress(Exception):
+                            controller.set_run_diagnostics(payload)
                     self.page_output.set_run_diagnostics(payload)
                     wall = payload.get("wall_time_s")
                     if isinstance(wall, int | float):
@@ -2157,6 +2275,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not isinstance(telem, dict):
             return False
 
+        # Mirror python-repr / prefixed legacy payloads into the Mission
+        # Monitor store (JSON legacy lines are consumed upstream by the
+        # monitor classifier and never reach this method).
+        monitor = getattr(self, "monitor_controller", None)
+        if monitor is not None:
+            with contextlib.suppress(Exception):
+                monitor.feed_legacy_mapping(telem)
+
         # Pass to the telemetry plot (TelemetryPage owns the plot).
         with contextlib.suppress(Exception):
             self.page_telemetry.telemetry_multiplot.add_datapoint(telem)
@@ -2178,6 +2304,44 @@ class MainWindow(QtWidgets.QMainWindow):
                         t_s *= DAY_S
                 break
 
+        self._update_run_progress(t_s)
+
+        # Telemetry payloads are not echoed to the log to prevent spam.
+        return True
+
+    def _apply_telemetry_sample(self, sample) -> None:
+        """Mirror a structured monitor sample into the legacy telemetry surfaces.
+
+        Live Telemetry plots, the collision watchdog and the progress bar all
+        predate the v1 contract and consume km-based dicts; deriving that dict
+        from the typed sample keeps a single producer emission feeding both the
+        Mission Monitor and the legacy pipeline.
+        """
+        legacy: dict[str, float] = {"t_s": float(sample.simulation_time_s)}
+        if sample.altitude_m is not None:
+            legacy["alt_km"] = sample.altitude_m / 1000.0
+        if sample.speed_m_s is not None:
+            legacy["v_km_s"] = sample.speed_m_s / 1000.0
+        ecc = sample.orbital_elements.get("ecc")
+        if ecc is not None:
+            legacy["ecc"] = float(ecc)
+        if sample.surface_radius_m is not None:
+            legacy["surface_r_km"] = sample.surface_radius_m / 1000.0
+        if sample.terrain_clearance_m is not None:
+            legacy["terrain_clearance_km"] = sample.terrain_clearance_m / 1000.0
+            if sample.altitude_m is not None:
+                # surface_alt = altitude - clearance (both relative to R_ref).
+                legacy["surface_alt_km"] = (
+                    sample.altitude_m - sample.terrain_clearance_m
+                ) / 1000.0
+
+        with contextlib.suppress(Exception):
+            self.page_telemetry.telemetry_multiplot.add_datapoint(legacy)
+        self._check_collision(legacy)
+        self._update_run_progress(sample.simulation_time_s)
+
+    def _update_run_progress(self, t_s: float | None) -> None:
+        """Progress bar / ETA update from the latest telemetry time."""
         if t_s is not None:
             self._last_telem_t_s = float(t_s)
 
@@ -2210,9 +2374,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     else:
                         eta_txt = f" | ETA {eta_s:.0f} s"
                 self.lbl_progress.setText(f"{t_days:.2f}/{T_days:.2f} d{eta_txt}")
-
-        # Telemetry payloads are not echoed to the log to prevent spam.
-        return True
 
     @staticmethod
     def _classify_stderr_line(line: str) -> str:
@@ -2266,6 +2427,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Emit any trailing partial stderr line the stream buffering held back.
         self._flush_stream_buffers()
+
+        # Close out the Mission Monitor run (after the flush, so a trailing
+        # partial telemetry line still lands in the store first).
+        with contextlib.suppress(Exception):
+            self.monitor_controller.finish_live_run(exit_code=int(exit_code))
 
         if exit_code == 0:
             status_msg = "Mission analysis completed successfully"
@@ -2767,6 +2933,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Persist window geometry so the workspace reopens where the user left it.
         with contextlib.suppress(Exception):
             self._density_settings().setValue("ui/geometry", self.saveGeometry())
+
+        # Persist the Mission Monitor dashboards (tabs, widgets, dock layout).
+        self._save_monitor_layout()
 
         # Save the latest state after shutdown prompts/process cleanup so the
         # persisted snapshot reflects the final visible UI values.
