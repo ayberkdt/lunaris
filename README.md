@@ -79,6 +79,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Enterprise/offline deployment: air-gapped install, data mirroring, proxies, logging, privacy ("no telemetry"), security boundaries |
 | [docs/VERSIONING.md](docs/VERSIONING.md) | Version scheme, stable surfaces, artifact-schema compatibility, deprecation and support policy |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, batch/ensemble propagation internals, ST-LRPS surrogate |
+| [docs/MISSION_MONITOR.md](docs/MISSION_MONITOR.md) | Live probes, accepted/output-state replay semantics, compatibility policy, telemetry diagnostics, and widgets |
 | [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
 | [docs/REPRODUCIBLE_BENCHMARKS.md](docs/REPRODUCIBLE_BENCHMARKS.md) | Config-driven benchmark runs, provenance manifests, validation reports, and CI smoke mode |
@@ -122,7 +123,7 @@ developed and tested, not aspiration:
 
 | Platform | Status |
 |---|---|
-| Windows 10/11 (x86-64) | Supported — primary development platform (engine + desktop UI) |
+| Windows 10/11 (x86-64) | Supported — primary development platform; Python 3.11 core/wheel smoke CI |
 | Ubuntu LTS (x86-64) | Supported — full CI (tests, lint, type, architecture gates) runs here headless |
 | Other Linux distros | Expected to work (pure-Python + wheels); not routinely tested |
 | macOS | **Untested** — no CI, no manual validation; try at your own risk |
@@ -304,6 +305,12 @@ by the primary `lunaris-batch` command. Each ensemble run declares its sampling
 design: `random` is the classical Monte Carlo design, while `lhs`, `sobol`, and
 `sobol_scrambled` provide space-filling designs for validation and benchmark
 coverage.
+
+Mission Monitor replay is based on the exact solver-returned output grid, not
+adaptive Runge–Kutta stage evaluations. Live cadence-gated RHS observations are
+explicit `rhs_probe` samples and are excluded from `telemetry.ndjson` and all
+scientific trajectory widgets. Old telemetry without sample semantics remains
+decodable but is labelled uncertain; see [docs/MISSION_MONITOR.md](docs/MISSION_MONITOR.md).
 
 Batch backends are explicit (`cpu_sh` truth reference, `numba_cuda_sh`,
 `torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`,
