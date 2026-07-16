@@ -14,12 +14,10 @@ authors:
 repository-code: "https://github.com/ayberkdt/lunaris"
 url: "https://github.com/ayberkdt/lunaris"
 license: "MIT"
-version: "0.1.0rc1"
-# Must match the CHANGELOG heading for this version. 0.1.0rc1 landed on
-# 2026-07-11 (commit e7c58434); the previous 2026-07-14 here was the date the
-# file happened to be edited, not the release date. tests/test_release_metadata.py
-# pins the two together.
-date-released: "2026-07-11"
+version: "0.1.0rc2"
+# Must match the CHANGELOG heading for this version; the metadata gate pins the
+# version and release date across pyproject.toml, CITATION.cff, and CHANGELOG.md.
+date-released: "2026-07-17"
 keywords:
   - lunar
   - astrodynamics

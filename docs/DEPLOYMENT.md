@@ -101,7 +101,7 @@ the machine that produced them.
 
 ## 8. Updating
 
-Pin an exact version in production (`lunaris==0.1.0rc1`). Read
+Pin an exact version in production (`lunaris==0.1.0rc2`). Read
 [VERSIONING.md](VERSIONING.md) for the compatibility policy (semver posture,
 artifact-schema guarantees, deprecation process) before upgrading, and re-run
 `lunaris-data verify --strict --runtime` plus your own acceptance checks after

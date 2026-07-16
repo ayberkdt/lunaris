@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lunaris"
-version = "0.1.0rc1"
+version = "0.1.0rc2"
 description = "Lunar orbit propagation and ST-LRPS surrogate gravity modeling tools"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -315,6 +315,10 @@ files = [
   "src/lunaris/cli/options.py",
   "src/lunaris/cli/common_args.py",
   "src/lunaris/cli/run.py",
+  # --- Mission Monitor telemetry consumers (Qt-light typed boundary) ---
+  "src/lunaris/ui/core/results_index.py",
+  "src/lunaris/ui/monitor/replay.py",
+  "src/lunaris/ui/monitor/store.py",
   # --- ST-LRPS foundational SSOT layers (shared contracts, scaling, constants) ---
   "src/lunaris/surrogate/st_lrps/shared/capabilities.py",
   "src/lunaris/surrogate/st_lrps/shared/contracts.py",
