@@ -85,8 +85,8 @@ from lunaris.surrogate.st_lrps.data.splits import (
 )
 from lunaris.surrogate.st_lrps.networks.models import (
     MODEL_BUILDER_VERSION,
-    _compute_harmonic_w0_bands,
-    _get_output_head_params,
+    compute_harmonic_w0_bands,
+    get_output_head_params,
     build_model_from_config,
     compute_architecture_signature,
 )
@@ -2560,7 +2560,7 @@ def _build_model_and_optim(
                 "Regenerate the dataset with degree_max recorded, or use n_bands=1."
             )
         cfg.w0_bands = [
-            float(w) for w in _compute_harmonic_w0_bands(
+            float(w) for w in compute_harmonic_w0_bands(
                 int(cfg.n_bands), int(cfg.degree_min), int(cfg.degree_max)
             )
         ]
@@ -2675,7 +2675,7 @@ def _build_model_and_optim(
     ).to(device=device, dtype=DTYPE)
     logger.info("Residual baseline: %s", target_contract.baseline_description)
 
-    head_params = _get_output_head_params(model)
+    head_params = get_output_head_params(model)
     head_param_ids = {id(param) for param in head_params}
     body_params = [param for param in model.parameters() if id(param) not in head_param_ids]
     param_groups: list[dict[str, Any]] = []
