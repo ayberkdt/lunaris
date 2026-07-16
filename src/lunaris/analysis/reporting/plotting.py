@@ -62,8 +62,8 @@ import contextlib
 import itertools
 
 from lunaris.analysis.postprocess import (
-    _extract_rv_vectors,
-    _first_present,
+    extract_rv_vectors,
+    first_present,
     extract_invariants,
     extract_time_days,
 )
@@ -1021,15 +1021,15 @@ def figure_ground_track(
 
     meta = meta or {}
 
-    gt = _first_present(history, ["groundtrack", "ground_track", "gt"])
+    gt = first_present(history, ["groundtrack", "ground_track", "gt"])
     if not isinstance(gt, Mapping) and ctx is not None:
         try:
-            from lunaris.analysis.postprocess import _groundtrack_if_available
-            t_s = _as_np(_first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
-            y = _as_np(_first_present(history, ["y", "y_ns", "state", "states", "Y"]), float)
+            from lunaris.analysis.postprocess import groundtrack_if_available
+            t_s = _as_np(first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
+            y = _as_np(first_present(history, ["y", "y_ns", "state", "states", "Y"]), float)
             if t_s.size and y.size:
                 # compute_history stores y as (n_state, n_steps); pass through
-                gt = _groundtrack_if_available(ctx, t_s, y)
+                gt = groundtrack_if_available(ctx, t_s, y)
         except Exception:
             gt = None
 
@@ -1048,7 +1048,7 @@ def figure_ground_track(
     lat = lat[:n]
     lon = wrap_lon_deg(lon[:n])
 
-    t_s = _as_np(_first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
+    t_s = _as_np(first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
     if t_s.size >= n:
         t_days = (t_s[:n] / DAY_S).astype(float)
     else:
@@ -1122,7 +1122,7 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None =
     if not _as_bool(meta.get("make_3d_plots", True)):
         return _placeholder_figure("3D Orbit View", "3D plotting disabled by config.")
 
-    r_vec_m, _ = _extract_rv_vectors(history)
+    r_vec_m, _ = extract_rv_vectors(history)
     if r_vec_m.size == 0:
         return _placeholder_figure("3D Orbit View", "Position history missing.")
 
@@ -1133,7 +1133,7 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None =
     down = max(1, down)
     r = r_km[::down, :]
 
-    t_s = _as_np(_first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
+    t_s = _as_np(first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
     if t_s.size >= r_km.shape[0]:
         t_days = (t_s[:r_km.shape[0]] / DAY_S)[::down]
     else:
@@ -1339,10 +1339,10 @@ def figure_perturbation_magnitude(
     # Time and state extraction
     t_days = _as_np(extract_time_days(history), float, atleast_1d=True, ravel=True)
 
-    y = _first_present(history, ["y", "y_ns", "state", "states", "Y"])
+    y = first_present(history, ["y", "y_ns", "state", "states", "Y"])
     if y is None:
-        r = _as_np(_first_present(history, ["r", "r_m", "r_vec", "r_meters"]), float)
-        v = _as_np(_first_present(history, ["v", "v_mps", "v_vec", "v_m_s"]), float)
+        r = _as_np(first_present(history, ["r", "r_m", "r_vec", "r_meters"]), float)
+        v = _as_np(first_present(history, ["v", "v_mps", "v_vec", "v_m_s"]), float)
         if r.size and v.size:
             r = np.asarray(r, dtype=float)
             v = np.asarray(v, dtype=float)
@@ -2198,13 +2198,13 @@ def merge_meta_with_auto_config(
     # 4) Fill missing spacecraft properties from history (strictly optional)
     # Only set if missing; never override explicit meta/disk values.
     if "mass_kg" not in sc:
-        val = _first_present(history, ["mass_kg", "mass", "m"])
+        val = first_present(history, ["mass_kg", "mass", "m"])
         if val is not None:
             with contextlib.suppress(Exception):
                 sc["mass_kg"] = float(_as_np(val).ravel()[0])
 
     if "area_m2" not in sc:
-        val = _first_present(history, ["area_m2", "area", "cross_section"])
+        val = first_present(history, ["area_m2", "area", "cross_section"])
         if val is not None:
             with contextlib.suppress(Exception):
                 sc["area_m2"] = float(_as_np(val).ravel()[0])
