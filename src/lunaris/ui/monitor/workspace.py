@@ -72,6 +72,12 @@ class MonitorController(QtCore.QObject):
         self.cursor_time_s: float | None = None
         #: Last replay artifact the user opened (persisted with the layout).
         self.last_replay_path: str | None = None
+        #: Batch/ensemble observability. Deliberately *not* stored in the
+        #: telemetry store: a batch subprocess can run concurrently with a
+        #: single-run live session, and its payloads must never overwrite the
+        #: live run's provenance or samples.
+        self.batch_progress: dict[str, Any] | None = None
+        self.batch_metrics: dict[str, Any] | None = None
         self._dirty = False
         self._problem_kinds_warned: set[str] = set()
         self._timer = QtCore.QTimer(self)
@@ -168,6 +174,21 @@ class MonitorController(QtCore.QObject):
                 message=stop_reason,
                 severity="warning",
             ))
+        self._mark_dirty()
+
+    # ----------------------------------------------------------------- batch
+    def begin_batch_run(self) -> None:
+        """Reset batch observability when a new batch subprocess starts."""
+        self.batch_progress = None
+        self.batch_metrics = None
+        self._mark_dirty()
+
+    def set_batch_progress(self, payload: Mapping[str, Any]) -> None:
+        self.batch_progress = dict(payload)
+        self._mark_dirty()
+
+    def set_batch_metrics(self, payload: Mapping[str, Any]) -> None:
+        self.batch_metrics = dict(payload)
         self._mark_dirty()
 
     # ---------------------------------------------------------------- replay

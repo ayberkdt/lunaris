@@ -18,6 +18,16 @@
   bare-JSON telemetry keeps working through a compatibility adapter. New
   import-linter contract keeps `lunaris.ui.monitor` off the physics hot path.
   Docs: `docs/MISSION_MONITOR.md`.
+- **Completed the Mission Monitor (phases 4–6).** 3D Orbit View (reuses the
+  Orbit Setup GL scene: Moon, display-decimated trace, cursor-following
+  position marker, impact markers, explicit no-GL fallback) and State Vector
+  (inertial/body-fixed with honest channel gating). Multi-tab dashboards with
+  versioned layout persistence (`lunaris_monitor_layout_v1`,
+  `monitor_layout.json`, atomic writes; corrupt files quarantine to `.bak`
+  and can never block startup). Batch Progress widget consumes the existing
+  `[BATCH_PROGRESS]`/`[BATCH_METRICS]` protocol (impact stats with the
+  runner's 95% CI, requested→actual backend, ST-LRPS runtime kind) via
+  controller-scoped payloads that never touch the live run's store.
 
 Merged to `main` after 0.1.0rc1 (#115–#119): 100 files, ~12.6k insertions.
 This is not a formatting-only delta — it adds a new `lunaris.validation`

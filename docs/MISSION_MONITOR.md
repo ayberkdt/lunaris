@@ -75,15 +75,17 @@ memory.
 
 | Widget | Shows | Honesty notes |
 |---|---|---|
+| 3D Orbit View | Moon, display-decimated trajectory trace, current-position marker (follows the replay cursor), impact/terminal markers | reuses the Orbit Setup GL scene pattern; offscreen/no-GL platforms get an explicit fallback note, never a blank scene |
 | Altitude / Radius | mean-radius altitude, radius, terrain clearance; current/min/max | altitude definition (`r − R_ref`, R_ref value) visible on the widget; missing metrics are absent from the selector |
 | Orbital Elements | osculating 2-body a, e, i, Ω, ω, ν | singular angles are "undefined", not 0; frame + convention footer |
+| State Vector | x/y/z, vx/vy/vz, norms, sample time; inertial/body-fixed selector | body-fixed disabled with an explicit reason when the run has no `state_fixed` channel; SI source, km display |
 | Integrator Health | sim/wall time, throughput, progress/ETA, sample & sequence counters, end-of-run `[DIAG]` fields (nfev, backend, stop reason) | only backend-reported fields appear |
 | Event Timeline | periapsis/impact/terminal/fallback/run events, deduplicated, chronological | double-click jumps the replay timeline |
 | Backend & Provenance | requested vs effective backend, gravity model/degree, ST-LRPS artifact, config hash, git commit, fallback reason | unknown facts render "—" (Unavailable); fallback is prominent |
+| Batch Progress | `[BATCH_PROGRESS]` stage/samples/ETA; `[BATCH_METRICS]` impact counts with the runner's 95% CI, requested→actual backend, SH degree, device, ST-LRPS runtime kind | batch payloads are controller-scoped and never touch the live run's store/provenance |
 
 Declared for later phases (open as honest placeholders, never fake content):
-3D Orbit View, State Vector, Invariant Monitor, Force Contribution, Batch
-Progress, ST-LRPS Domain Status.
+Invariant Monitor, Force Contribution, ST-LRPS Domain Status.
 
 Every widget carries a unit/frame/source badge chip and a Live/Replay mode
 badge, renders an explicit empty state ("Waiting for telemetry", "Channel
@@ -113,6 +115,18 @@ this build are skipped and listed in the toolbar notice. Widgets live in
 QDockWidgets inside a nested QMainWindow: move, resize, float, tabify, close,
 re-open (Add Widget menu), Reset Layout. Unknown widget ids restore as
 graceful placeholders.
+
+Multiple dashboard tabs (each an independent dock layout over the same run)
+can be added with the "+" button; the last tab cannot be closed away.
+
+## Layout persistence
+
+The tab set, per-tab open widgets, dock geometry, active preset and the last
+replay artifact persist through a versioned schema
+(`lunaris_monitor_layout_v1`, `monitor_layout.json` in the app data dir,
+written atomically on window close). A corrupt or foreign-schema layout file
+is quarantined to `.bak` and the default Orbit Overview preset opens with a
+console warning — a layout file can never block application startup.
 
 ## Performance envelope
 

@@ -11,6 +11,7 @@ from lunaris.ui.monitor.registry import DEFAULT_REGISTRY, MonitorWidgetSpec
 from lunaris.ui.monitor.widgets.altitude import ALTITUDE_SPEC
 from lunaris.ui.monitor.widgets.backend_provenance import BACKEND_PROVENANCE_SPEC
 from lunaris.ui.monitor.widgets.base import MonitorWidgetFrame
+from lunaris.ui.monitor.widgets.batch_progress import BATCH_PROGRESS_SPEC
 from lunaris.ui.monitor.widgets.event_timeline import EVENT_TIMELINE_SPEC
 from lunaris.ui.monitor.widgets.integrator_health import INTEGRATOR_HEALTH_SPEC
 from lunaris.ui.monitor.widgets.orbit_view import ORBIT_VIEW_SPEC
@@ -38,14 +39,6 @@ RESERVED_SPECS: tuple[MonitorWidgetSpec, ...] = (
         factory=None,
     ),
     MonitorWidgetSpec(
-        widget_id="batch_progress",
-        title="Batch Progress",
-        category="Batch",
-        description="Ensemble completion / impact counters from [BATCH_PROGRESS] (Phase 6).",
-        required_channels=("batch_progress",),
-        factory=None,
-    ),
-    MonitorWidgetSpec(
         widget_id="st_lrps_domain",
         title="ST-LRPS Domain Status",
         category="ST-LRPS",
@@ -66,6 +59,7 @@ def register_all_specs() -> None:
         INTEGRATOR_HEALTH_SPEC,
         EVENT_TIMELINE_SPEC,
         BACKEND_PROVENANCE_SPEC,
+        BATCH_PROGRESS_SPEC,
         *RESERVED_SPECS,
     ):
         if DEFAULT_REGISTRY.get(spec.widget_id) is None:
@@ -77,6 +71,7 @@ register_all_specs()
 __all__ = [
     "ALTITUDE_SPEC",
     "BACKEND_PROVENANCE_SPEC",
+    "BATCH_PROGRESS_SPEC",
     "EVENT_TIMELINE_SPEC",
     "INTEGRATOR_HEALTH_SPEC",
     "ORBITAL_ELEMENTS_SPEC",

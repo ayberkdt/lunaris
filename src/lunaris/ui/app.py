@@ -1096,6 +1096,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "lbl_backend_status", None) is not None:
             self.lbl_backend_status.hide()
 
+        # A fresh batch subprocess supersedes the previous batch observability
+        # in the Mission Monitor (its own store/run state is untouched).
+        with contextlib.suppress(Exception):
+            self.monitor_controller.begin_batch_run()
+
         self.batch_process = QtCore.QProcess(self)
         self.batch_process.readyReadStandardOutput.connect(self._on_batch_stdout)
         self.batch_process.readyReadStandardError.connect(self._on_batch_stderr)
@@ -1146,6 +1151,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     if hasattr(self, "page_batch"):
                         self.page_batch.update_progress_payload(payload)
+                    # Mirror into the Mission Monitor's batch observability.
+                    with contextlib.suppress(Exception):
+                        self.monitor_controller.set_batch_progress(payload)
                 continue
 
             if line.startswith("[BATCH_METRICS]"):
@@ -1154,6 +1162,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._batch_metrics = json.loads(payload)
                 except Exception:
                     self._log_message("[BATCH] Ignored malformed metrics payload.", severity="warning")
+                else:
+                    with contextlib.suppress(Exception):
+                        self.monitor_controller.set_batch_metrics(self._batch_metrics)
                 continue
 
             self._log_message(line, severity="info", source="batch")
