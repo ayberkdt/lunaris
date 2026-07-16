@@ -1,10 +1,9 @@
 """Structured (lunaris_telemetry_v1) telemetry emission for propagation runs.
 
-The propagator wraps its RHS with a cadence gate (one float comparison per
-evaluation); when the gate opens it hands the raw state to this emitter, which
-builds a typed :class:`~lunaris.common.telemetry_contract.TelemetrySample`,
-prints it as a ``[TELEMETRY] {json}`` stdout line, and optionally mirrors the
-line into an ndjson sink file (the replay artifact).
+Live RHS cadence samples are explicit ``rhs_probe`` observations and are never
+mirrored into the scientific replay sink.  After integration, solver-returned
+output states are emitted as ``output_state`` samples and form the replay
+trajectory.
 
 Emission is strictly an observation layer: it is best-effort (any failure is
 swallowed so telemetry can never break a propagation), it never mutates the
@@ -14,15 +13,21 @@ per RHS evaluation.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from lunaris.common.math_utils import rv_to_coe_select
-from lunaris.common.telemetry_contract import TelemetrySample, encode_sample_line
+from lunaris.common.telemetry_contract import (
+    SampleKind,
+    TelemetrySample,
+    encode_sample_line,
+)
 
 #: Below this eccentricity the argument of periapsis is undefined; the channel
 #: is omitted (the UI shows "undefined (circular)"), never a fake zero.
@@ -32,6 +37,51 @@ _EQUATORIAL_INC_EPS = 1e-9
 
 #: Frame label for the mission propagator's integration frame.
 INERTIAL_FRAME_LABEL = "moon_centered_inertial"
+
+_MAX_FAILURE_MESSAGE = 240
+_SINK_FAILURE_LIMIT = 5
+
+
+def _bounded_failure(exc: Exception) -> tuple[str, str]:
+    """Return bounded diagnostics without leaking local absolute paths."""
+    message = " ".join(str(exc).split())
+    message = re.sub(r"(?:[A-Za-z]:\\|/)[^\s]+", "<path>", message)
+    return type(exc).__name__, message[:_MAX_FAILURE_MESSAGE]
+
+
+@dataclass(slots=True)
+class TelemetryDiagnostics:
+    sample_build_failures: int = 0
+    serialization_failures: int = 0
+    writer_failures: int = 0
+    sink_write_failures: int = 0
+    terrain_enrichment_failures: int = 0
+    first_failure_type: str | None = None
+    first_failure_message: str | None = None
+    sink_disabled: bool = False
+
+    def record(self, counter: str, exc: Exception) -> None:
+        setattr(self, counter, int(getattr(self, counter)) + 1)
+        if self.first_failure_type is None:
+            self.first_failure_type, self.first_failure_message = _bounded_failure(exc)
+
+    def as_dict(self) -> dict[str, int | str | bool]:
+        payload: dict[str, int | str | bool] = {
+            "sample_build_failures": self.sample_build_failures,
+            "serialization_failures": self.serialization_failures,
+            "writer_failures": self.writer_failures,
+            "sink_write_failures": self.sink_write_failures,
+            "terrain_enrichment_failures": self.terrain_enrichment_failures,
+            "sink_disabled": self.sink_disabled,
+        }
+        payload["dropped_samples"] = (
+            self.sample_build_failures + self.serialization_failures + self.writer_failures
+        )
+        if self.first_failure_type is not None:
+            payload["first_failure_type"] = self.first_failure_type
+        if self.first_failure_message is not None:
+            payload["first_failure_message"] = self.first_failure_message
+        return payload
 
 
 def generate_run_id(prefix: str = "run") -> str:
@@ -65,8 +115,10 @@ class TelemetryEmitter:
         self._sink_path = str(sink_path) if sink_path else None
         self._sink_failures = 0
         self._writer = writer if writer is not None else self._print_line
-        self._sequence = 0
+        self._trajectory_sequence = 0
+        self._probe_sequence = 0
         self._wall0 = time.perf_counter()
+        self.diagnostics = TelemetryDiagnostics()
 
     @staticmethod
     def _print_line(line: str) -> None:
@@ -76,25 +128,83 @@ class TelemetryEmitter:
         """Mirror an already-encoded protocol line (e.g. the meta line) to the sink."""
         self._sink_write(line)
 
-    def emit(self, t_frame_s: float, y: np.ndarray) -> None:
-        """Best-effort: build and write one sample; failures never propagate."""
+    def emit(
+        self,
+        t_frame_s: float,
+        y: np.ndarray,
+        *,
+        sample_kind: SampleKind = "output_state",
+        persist: bool | None = None,
+    ) -> bool:
+        """Best-effort emission; return whether the sample was built/encoded.
+
+        ``rhs_probe`` defaults to stdout-only.  Scientific samples default to
+        stdout plus the replay sink.  Writer and sink failures are independent:
+        a closed stdout pipe cannot destroy an otherwise writable replay file.
+        """
+        if persist is None:
+            persist = sample_kind != "rhs_probe"
         try:
-            sample = self._build_sample(float(t_frame_s), np.asarray(y, dtype=np.float64))
+            sample = self._build_sample(
+                float(t_frame_s), np.asarray(y, dtype=np.float64), sample_kind=sample_kind
+            )
             if sample is None:
-                return
+                self.diagnostics.record(
+                    "sample_build_failures", ValueError("state unavailable for telemetry")
+                )
+                return False
+        except Exception as exc:
+            self.diagnostics.record("sample_build_failures", exc)
+            return False
+        try:
             line = encode_sample_line(sample)
-        except Exception:
-            # Telemetry must stay an observation layer: a bad state or an
-            # encoding surprise skips one sample instead of killing the run.
-            return
+        except (TypeError, ValueError, OverflowError) as exc:
+            self.diagnostics.record("serialization_failures", exc)
+            return False
         try:
             self._writer(line)
-        except Exception:
-            return
-        self._sink_write(line)
+        except Exception as exc:
+            # ``writer`` is an injected callback (stdout by default), so its
+            # implementation can raise any ordinary Exception. This is one of
+            # the few intentionally broad boundaries: telemetry must never
+            # terminate an otherwise valid propagation.
+            self.diagnostics.record("writer_failures", exc)
+        if persist:
+            self._sink_write(line)
+        return True
+
+    def emit_rhs_probe(self, t_frame_s: float, y: np.ndarray) -> bool:
+        """Emit a transient solver probe; never write it to ``telemetry.ndjson``."""
+        return self.emit(t_frame_s, y, sample_kind="rhs_probe", persist=False)
+
+    def emit_trajectory(self, times_s: np.ndarray, states: np.ndarray) -> int:
+        """Emit solver-returned trajectory rows as one contiguous replay stream."""
+        times = np.asarray(times_s, dtype=np.float64).reshape(-1)
+        table = np.asarray(states, dtype=np.float64)
+        if table.ndim != 2 or table.shape[0] != times.size:
+            self.diagnostics.record(
+                "sample_build_failures", ValueError("trajectory time/state shape mismatch")
+            )
+            return 0
+        emitted = 0
+        last_t: float | None = None
+        for t_frame_s, state in zip(times, table, strict=True):
+            t_value = float(t_frame_s)
+            if last_t is not None and t_value <= last_t:
+                self.diagnostics.record(
+                    "sample_build_failures",
+                    ValueError("trajectory times are not strictly increasing"),
+                )
+                continue
+            if self.emit(t_value, state, sample_kind="output_state", persist=True):
+                emitted += 1
+                last_t = t_value
+        return emitted
 
     # ------------------------------------------------------------- internals
-    def _build_sample(self, t_frame_s: float, y: np.ndarray) -> TelemetrySample | None:
+    def _build_sample(
+        self, t_frame_s: float, y: np.ndarray, *, sample_kind: SampleKind
+    ) -> TelemetrySample | None:
         if y.size < 6:
             return None
         r = y[0:3]
@@ -145,10 +255,14 @@ class TelemetryEmitter:
 
         surface_radius_m, terrain_clearance_m = self._terrain_channels(t_frame_s, r, radius_m)
 
+        sequence_id = (
+            self._probe_sequence if sample_kind == "rhs_probe" else self._trajectory_sequence
+        )
         sample = TelemetrySample(
             run_id=self.run_id,
-            sequence_id=self._sequence,
+            sequence_id=sequence_id,
             simulation_time_s=t_frame_s - self._t0_s,
+            sample_kind=sample_kind,
             wall_time_s=time.perf_counter() - self._wall0,
             frame_inertial=self._frame_inertial,
             state_inertial=tuple(float(x) for x in y[0:6]),  # type: ignore[arg-type]
@@ -159,7 +273,10 @@ class TelemetryEmitter:
             terrain_clearance_m=terrain_clearance_m,
             orbital_elements=elements,
         )
-        self._sequence += 1
+        if sample_kind == "rhs_probe":
+            self._probe_sequence += 1
+        else:
+            self._trajectory_sequence += 1
         return sample
 
     def _terrain_channels(
@@ -177,9 +294,12 @@ class TelemetryEmitter:
             if not np.isfinite(terrain_r_m) or terrain_r_m <= 0.0:
                 return None, None
             return terrain_r_m, radius_m - terrain_r_m
-        except Exception:
+        except Exception as exc:
             # Optional terrain enrichment stays best-effort (mirrors the
-            # legacy _make_telem_dict behavior).
+            # legacy _make_telem_dict behavior). These are injected frame and
+            # surface callbacks, so protect the observation boundary broadly
+            # while recording the failure instead of hiding it.
+            self.diagnostics.record("terrain_enrichment_failures", exc)
             return None, None
 
     def _sink_write(self, line: str) -> None:
@@ -191,10 +311,12 @@ class TelemetryEmitter:
             # so a broken disk cannot slow the run down.
             with open(self._sink_path, "a", encoding="utf-8", newline="\n") as handle:
                 handle.write(line + "\n")
-        except OSError:
+        except OSError as exc:
             self._sink_failures += 1
-            if self._sink_failures >= 5:
+            self.diagnostics.record("sink_write_failures", exc)
+            if self._sink_failures >= _SINK_FAILURE_LIMIT:
                 self._sink_path = None
+                self.diagnostics.sink_disabled = True
 
 
 def build_emitter_from_config(
@@ -222,6 +344,7 @@ def build_emitter_from_config(
 
 __all__ = [
     "INERTIAL_FRAME_LABEL",
+    "TelemetryDiagnostics",
     "TelemetryEmitter",
     "build_emitter_from_config",
     "generate_run_id",

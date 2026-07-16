@@ -35,7 +35,7 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, cast
 
 TELEMETRY_SCHEMA_VERSION = "lunaris_telemetry_v1"
 TELEMETRY_SAMPLE_PREFIX = "[TELEMETRY]"
@@ -46,6 +46,18 @@ TELEMETRY_ARTIFACT_NAME = "telemetry.ndjson"
 
 #: Diagnostic value types allowed on the wire.
 DiagnosticValue = float | int | str | bool
+
+#: Scientific meaning of a structured sample.  ``legacy_unknown`` is decoder-
+#: only: current producers must always declare one of the first three values,
+#: while old v1/bare-JSON records are kept readable without pretending that an
+#: historical RHS-cadence sample was an accepted trajectory state.
+SampleKind = Literal["accepted_state", "output_state", "rhs_probe", "legacy_unknown"]
+SCIENTIFIC_SAMPLE_KINDS: frozenset[SampleKind] = frozenset(
+    {"accepted_state", "output_state"}
+)
+_SAMPLE_KINDS: frozenset[str] = frozenset(
+    {"accepted_state", "output_state", "rhs_probe", "legacy_unknown"}
+)
 
 #: Time keys accepted from legacy (pre-v1) bare-JSON telemetry lines, in
 #: priority order. Mirrors the historical desktop-UI parser.
@@ -119,6 +131,7 @@ class TelemetryProvenance:
     reference_radius_m: float | None = None
     mu_m3s2: float | None = None
     telemetry_cadence_s: float | None = None
+    replay_policy: str | None = None
     data_hashes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -140,6 +153,7 @@ class TelemetrySample:
     run_id: str
     sequence_id: int
     simulation_time_s: float
+    sample_kind: SampleKind = "output_state"
     schema_version: str = TELEMETRY_SCHEMA_VERSION
     wall_time_s: float | None = None
     epoch_et_s: float | None = None
@@ -166,6 +180,8 @@ class TelemetrySample:
             raise ValueError(
                 f"TelemetrySample.simulation_time_s must be finite, got {self.simulation_time_s!r}"
             )
+        if self.sample_kind not in _SAMPLE_KINDS:
+            raise ValueError(f"TelemetrySample.sample_kind invalid: {self.sample_kind!r}")
         for name in ("state_inertial", "state_fixed"):
             state = getattr(self, name)
             if state is None:
@@ -206,6 +222,7 @@ def sample_to_payload(sample: TelemetrySample) -> dict[str, Any]:
         "run_id": sample.run_id,
         "sequence_id": int(sample.sequence_id),
         "simulation_time_s": float(sample.simulation_time_s),
+        "sample_kind": sample.sample_kind,
         "time_system": sample.time_system,
     }
     _put_finite(payload, "wall_time_s", sample.wall_time_s)
@@ -264,7 +281,7 @@ def provenance_to_payload(provenance: TelemetryProvenance) -> dict[str, Any]:
     for key in (
         "requested_backend", "effective_backend", "device", "integrator",
         "gravity_backend", "gravity_model", "st_lrps_artifact", "fallback_reason",
-        "config_sha256", "git_commit", "frame_inertial",
+        "config_sha256", "git_commit", "frame_inertial", "replay_policy",
     ):
         value = getattr(provenance, key)
         if value is not None:
@@ -366,6 +383,18 @@ def sample_from_payload(payload: Mapping[str, Any]) -> TelemetrySample:
     t_s = _finite_or_none(payload.get("simulation_time_s"))
     if t_s is None:
         raise TelemetryDecodeError("telemetry sample is missing a finite simulation_time_s")
+    sample_kind_raw = payload.get("sample_kind")
+    if sample_kind_raw is None:
+        # Historical v1 artifacts were emitted from an RHS cadence gate.  They
+        # remain decodable, but their samples are deliberately not promoted to
+        # accepted/output trajectory science.
+        sample_kind: SampleKind = "legacy_unknown"
+    elif isinstance(sample_kind_raw, str) and sample_kind_raw in _SAMPLE_KINDS:
+        sample_kind = cast(SampleKind, sample_kind_raw)
+    else:
+        raise TelemetryDecodeError(
+            f"telemetry sample has invalid sample_kind: {sample_kind_raw!r}"
+        )
 
     elements_raw = payload.get("orbital_elements")
     elements: dict[str, float] = {}
@@ -395,6 +424,7 @@ def sample_from_payload(payload: Mapping[str, Any]) -> TelemetrySample:
         run_id=run_id,
         sequence_id=sequence_raw,
         simulation_time_s=t_s,
+        sample_kind=sample_kind,
         schema_version=version,
         wall_time_s=_finite_or_none(payload.get("wall_time_s")),
         epoch_et_s=_finite_or_none(payload.get("epoch_et_s")),
@@ -454,6 +484,7 @@ def provenance_from_payload(payload: Mapping[str, Any]) -> TelemetryProvenance:
         reference_radius_m=_finite_or_none(payload.get("reference_radius_m")),
         mu_m3s2=_finite_or_none(payload.get("mu_m3s2")),
         telemetry_cadence_s=_finite_or_none(payload.get("telemetry_cadence_s")),
+        replay_policy=_str_or_none(payload.get("replay_policy")),
         data_hashes=data_hashes,
     )
 
@@ -540,6 +571,7 @@ def sample_from_legacy_dict(
         run_id=run_id,
         sequence_id=sequence_id,
         simulation_time_s=t_s,
+        sample_kind="legacy_unknown",
         altitude_m=_legacy_km_to_m(payload, "alt_km"),
         speed_m_s=None if speed_km_s is None else speed_km_s * 1000.0,
         surface_radius_m=_legacy_km_to_m(payload, "surface_r_km"),
@@ -555,6 +587,8 @@ __all__ = [
     "TELEMETRY_SAMPLE_PREFIX",
     "TELEMETRY_SCHEMA_VERSION",
     "DiagnosticValue",
+    "SCIENTIFIC_SAMPLE_KINDS",
+    "SampleKind",
     "TelemetryDecodeError",
     "TelemetryEvent",
     "TelemetryProvenance",
