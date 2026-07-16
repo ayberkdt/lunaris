@@ -529,8 +529,8 @@ class BatchPropagationEngine:
                 return payload
 
         if self._topo_grid is not None:
-            from lunaris.loaders.io_surface import _grid_topo_payload
-            return _grid_topo_payload(self._topo_grid)
+            from lunaris.loaders.io_surface import grid_topo_payload
+            return grid_topo_payload(self._topo_grid)
         return None
 
     def _resolve_dem_provenance(self) -> dict[str, Any] | None:
@@ -544,10 +544,10 @@ class BatchPropagationEngine:
             return None
         if self._topo_grid is None:
             return None
-        from lunaris.loaders.io_surface import _grid_dem_provenance
+        from lunaris.loaders.io_surface import grid_dem_provenance
 
         try:
-            return _grid_dem_provenance(self._topo_grid)
+            return grid_dem_provenance(self._topo_grid)
         except Exception:
             return None
 
