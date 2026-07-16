@@ -145,7 +145,9 @@ Alongside the four layers:
 | `core` does not import CLI or batch orchestration layers | import-linter: `core does not import the CLI or batch orchestration layers` |
 | Analysis and visualization do not import desktop UI | import-linter: `analysis and visualization do not import the desktop UI` |
 | ST-LRPS Studio consumes only the published UI foundation | import-linter: `ST-LRPS studio does not import mission-UI internals` |
+| The mission UI embeds the Studio only via its window/theme entry points, never its widget internals (shared helpers live in `lunaris.ui_foundation`) | import-linter: `mission UI does not import ST-LRPS studio widget internals` |
 | The shared UI foundation imports neither desktop application | import-linter: `UI foundation stays independent of both desktop applications` |
+| Private (`_`-prefixed) symbols are never imported across subsystem boundaries; the facade `__all__` surfaces match `docs/PUBLIC_API.md` and `docs/api_snapshot.json` | `tests/test_api_boundaries.py`, `tests/test_public_api_doc_sync.py`, `tests/test_api_snapshot.py` |
 | The Mission Monitor observes runs only through the shared telemetry contract, stdout protocol lines, and run artifacts | import-linter: `mission monitor UI stays off the physics hot path` |
 | All full simulation config construction/replacement is validated | `tests/test_sim_config_ssot.py` |
 | Bare package import and every console `--help` survive missing optional dependencies | `tests/test_optional_dependency_boundaries.py` |

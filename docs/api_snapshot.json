@@ -1,23 +1,5 @@
 {
-  "cross_unit_underscore_imports": [
-    "lunaris.analysis.frozen.plots <- lunaris.batch.summary :: _osculating_elements",
-    "lunaris.analysis.frozen.search <- lunaris.batch.summary :: _osculating_elements",
-    "lunaris.batch.engine <- lunaris.loaders.io_surface :: _grid_dem_provenance",
-    "lunaris.batch.engine <- lunaris.loaders.io_surface :: _grid_topo_payload",
-    "lunaris.core.dynamics.adaptive_degree <- lunaris.common.math_utils :: _sample_2d_scaled_bilinear_kernel",
-    "lunaris.core.dynamics.engine <- lunaris.common.math_utils :: _sample_grid_bilinear_kernel",
-    "lunaris.core.dynamics.engine <- lunaris.physics.relativity_effects :: _external_1pn_components",
-    "lunaris.core.dynamics.engine <- lunaris.physics.relativity_effects :: _schwarzschild_components",
-    "lunaris.surrogate.st_lrps.evaluation.validation_suite <- lunaris.surrogate.st_lrps.data.datasets :: _discover_dataset_name",
-    "lunaris.surrogate.st_lrps.evaluation.validation_suite <- lunaris.surrogate.st_lrps.data.splits :: _hash_indices",
-    "lunaris.surrogate.st_lrps.training.config <- lunaris.surrogate.st_lrps.data.datasets :: _find_latest_dataset",
-    "lunaris.surrogate.st_lrps.training.engine <- lunaris.surrogate.st_lrps.data.datasets :: _discover_dataset_name",
-    "lunaris.surrogate.st_lrps.training.engine <- lunaris.surrogate.st_lrps.data.datasets :: _resolve_loader_worker_count",
-    "lunaris.surrogate.st_lrps.training.engine <- lunaris.surrogate.st_lrps.data.datasets :: _resolve_lunar_dataset_contract",
-    "lunaris.surrogate.st_lrps.training.engine <- lunaris.surrogate.st_lrps.networks.models :: _compute_harmonic_w0_bands",
-    "lunaris.surrogate.st_lrps.training.engine <- lunaris.surrogate.st_lrps.networks.models :: _get_output_head_params",
-    "lunaris.ui.launcher <- lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets :: _NoWheelOnSpinFilter"
-  ],
+  "cross_unit_underscore_imports": [],
   "facade_all": {
     "lunaris": [
       "__version__"
