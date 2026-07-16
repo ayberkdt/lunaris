@@ -977,7 +977,41 @@ class MainWindow(QtWidgets.QMainWindow):
         """Mission Monitor: dockable live/replay observation workspace."""
         self.monitor_controller = MonitorController(self)
         page = MonitorPage(self.monitor_controller)
+        self._restore_monitor_layout(page)
         return page
+
+    def _monitor_layout_path(self) -> Path:
+        from lunaris.ui.monitor.persistence import MONITOR_LAYOUT_FILENAME
+
+        return self.app_data_dir / MONITOR_LAYOUT_FILENAME
+
+    def _restore_monitor_layout(self, page: QtWidgets.QWidget) -> None:
+        """Apply the saved monitor layout; a broken file is quarantined and
+        the default preset opens instead (startup can never fail here)."""
+        try:
+            from lunaris.ui.monitor.persistence import load_layout_or_quarantine
+
+            layout = load_layout_or_quarantine(
+                self._monitor_layout_path(),
+                log_warning=lambda msg: self._log_message(
+                    f"[Monitor] {msg}", severity="warning"
+                ),
+            )
+            if layout is not None:
+                page.restore_layout(layout)
+        except Exception:
+            # Layout restoration is strictly best-effort.
+            pass
+
+    def _save_monitor_layout(self) -> None:
+        try:
+            from lunaris.ui.monitor.persistence import save_layout
+
+            page = getattr(self, "page_monitor", None)
+            if page is not None:
+                save_layout(self._monitor_layout_path(), page.capture_layout())
+        except Exception:
+            pass
 
 
     # =========================================================================
@@ -2873,6 +2907,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Persist window geometry so the workspace reopens where the user left it.
         with contextlib.suppress(Exception):
             self._density_settings().setValue("ui/geometry", self.saveGeometry())
+
+        # Persist the Mission Monitor dashboards (tabs, widgets, dock layout).
+        self._save_monitor_layout()
 
         # Save the latest state after shutdown prompts/process cleanup so the
         # persisted snapshot reflects the final visible UI values.

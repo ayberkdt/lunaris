@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from lunaris.ui.monitor.persistence import MonitorLayout, TabLayout
 
 from PySide6 import QtCore, QtWidgets
 
@@ -67,6 +70,8 @@ class MonitorController(QtCore.QObject):
         self._classifier = TelemetryLineClassifier()
         #: Replay cursor (simulation seconds); None = follow the latest sample.
         self.cursor_time_s: float | None = None
+        #: Last replay artifact the user opened (persisted with the layout).
+        self.last_replay_path: str | None = None
         self._dirty = False
         self._problem_kinds_warned: set[str] = set()
         self._timer = QtCore.QTimer(self)
@@ -187,6 +192,7 @@ class MonitorController(QtCore.QObject):
 
         self.stop_replay_loader()
         self.cursor_time_s = None
+        self.last_replay_path = str(path)
         loader = ReplayLoader(str(path), self)
         loader.count_ready.connect(self._on_replay_count)
         loader.meta_ready.connect(self._on_replay_meta)
@@ -414,6 +420,46 @@ class MonitorWorkspace(QtWidgets.QWidget):
         if preset_id:
             self.apply_preset(str(preset_id))
 
+    # ------------------------------------------------------- layout persistence
+    def capture_tab_layout(self, title: str) -> TabLayout:
+        """Snapshot this dashboard (open widgets + dock geometry) for saving."""
+        from lunaris.ui.monitor.persistence import TabLayout
+
+        state = self._host.saveState()
+        dock_b64 = bytes(state.toBase64()).decode("ascii")
+        return TabLayout(
+            title=title,
+            preset_id=self.active_preset_id,
+            widget_ids=tuple(self._docks.keys()),
+            dock_state_b64=dock_b64,
+        )
+
+    def restore_tab_layout(self, tab: TabLayout) -> None:
+        """Rebuild this dashboard from a saved tab layout.
+
+        Unknown/removed widget ids come back as graceful placeholders (their
+        dock slot is preserved); a stale dock-geometry blob simply falls back
+        to the default arrangement — restore never raises.
+        """
+        from lunaris.ui.monitor.presets import preset_by_id as _preset_by_id
+
+        self.active_preset_id = (
+            tab.preset_id if _preset_by_id(tab.preset_id) is not None
+            else DEFAULT_PRESET_ID
+        )
+        index = self.preset_combo.findData(self.active_preset_id)
+        if index >= 0:
+            self.preset_combo.setCurrentIndex(index)
+        self.clear_docks()
+        self.skipped_label.setVisible(False)
+        for widget_id in tab.widget_ids:
+            self.add_widget(widget_id)
+        blob = tab.dock_state_bytes()
+        if blob:
+            # restoreState returns False for a stale blob; the freshly added
+            # docks then keep their default arrangement.
+            self._host.restoreState(QtCore.QByteArray(blob))
+
     def _on_open_replay(self) -> None:
         path, _filter = QtWidgets.QFileDialog.getOpenFileName(
             self,
@@ -583,7 +629,13 @@ class ReplayBar(QtWidgets.QFrame):
 
 
 class MonitorPage(QtWidgets.QWidget):
-    """Navigation-page wrapper: problem banner + replay bar + workspace."""
+    """Navigation page: problem banner + tabbed dashboards + shared replay bar.
+
+    Each tab is one independent :class:`MonitorWorkspace` (its own docks and
+    preset) over the *same* controller/store, so every dashboard observes the
+    same run and the same replay cursor. The tab set, per-tab widgets and dock
+    geometry persist through ``lunaris_monitor_layout_v1``.
+    """
 
     def __init__(
         self,
@@ -606,8 +658,20 @@ class MonitorPage(QtWidgets.QWidget):
         self.problem_banner.setVisible(False)
         layout.addWidget(self.problem_banner)
 
-        self.workspace = MonitorWorkspace(controller, parent=self)
-        layout.addWidget(self.workspace, 1)
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setAccessibleName("Monitor dashboards")
+        self.tabs.setDocumentMode(True)
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        self.add_tab_button = QtWidgets.QToolButton()
+        self.add_tab_button.setText("+")
+        self.add_tab_button.setAccessibleName("Add dashboard tab")
+        self.add_tab_button.setToolTip("Add a new dashboard tab")
+        self.add_tab_button.clicked.connect(lambda: self.add_dashboard_tab())
+        self.tabs.setCornerWidget(self.add_tab_button, QtCore.Qt.TopRightCorner)
+        layout.addWidget(self.tabs, 1)
+
+        self.add_dashboard_tab("Dashboard")
 
         self.replay_bar = ReplayBar(controller, self.timeline, parent=self)
         layout.addWidget(self.replay_bar)
@@ -616,6 +680,66 @@ class MonitorPage(QtWidgets.QWidget):
         controller.replay_failed.connect(self._on_replay_failed)
         controller.run_started.connect(lambda: self.problem_banner.setVisible(False))
 
+    # ------------------------------------------------------------------ tabs
+    @property
+    def workspace(self) -> MonitorWorkspace:
+        """The active dashboard tab's workspace."""
+        current = self.tabs.currentWidget()
+        assert isinstance(current, MonitorWorkspace)
+        return current
+
+    def workspaces(self) -> tuple[MonitorWorkspace, ...]:
+        return tuple(
+            w for w in (self.tabs.widget(i) for i in range(self.tabs.count()))
+            if isinstance(w, MonitorWorkspace)
+        )
+
+    def add_dashboard_tab(self, title: str | None = None) -> MonitorWorkspace:
+        workspace = MonitorWorkspace(self.controller, parent=self)
+        index = self.tabs.addTab(workspace, title or f"Dashboard {self.tabs.count() + 1}")
+        self.tabs.setCurrentIndex(index)
+        return workspace
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        if self.tabs.count() <= 1:
+            return  # the monitor always keeps one dashboard
+        widget = self.tabs.widget(index)
+        self.tabs.removeTab(index)
+        if widget is not None:
+            widget.deleteLater()
+
+    # ------------------------------------------------------- layout persistence
+    def capture_layout(self) -> MonitorLayout:
+        """Snapshot every tab into a versioned MonitorLayout."""
+        from lunaris.ui.monitor.persistence import MonitorLayout
+
+        tabs = tuple(
+            workspace.capture_tab_layout(self.tabs.tabText(i))
+            for i, workspace in enumerate(self.workspaces())
+        )
+        return MonitorLayout(
+            tabs=tabs,
+            active_tab=max(0, self.tabs.currentIndex()),
+            last_replay_path=self.controller.last_replay_path,
+        )
+
+    def restore_layout(self, layout: MonitorLayout) -> None:
+        """Rebuild all tabs from a saved MonitorLayout (never raises)."""
+        while self.tabs.count():
+            widget = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            if widget is not None:
+                widget.deleteLater()
+        for tab in layout.tabs:
+            workspace = self.add_dashboard_tab(tab.title)
+            workspace.restore_tab_layout(tab)
+        if not self.tabs.count():
+            self.add_dashboard_tab("Dashboard")
+        self.tabs.setCurrentIndex(min(layout.active_tab, self.tabs.count() - 1))
+        if layout.last_replay_path:
+            self.controller.last_replay_path = layout.last_replay_path
+
+    # ----------------------------------------------------------------- banner
     def _on_problem(self, detail: str) -> None:
         self.problem_banner.setText(
             f"Telemetry protocol warning: {detail} — affected lines were routed "
