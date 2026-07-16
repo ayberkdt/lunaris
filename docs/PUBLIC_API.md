@@ -45,10 +45,10 @@ These modules are intended for direct import:
 | `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_batch_result`, `batch_entry` |
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
 | `lunaris.core.dynamics` | `DynamicsEngine` |
-| `lunaris.core.propagation` | Canonical propagation package; `propagate`, `make_time_grid`, `build_events` |
+| `lunaris.core.propagation` | Canonical propagation package: `propagate`, `make_time_grid`, `build_events`, `PropagationResult`, `EventOutcome`, `EventSpec`, `event_outcome_from_solver_events`, and the plan types/resolvers `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`, `resolve_time_grid_plan`, `resolve_step_size_policy`, `resolve_integration_plan` |
 | `lunaris.physics.spherical_harmonics` | `GravityModel` |
 | `lunaris.physics.ephemeris` | `SpiceBuildConfig`, `EphemerisManager`, `build_spice_tables`, `build_tables` |
-| `lunaris.surrogate.runtime` | `SurrogateGravityModel` for production-facing ST-LRPS inference |
+| `lunaris.surrogate.runtime` | Production-facing ST-LRPS inference: `SurrogateGravityModel`, `SurrogateGravityMetadata`, `DEFAULT_ST_LRPS_RUNS_DIR`, `discover_st_lrps_model_dirs`, `find_checkpoint_for_st_lrps_run`, `find_latest_st_lrps_model_dir` |
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
 | `lunaris.analysis.reporting.manager` | `plot_all` |
 | `lunaris.analysis.ensemble.statistics` | Propagated-ensemble statistics, covariance, RIC uncertainty, impact statistics, OE dispersion |
@@ -69,6 +69,37 @@ this Python API.
 resolution and lunar body-signature checks. It is stable for internal framework
 subsystems, but downstream scripts should prefer `lunaris.api` or the documented
 console workflows unless they are deliberately extending data/artifact plumbing.
+
+## Naming And Boundary Policy
+
+These rules make the public/internal boundary mechanical instead of
+folklore:
+
+- A single leading underscore means **private to its defining module and its
+  own subsystem**. Code in another subsystem must not import it. The unit
+  boundaries match the import-linter contracts: top-level packages
+  (`lunaris.core`, `lunaris.batch`, ...), with each
+  `lunaris.surrogate.st_lrps.*` subpackage (`data`, `networks`, `training`,
+  `evaluation`, `runtime`, `ui`, ...) counted separately.
+- A helper that is legitimately consumed across such a boundary must carry a
+  public (non-underscored) name in its defining module, or be re-exported
+  through an explicit facade. `tests/test_api_boundaries.py` enforces this
+  for `src/lunaris`; `docs/api_snapshot.json` is the reviewable inventory
+  (regenerate with `python tools/api_inventory.py --write`).
+- An underscore-named **package** (for example
+  `lunaris.surrogate.st_lrps.evaluation._gravity_benchmark`) is the
+  sanctioned pattern for an internal implementation tree consumed through a
+  single public facade module (`compare_gravity_models`).
+- **White-box tests are legitimate**: tests may import private helpers to
+  validate numerical internals (integrator steppers, relativity components,
+  storage writers) — that is deliberate coverage, not API. The
+  `tests/test_*_import_compat.py` files pin the *compatibility* surfaces: an
+  underscore import path asserted there is a contract and must survive until
+  its documented removal release.
+- Compatibility shims that re-export retired underscore names (for example
+  the dynamic fold in `lunaris.surrogate.st_lrps.training.cli`) survive at
+  least one MINOR release after the rename lands, then go through the
+  deprecation process in [VERSIONING.md](VERSIONING.md).
 
 ## Configuration Contract
 
