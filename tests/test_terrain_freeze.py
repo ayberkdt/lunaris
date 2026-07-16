@@ -230,7 +230,7 @@ class _FakeEphem:
 
 class _FakeDynamics:
     """Minimal duck for build_events: point-mass ref radius + a rotation table."""
-    grav = None  # -> _get_ref_radius_and_mu falls back to (R_MOON, MU_MOON)
+    grav = None  # -> get_ref_radius_and_mu falls back to (R_MOON, MU_MOON)
     ephem = _FakeEphem()
 
 
