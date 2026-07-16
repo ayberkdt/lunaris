@@ -637,22 +637,20 @@ class LauncherWindow(QtWidgets.QWidget):
         return PropagationMainWindow()
 
     def _build_studio_window(self) -> QtWidgets.QWidget:
-        from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import (
-            _NoWheelOnSpinFilter,
-        )
         from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import (
             MainWindow as StudioMainWindow,
         )
         from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import (
             apply_premium_dark_theme,
         )
+        from lunaris.ui_foundation.event_filters import NoWheelOnSpinFilter
 
         app = QtWidgets.QApplication.instance()
         if app is not None:
             apply_premium_dark_theme(app)
             # Install the Studio's wheel guard once for the shared application.
             if not getattr(self, "_studio_wheel_guard", None):
-                self._studio_wheel_guard = _NoWheelOnSpinFilter(app)
+                self._studio_wheel_guard = NoWheelOnSpinFilter(app)
                 app.installEventFilter(self._studio_wheel_guard)
 
         return StudioMainWindow()
