@@ -65,7 +65,7 @@ collate_h5 = collate_xyz_u_a
 
 # --- Utilities ---
 
-def _resolve_loader_worker_count(
+def resolve_loader_worker_count(
     data_path: Path,
     requested_workers: int,
     *,
@@ -347,7 +347,7 @@ def _normalized_dataset_body_name(meta: DatasetMeta) -> str | None:
             return name
     return None
 
-def _resolve_lunar_dataset_contract(meta: DatasetMeta, *, data_path: Path) -> tuple[str, float, float]:
+def resolve_lunar_dataset_contract(meta: DatasetMeta, *, data_path: Path) -> tuple[str, float, float]:
     """
     Validate that an HDF5 dataset really belongs to the lunar surrogate stack.
 
@@ -566,7 +566,7 @@ def validate_training_dataset_convention(
 # variances. A single global scale (max ‖x‖) preserves aspect ratio so
 # the chain rule Δa = ∇(ΔU) stays isotropy-correct.
 
-def _discover_dataset_name(h5_path: Path, preferred: str = "data") -> str:
+def discover_dataset_name(h5_path: Path, preferred: str = "data") -> str:
     dataset_name = None
 
     def visitor(name: str, obj: object) -> bool | None:
@@ -834,7 +834,7 @@ def identity_collate(batch: Any) -> Any:
 # sin(w0 · (Wx + b)) avoids spectral bias for high-frequency mascon fields.
 # Init: first layer W~U(-1/n, 1/n); hidden W~U(-sqrt(6/n)/w0, sqrt(6/n)/w0).
 
-def _build_train_val_indices(n_rows: int, val_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
+def build_train_val_indices(n_rows: int, val_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
     """
     Build a deterministic shuffled split while preserving ascending row order.
 
@@ -859,7 +859,7 @@ def _build_train_val_indices(n_rows: int, val_fraction: float, seed: int) -> tup
     train_idx = np.sort(perm[n_val:].astype(np.int64, copy=False))
     return train_idx, val_idx
 
-def _find_latest_dataset(start_dir: Path) -> Path | None:
+def find_latest_dataset(start_dir: Path) -> Path | None:
     """
     Return the newest lunar-compatible HDF5 dataset near ``start_dir``.
 
@@ -870,7 +870,7 @@ def _find_latest_dataset(start_dir: Path) -> Path | None:
 
     def _candidate_score(path: Path) -> tuple[int, float] | None:
         try:
-            dset_name = _discover_dataset_name(path, preferred="data")
+            dset_name = discover_dataset_name(path, preferred="data")
             with h5py.File(path, "r") as handle:
                 ds = handle[dset_name]
                 if ds.ndim != 2 or int(ds.shape[1]) != 7 or int(ds.shape[0]) <= 0:
@@ -967,8 +967,8 @@ __all__ = [
     'DTYPE', 'DatasetMeta', 'H5BlockDataset', 'TensorMemoryDataset',
     'DatasetContract', 'DatasetContractError',
     'BlockShuffleSampler', 'TensorBatchSampler', 'collate_xyz_u_a', 'collate_h5',
-    'identity_collate', '_resolve_loader_worker_count',
-    '_build_train_val_indices', '_find_latest_dataset', '_discover_dataset_name',
-    '_resolve_lunar_dataset_contract', 'infer_a_sign_from_data',
+    'identity_collate', 'resolve_loader_worker_count',
+    'build_train_val_indices', 'find_latest_dataset', 'discover_dataset_name',
+    'resolve_lunar_dataset_contract', 'infer_a_sign_from_data',
     'build_dataset_contract', 'read_dataset_contract_from_h5', 'validate_dataset_contract',
 ]

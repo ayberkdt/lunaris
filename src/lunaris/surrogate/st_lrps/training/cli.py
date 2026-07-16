@@ -63,6 +63,13 @@ _EXPORT_MODULES = {
     "TensorMemoryDataset": "lunaris.surrogate.st_lrps.data.datasets",
     "BlockShuffleSampler": "lunaris.surrogate.st_lrps.data.datasets",
     "collate_h5": "lunaris.surrogate.st_lrps.data.datasets",
+    "build_train_val_indices": "lunaris.surrogate.st_lrps.data.datasets",
+    "find_latest_dataset": "lunaris.surrogate.st_lrps.data.datasets",
+    "resolve_loader_worker_count": "lunaris.surrogate.st_lrps.data.datasets",
+    "resolve_lunar_dataset_contract": "lunaris.surrogate.st_lrps.data.datasets",
+    # compat: retired underscore spellings of the dataset helpers above.
+    # Resolved through _COMPAT_RENAMES; remove in the MINOR release after
+    # the rename ships (docs/PUBLIC_API.md "Naming And Boundary Policy").
     "_build_train_val_indices": "lunaris.surrogate.st_lrps.data.datasets",
     "_find_latest_dataset": "lunaris.surrogate.st_lrps.data.datasets",
     "_resolve_loader_worker_count": "lunaris.surrogate.st_lrps.data.datasets",
@@ -74,12 +81,21 @@ _EXPORT_MODULES = {
 
 __all__ = list(_EXPORT_MODULES.keys())
 
+# Old exported name -> current name in the defining module (compat only).
+_COMPAT_RENAMES = {
+    "_build_train_val_indices": "build_train_val_indices",
+    "_find_latest_dataset": "find_latest_dataset",
+    "_resolve_loader_worker_count": "resolve_loader_worker_count",
+    "_resolve_lunar_dataset_contract": "resolve_lunar_dataset_contract",
+}
+
 
 def __getattr__(name: str) -> Any:
     module_name = _EXPORT_MODULES.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module_name), name)
+    attr_name = _COMPAT_RENAMES.get(name, name)
+    value = getattr(import_module(module_name), attr_name)
     globals()[name] = value
     return value
 
