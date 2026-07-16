@@ -180,6 +180,7 @@ def propagate(
     # also enables it.
     _telem_cadence_cfg = float(getattr(cfg, "telem_cadence_s", getattr(cfg, "telemetry_cadence_s", 0.0)) or 0.0)
     enable_telem_json = bool(getattr(cfg, "enable_telemetry", False)) or _telem_cadence_cfg > 0.0
+    telem_emitter: Any | None = None
     telem_cadence_s: float = _telem_cadence_cfg
     if enable_telem_json and telem_cadence_s <= 0.0:
         hb_h = float(getattr(cfg, "heartbeat_hours", 0.0) or 0.0)
@@ -192,8 +193,9 @@ def propagate(
     if enable_telem_json and telem_cadence_s > 0.0:
         # Structured lunaris_telemetry_v1 emission ([TELEMETRY] {json} lines).
         # The cadence gate stays here — one float comparison per RHS call —
-        # while sample construction/serialization lives in the emitter and
-        # runs only when the gate opens.
+        # These gated samples are transient ``rhs_probe`` observations;
+        # scientific output-state samples are emitted from PropagationResult
+        # after integration.
         from lunaris.core.propagation.telemetry_emitter import build_emitter_from_config
 
         telem_emitter = build_emitter_from_config(
@@ -211,7 +213,7 @@ def propagate(
             nonlocal last_telem_t
             dy = rhs_base(t, y)
             if (float(t) - float(last_telem_t)) >= float(telem_cadence_s):
-                telem_emitter.emit(float(t), y)
+                telem_emitter.emit_rhs_probe(float(t), y)
                 last_telem_t = float(t)
             return dy
 
@@ -417,6 +419,10 @@ def propagate(
     # 6) Diagnostics + Optional 2-body baseline
     # -------------------------------------------------------------------------
     wall = time.perf_counter() - t_wall0
+    if telem_emitter is not None:
+        # Emit the exact solver-returned rows.  This is the shared scientific
+        # trajectory boundary for adaptive and fixed-step propagation.
+        telem_emitter.emit_trajectory(res.t, res.y)
     res.diagnostics = build_propagation_diagnostics(
         dynamics=dynamics,
         cfg=cfg,
@@ -436,6 +442,9 @@ def propagate(
         verbose=verbose,
         logger=logger,
     )
+    if telem_emitter is not None:
+        for key, value in telem_emitter.diagnostics.as_dict().items():
+            res.diagnostics[f"telemetry_{key}"] = value
 
     if bool(getattr(cfg, "compute_2body_baseline", False)):
         res.baseline = _compute_2body_baseline(
