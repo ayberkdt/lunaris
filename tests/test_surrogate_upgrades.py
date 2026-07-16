@@ -39,9 +39,9 @@ from lunaris.surrogate.st_lrps.data.datasets import (
 from lunaris.surrogate.st_lrps.networks.models import (
     RadialDecayEncoding,
     RealSHBasisEncoding,
-    compute_harmonic_w0_bands,
     build_model_from_config,
     compute_architecture_signature,
+    compute_harmonic_w0_bands,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args

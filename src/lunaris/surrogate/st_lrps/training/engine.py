@@ -67,13 +67,13 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     H5BlockDataset,
     TensorBatchSampler,
     TensorMemoryDataset,
-    discover_dataset_name,
-    resolve_loader_worker_count,
-    resolve_lunar_dataset_contract,
     build_dataset_contract,
     collate_xyz_u_a,
+    discover_dataset_name,
     identity_collate,
     infer_a_sign_from_data,
+    resolve_loader_worker_count,
+    resolve_lunar_dataset_contract,
     validate_training_dataset_convention,
 )
 from lunaris.surrogate.st_lrps.data.splits import (
@@ -85,10 +85,10 @@ from lunaris.surrogate.st_lrps.data.splits import (
 )
 from lunaris.surrogate.st_lrps.networks.models import (
     MODEL_BUILDER_VERSION,
-    compute_harmonic_w0_bands,
-    get_output_head_params,
     build_model_from_config,
     compute_architecture_signature,
+    compute_harmonic_w0_bands,
+    get_output_head_params,
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract, resolve_dataset_hash
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming

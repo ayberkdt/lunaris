@@ -60,13 +60,13 @@ from lunaris.common.constants import (
 )
 from lunaris.common.frame_policy import FrameModeInput, resolve_frame_policy
 from lunaris.common.math_utils import (
+    latlon_from_xyz_m,
+    quat_rotate_vec,
+    sample_grid_bilinear,
     # Numba-callable kernels for use inside @njit code (the public
     # sample_*/sample_grid_* wrappers validate in Python and cannot be called
     # from nopython mode).
     sample_grid_bilinear_kernel,
-    latlon_from_xyz_m,
-    quat_rotate_vec,
-    sample_grid_bilinear,
 )
 from lunaris.common.type_defs import PerturbationFlags, SolidTideConfig, SpacecraftProps
 from lunaris.core.dynamics.adaptive_degree import (

@@ -22,11 +22,11 @@ from lunaris.physics.relativity_effects import (
     C_SQ,
     EPS_1E12,
     MU_MOON,
+    calc_external_1pn_accel,
+    calc_schwarzschild_accel,
     de_sitter_components,
     external_1pn_components,
     external_schwarzschild_diff_components,
-    calc_external_1pn_accel,
-    calc_schwarzschild_accel,
 )
 
 # ---------------------------------------------------------------------------

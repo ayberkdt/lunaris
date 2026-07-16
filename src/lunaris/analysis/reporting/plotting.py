@@ -62,10 +62,10 @@ import contextlib
 import itertools
 
 from lunaris.analysis.postprocess import (
-    extract_rv_vectors,
-    first_present,
     extract_invariants,
+    extract_rv_vectors,
     extract_time_days,
+    first_present,
 )
 from lunaris.common.constants import DAY_S
 from lunaris.common.math_utils import wrap_lon_deg
