@@ -2179,8 +2179,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Mission Monitor structured telemetry ([TELEMETRY] / [TELEMETRY_META]
         # v1 lines and legacy bare-JSON telemetry). The classifier returns None
-        # for every ordinary log line, so the existing routing below stays
-        # authoritative for anything that is not telemetry.
+        # for every ordinary log line — including the [REPORT] control line
+        # below — so the existing routing stays authoritative for anything
+        # that is not telemetry.
         monitor_msg = None
         controller = getattr(self, "monitor_controller", None)
         if controller is not None:
@@ -2204,6 +2205,20 @@ class MainWindow(QtWidgets.QMainWindow):
             # decoded; surface it in the console instead of guessing.
             self._log_message(clean_line, severity="warning")
             return
+
+        # Analysis-report completion payload from the run subprocess.
+        if clean_line.startswith("[REPORT]"):
+            try:
+                payload = json.loads(clean_line[len("[REPORT]"):].strip())
+                if isinstance(payload, dict):
+                    self.page_output.set_generated_report(payload)
+                    self._log_message(
+                        f"[Run] Analysis report ready: {payload.get('report_pdf', 'path unavailable')}",
+                        severity="system",
+                    )
+                    return
+            except Exception:
+                pass
 
         # Structured engine diagnostics emitted once at the end of a run.
         # Routed to the Results page panel; a malformed payload falls through

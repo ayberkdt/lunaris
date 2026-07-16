@@ -232,6 +232,94 @@ _THEME = {
 }
 THEME: Mapping[str, str] = MappingProxyType(_THEME)
 
+# Editorial report system.  These tokens are deliberately separate from the
+# dark Mission Studio UI theme: the PDF is an off-white, print-safe expression
+# of the same Lunar Graphite identity.  Report/page/plot code must consume these
+# mappings rather than introducing page-local color literals.
+_REPORT_PALETTE = {
+    "paper": "#F7F6F2",
+    "paper_alt": "#EEEDE8",
+    "white": "#FFFFFF",
+    "graphite": "#1D242B",
+    "graphite_mid": "#3F4952",
+    "muted": "#626D76",
+    "rule": "#C9CFD1",
+    "grid": "#DCE0E1",
+    "lunar_blue": "#176B87",
+    "lunar_cyan": "#268DA2",
+    "indigo": "#5B5E96",
+    "green": "#4E755F",
+    "amber": "#A56C1E",
+    "warning_bg": "#F4ECE0",
+    "red": "#9B3C3C",
+}
+REPORT_PALETTE: Mapping[str, str] = MappingProxyType(_REPORT_PALETTE)
+
+_REPORT_STATUS_COLORS = {
+    "ok": REPORT_PALETTE["green"],
+    "normal": REPORT_PALETTE["green"],
+    "warning": REPORT_PALETTE["amber"],
+    "critical": REPORT_PALETTE["red"],
+    "unavailable": REPORT_PALETTE["muted"],
+}
+REPORT_STATUS_COLORS: Mapping[str, str] = MappingProxyType(_REPORT_STATUS_COLORS)
+
+_REPORT_SERIES_COLORS = {
+    "altitude": REPORT_PALETTE["lunar_blue"],
+    "radius": REPORT_PALETTE["lunar_blue"],
+    "semi_major_axis": REPORT_PALETTE["lunar_blue"],
+    "eccentricity": REPORT_PALETTE["indigo"],
+    "inclination": REPORT_PALETTE["lunar_cyan"],
+    "raan": "#7A6650",
+    "argument_of_periapsis": "#7C537C",
+    "true_anomaly": "#39756F",
+    "periselene": REPORT_PALETTE["lunar_cyan"],
+    "aposelene": REPORT_PALETTE["indigo"],
+    "orbital_period": REPORT_PALETTE["amber"],
+    "energy": REPORT_PALETTE["graphite_mid"],
+    "angular_momentum": REPORT_PALETTE["indigo"],
+    "central_gravity": REPORT_PALETTE["graphite"],
+    "spherical_harmonics": REPORT_PALETTE["lunar_blue"],
+    "third_body_sun": REPORT_PALETTE["amber"],
+    "third_body_earth": "#7A6650",
+    "srp": "#B55A43",
+    "albedo": REPORT_PALETTE["green"],
+    "thermal_ir": "#8A5B88",
+    "solid_tides": REPORT_PALETTE["lunar_cyan"],
+    "relativity": REPORT_PALETTE["indigo"],
+    "total_noncentral": REPORT_PALETTE["graphite"],
+    "ric_radial": REPORT_PALETTE["lunar_blue"],
+    "ric_intrack": REPORT_PALETTE["amber"],
+    "ric_crosstrack": REPORT_PALETTE["indigo"],
+}
+REPORT_SERIES_COLORS: Mapping[str, str] = MappingProxyType(_REPORT_SERIES_COLORS)
+
+_REPORT_TYPOGRAPHY = {
+    "cover_title": 28.0,
+    "section_title": 18.0,
+    "subsection_title": 12.0,
+    "metric_headline": 15.0,
+    "table_header": 8.2,
+    "body": 8.8,
+    "caption": 7.5,
+    "annotation": 7.2,
+    "footnote": 6.7,
+    "provenance": 6.3,
+}
+REPORT_TYPOGRAPHY: Mapping[str, float] = MappingProxyType(_REPORT_TYPOGRAPHY)
+
+_REPORT_LAYOUT = {
+    "page_width_in": 8.27,
+    "page_height_in": 11.69,
+    "margin_left": 0.075,
+    "margin_right": 0.925,
+    "content_top": 0.90,
+    "content_bottom": 0.075,
+    "gutter": 0.035,
+    "spacing_unit": 0.008,
+}
+REPORT_LAYOUT: Mapping[str, float] = MappingProxyType(_REPORT_LAYOUT)
+
 
 # ----------------------------
 # Semantic colors (domain concepts)
@@ -1031,6 +1119,11 @@ __all__ = [
     # THEME:
     #   Layout-level colors (figure/axes backgrounds, grid color, text colors).
     "THEME",
+    "REPORT_PALETTE",
+    "REPORT_STATUS_COLORS",
+    "REPORT_SERIES_COLORS",
+    "REPORT_TYPOGRAPHY",
+    "REPORT_LAYOUT",
 
     # SEMANTIC:
     #   Domain-meaning colors (orbit / SH / SRP / third-body / albedo / relativity / events).

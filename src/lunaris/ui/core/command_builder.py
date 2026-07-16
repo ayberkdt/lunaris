@@ -419,6 +419,7 @@ def build_command(
         command.extend(["--out-dir", output.output_dir.strip()])
 
     command.extend(["--make-3d-plots", bool_to_onoff(bool(output.generate_3d_plots))])
+    command.extend(["--report-preset", str(getattr(output, "report_preset", "standard"))])
     if output.generate_3d_plots and int(output.downsample_3d) > 1:
         command.extend(["--downsample-3d", str(int(output.downsample_3d))])
 

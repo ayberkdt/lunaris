@@ -30,8 +30,8 @@ from lunaris.cli.summary import median_dt, print_summary
 from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON
 from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.state_vector import normalize_cartesian_state
-from lunaris.common.type_defs import PropagationResult
-from lunaris.core.config import SimConfig, load_default_config
+from lunaris.common.type_defs import InitialState, PropagationResult
+from lunaris.core.config import SimConfig, load_default_config, replace_sim_config
 
 if TYPE_CHECKING:
     from lunaris.physics.ephemeris import EphemerisManager
@@ -117,7 +117,7 @@ def _warn_optional_failure(stage: str, operation: Callable[[], None]) -> None:
 
 def _run_optional_output(
     stage: str,
-    operation: Callable[[], None],
+    operation: Callable[[], Any],
     *,
     debug_tracebacks: bool,
     import_warning: str,
@@ -568,6 +568,7 @@ def build_run_meta(
         "output_points_cap": int(cfg.time.max_points_cap),
         "degree": cfg.gravity.degree,
         "mu_m3s2": mu,
+        "body_radius_m": float(R_MOON),
         "spacecraft": {
             "mass_kg": cfg.spacecraft.mass_kg,
             "area_m2": cfg.spacecraft.area_m2,
@@ -601,21 +602,28 @@ def render_reports(
     cfg: SimConfig,
     out_dir: Path,
     meta: dict[str, Any],
-) -> None:
-    from lunaris.analysis.postprocess import process_simulation_results
-    from lunaris.analysis.reporting.manager import plot_all
+    preset: str = "standard",
+) -> dict[str, Any]:
+    from lunaris.analysis.reporting.manager import generate_run_package
 
-    hist = process_simulation_results(result, ctx=engine, cfg=cfg)
-    plot_all(
-        history=hist,
-        out_dir=str(out_dir),
-        meta=meta,
+    outputs = generate_run_package(
+        result=result,
+        config=cfg,
+        out_dir=out_dir,
         ctx=engine,
-        title_prefix="Lunaris",
-        use_run_subdir=False,
-        visual_cfg=cfg.visual,
-        save_pdf=True,
+        meta=meta,
+        preset=preset,
     )
+    notification = {
+        "status": "success",
+        "run_dir": str(out_dir.resolve()),
+        "report_pdf": str(Path(outputs["pdf"]).resolve()),
+        "report_markdown": str(Path(outputs["report_markdown"]).resolve()),
+        "metrics_json": str(Path(outputs["metrics"]).resolve()),
+        "preset": preset,
+    }
+    print("[REPORT] " + json.dumps(notification, sort_keys=True))
+    return outputs
 
 
 def render_optional_3d(result: PropagationResult, cfg: SimConfig, out_dir: Path) -> None:
@@ -649,6 +657,18 @@ def run_pipeline(args: Namespace) -> int:
         lambda: build_ephemeris_if_needed(cfg, topo_requested=surface.topo_requested),
     )
     y0, orbit_params = _run_stage("Orbit init failed", lambda: resolve_initial_state(cfg, args, mu=mu))
+    effective_y0 = _y0_to_array(y0)[:6]
+    cfg = replace_sim_config(
+        cfg,
+        initial_state=InitialState(
+            x=float(effective_y0[0]),
+            y=float(effective_y0[1]),
+            z=float(effective_y0[2]),
+            vx=float(effective_y0[3]),
+            vy=float(effective_y0[4]),
+            vz=float(effective_y0[5]),
+        ),
+    )
     _run_stage("Run summary failed", lambda: print_summary(cfg, orbit_params, y0))
 
     engine = _run_stage(
@@ -688,6 +708,7 @@ def run_pipeline(args: Namespace) -> int:
     if ephem_mgr is not None and hasattr(ephem_mgr, "kernel_provenance"):
         with contextlib.suppress(Exception):
             diag_payload["spice_kernels"] = ephem_mgr.kernel_provenance()
+    run.result.diagnostics = dict(diag_payload)
     _warn_optional_failure(
         "Could not write run artifacts",
         lambda: write_run_artifacts(run_dir, cfg, diag_payload),
@@ -695,6 +716,12 @@ def run_pipeline(args: Namespace) -> int:
     _finalize_telemetry_artifact(cfg, run_dir)
 
     meta = build_run_meta(cfg, run.result, mu=mu, propagation_time_s=run.elapsed_s)
+    meta.update(
+        {
+            "ldem_root": getattr(args, "ldem_root", None),
+            "albedo_root": getattr(args, "albedo_root", None),
+        }
+    )
 
     _run_optional_output(
         "Plot/report failed",
@@ -704,6 +731,7 @@ def run_pipeline(args: Namespace) -> int:
             cfg=cfg,
             out_dir=run_dir,
             meta=meta,
+            preset=str(getattr(args, "report_preset", "standard")),
         ),
         debug_tracebacks=debug_tracebacks,
         import_warning="[WARN] analysis.reporting.manager not found; skipping plots.",

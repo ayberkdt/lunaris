@@ -182,6 +182,12 @@ def _add_io_args(parser: argparse.ArgumentParser) -> None:
     g_io.add_argument("--out-dir", type=str, help="Output directory")
     g_io.add_argument("--make-3d-plots", type=str2bool, help="Generate 3D plots/animation outputs (on/off)")
     g_io.add_argument("--downsample-3d", type=int, help="3D plot downsample factor")
+    g_io.add_argument(
+        "--report-preset",
+        choices=("quick", "standard", "paper"),
+        default="standard",
+        help="Analysis/report fidelity preset",
+    )
     g_io.add_argument("--kernel-dir", type=str, help="Directory containing SPICE kernels (renames by filename match)")
     g_io.add_argument("--ldem-root", type=str, help="LOLA LDEM root directory")
     g_io.add_argument("--albedo-root", type=str, help="LOLA Albedo root directory")
