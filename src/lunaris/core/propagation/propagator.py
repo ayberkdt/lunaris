@@ -57,8 +57,8 @@ from lunaris.core.propagation.telemetry import (
     _make_telem_dict,  # noqa: F401  # canonical import path for tests/back-compat
 )
 from lunaris.core.propagation.time_grid import (
-    _get_ref_radius_and_mu,
-    _get_sh_degree,
+    get_ref_radius_and_mu,
+    get_sh_degree,
     make_time_grid,
 )
 
@@ -155,7 +155,7 @@ def propagate(
 
     rhs = dynamics.build_rhs()
     rhs_path = _rhs_path_for_diagnostics(dynamics)
-    R_ref_m, mu_m3s2 = _get_ref_radius_and_mu(dynamics)
+    R_ref_m, mu_m3s2 = get_ref_radius_and_mu(dynamics)
 
     # Terrain-aware telemetry is optional. The actual hybrid impact event uses a
     # similar capability deeper in the propagator, but surfacing the sampled
@@ -218,7 +218,7 @@ def propagate(
     # -------------------------------------------------------------------------
     # 3) Max-step logic (Nyquist cap vs user cap)
     # -------------------------------------------------------------------------
-    degree = _get_sh_degree(dynamics)
+    degree = get_sh_degree(dynamics)
     topo_present = topo_grid is not None
     step_plan = resolve_step_size_policy(
         cfg=cfg,

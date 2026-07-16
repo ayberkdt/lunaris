@@ -65,13 +65,13 @@ from lunaris.physics.thermal_ir import (
 )
 
 
-def _provider_get(provider: Any, key: str, default: Any) -> Any:
+def provider_get(provider: Any, key: str, default: Any) -> Any:
     if isinstance(provider, dict):
         return provider.get(key, default)
     return getattr(provider, key, default)
 
 
-def _provider_has(provider: Any, key: str) -> bool:
+def provider_has(provider: Any, key: str) -> bool:
     if isinstance(provider, dict):
         return key in provider
     return hasattr(provider, key)
@@ -444,8 +444,8 @@ def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
 
     dt_s, sun_tab, earth_tab, qtab = extract_ephem_tables_strict(ephem_manager)
     provider = ephem_manager.get_data_provider()
-    mu_earth = float(_provider_get(provider, "mu_earth_m3s2", MU_EARTH))
-    mu_sun = float(_provider_get(provider, "mu_sun_m3s2", MU_SUN))
+    mu_earth = float(provider_get(provider, "mu_earth_m3s2", MU_EARTH))
+    mu_sun = float(provider_get(provider, "mu_sun_m3s2", MU_SUN))
 
     # Fail closed on degenerate body tables. An ephemeris built with
     # include_third_body=False stores all-zero Sun/Earth rows; feeding those
@@ -854,6 +854,8 @@ def prepare_thermal(
 __all__ = [
     "DynamicsRequirements",
     "compute_requirements",
+    "provider_get",
+    "provider_has",
     "validate_dependencies",
     "prepare_adaptive_gravity_policy",
     "prepare_gravity",

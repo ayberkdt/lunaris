@@ -139,7 +139,7 @@ class SurrogateGravityModel:
         self._warned_out_of_domain = False
         self._alt_min_km, self._alt_max_km = self._resolve_altitude_envelope(config, force_runtime)
 
-        # Degree metadata — required by core.propagation.propagator._get_sh_degree() and
+        # Degree metadata — required by core.propagation.propagator.get_sh_degree() and
         # batch result provenance.  Raised at construction time so the error fires
         # once at load, not N times inside the batch sample loop.
         _deg_min, _deg_max = _extract_degree_metadata(config)
