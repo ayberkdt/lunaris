@@ -1567,9 +1567,10 @@ def sample_2d_bilinear(
     ))
 
 
-# Used by: math_utils
+# Used by: math_utils, dynamics (JIT-callable from njit hot paths; skips the
+# Python-level validation that the sample_grid_bilinear wrapper performs)
 @njit(cache=True)
-def _sample_grid_bilinear_kernel(
+def sample_grid_bilinear_kernel(
     lat_deg: float,
     lon_deg: float,
     data: np.ndarray,
@@ -1621,7 +1622,7 @@ def sample_grid_bilinear(
     if res_deg <= 0.0 or not np.isfinite(res_deg):
         raise ValueError(f"res_deg must be finite and > 0, got {res_deg}")
     data_f = _validate_grid_data(data, int(nlines), int(nsamples), row_label="nlines", col_label="nsamples")
-    return float(_sample_grid_bilinear_kernel(
+    return float(sample_grid_bilinear_kernel(
         float(lat_deg), float(lon_deg), data_f,
         int(nlines), int(nsamples), float(res_deg),
         float(lon0_deg), float(lat0_deg)
@@ -1695,9 +1696,10 @@ def sample_2d_scaled_nearest(
     ))
 
 
-# Used by: math_utils
+# Used by: math_utils, dynamics (JIT-callable from njit hot paths; skips the
+# Python-level validation that the sample_2d_scaled_bilinear wrapper performs)
 @njit(cache=True)
-def _sample_2d_scaled_bilinear_kernel(
+def sample_2d_scaled_bilinear_kernel(
     data: np.ndarray,
     row_f: float,
     col_f: float,
@@ -1790,7 +1792,7 @@ def sample_2d_scaled_bilinear(
     Public API: Scaled bilinear sampler (with missing-value robustness).
     """
     data_f = _validate_grid_data(data, int(n_rows), int(n_cols))
-    return float(_sample_2d_scaled_bilinear_kernel(
+    return float(sample_2d_scaled_bilinear_kernel(
         data_f, float(row_f), float(col_f),
         int(n_rows), int(n_cols),
         float(scale), float(offset), float(missing_val)
@@ -1854,4 +1856,8 @@ __all__ = (
     "sample_grid_bilinear",      # Public: lat/lon -> indices -> bilinear sample
     "sample_2d_scaled_nearest",  # Public: nearest + scale/offset + missing handling
     "sample_2d_scaled_bilinear", # Public: bilinear + scale/offset + missing fallback
+
+    # JIT-callable kernel variants (no Python-level validation; for njit hot paths)
+    "sample_grid_bilinear_kernel",      # Kernel behind sample_grid_bilinear
+    "sample_2d_scaled_bilinear_kernel", # Kernel behind sample_2d_scaled_bilinear
 )

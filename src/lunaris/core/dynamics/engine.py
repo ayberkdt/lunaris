@@ -63,7 +63,7 @@ from lunaris.common.math_utils import (
     # Numba-callable kernels for use inside @njit code (the public
     # sample_*/sample_grid_* wrappers validate in Python and cannot be called
     # from nopython mode).
-    _sample_grid_bilinear_kernel,
+    sample_grid_bilinear_kernel,
     latlon_from_xyz_m,
     quat_rotate_vec,
     sample_grid_bilinear,
@@ -1007,7 +1007,7 @@ class DynamicsEngine:
 
                     alb_val = ALB_CONST
                     if ALB_MODE == 0:
-                        alb_val = _sample_grid_bilinear_kernel(
+                        alb_val = sample_grid_bilinear_kernel(
                             lat_deg,
                             lon_deg,
                             ALB_GRID,

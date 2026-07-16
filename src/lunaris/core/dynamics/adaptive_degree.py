@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from numba import njit
 
-from lunaris.common.math_utils import _sample_2d_scaled_bilinear_kernel, clamp, wrap_lon_deg
+from lunaris.common.math_utils import sample_2d_scaled_bilinear_kernel, clamp, wrap_lon_deg
 
 
 @njit(cache=True)
@@ -50,7 +50,7 @@ def _sample_albedo_dn_scaled(
     j_f = (lon_wrapped - lon_ref_deg) / deg_per_px
     j_f = j_f % n_cols
 
-    return _sample_2d_scaled_bilinear_kernel(
+    return sample_2d_scaled_bilinear_kernel(
         dn_grid, i_f, j_f, n_rows, n_cols, scale, bias, nodata_dn
     )
 
