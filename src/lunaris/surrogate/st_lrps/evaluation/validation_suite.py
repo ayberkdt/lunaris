@@ -25,7 +25,7 @@ import numpy as np
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.data.splits import (
-    _hash_indices,
+    hash_indices,
     radius_lat_lon_deg,
     split_dataset_indices,
 )
@@ -385,7 +385,7 @@ def _resolve_training_heldout_guard(
             options=opts or None,
         )
         train_recon = np.asarray(recon.get("train", []), dtype=np.int64)
-        recon_hash = _hash_indices(train_recon)
+        recon_hash = hash_indices(train_recon)
     except Exception as exc:
         return {
             "status": "unverified",
