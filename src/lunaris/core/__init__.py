@@ -20,7 +20,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-from lunaris._version import __version__
+from lunaris import __version__
 
 __all__ = [
     "__version__",

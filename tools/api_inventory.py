@@ -3,23 +3,17 @@
 Computes, without importing ``lunaris`` (pure AST, safe on machines missing
 optional dependencies):
 
-1. The ``__all__`` surface of every facade module named in
-   ``docs/PUBLIC_API.md``'s module table (the subset with an exact exported
-   symbol list — see ``FACADE_MODULES``).
-2. Every cross-unit import of a single-underscore symbol inside
-   ``src/lunaris`` (``from X import _y`` / ``import X._y``), where a *unit* is
-   a top-level subsystem package (``lunaris.core``, ``lunaris.batch``, ...)
-   except that the ST-LRPS subpackages (``training``, ``data``, ``networks``,
-   ``evaluation``, ``runtime``, ``ui``, ...) each count as their own unit —
-   matching the import-linter boundaries in ``pyproject.toml``.
+1. The ``__all__`` surface of every module named in the machine-readable
+   ``docs/public_api_manifest.json``.
+2. Every cross-unit access to a single-underscore module or symbol inside
+   ``src/lunaris`` (``from X import _y``, ``import X._y``, or
+   ``import X as alias; alias._y``), where a *unit* is a top-level subsystem
+   package except that ST-LRPS subpackages each count as their own unit.
 
 Usage:
     python tools/api_inventory.py            # print inventory JSON to stdout
-    python tools/api_inventory.py --check    # exit 1 if docs/api_snapshot.json is stale
-    python tools/api_inventory.py --write    # regenerate docs/api_snapshot.json
-
-The committed snapshot (``docs/api_snapshot.json``) is the reviewable "before"
-picture of the public surface; ``tests/test_api_snapshot.py`` keeps it honest.
+    python tools/api_inventory.py --check    # exit 1 if the snapshot is stale
+    python tools/api_inventory.py --write    # regenerate the snapshot
 """
 
 from __future__ import annotations
@@ -33,15 +27,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 SNAPSHOT_PATH = REPO_ROOT / "docs" / "api_snapshot.json"
-SCHEMA = "lunaris_api_snapshot_v1"
-
-# Facade modules whose __all__ is a documented, exact public surface.
-FACADE_MODULES: tuple[str, ...] = (
-    "lunaris",
-    "lunaris.api",
-    "lunaris.batch",
-    "lunaris.core.propagation",
-    "lunaris.surrogate.runtime",
+MANIFEST_PATH = REPO_ROOT / "docs" / "public_api_manifest.json"
+SCHEMA = "lunaris_api_snapshot_v2"
+MANIFEST_SCHEMA = "lunaris_public_api_manifest_v1"
+PUBLIC_API_TIERS = frozenset(
+    {"user_stable", "documented_provisional", "cross_subsystem_internal"}
 )
 
 _ST_LRPS_PREFIX = "lunaris.surrogate.st_lrps"
@@ -76,7 +66,7 @@ def unit_of(module: str) -> str:
 
 def extract_all(path: Path) -> list[str] | None:
     """Return the literal ``__all__`` of a module, or None if absent/dynamic."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"))
     for node in tree.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -87,6 +77,38 @@ def extract_all(path: Path) -> list[str] | None:
                         return None
                     return sorted(str(name) for name in value)
     return None
+
+
+def load_public_api_manifest() -> tuple[dict[str, str], ...]:
+    """Load and validate the module inventory that drives API snapshots."""
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    if raw.get("schema") != MANIFEST_SCHEMA:
+        raise ValueError(
+            f"{MANIFEST_PATH.relative_to(REPO_ROOT)} has unsupported schema "
+            f"{raw.get('schema')!r}"
+        )
+    entries = raw.get("modules")
+    if not isinstance(entries, list):
+        raise ValueError("public API manifest 'modules' must be a list")
+
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("public API manifest entries must be objects")
+        module = entry.get("module")
+        tier = entry.get("tier")
+        if not isinstance(module, str) or not module.startswith("lunaris"):
+            raise ValueError(f"invalid public API module: {module!r}")
+        if tier not in PUBLIC_API_TIERS:
+            raise ValueError(f"invalid public API tier for {module}: {tier!r}")
+        if module in seen:
+            raise ValueError(f"duplicate public API module: {module}")
+        if not module_path_for(module).is_file():
+            raise ValueError(f"public API module does not exist: {module}")
+        seen.add(module)
+        normalized.append({"module": module, "tier": tier})
+    return tuple(normalized)
 
 
 def resolve_relative(module: str, is_package: bool, node: ast.ImportFrom) -> str:
@@ -107,38 +129,141 @@ def iter_source_files() -> list[Path]:
     )
 
 
-def cross_unit_underscore_imports() -> list[str]:
-    """List ``importer <- source :: _symbol`` rows crossing a unit boundary."""
+def _is_private(name: str) -> bool:
+    return name.startswith("_") and not name.startswith("__")
+
+
+def _private_path_rows(importer: str, imported: str) -> set[str]:
+    """Describe private components in one absolute imported module path."""
     rows: set[str] = set()
-    for path in iter_source_files():
-        module = module_name_for(path)
-        is_package = path.name == "__init__.py"
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:
+    parts = imported.split(".")
+    for index, name in enumerate(parts):
+        if not _is_private(name):
             continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                source = resolve_relative(module, is_package, node)
-                if not source.startswith("lunaris"):
+        source = ".".join(parts[:index])
+        if source.startswith("lunaris") and unit_of(source) != unit_of(importer):
+            rows.add(f"{importer} <- {source} :: {name}")
+    return rows
+
+
+def _attribute_parts(node: ast.Attribute) -> list[str] | None:
+    parts: list[str] = []
+    current: ast.expr = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if not isinstance(current, ast.Name):
+        return None
+    parts.append(current.id)
+    parts.reverse()
+    return parts
+
+
+def private_boundary_violations(
+    module: str,
+    source_text: str,
+    *,
+    is_package: bool = False,
+) -> list[str]:
+    """Return private cross-unit imports/accesses found in one source string."""
+    tree = ast.parse(source_text)
+    rows: set[str] = set()
+
+    # local binding -> (absolute module base, attribute prefix required for an
+    # unaliased dotted import). A binding can represent several imports, most
+    # commonly the shared ``lunaris`` root.
+    bindings: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported = alias.name
+                if not imported.startswith("lunaris"):
                     continue
-                if unit_of(source) == unit_of(module):
+                rows.update(_private_path_rows(module, imported))
+                parts = imported.split(".")
+                if alias.asname:
+                    binding = alias.asname
+                    target = imported
+                    required: tuple[str, ...] = ()
+                else:
+                    binding = parts[0]
+                    target = parts[0]
+                    required = tuple(parts[1:])
+                bindings.setdefault(binding, []).append((target, required))
+        elif isinstance(node, ast.ImportFrom):
+            imported_from = resolve_relative(module, is_package, node)
+            if not imported_from.startswith("lunaris"):
+                continue
+            rows.update(_private_path_rows(module, imported_from))
+            for alias in node.names:
+                name = alias.name
+                if _is_private(name) and unit_of(imported_from) != unit_of(module):
+                    rows.add(f"{module} <- {imported_from} :: {name}")
                     continue
-                for alias in node.names:
-                    name = alias.name
-                    if name.startswith("_") and not name.startswith("__"):
-                        rows.add(f"{module} <- {source} :: {name}")
+                # Track ``from package import module as alias`` only when the
+                # target is demonstrably a module. This avoids treating a
+                # class/function import as a module alias.
+                candidate = f"{imported_from}.{name}"
+                if name != "*" and module_path_for(candidate).is_file():
+                    bindings.setdefault(alias.asname or name, []).append((candidate, ()))
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        parts = _attribute_parts(node)
+        if not parts or parts[0] not in bindings:
+            continue
+        attrs = parts[1:]
+        for target, required in bindings[parts[0]]:
+            if tuple(attrs[: len(required)]) != required:
+                continue
+            effective_attrs = attrs[len(required):]
+            base_parts = target.split(".") + list(required)
+            for index, name in enumerate(effective_attrs):
+                if not _is_private(name):
+                    continue
+                owner = ".".join(base_parts + effective_attrs[:index])
+                if owner.startswith("lunaris") and unit_of(owner) != unit_of(module):
+                    rows.add(f"{module} <- {owner} :: {name}")
     return sorted(rows)
 
 
+def cross_unit_private_accesses() -> list[str]:
+    """List ``importer <- source :: _name`` rows crossing a unit boundary."""
+    rows: set[str] = set()
+    for path in iter_source_files():
+        module = module_name_for(path)
+        try:
+            rows.update(
+                private_boundary_violations(
+                    module,
+                    path.read_text(encoding="utf-8-sig"),
+                    is_package=path.name == "__init__.py",
+                )
+            )
+        except SyntaxError:
+            continue
+    return sorted(rows)
+
+
+def cross_unit_underscore_imports() -> list[str]:
+    """Backward-compatible name for :func:`cross_unit_private_accesses`."""
+    return cross_unit_private_accesses()
+
+
 def build_inventory() -> dict[str, object]:
-    facade_all: dict[str, list[str] | None] = {}
-    for module in FACADE_MODULES:
-        facade_all[module] = extract_all(module_path_for(module))
+    module_all: dict[str, list[str] | None] = {}
+    module_tiers: dict[str, str] = {}
+    for entry in load_public_api_manifest():
+        module = entry["module"]
+        module_all[module] = extract_all(module_path_for(module))
+        module_tiers[module] = entry["tier"]
     return {
         "schema": SCHEMA,
-        "facade_all": facade_all,
-        "cross_unit_underscore_imports": cross_unit_underscore_imports(),
+        "module_all": module_all,
+        "module_tiers": module_tiers,
+        "cross_unit_private_accesses": cross_unit_private_accesses(),
     }
 
 

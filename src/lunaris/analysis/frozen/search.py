@@ -446,9 +446,11 @@ def _git_commit() -> str:
 
 def _element_history(t: np.ndarray, y: np.ndarray, mu: float, r_ref: float) -> dict[str, np.ndarray]:
     """Osculating element histories for one ``(T, 6)`` trajectory."""
-    from lunaris.common.math_utils import osculating_elements_vec
+    from lunaris.common.math_utils import screening_orbital_elements_vec
 
-    a_m, e, inc, argp = osculating_elements_vec(y[:, :3], y[:, 3:], float(mu))
+    a_m, e, inc, argp = screening_orbital_elements_vec(
+        y[:, :3], y[:, 3:], float(mu)
+    )
     return {
         "t_s": np.asarray(t, dtype=np.float64),
         "a_m": a_m,

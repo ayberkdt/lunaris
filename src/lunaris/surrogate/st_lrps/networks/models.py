@@ -88,6 +88,10 @@ def compute_harmonic_w0_bands(
     return out
 
 
+# Pre-0.1.0rc2 compatibility name. Retained through at least 0.2.x.
+_compute_harmonic_w0_bands = compute_harmonic_w0_bands
+
+
 # ---------------------------------------------------------------------------
 # Residual SIREN block
 # ---------------------------------------------------------------------------
@@ -918,6 +922,10 @@ def get_output_head_params(model: nn.Module) -> list[nn.Parameter]:
     return list(linears[-1].parameters())
 
 
+# Pre-0.1.0rc2 compatibility name. Retained through at least 0.2.x.
+_get_output_head_params = get_output_head_params
+
+
 def _cfg_value(cfg: Any, key: str, default: Any = None) -> Any:
     if isinstance(cfg, Mapping):
         return cfg.get(key, default)
@@ -1488,6 +1496,8 @@ __all__ = [
     "siren_init_hidden_",
     "compute_harmonic_w0_bands",
     "get_output_head_params",
+    "_compute_harmonic_w0_bands",
+    "_get_output_head_params",
     "build_model_from_config",
     "MODEL_BUILDER_VERSION",
     "ARCH_SIGNATURE_FIELDS",

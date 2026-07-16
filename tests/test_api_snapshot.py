@@ -1,7 +1,7 @@
-"""Keep docs/api_snapshot.json in sync with the actual facade surfaces.
+"""Keep docs/api_snapshot.json in sync with the supported module surfaces.
 
-The snapshot is the machine-readable public-API inventory (facade ``__all__``
-lists plus every cross-unit single-underscore import inside ``src/lunaris``).
+The snapshot is driven by ``docs/public_api_manifest.json`` (module ``__all__``
+lists plus every cross-unit private import/access inside ``src/lunaris``).
 When this test fails, the public surface changed: regenerate the snapshot with
 ``python tools/api_inventory.py --write`` and review the diff in the same PR —
 the diff *is* the API review artifact.
@@ -36,13 +36,23 @@ def test_api_snapshot_is_current() -> None:
     )
 
 
-def test_snapshot_facades_have_static_all() -> None:
-    """Every tracked facade must keep a literal, AST-readable ``__all__``."""
+def test_snapshot_modules_have_static_all() -> None:
+    """Every manifest module must keep a literal, AST-readable ``__all__``."""
     tool = _load_tool()
     inventory = tool.build_inventory()
     missing = [
         module
-        for module, exported in inventory["facade_all"].items()
+        for module, exported in inventory["module_all"].items()
         if exported is None
     ]
-    assert missing == [], f"facades lost their literal __all__: {missing}"
+    assert missing == [], f"manifest modules lost their literal __all__: {missing}"
+
+
+def test_snapshot_manifest_tiers_are_preserved() -> None:
+    tool = _load_tool()
+    inventory = tool.build_inventory()
+    expected = {
+        entry["module"]: entry["tier"]
+        for entry in tool.load_public_api_manifest()
+    }
+    assert inventory["module_tiers"] == expected

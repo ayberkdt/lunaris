@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.math_utils import osculating_elements_vec
+from lunaris.common.math_utils import screening_orbital_elements_vec
 
 BATCH_SUMMARY_SCHEMA_VERSION = 1
 
@@ -95,7 +95,9 @@ def summarize_ensemble(
         else np.asarray(valid_mask, dtype=np.float64) > 0.5
     )
 
-    a_m, e, inc, argp = osculating_elements_vec(Y_arr[:, :, :3], Y_arr[:, :, 3:], float(mu_m3s2))
+    a_m, e, inc, argp = screening_orbital_elements_vec(
+        Y_arr[:, :, :3], Y_arr[:, :, 3:], float(mu_m3s2)
+    )
     h_peri_km = (a_m * (1.0 - e) - float(r_ref_m)) / 1_000.0
 
     # Snapshot validity: finite AND pre-impact (frozen post-impact rows would

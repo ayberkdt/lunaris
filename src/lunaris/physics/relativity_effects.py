@@ -300,6 +300,15 @@ class RelativityModel:
         return out
 
 
+# Compatibility aliases for the pre-0.1.0rc2 kernel names.  These names were
+# importable (three were also present in ``__all__``), so keep them through at
+# least the 0.2.x line under the project's one-MINOR compatibility policy.
+_schwarzschild_components = schwarzschild_components
+_external_schwarzschild_diff_components = external_schwarzschild_diff_components
+_de_sitter_components = de_sitter_components
+_external_1pn_components = external_1pn_components
+
+
 
 # =============================================================================
 # 3.                            PUBLIC API
@@ -313,11 +322,22 @@ __all__ = (
 
     "calc_external_1pn_accel",        # External-body Schwarzschild + de Sitter wrapper
 
+    "schwarzschild_components",
+
     "external_schwarzschild_diff_components",
 
     "de_sitter_components",
 
     "external_1pn_components",
+
+    # Compatibility exports retained through at least 0.2.x.
+    "_schwarzschild_components",
+
+    "_external_schwarzschild_diff_components",
+
+    "_de_sitter_components",
+
+    "_external_1pn_components",
 
     # --- Model interface ---
     "RelativityModel",                # Convenience wrapper class (holds mu)

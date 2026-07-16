@@ -236,7 +236,7 @@ consumption (see `docs/PUBLIC_API.md` "Naming And Boundary Policy" and
   JIT kernels, terrain-freeze payload, relativity components, postprocess
   extraction helpers, ST-LRPS dataset/split/network helpers, core
   time-grid/provider accessors), moving it to a shared home
-  (`osculating_elements_vec` -> `common.math_utils`), or relocating it to the
+  (`screening_orbital_elements_vec` -> `common.math_utils`), or relocating it to the
   app-neutral foundation (`NoWheelOnSpinFilter` ->
   `ui_foundation.event_filters`).
 - Deliberately NOT renamed: intra-package underscore helpers (the
