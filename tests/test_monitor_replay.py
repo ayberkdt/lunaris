@@ -61,12 +61,16 @@ def write_artifact(path, n_samples: int = 25, cadence_s: float = 60.0) -> None:
 def run_loader_sync(path) -> dict:
     """Execute the loader body synchronously and collect its signals."""
     loader = ReplayLoader(str(path))
-    out: dict = {"count": None, "meta": None, "batches": [], "ok": None, "failed": None}
+    out: dict = {
+        "count": None, "meta": None, "batches": [], "ok": None,
+        "failed": None, "warnings": [],
+    }
     loader.count_ready.connect(lambda n: out.__setitem__("count", n))
     loader.meta_ready.connect(lambda p: out.__setitem__("meta", p))
     loader.batch_ready.connect(lambda b: out["batches"].append(list(b)))
     loader.finished_ok.connect(lambda n: out.__setitem__("ok", n))
     loader.failed.connect(lambda d: out.__setitem__("failed", d))
+    loader.warning.connect(lambda d: out["warnings"].append(d))
     loader.run()  # same-thread execution -> direct signal delivery
     return out
 
@@ -104,6 +108,42 @@ class TestReplayLoader:
         out = run_loader_sync(tmp_path / "deleted_mid_session.ndjson")
         assert out["failed"] is not None
         assert out["ok"] is None
+
+    def test_probe_samples_are_excluded_from_scientific_replay(self, tmp_path):
+        _app()
+        artifact = tmp_path / "telemetry.ndjson"
+        accepted = TelemetrySample(
+            run_id="r", sequence_id=0, simulation_time_s=2.0,
+            sample_kind="output_state", altitude_m=10.0,
+        )
+        probe = TelemetrySample(
+            run_id="r", sequence_id=0, simulation_time_s=1.0,
+            sample_kind="rhs_probe", altitude_m=999.0,
+        )
+        artifact.write_text(
+            encode_sample_line(probe) + "\n" + encode_sample_line(accepted) + "\n",
+            encoding="utf-8",
+        )
+        out = run_loader_sync(artifact)
+        samples = [sample for batch in out["batches"] for sample in batch]
+        assert out["count"] == 1
+        assert out["ok"] == 1
+        assert samples == [accepted]
+        assert any("RHS probe" in warning for warning in out["warnings"])
+
+    def test_old_structured_samples_are_readable_but_not_scientific(self, tmp_path):
+        _app()
+        artifact = tmp_path / "telemetry.ndjson"
+        artifact.write_text(
+            '[TELEMETRY] {"schema_version":"lunaris_telemetry_v1","run_id":"old",'
+            '"sequence_id":0,"simulation_time_s":1.0,"altitude_m":42.0}\n',
+            encoding="utf-8",
+        )
+        out = run_loader_sync(artifact)
+        assert out["count"] == 0
+        assert out["ok"] is None
+        assert "uncertain" in out["failed"].lower()
+        assert out["warnings"]
 
     def test_malformed_lines_are_skipped_but_all_malformed_fails(self, tmp_path):
         _app()
