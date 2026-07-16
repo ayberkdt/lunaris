@@ -86,6 +86,59 @@ class OutputPageState:
     output_dir: str = ""
     generate_3d_plots: bool = False
     downsample_3d: int = 1
+    report_preset: str = "standard"
+
+
+class _ReportRegenerationWorker(QtCore.QThread):
+    """Regenerate selected-run presentation artifacts off the GUI thread."""
+
+    completed = QtCore.Signal(bool, str, str)
+
+    def __init__(self, run_dir: Path, preset: str, parent: QtCore.QObject | None = None) -> None:
+        super().__init__(parent)
+        self._run_dir = Path(run_dir)
+        self._preset = preset
+
+    def run(self) -> None:
+        try:
+            from lunaris.analysis.reporting.manager import regenerate_run_package
+
+            outputs = regenerate_run_package(self._run_dir, preset=self._preset)
+            self.completed.emit(True, "Report package regenerated.", str(outputs["pdf"]))
+        except Exception as exc:
+            self.completed.emit(False, f"Report regeneration failed: {exc}", "")
+
+
+class _RunComparisonWorker(QtCore.QThread):
+    """Compare two persisted analysis packages without blocking the UI."""
+
+    completed = QtCore.Signal(bool, str, str)
+
+    def __init__(
+        self,
+        baseline_run_dir: Path,
+        candidate_run_dir: Path,
+        parent: QtCore.QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._baseline_run_dir = Path(baseline_run_dir)
+        self._candidate_run_dir = Path(candidate_run_dir)
+
+    def run(self) -> None:
+        try:
+            from lunaris.analysis.run_comparison import compare_run_packages
+
+            outputs = compare_run_packages(
+                self._baseline_run_dir,
+                self._candidate_run_dir,
+            )
+            self.completed.emit(
+                True,
+                "Run comparison generated.",
+                outputs["comparison_markdown"],
+            )
+        except Exception as exc:
+            self.completed.emit(False, f"Run comparison failed: {exc}", "")
 
 
 class ResultsExportPage(QtWidgets.QWidget):
@@ -118,6 +171,7 @@ class ResultsExportPage(QtWidgets.QWidget):
             output_dir=str(self._project_root / "outputs" / "missions"),
             generate_3d_plots=False,
             downsample_3d=1,
+            report_preset="standard",
         )
 
         self._build_ui()
@@ -136,6 +190,7 @@ class ResultsExportPage(QtWidgets.QWidget):
             output_dir=self.ent_out_dir.text().strip(),
             generate_3d_plots=bool(self.toggle_anim3d.isChecked()),
             downsample_3d=int(self.spin_downsample_3d.value()),
+            report_preset=self.cb_report_preset.currentText().lower(),
         )
 
     def apply_state(self, state: OutputPageState) -> None:
@@ -151,6 +206,8 @@ class ResultsExportPage(QtWidgets.QWidget):
         self.ent_out_dir.setText(state.output_dir or str(self._project_root / "outputs" / "missions"))
         self.toggle_anim3d.setChecked(bool(state.generate_3d_plots))
         self.spin_downsample_3d.setValue(max(1, int(state.downsample_3d or 1)))
+        preset = str(getattr(state, "report_preset", "standard")).lower()
+        self.cb_report_preset.setCurrentText(preset.title() if preset in {"quick", "standard", "paper"} else "Standard")
         self._sync_3d_controls()
 
     def set_output_dir(self, output_dir: str) -> None:
@@ -271,6 +328,19 @@ class ResultsExportPage(QtWidgets.QWidget):
         downsample_row.addWidget(self.spin_downsample_3d)
         options_row.addLayout(downsample_row)
 
+        options_row.addSpacing(24)
+        preset_row = QtWidgets.QHBoxLayout()
+        preset_row.addWidget(QtWidgets.QLabel("Report preset"))
+        self.cb_report_preset = NoWheelComboBox()
+        self.cb_report_preset.setAccessibleName("Report fidelity preset")
+        self.cb_report_preset.addItems(["Quick", "Standard", "Paper"])
+        self.cb_report_preset.setCurrentText("Standard")
+        self.cb_report_preset.setToolTip(
+            "Quick: fast review; Standard: normal engineering report; Paper: high-DPI plus SVG figures."
+        )
+        preset_row.addWidget(self.cb_report_preset)
+        options_row.addLayout(preset_row)
+
         options_row.addStretch(1)
         layout.addLayout(options_row)
 
@@ -316,6 +386,19 @@ class ResultsExportPage(QtWidgets.QWidget):
         self.lbl_runs_status.setObjectName("statusLabel")
         header_row.addWidget(self.lbl_runs_status)
         layout.addLayout(header_row)
+
+        report_row = QtWidgets.QHBoxLayout()
+        self.lbl_generated_report = QtWidgets.QLabel("")
+        self.lbl_generated_report.setObjectName("statusLabel")
+        self.lbl_generated_report.setWordWrap(True)
+        self.lbl_generated_report.setVisible(False)
+        report_row.addWidget(self.lbl_generated_report, 1)
+        self.btn_open_generated_report = QtWidgets.QPushButton("Open Report")
+        self.btn_open_generated_report.setIcon(get_icon("fa6s.file-pdf", THEME["fg_main"]))
+        self.btn_open_generated_report.setVisible(False)
+        self.btn_open_generated_report.clicked.connect(self._open_generated_report)
+        report_row.addWidget(self.btn_open_generated_report)
+        layout.addLayout(report_row)
 
         self.runs_empty = EmptyState(
             "No completed runs yet",
@@ -367,6 +450,31 @@ class ResultsExportPage(QtWidgets.QWidget):
         self.lbl_run_provenance.setWordWrap(True)
         self.lbl_run_provenance.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         detail.addWidget(self.lbl_run_provenance)
+
+        actions = QtWidgets.QGridLayout()
+        self.btn_open_analysis_report = QtWidgets.QPushButton("Open Analysis Report")
+        self.btn_open_analysis_report.clicked.connect(self._open_selected_report)
+        actions.addWidget(self.btn_open_analysis_report, 0, 0)
+        self.btn_regenerate_report = QtWidgets.QPushButton("Regenerate Report")
+        self.btn_regenerate_report.clicked.connect(self._regenerate_selected_report)
+        actions.addWidget(self.btn_regenerate_report, 0, 1)
+        self.btn_open_figures = QtWidgets.QPushButton("Open Figures Folder")
+        self.btn_open_figures.clicked.connect(self._open_selected_figures)
+        actions.addWidget(self.btn_open_figures, 0, 2)
+        self.btn_open_metrics = QtWidgets.QPushButton("Open Metrics JSON")
+        self.btn_open_metrics.clicked.connect(self._open_selected_metrics)
+        actions.addWidget(self.btn_open_metrics, 1, 0)
+        self.btn_open_budget = QtWidgets.QPushButton("Open Perturbation Budget")
+        self.btn_open_budget.clicked.connect(self._open_selected_budget)
+        actions.addWidget(self.btn_open_budget, 1, 1)
+        self.btn_compare_runs = QtWidgets.QPushButton("Compare with Another Run")
+        self.btn_compare_runs.setEnabled(False)
+        self.btn_compare_runs.setToolTip(
+            "Compare typed metrics from two completed canonical run packages."
+        )
+        self.btn_compare_runs.clicked.connect(self._compare_selected_run)
+        actions.addWidget(self.btn_compare_runs, 1, 2)
+        detail.addLayout(actions)
 
         self.gallery_runs = QtWidgets.QListWidget()
         self.gallery_runs.setAccessibleName("Run figure gallery")
@@ -444,6 +552,18 @@ class ResultsExportPage(QtWidgets.QWidget):
             provenance += f" - {len(record.reports)} report(s)"
         self.lbl_run_provenance.setText(provenance)
 
+        self.btn_open_analysis_report.setEnabled(bool(record.reports))
+        self.btn_regenerate_report.setEnabled(record.analysis_ready)
+        self.btn_open_figures.setEnabled(record.figures_dir is not None)
+        self.btn_open_metrics.setEnabled(record.metrics_json is not None)
+        self.btn_open_budget.setEnabled(record.force_budget_csv is not None)
+        comparison_candidates = [
+            item
+            for item in records
+            if item.run_dir != record.run_dir and item.analysis_ready
+        ]
+        self.btn_compare_runs.setEnabled(record.analysis_ready and bool(comparison_candidates))
+
         self.gallery_runs.clear()
         for figure in record.figures:
             item = QtWidgets.QListWidgetItem(figure.name)
@@ -461,6 +581,119 @@ class ResultsExportPage(QtWidgets.QWidget):
             item.setToolTip(str(report))
             item.setIcon(get_icon("fa6s.file-pdf", THEME["fg_main"]))
             self.gallery_runs.addItem(item)
+
+    def _selected_run(self) -> RunRecord | None:
+        row = self.list_runs.currentRow()
+        records = getattr(self, "_run_records", [])
+        return records[row] if 0 <= row < len(records) else None
+
+    def _open_selected_report(self) -> None:
+        record = self._selected_run()
+        if record and record.reports:
+            preferred = next((path for path in record.reports if path.name == "report.pdf"), record.reports[0])
+            self._open_path_externally(preferred)
+
+    def _open_selected_figures(self) -> None:
+        record = self._selected_run()
+        if record and record.figures_dir:
+            self._open_path_externally(record.figures_dir)
+
+    def _open_selected_metrics(self) -> None:
+        record = self._selected_run()
+        if record and record.metrics_json:
+            self._open_path_externally(record.metrics_json)
+
+    def _open_selected_budget(self) -> None:
+        record = self._selected_run()
+        if record and record.force_budget_csv:
+            self._open_path_externally(record.force_budget_csv)
+
+    def _regenerate_selected_report(self) -> None:
+        record = self._selected_run()
+        if record is None or not record.analysis_ready:
+            return
+        if getattr(self, "_report_worker", None) is not None:
+            return
+        self.btn_regenerate_report.setEnabled(False)
+        self.lbl_runs_status.setText("Regenerating report in background...")
+        preset = self.cb_report_preset.currentText().lower()
+        worker = _ReportRegenerationWorker(record.run_dir, preset, self)
+        self._report_worker = worker
+        worker.completed.connect(self._on_report_regenerated)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _compare_selected_run(self) -> None:
+        baseline = self._selected_run()
+        if baseline is None or not baseline.analysis_ready:
+            return
+        candidates = [
+            record
+            for record in getattr(self, "_run_records", [])
+            if record.run_dir != baseline.run_dir and record.analysis_ready
+        ]
+        if not candidates or getattr(self, "_comparison_worker", None) is not None:
+            return
+        labels = [f"{record.label} - {record.run_dir.name}" for record in candidates]
+        selected, accepted = QtWidgets.QInputDialog.getItem(
+            self,
+            "Compare Runs",
+            "Candidate run:",
+            labels,
+            0,
+            False,
+        )
+        if not accepted:
+            return
+        candidate = candidates[labels.index(selected)]
+        self.btn_compare_runs.setEnabled(False)
+        self.lbl_runs_status.setText("Comparing persisted run metrics in background...")
+        worker = _RunComparisonWorker(baseline.run_dir, candidate.run_dir, self)
+        self._comparison_worker = worker
+        worker.completed.connect(self._on_run_comparison_completed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    @QtCore.Slot(bool, str, str)
+    def _on_report_regenerated(self, success: bool, message: str, pdf_path: str) -> None:
+        self._report_worker = None
+        self.lbl_runs_status.setText(message)
+        if success:
+            self.set_generated_report({"report_pdf": pdf_path, "run_dir": str(Path(pdf_path).parent)})
+            self.refresh_runs()
+
+    @QtCore.Slot(bool, str, str)
+    def _on_run_comparison_completed(
+        self,
+        success: bool,
+        message: str,
+        markdown_path: str,
+    ) -> None:
+        self._comparison_worker = None
+        self.lbl_runs_status.setText(message)
+        self._on_run_selected(self.list_runs.currentRow())
+        if success and markdown_path:
+            self._open_path_externally(Path(markdown_path))
+
+    def set_generated_report(self, payload: dict | None) -> None:
+        """Show the report path emitted by the just-completed CLI run."""
+        path = Path(str((payload or {}).get("report_pdf", "")))
+        if not path.is_file():
+            self._generated_report_path = None
+            self.lbl_generated_report.setVisible(False)
+            self.btn_open_generated_report.setVisible(False)
+            return
+        self._generated_report_path = path
+        self.lbl_generated_report.setText(f"Analysis report ready: {path}")
+        self.lbl_generated_report.setVisible(True)
+        self.btn_open_generated_report.setVisible(True)
+        self.refresh_runs()
+        self._refresh_artifact_browser()
+
+    def _open_generated_report(self) -> None:
+        path = getattr(self, "_generated_report_path", None)
+        if path and Path(path).is_file():
+            self._open_path_externally(Path(path))
 
     def _thumbnail_icon(self, path: Path) -> QtGui.QIcon | None:
         """Load a small aspect-preserving thumbnail (fast scaled decode)."""

@@ -1928,6 +1928,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if not clean_line:
             return
 
+        if clean_line.startswith("[REPORT]"):
+            try:
+                payload = json.loads(clean_line[len("[REPORT]"):].strip())
+                if isinstance(payload, dict):
+                    self.page_output.set_generated_report(payload)
+                    self._log_message(
+                        f"[Run] Analysis report ready: {payload.get('report_pdf', 'path unavailable')}",
+                        severity="system",
+                    )
+                    return
+            except Exception:
+                pass
+
         # Structured engine diagnostics emitted once at the end of a run.
         # Routed to the Results page panel; a malformed payload falls through
         # to the plain log so nothing is silently dropped.

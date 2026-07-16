@@ -62,6 +62,33 @@ def test_index_finds_flat_and_nested_runs(tmp_path: Path) -> None:
     assert rec.config_sha256
 
 
+def test_index_exposes_canonical_analysis_artifacts(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, "run_analysis", figures=0, reports=0)
+    figures = run_dir / "figures"
+    figures.mkdir()
+    (figures / "orbit_overview.png").write_bytes(b"\x89PNG\r\n")
+    for name in (
+        "metrics.json",
+        "config.json",
+        "diagnostics.json",
+        "provenance.json",
+    ):
+        (run_dir / name).write_text("{}", encoding="utf-8")
+    for name in ("events.csv", "orbital_elements.csv", "force_budget.csv"):
+        (run_dir / name).write_text("header\n", encoding="utf-8")
+    (run_dir / "report.md").write_text("# report", encoding="utf-8")
+    (run_dir / "report.pdf").write_bytes(b"%PDF-1.4")
+
+    (record,) = index_runs(tmp_path)
+    assert record.analysis_ready is True
+    assert record.report_markdown == run_dir / "report.md"
+    assert record.metrics_json == run_dir / "metrics.json"
+    assert record.force_budget_csv == run_dir / "force_budget.csv"
+    assert record.figures_dir == figures
+    assert figures / "orbit_overview.png" in record.figures
+    assert run_dir / "report.pdf" in record.reports
+
+
 def test_index_root_itself_can_be_a_run(tmp_path: Path) -> None:
     (tmp_path / "run_config.json").write_text("{}", encoding="utf-8")
     (tmp_path / "alt.png").write_bytes(b"\x89PNG")

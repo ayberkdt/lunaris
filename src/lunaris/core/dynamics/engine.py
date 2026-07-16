@@ -1160,7 +1160,30 @@ class DynamicsEngine:
     # Debug / reporting
     # -------------------------------------------------------------------------
     def get_acceleration_breakdown(self, t: float, y: np.ndarray) -> dict[str, float]:
-        """Return acceleration component norms at epoch t (debug/reporting)."""
+        """Return acceleration component norms at epoch ``t``.
+
+        This compatibility surface is derived from the authoritative vector
+        hook so reporting callers that only need magnitudes retain the exact
+        historical contract without encouraging invalid magnitude arithmetic.
+        """
+        vectors = self.get_acceleration_vector_breakdown(t, y)
+        return {
+            name: float(np.linalg.norm(np.asarray(vector, dtype=np.float64)))
+            for name, vector in vectors.items()
+        }
+
+    def get_acceleration_vector_breakdown(
+        self,
+        t: float,
+        y: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        """Return inertial acceleration vectors for every active force term.
+
+        Aggregate rows (for example ``Solid Tides`` and ``Relativity (1PN)``)
+        are intentionally retained alongside their constituent rows because
+        they are useful diagnostics. Consumers forming totals must exclude
+        either the aggregate or its constituents to avoid double counting.
+        """
         if not self._prep:
             self.build_rhs(force_rebuild=False)
 
@@ -1180,7 +1203,7 @@ class DynamicsEngine:
         mu_s = float(ep.mu_sun_m3s2)
         mu_e = float(ep.mu_earth_m3s2)
 
-        out: dict[str, float] = {}
+        out: dict[str, np.ndarray] = {}
 
         # Ephemeris (Python-side fetch)
         sun = np.zeros(3, dtype=float)
@@ -1201,8 +1224,11 @@ class DynamicsEngine:
             earth[:] = (ex, ey, ez)
             q[:] = (q0, q1, q2, q3)
 
-        def _norm3(ax: float, ay: float, az: float) -> float:
-            return float(math.sqrt(ax * ax + ay * ay + az * az))
+        def _record(name: str, ax: float, ay: float, az: float) -> None:
+            vector = np.asarray((ax, ay, az), dtype=np.float64)
+            if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+                raise ValueError(f"non-finite acceleration vector for {name}")
+            out[name] = vector
 
         # Gravity
         if req.use_sh:
@@ -1212,7 +1238,7 @@ class DynamicsEngine:
                 ax_i, ay_i, az_i = quat_rotate_vec(
                     q[0], -q[1], -q[2], -q[3], float(ax_f), float(ay_f), float(az_f)
                 )
-                out["Gravity (ST-LRPS)"] = _norm3(ax_i, ay_i, az_i)
+                _record("Gravity (ST-LRPS)", ax_i, ay_i, az_i)
             else:
                 rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
 
@@ -1256,19 +1282,19 @@ class DynamicsEngine:
                     WS,
                 )
                 ax_i, ay_i, az_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], ax_f, ay_f, az_f)
-                out["Gravity (SH)"] = _norm3(ax_i, ay_i, az_i)
+                _record("Gravity (SH)", ax_i, ay_i, az_i)
         else:
             ax0, ay0, az0 = compute_point_mass_acceleration(r[0], r[1], r[2], float(mu_m))
-            out["Gravity (PM)"] = _norm3(ax0, ay0, az0)
+            _record("Gravity (PM)", ax0, ay0, az0)
 
         # Third body
         if req.use_3rd_sun:
             ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], sun[0], sun[1], sun[2], mu_s)
-            out["3rd Body (Sun)"] = _norm3(ax3, ay3, az3)
+            _record("3rd Body (Sun)", ax3, ay3, az3)
 
         if req.use_3rd_earth:
             ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], earth[0], earth[1], earth[2], mu_e)
-            out["3rd Body (Earth)"] = _norm3(ax3, ay3, az3)
+            _record("3rd Body (Earth)", ax3, ay3, az3)
 
         if req.use_earth_j2:
             j2x, j2y, j2z = accel_j2_oblate_diff_numba(
@@ -1285,7 +1311,7 @@ class DynamicsEngine:
                 float(ej.ay),
                 float(ej.az),
             )
-            out["3rd Body (Earth J2)"] = _norm3(j2x, j2y, j2z)
+            _record("3rd Body (Earth J2)", j2x, j2y, j2z)
 
         # Solid-body tides
         if req.use_tides:
@@ -1311,8 +1337,7 @@ class DynamicsEngine:
                     bool(tp.use_k3),
                 )
                 atx_i, aty_i, atz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], atx_f, aty_f, atz_f)
-                earth_norm = _norm3(atx_i, aty_i, atz_i)
-                out["Solid Tides (Earth)"] = earth_norm
+                _record("Solid Tides (Earth)", atx_i, aty_i, atz_i)
                 tide_x += atx_i
                 tide_y += aty_i
                 tide_z += atz_i
@@ -1334,13 +1359,12 @@ class DynamicsEngine:
                     bool(tp.use_k3),
                 )
                 atx_i, aty_i, atz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], atx_f, aty_f, atz_f)
-                sun_norm = _norm3(atx_i, aty_i, atz_i)
-                out["Solid Tides (Sun)"] = sun_norm
+                _record("Solid Tides (Sun)", atx_i, aty_i, atz_i)
                 tide_x += atx_i
                 tide_y += aty_i
                 tide_z += atz_i
 
-            out["Solid Tides"] = _norm3(tide_x, tide_y, tide_z)
+            _record("Solid Tides", tide_x, tide_y, tide_z)
 
         # SRP
         if req.use_srp:
@@ -1368,7 +1392,7 @@ class DynamicsEngine:
                 bool(getattr(srp_cfg, "enable_moon_eclipse", True)),
                 enable_earth,
             )
-            out["SRP"] = _norm3(asx, asy, asz)
+            _record("SRP", asx, asy, asz)
 
         # Albedo (reflected solar radiation pressure)
         if req.use_albedo:
@@ -1465,7 +1489,7 @@ class DynamicsEngine:
                 )
 
             aax_i, aay_i, aaz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], aax_f, aay_f, aaz_f)
-            out["Albedo"] = _norm3(aax_i, aay_i, aaz_i)
+            _record("Albedo", aax_i, aay_i, aaz_i)
 
         # Lunar thermal IR radiation pressure
         if req.use_thermal:
@@ -1504,7 +1528,7 @@ class DynamicsEngine:
                 bool(th.enable_eclipse),
             )
             athx_i, athy_i, athz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], athx_f, athy_f, athz_f)
-            out["Thermal IR"] = _norm3(athx_i, athy_i, athz_i)
+            _record("Thermal IR", athx_i, athy_i, athz_i)
 
         # Relativity
         if req.use_rel:
@@ -1512,7 +1536,7 @@ class DynamicsEngine:
             rel_x = arx
             rel_y = ary
             rel_z = arz
-            out["Relativity (Moon Schwarzschild)"] = _norm3(arx, ary, arz)
+            _record("Relativity (Moon Schwarzschild)", arx, ary, arz)
 
             if req.use_rel_external:
                 svx, svy, svz = interp_vec3_derivative_safe(
@@ -1542,12 +1566,12 @@ class DynamicsEngine:
                 ext_x = exx + eex
                 ext_y = exy + eey
                 ext_z = exz + eez
-                out["Relativity (External 1PN)"] = _norm3(ext_x, ext_y, ext_z)
+                _record("Relativity (External 1PN)", ext_x, ext_y, ext_z)
                 rel_x += ext_x
                 rel_y += ext_y
                 rel_z += ext_z
 
-            out["Relativity (1PN)"] = _norm3(rel_x, rel_y, rel_z)
+            _record("Relativity (1PN)", rel_x, rel_y, rel_z)
 
         return out
 

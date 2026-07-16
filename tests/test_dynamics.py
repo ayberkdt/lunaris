@@ -170,9 +170,11 @@ def test_acceleration_breakdown_smoke(engine_point_mass: tuple[DynamicsEngine, c
 
     y0 = _build_default_state()
     comp = eng.get_acceleration_breakdown(0.0, y0)
+    vectors = eng.get_acceleration_vector_breakdown(0.0, y0)
 
     assert isinstance(comp, dict)
     assert len(comp) >= 1
+    assert set(vectors) == set(comp)
 
     # Expect at least a gravity term in minimal config.
     has_gravity = any("gravity" in k.lower() for k in comp.keys())
@@ -182,6 +184,8 @@ def test_acceleration_breakdown_smoke(engine_point_mass: tuple[DynamicsEngine, c
     for _k, v in comp.items():
         assert math.isfinite(float(v))
         assert float(v) >= 0.0
+        assert np.asarray(vectors[_k]).shape == (3,)
+        assert np.linalg.norm(vectors[_k]) == pytest.approx(v)
 
 
 def test_srp_config_controls_dynamics_eclipse() -> None:
