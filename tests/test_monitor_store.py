@@ -89,6 +89,24 @@ class TestSequenceHandling:
 
 
 class TestChannels:
+    def test_rhs_probe_and_uncertain_legacy_never_enter_trajectory_channels(self):
+        store = TelemetryStore(capacity=16)
+        store.begin_run("run_a")
+        state = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+        probe = sample(
+            0, sample_kind="rhs_probe", altitude_m=999.0, state_inertial=state
+        )
+        uncertain = sample(
+            0, sample_kind="legacy_unknown", altitude_m=888.0, state_inertial=state
+        )
+        assert store.append(probe) == "rhs_probe"
+        assert store.append(uncertain) == "uncertain_sample"
+        assert store.n_samples == 0
+        assert store.snapshot("altitude_m")[0].size == 0
+        assert store.snapshot_state()[0].size == 0
+        assert store.counters.rhs_probes == 1
+        assert store.counters.uncertain_samples == 1
+
     def test_never_seen_channel_yields_empty_not_zeros(self):
         store = TelemetryStore(capacity=16)
         store.begin_run("run_a")

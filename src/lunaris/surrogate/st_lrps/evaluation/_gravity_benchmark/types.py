@@ -62,6 +62,13 @@ class BatchModelResult:
     output_dt_s: float
     status: str
     failure_reason: str = ""
+    # "fixed_step_rk" for the GPU batch kernels; "cpu_adaptive" for the
+    # per-scenario SciPy adaptive series (rk4_dt_s is NaN there).
+    integrator: str = "fixed_step_rk"
+    # Total RHS (acceleration) evaluations across all scenarios, when the
+    # propagator reports them (adaptive series); None for fixed-step results
+    # whose eval count is derived from n_steps * evals_per_step.
+    accel_evals_total: int | None = None
 
 
 @dataclass
@@ -170,6 +177,20 @@ def build_base_config(args: argparse.Namespace) -> SimConfig:
         enable_earth_j2=False,
     )
     return replace_sim_config(cfg, time=new_time, propagator=new_prop, flags=new_flags)
+
+
+def _cfg_with_tolerances(cfg: SimConfig, rtol: float, atol: float) -> SimConfig:
+    """Return a copy of ``cfg`` whose propagator uses the given tolerances.
+
+    The CPU adaptive surrogate series needs looser tolerances than the truth
+    run: a float32 surrogate RHS carries a relative noise floor around 1e-7,
+    and truth-grade tolerances (rtol 1e-10) push the step controller into a
+    rejection crawl against that noise instead of buying accuracy.
+    """
+    return replace_sim_config(
+        cfg,
+        propagator=replace(cfg.propagator, rtol=float(rtol), atol=float(atol)),
+    )
 
 
 def _cfg_with_integrator(cfg: SimConfig, integrator: str) -> SimConfig:

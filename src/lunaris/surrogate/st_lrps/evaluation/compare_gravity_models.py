@@ -286,6 +286,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                        "interpolation strategy. Legacy aliases match_dynamics_engine "
                        "and inertial_fixed_legacy are accepted at the CLI boundary."
                    ))
+    p.add_argument("--cpu-adaptive-surrogate", action="store_true",
+                   help="In --gpu-batch-compare mode, additionally propagate the "
+                        "ST-LRPS surrogate per scenario with the CPU adaptive truth "
+                        "integrator (same integrator and tolerances as the truth run) "
+                        "and report it as the ST_LRPS_CPU_<integrator> series. "
+                        "Against the GPU fixed-step surrogate series this separates "
+                        "surrogate field error from fixed-step integrator/dtype error "
+                        "in one report. Not compatible with trajectory-cache flags or "
+                        "--rebuild-metrics.")
+    p.add_argument("--cpu-adaptive-rtol", type=float, default=1.0e-8,
+                   help="Relative tolerance for the CPU adaptive surrogate series. "
+                        "Kept looser than the truth rtol on purpose: a float32 "
+                        "surrogate RHS has a ~1e-7 relative noise floor and "
+                        "truth-grade tolerances stall the adaptive step controller.")
+    p.add_argument("--cpu-adaptive-atol", type=float, default=1.0e-6,
+                   help="Absolute tolerance (m, m/s) for the CPU adaptive surrogate "
+                        "series. See --cpu-adaptive-rtol.")
     p.add_argument("--cache-truth", action="store_true",
                    help="Save SH200 DOP853 truth trajectories under output_dir/truth")
     p.add_argument("--reuse-truth-cache", action="store_true",

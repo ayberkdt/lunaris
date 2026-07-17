@@ -100,10 +100,14 @@ class TestHotPathSafety:
 
     def test_writer_failure_never_propagates(self):
         def broken_writer(_line: str) -> None:
-            raise OSError("stdout closed")
+            # An injected writer can raise an arbitrary ordinary Exception;
+            # the observation boundary must contain it.
+            raise LookupError("closed callback")
 
         emitter, _ = make_emitter(writer=broken_writer)
         emitter.emit(0.0, circular_state())  # must not raise
+        assert emitter.diagnostics.writer_failures == 1
+        assert emitter.diagnostics.first_failure_type == "LookupError"
 
     def test_zero_mu_still_emits_radius_and_speed(self):
         emitter, lines = make_emitter(mu_m3s2=0.0)
@@ -132,6 +136,54 @@ class TestSink:
             emitter.emit(float(i), circular_state())
         assert len(lines) == 7  # stdout emission unaffected
         assert emitter._sink_path is None  # sink disabled after repeated failures
+        assert emitter.diagnostics.sink_write_failures == 5
+        assert emitter.diagnostics.sink_disabled is True
+
+    def test_rhs_probe_is_stdout_only(self, tmp_path):
+        sink = tmp_path / "telemetry.ndjson"
+        emitter, lines = make_emitter(sink_path=str(sink))
+        emitter.emit_rhs_probe(0.0, circular_state())
+        emitter.emit(60.0, circular_state())
+        assert decode_sample_line(lines[0]).sample_kind == "rhs_probe"
+        assert decode_sample_line(lines[1]).sample_kind == "output_state"
+        persisted = sink.read_text(encoding="utf-8").splitlines()
+        assert len(persisted) == 1
+        assert decode_sample_line(persisted[0]).sample_kind == "output_state"
+
+
+class TestDiagnostics:
+    def test_sample_build_and_serialization_failures_are_bounded(self, monkeypatch):
+        emitter, _ = make_emitter()
+
+        def broken_build(*_args, **_kwargs):
+            raise ValueError(r"bad state at C:\\Users\\secret\\state.npy")
+
+        monkeypatch.setattr(emitter, "_build_sample", broken_build)
+        emitter.emit(0.0, circular_state())
+        assert emitter.diagnostics.sample_build_failures == 1
+        assert "secret" not in (emitter.diagnostics.first_failure_message or "")
+
+        emitter2, _ = make_emitter()
+        monkeypatch.setattr(
+            "lunaris.core.propagation.telemetry_emitter.encode_sample_line",
+            lambda _sample: (_ for _ in ()).throw(ValueError("cannot encode")),
+        )
+        emitter2.emit(0.0, circular_state())
+        assert emitter2.diagnostics.serialization_failures == 1
+
+    def test_terrain_failure_drops_only_optional_channels(self):
+        def broken_rotation(_t, _r):
+            raise RuntimeError("rotation unavailable")
+
+        emitter, lines = make_emitter(
+            r_i_to_bf=broken_rotation,
+            surface_radius_m=lambda _lat, _lon: R_MOON,
+        )
+        emitter.emit(0.0, circular_state())
+        assert len(lines) == 1
+        sample = decode_sample_line(lines[0])
+        assert sample.terrain_clearance_m is None
+        assert emitter.diagnostics.terrain_enrichment_failures == 1
 
 
 def test_generate_run_id_is_unique_and_sortable():

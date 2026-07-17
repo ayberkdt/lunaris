@@ -17,6 +17,7 @@ from __future__ import annotations
 from PySide6 import QtCore
 
 from lunaris.common.telemetry_contract import (
+    SCIENTIFIC_SAMPLE_KINDS,
     TELEMETRY_META_PREFIX,
     TELEMETRY_SAMPLE_PREFIX,
     TelemetryDecodeError,
@@ -42,6 +43,7 @@ class ReplayLoader(QtCore.QThread):
     batch_ready = QtCore.Signal(object)   # list[TelemetrySample]
     finished_ok = QtCore.Signal(int)      # delivered sample count
     failed = QtCore.Signal(str)           # human-readable, fail-closed reason
+    warning = QtCore.Signal(str)          # readable artifact with reduced trust/content
 
     def __init__(self, path: str, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
@@ -61,10 +63,25 @@ class ReplayLoader(QtCore.QThread):
         # Pass 1: count sample lines so the store can be sized before data
         # arrives (bounded memory is decided up front, not discovered late).
         sample_lines = 0
+        probe_lines = 0
+        uncertain_lines = 0
         with open(self._path, encoding="utf-8") as handle:
             for line in handle:
-                if line.startswith(TELEMETRY_SAMPLE_PREFIX):
+                stripped = line.strip()
+                if not stripped.startswith(TELEMETRY_SAMPLE_PREFIX):
+                    continue
+                try:
+                    sample = decode_sample_line(stripped)
+                except UnsupportedTelemetrySchemaError:
+                    raise
+                except TelemetryDecodeError:
+                    continue
+                if sample.sample_kind in SCIENTIFIC_SAMPLE_KINDS:
                     sample_lines += 1
+                elif sample.sample_kind == "rhs_probe":
+                    probe_lines += 1
+                else:
+                    uncertain_lines += 1
         if self.isInterruptionRequested():
             return
         self.count_ready.emit(min(sample_lines, REPLAY_SAMPLE_HARD_CAP))
@@ -98,6 +115,8 @@ class ReplayLoader(QtCore.QThread):
                 except TelemetryDecodeError:
                     malformed += 1
                     continue
+                if sample.sample_kind not in SCIENTIFIC_SAMPLE_KINDS:
+                    continue
                 batch.append(sample)
                 delivered += 1
                 if len(batch) >= _BATCH_SIZE:
@@ -108,7 +127,26 @@ class ReplayLoader(QtCore.QThread):
         if batch:
             self.batch_ready.emit(batch)
 
+        if probe_lines:
+            self.warning.emit(
+                f"Excluded {probe_lines} RHS probe sample(s) from scientific replay."
+            )
+        if uncertain_lines:
+            self.warning.emit(
+                f"Excluded {uncertain_lines} legacy sample(s): accepted-state semantics "
+                "cannot be established for this artifact."
+            )
+
         if delivered == 0:
+            if uncertain_lines:
+                self.failed.emit(
+                    "This legacy artifact is readable, but its samples have uncertain RHS/accepted-state "
+                    "semantics and cannot be shown as a scientific trajectory."
+                )
+                return
+            if probe_lines:
+                self.failed.emit("The artifact contains RHS probes but no accepted/output trajectory states.")
+                return
             if malformed:
                 self.failed.emit(
                     "The artifact contains telemetry lines but none could be decoded."

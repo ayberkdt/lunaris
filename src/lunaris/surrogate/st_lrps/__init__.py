@@ -14,6 +14,6 @@ those costs explicitly.
 
 from __future__ import annotations
 
-from lunaris._version import __version__
+from lunaris import __version__
 
 __all__ = ["__version__"]

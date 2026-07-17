@@ -29,15 +29,24 @@ Structured telemetry is versioned (`lunaris_telemetry_v1`) and typed via
 - `[TELEMETRY_META] {json}` — once per run: requested backend facts,
   integrator, gravity model/degree, config hash, git commit, μ, cadence
   (`TelemetryProvenance`). Emitted by the CLI before propagation.
-- `[TELEMETRY] {json}` — one `TelemetrySample` per telemetry cadence tick:
-  SI state vector (m, m/s), radius/altitude/speed, osculating orbital
-  elements, optional terrain channels, monotonic `sequence_id`.
+- `[TELEMETRY] {json}` — a typed `TelemetrySample` with an explicit
+  `sample_kind`: `output_state`, `accepted_state`, or `rhs_probe`. Physical
+  channels stay SI; sequence ids are monotonic within the trajectory or probe
+  stream.
 
 Rules the implementation enforces:
 
-- Emission is opt-in (`--enable-telemetry` / `--telem-cadence-s`) and
-  best-effort: telemetry can never fail or slow a run beyond the cadence-gated
-  single float comparison per RHS evaluation.
+- Adaptive replay samples are built only from the final `solve_ivp` output grid
+  returned in `PropagationResult`; Lunaris does not reintegrate or interpolate a
+  second trajectory for telemetry. Fixed-step replay samples are completed
+  output states. A refined terminal event state is included exactly once.
+- Cadence-gated RHS observations are labelled `rhs_probe`. They support live
+  progress only, may be non-monotonic in solver time, and never enter the
+  scientific replay trajectory or its state-derived widgets.
+- Emission is opt-in and best-effort. Build, serialization, writer, sink, and
+  terrain-enrichment failures are bounded counters in end-of-run diagnostics;
+  the first failure is sanitized and recorded once. Repeated sink failures
+  disable that sink without interrupting propagation.
 - Non-finite values are dropped at encode time (`allow_nan=False`); the
   consumer maps anything non-finite to "channel missing", never zero.
 - **Singularity honesty**: for near-circular orbits `argp` is omitted, for
@@ -45,17 +54,19 @@ Rules the implementation enforces:
   "undefined (circular/equatorial orbit)" instead of a fake 0°.
 - Unknown `schema_version` fails closed: the line is surfaced in the console
   and a warning banner appears on the Monitor page.
-- Legacy bare-JSON telemetry (`{"t_s": ..., "alt_km": ...}`) is still parsed
-  through a compatibility adapter, so old logs and third-party producers keep
-  working (with reduced channel availability).
+- Legacy bare-JSON and old v1 samples without `sample_kind` remain decodable,
+  but are marked `legacy_unknown`. Because historical v1 emission occurred
+  inside the RHS wrapper, the monitor does not silently claim that these were
+  accepted states: trajectory widgets exclude them and show an uncertainty
+  warning.
 
 ## Cadences (three, deliberately separate)
 
-1. **Integrator cadence** — internal steps/RHS evaluations; never throttled or
-   observed per-evaluation.
-2. **Telemetry sampling cadence** — `--telem-cadence-s` (UI default derives
-   from the output cadence); sample construction/serialization runs only at
-   this cadence.
+1. **Integrator cadence** — internal steps/RHS evaluations. Adaptive stages and
+   rejected trials are solver internals, not trajectory states.
+2. **Live probe cadence** — `--telem-cadence-s`; only explicit `rhs_probe`
+   observations are cadence-gated on the RHS path. Replay trajectory emission
+   follows the resolved output grid after integration.
 3. **UI paint cadence** — the monitor controller batches store updates through
    a ~60 ms QTimer (≤ ~16 Hz); widgets re-render from store snapshots, never
    per incoming line.
@@ -95,13 +106,15 @@ placeholder without affecting the rest of the workspace.
 
 ## Replay artifact
 
-`--telemetry-artifact on` (UI-launched runs enable it automatically) mirrors
-the emitted protocol lines into the canonical run directory as
-`telemetry.ndjson` — one meta line followed by sample lines, exactly the
-stdout payloads. See `docs/CONFIG_AND_ARTIFACT_CONTRACTS.md`. The Run History
-indexer (`lunaris.ui.core.results_index.RunRecord.has_telemetry`) flags runs
-that can be replayed. Loading happens on a worker thread in batches; the UI
-thread never blocks on file IO.
+`--telemetry-artifact on` (UI-launched runs enable it automatically) writes
+`telemetry.ndjson` in the canonical run directory. Its policy is one provenance
+record (`replay_policy=output_states_only`) followed by accepted/output
+trajectory states; optional events and diagnostics may be carried by those
+records. Internal-stage/RHS probes are never written to this artifact. The Run
+History index records both artifact presence and its declared replay policy.
+Loading happens on a worker thread in batches; probes in a foreign/mixed file
+are filtered, and an artifact containing only uncertain legacy samples is
+readable but is not rendered as a scientific trajectory.
 
 A run without the artifact still opens: provenance/diagnostics widgets render
 from `run_config.json`/`run_diagnostics.json` context where available, and
@@ -131,8 +144,9 @@ console warning — a layout file can never block application startup.
 ## Performance envelope
 
 - Telemetry disabled (default for library callers): zero overhead.
-- Telemetry enabled: one float comparison per RHS evaluation; sample build +
-  JSON encode only at telemetry cadence.
+- Telemetry enabled: the RHS hot path adds one cadence comparison and builds
+  only occasional `rhs_probe` samples; solver-returned output rows are encoded
+  once after integration for stdout/replay.
 - UI memory is bounded by the store capacity regardless of run length; the
   contract is tested (100 000 appends into a fixed-capacity ring).
 - Hidden widgets skip refresh work and catch up on show.
@@ -143,7 +157,9 @@ console warning — a layout file can never block application startup.
   from the integrated state — badge says "derived".
 - Altitude is relative to the mean reference radius unless the terrain
   channel is shown; the impact threshold at 0 km refers to the mean radius.
-- Telemetry samples are taken at telemetry cadence, not at integrator steps;
-  min/max stats reflect the sampled series, not the continuous trajectory.
+- Replay samples are resolved output-grid states, not every accepted internal
+  adaptive step and not a continuous trajectory. Min/max values therefore
+  describe that output grid. Live `rhs_probe` values are debug observations and
+  are never merged into those statistics.
 - "Effective backend" is measured by the engine and arrives with the
   end-of-run diagnostics; before that, only requested facts are shown.

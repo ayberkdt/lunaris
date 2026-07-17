@@ -186,6 +186,24 @@ CLI (lunaris.cli.main) / UI (lunaris.ui.app)
   → lunaris.analysis.reporting.{plotting,manager} (PNG/PDF output)
 ```
 
+### Propagation telemetry boundary
+
+`lunaris.common.telemetry_contract` is the dependency-light wire SSOT shared by
+the engine and Mission Monitor. Every current sample declares `sample_kind`.
+Adaptive and fixed-step runners expose the scientific trajectory only through
+`PropagationResult.t/y`; after integration, the propagator emits those exact
+rows as `output_state`. The adaptive RHS wrapper may emit cadence-gated
+`rhs_probe` observations for live progress, but probes are not persisted to
+`telemetry.ndjson` and the UI store never routes them into trajectory channels.
+
+The replay artifact declares `replay_policy=output_states_only`, contains one
+provenance record followed by accepted/output states, and is observational: no
+telemetry callback changes the state, tolerances, step choice, events, or force
+model. Old v1 and bare-JSON records without explicit semantics decode as
+`legacy_unknown`; presentation reports the uncertainty rather than promoting
+them to accepted-state data. Telemetry failures are counted and attached to
+end-of-run diagnostics, never raised back into propagation.
+
 Perturbation Budget Analysis is a sibling analysis flow:
 
 ```text

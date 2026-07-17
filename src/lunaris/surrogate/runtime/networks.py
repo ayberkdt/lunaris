@@ -247,7 +247,21 @@ def _load_checkpoint(
     executing code embedded in the file.
     """
 
-    obj = safe_torch_load(path, map_location=device, trust_artifact=trust_artifact)
+    # Older checkpoints embed torch.__version__ as a TorchVersion object
+    # (a plain str subclass, safe to allowlist); new ones store str. Mirrors
+    # the artifact-manager loader so both paths accept the same checkpoints.
+    try:
+        from torch.torch_version import TorchVersion
+
+        safe_globals: tuple[type, ...] = (TorchVersion,)
+    except ImportError:
+        safe_globals = ()
+    obj = safe_torch_load(
+        path,
+        map_location=device,
+        trust_artifact=trust_artifact,
+        safe_globals=safe_globals,
+    )
     if not isinstance(obj, dict):
         raise TypeError(f"Unsupported checkpoint payload: {type(obj)!r}")
     return obj

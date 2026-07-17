@@ -165,6 +165,36 @@ def test_fmt_km_does_not_collapse_tiny_values_to_zero():
     assert tiny != "0.0000" and "e-" in tiny
 
 
+def _agg_rows(names_with_errs):
+    return [dict(model=m, median_rms_pos_err_km=e, p95_rms_pos_err_km=e * 1.2,
+                 max_rms_pos_err_km=e * 1.5, median_along_rms_km=e * 0.5,
+                 n_scenarios_ok=4)
+            for m, e in names_with_errs]
+
+
+def test_equivalent_degree_accepts_factory_and_legacy_names():
+    """The estimator must work on the names the harness actually emits.
+
+    Regression: the terminology refactor left the estimator matching a legacy
+    display prefix while the runtime factory emits a different one, so real
+    runs silently returned insufficient_data. Both eras must interpolate.
+    """
+    st_err = 0.05
+    factory = [(cgm._model_display_name("sh20"), 1.0),
+               (cgm._model_display_name("sh80"), 0.1),
+               (cgm._model_display_name("sh200"), 0.01),
+               (cgm._model_display_name("st_lrps"), st_err)]
+    legacy = [("NUMBA_CUDA_SH20_RK4", 1.0), ("NUMBA_CUDA_SH80_RK4", 0.1),
+              ("NUMBA_CUDA_SH200_RK4", 0.01), ("GPU_ST_LRPS_RK4", st_err)]
+    for rows in (factory, legacy):
+        eq = cgm.estimate_stlrps_equivalent_sh_degree(_agg_rows(rows))
+        med = eq["median_rms"]
+        assert med["status"] == "ok", med
+        assert med["closest_degree"] in (80, 200)
+        assert med["equivalent_degree_status"] == "interpolated"
+        assert 80.0 <= med["equivalent_degree"] <= 200.0
+
+
 def test_gpu_integrator_eval_counts_match_integrators():
     assert cgm._gpu_integrator_evals_per_step("light") == 2
     assert cgm._gpu_integrator_evals_per_step("medium") == 4
@@ -190,6 +220,55 @@ def test_runtime_metrics_throughput_and_eval_scaling():
     # Acceleration-eval throughput scales with the integrator, not a hardcoded 4.
     assert abs(rows4[0]["acceleration_evaluations_per_second"] - tps * 4) < 1e-6
     assert abs(rows2[0]["acceleration_evaluations_per_second"] - tps * 2) < 1e-6
+
+
+def test_runtime_metrics_cpu_adaptive_series_reports_honest_throughput():
+    import numpy as np
+    T, N = 11, 8
+    res = cgm.BatchModelResult(
+        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_CPU_DOP853",
+        backend="scipy_dop853", device="cuda:0", dtype="float64",
+        t=np.linspace(0, 600, T), y=np.zeros((T, N, 6)),
+        runtime_s=4.0, n_steps=1200, n_scenarios=N, rk4_dt_s=float("nan"),
+        output_dt_s=60.0, status="ok",
+        integrator="cpu_adaptive", accel_evals_total=9600)
+    truth = cgm.TruthTrajectorySet(
+        "sh200_dop853", {0: np.array([0.0])}, {0: np.zeros((1, 6))}, {0: 5.0})
+    row = cgm.build_gpu_runtime_metrics([res], truth, evals_per_step=4)[0]
+    assert row["integrator"] == "cpu_adaptive"
+    # No fixed step grid: steps/s must not be fabricated from n_steps. It is
+    # emitted as "" (N/A) rather than NaN so the benchmark validator's
+    # no-NaN-in-runtime-CSV check accepts a real config-driven run.
+    assert row["trajectory_steps_per_second"] == ""
+    # Eval throughput comes from the reported RHS count, not n_steps * 4.
+    assert abs(row["acceleration_evaluations_per_second"] - 9600 / 4.0) < 1e-6
+    assert abs(row["speedup_vs_truth_total"] - 5.0 / 4.0) < 1e-9
+
+
+def test_cpu_adaptive_runtime_row_has_no_nan_cells():
+    """Every numeric cell must be finite or empty so benchmark validation
+    (which rejects NaN/Inf in runtime_summary.csv) accepts the series."""
+    import math
+
+    import numpy as np
+    T, N = 6, 4
+    res = cgm.BatchModelResult(
+        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_CPU_DOP853",
+        backend="scipy_dop853", device="cpu", dtype="float64",
+        t=np.linspace(0, 600, T), y=np.zeros((T, N, 6)),
+        runtime_s=3.0, n_steps=500, n_scenarios=N, rk4_dt_s=float("nan"),
+        output_dt_s=60.0, status="ok",
+        integrator="cpu_adaptive", accel_evals_total=None)  # no nfev reported
+    truth = cgm.TruthTrajectorySet(
+        "sh200_dop853", {0: np.array([0.0])}, {0: np.zeros((1, 6))}, {0: 5.0})
+    row = cgm.build_gpu_runtime_metrics([res], truth, evals_per_step=4)[0]
+    for key, value in row.items():
+        if isinstance(value, str):
+            continue
+        assert math.isfinite(float(value)), f"{key} is not finite: {value!r}"
+    # With no nfev, both throughput columns are the honest empty marker.
+    assert row["trajectory_steps_per_second"] == ""
+    assert row["acceleration_evaluations_per_second"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +308,19 @@ def test_st_lrps_figures_present_and_selected(tmp_path):
     # Selected ST-LRPS scenario figures are emitted.
     assert any(n.startswith("selected_") and "position_error" in n for n in names)
     assert ds["selected"]  # ST-LRPS scenarios were selected
+
+
+def test_plots_with_cpu_adaptive_series_do_not_crash(tmp_path):
+    # A mixed report: GPU fixed-step baselines + both surrogate series.
+    ds = _build(n=6, err_scale_km=0.05,
+                models=("NUMBA_CUDA_SH20_RK4", "NUMBA_CUDA_SH80_RK4",
+                        "GPU_ST_LRPS_RK4", "ST_LRPS_CPU_DOP853"))
+    saved, pdf = _run(tmp_path, ds, _make_args(random_scenarios=6))
+    assert all(Path(p).exists() for p in saved)
+    assert pdf.exists()
+    # The GPU surrogate point (not the CPU adaptive one) anchors the estimate.
+    med = ds["equivalent"]["median_rms"]
+    assert med.get("st_lrps_error") is not None
 
 
 def test_missing_optional_models_do_not_crash(tmp_path):

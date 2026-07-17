@@ -734,11 +734,27 @@ def build_gpu_runtime_metrics(
         n_scenarios = max(int(result.n_scenarios), 1)
         runtime = float(result.runtime_s)
         propagated_seconds = float(result.t[-1] - result.t[0]) if int(len(result.t)) >= 2 else 0.0
+        integrator = str(getattr(result, "integrator", "fixed_step_rk"))
+        adaptive = integrator == "cpu_adaptive"
+        evals_total = getattr(result, "accel_evals_total", None)
+        if adaptive:
+            # Adaptive series: no fixed step grid, so a steps/s figure would be
+            # meaningless; the eval throughput comes from the reported RHS count.
+            # Not-applicable fields are emitted as "" (never NaN) so they read as
+            # honest N/A and never trip the benchmark validator's finite check.
+            steps_rate: float | str = ""
+            evals_rate: float | str = (
+                float(evals_total) / max(runtime, 1e-9) if evals_total else ""
+            )
+        else:
+            steps_rate = n_scenarios * n_steps / max(runtime, 1e-9)
+            evals_rate = n_scenarios * n_steps * evals / max(runtime, 1e-9)
         row = {
             "model": result.display_name,
             "backend": result.backend,
             "device": result.device,
             "dtype": result.dtype,
+            "integrator": integrator,
             "n_scenarios": n_scenarios,
             "n_steps": n_steps,
             "n_saved_outputs": int(len(result.t)),
@@ -748,8 +764,8 @@ def build_gpu_runtime_metrics(
             "warm_time_s": runtime,
             "jit_compile_time_s": 0.0,
             "propagation_time_s": runtime,
-            "trajectory_steps_per_second": n_scenarios * n_steps / max(runtime, 1e-9),
-            "acceleration_evaluations_per_second": n_scenarios * n_steps * evals / max(runtime, 1e-9),
+            "trajectory_steps_per_second": steps_rate,
+            "acceleration_evaluations_per_second": evals_rate,
             "propagated_seconds_per_wall_second": (
                 n_scenarios * propagated_seconds / max(runtime, 1e-9)
             ),

@@ -1,0 +1,81 @@
+{
+  "schema": "lunaris_public_api_manifest_v1",
+  "modules": [
+    {
+      "module": "lunaris",
+      "tier": "user_stable"
+    },
+    {
+      "module": "lunaris.api",
+      "tier": "user_stable"
+    },
+    {
+      "module": "lunaris.batch",
+      "tier": "user_stable"
+    },
+    {
+      "module": "lunaris.core.propagation",
+      "tier": "user_stable"
+    },
+    {
+      "module": "lunaris.surrogate.runtime",
+      "tier": "user_stable"
+    },
+    {
+      "module": "lunaris.common.constants",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.common.type_defs",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.common.batch_defs",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.common.math_utils",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.core.config",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.core.dynamics",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.physics.spherical_harmonics",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.physics.ephemeris",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.analysis.reporting.manager",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.analysis.ensemble.statistics",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.analysis.ensemble.plotting",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.analysis.ensemble.uq_report",
+      "tier": "documented_provisional"
+    },
+    {
+      "module": "lunaris.physics.relativity_effects",
+      "tier": "cross_subsystem_internal"
+    },
+    {
+      "module": "lunaris.surrogate.st_lrps.networks.models",
+      "tier": "cross_subsystem_internal"
+    }
+  ]
+}

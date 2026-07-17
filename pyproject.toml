@@ -499,8 +499,9 @@ source_modules = ["lunaris.surrogate.st_lrps.ui"]
 forbidden_modules = ["lunaris.ui"]
 
 # The reverse direction of the contract above: the mission UI embeds the
-# Studio only through its window/theme entry points, never its widget
-# internals. Shared UI helpers live in lunaris.ui_foundation (e.g. the
+# Studio only through ``lunaris.surrogate.st_lrps.ui.embedding``, never its
+# ``studio_parts`` implementation tree. Shared UI helpers live in
+# lunaris.ui_foundation (e.g. the
 # NoWheelOnSpinFilter wheel guard), which both applications may import.
 # Direct imports only: the embedded Studio window legitimately uses its own
 # widget kit, so the transitive chain through main_window stays legal.
@@ -509,7 +510,7 @@ name = "mission UI does not import ST-LRPS studio widget internals"
 type = "forbidden"
 source_modules = ["lunaris.ui"]
 forbidden_modules = [
-  "lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets",
+  "lunaris.surrogate.st_lrps.ui.studio_parts",
   "lunaris.surrogate.st_lrps.ui.dashboard_widgets",
 ]
 allow_indirect_imports = "true"

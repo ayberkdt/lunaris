@@ -29,7 +29,7 @@
   `lunaris.surrogate.st_lrps.networks.models._compute_harmonic_w0_bands` /
   `._get_output_head_params` → public names. Moves:
   `lunaris.batch.summary._osculating_elements` →
-  `lunaris.common.math_utils.osculating_elements_vec`; the spinbox wheel
+  `lunaris.common.math_utils.screening_orbital_elements_vec`; the spinbox wheel
   guard `_NoWheelOnSpinFilter` →
   `lunaris.ui_foundation.event_filters.NoWheelOnSpinFilter`.
 - **Added: machine-checkable API boundary.** `docs/PUBLIC_API.md` gains a

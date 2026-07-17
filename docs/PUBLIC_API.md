@@ -28,32 +28,65 @@ This table is the canonical console-script inventory: every entry in
 `pyproject.toml [project.scripts]` must appear here (enforced by
 `tests/test_repo_hygiene.py::test_console_scripts_documented_in_public_api`).
 
-## Stable Python Surface
+## Python Surface Tiers
 
-These modules are intended for direct import:
+Python imports have three explicit stability levels. The exact module list and
+each tier are machine-readable in `docs/public_api_manifest.json`; literal
+`__all__` exports for every manifest module are recorded in
+`docs/api_snapshot.json`.
+
+### User-stable public API (`user-stable`)
+
+These are the preferred downstream imports. Within a released MINOR line they
+follow the deprecation process in [VERSIONING.md](VERSIONING.md). Pre-release
+builds can still change before the final release, with the change called out in
+the changelog.
 
 | Module | Public objects |
 | --- | --- |
 | `lunaris` | `__version__` |
 | `lunaris.api` | `load_default_config`, `replace_sim_config`, `DynamicsEngine`, `propagate`, `BatchPropagationConfig`, `BatchPropagationEngine`, `BatchPropagationResult` |
+| `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_batch_result`, `batch_entry` |
+| `lunaris.core.propagation` | `propagate`, `make_time_grid`, `build_events`, `PropagationResult`, `EventOutcome`, `EventSpec`, `event_outcome_from_solver_events`, `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`, `resolve_time_grid_plan`, `resolve_step_size_policy`, `resolve_integration_plan` |
+| `lunaris.surrogate.runtime` | `SurrogateGravityModel`, `SurrogateGravityMetadata`, `DEFAULT_ST_LRPS_RUNS_DIR`, `discover_st_lrps_model_dirs`, `find_checkpoint_for_st_lrps_run`, `find_latest_st_lrps_model_dir` |
+
+### Documented provisional Python API (`documented-provisional`)
+
+These lower-level modules are intended for advanced direct use, but signatures
+may change at a MINOR release while Lunaris is 0.x. Changes still require a
+changelog entry; removals of previously released names retain a compatibility
+alias for at least one MINOR line.
+
+| Module | Public objects |
+| --- | --- |
 | `lunaris.common` | Flat re-exports from `lunaris.common.constants` and `lunaris.common.type_defs` |
 | `lunaris.common.constants` | Physical constants and unit conversions such as `DAY_S`, `C_LIGHT`, `MU_MOON`, `R_MOON`, `AU`, `DEG2RAD`, `RAD2DEG` |
 | `lunaris.common.type_defs` | `GravityConfig`, `AdaptiveDegreeConfig`, `PerturbationFlags`, `SolidTideConfig`, `TimeConfig`, `InitialState`, `SpacecraftProps`, `PropagatorConfig`, `PropagationResult`, `SimulationHistory` |
 | `lunaris.common.hashing` | `canonical_json_text`, `canonical_json_sha256` |
 | `lunaris.common.paths` | `find_project_root`, `project_root_from_file`, `data_dir_from_root` |
 | `lunaris.common.batch_defs` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, `build_batch_output_grid`, `validate_st_lrps_model_dir` |
-| `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_batch_result`, `batch_entry` |
+| `lunaris.common.math_utils` | Shared numerical helpers, including `batch_y_to_elements`, the explicitly screening-only `screening_orbital_elements_vec`, `sample_grid_bilinear_kernel`, and `sample_2d_scaled_bilinear_kernel` |
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
-| `lunaris.core.dynamics` | `DynamicsEngine` |
-| `lunaris.core.propagation` | Canonical propagation package: `propagate`, `make_time_grid`, `build_events`, `PropagationResult`, `EventOutcome`, `EventSpec`, `event_outcome_from_solver_events`, and the plan types/resolvers `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`, `resolve_time_grid_plan`, `resolve_step_size_policy`, `resolve_integration_plan` |
-| `lunaris.physics.spherical_harmonics` | `GravityModel` |
+| `lunaris.core.dynamics` | `DynamicsEngine` and dependency-extraction helpers |
+| `lunaris.physics.spherical_harmonics` | `GravityModel` and documented SH evaluators |
 | `lunaris.physics.ephemeris` | `SpiceBuildConfig`, `EphemerisManager`, `build_spice_tables`, `build_tables` |
-| `lunaris.surrogate.runtime` | Production-facing ST-LRPS inference: `SurrogateGravityModel`, `SurrogateGravityMetadata`, `DEFAULT_ST_LRPS_RUNS_DIR`, `discover_st_lrps_model_dirs`, `find_checkpoint_for_st_lrps_run`, `find_latest_st_lrps_model_dir` |
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
-| `lunaris.analysis.reporting.manager` | `plot_all` |
+| `lunaris.analysis.reporting.manager` | `plot_all` and report assembly helpers |
 | `lunaris.analysis.ensemble.statistics` | Propagated-ensemble statistics, covariance, RIC uncertainty, impact statistics, OE dispersion |
-| `lunaris.analysis.ensemble.plotting` | Ensemble plots and the `plot_ensemble_report` report assembly helper |
+| `lunaris.analysis.ensemble.plotting` | Ensemble plots and `plot_ensemble_report` |
 | `lunaris.analysis.ensemble.uq_report` | Provenance-stamped ensemble UQ report builder |
+
+### Cross-subsystem internal contracts (`cross-subsystem-internal`)
+
+These public-looking names exist so one Lunaris subsystem can depend on another
+without importing a private underscore symbol. They are not a supported
+downstream API. Their current `__all__` is snapshotted because internal callers
+still need reviewable change control.
+
+| Module | Contract objects |
+| --- | --- |
+| `lunaris.physics.relativity_effects` | `schwarzschild_components`, `external_schwarzschild_diff_components`, `de_sitter_components`, `external_1pn_components`; pre-rc2 underscore aliases remain through at least 0.2.x |
+| `lunaris.surrogate.st_lrps.networks.models` | `compute_harmonic_w0_bands`, `get_output_head_params`; pre-rc2 underscore aliases remain through at least 0.2.x |
 
 Terminology note: the canonical concept is batch/ensemble propagation —
 `BatchPropagation*` names for execution and `lunaris.analysis.ensemble` for
@@ -61,9 +94,9 @@ statistics and reporting. "Monte Carlo" appears only as the statistical
 description of the `random` sampling design, alongside Latin Hypercube and
 Sobol variants.
 
-For new scripts, prefer `lunaris.api` unless you intentionally need a lower-level
-module listed below. The examples in `examples/` are the executable reference for
-this Python API.
+For new scripts, prefer the user-stable `lunaris.api` facade unless you
+intentionally need a provisional lower-level module. The examples in
+`examples/` are the executable reference for this Python API.
 
 `lunaris.common.lunar_data` is a dependency-light bridge for lunar gravity-path
 resolution and lunar body-signature checks. It is stable for internal framework

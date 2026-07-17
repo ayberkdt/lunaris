@@ -30,6 +30,11 @@ from typing import Any
 from lunaris.common.telemetry_contract import (
     TELEMETRY_ARTIFACT_NAME as _TELEMETRY_ARTIFACT_NAME,
 )
+from lunaris.common.telemetry_contract import (
+    TELEMETRY_META_PREFIX,
+    TelemetryDecodeError,
+    decode_meta_line,
+)
 
 __all__ = ["RunRecord", "index_runs", "run_kpis"]
 
@@ -66,6 +71,9 @@ class RunRecord:
     #: True when the run carries a telemetry.ndjson replay artifact the
     #: Mission Monitor can re-open.
     has_telemetry: bool = False
+    #: Declared replay policy, or ``legacy_uncertain`` when old metadata does
+    #: not establish accepted/output-state semantics.
+    telemetry_replay_policy: str | None = None
 
     @property
     def analysis_ready(self) -> bool:
@@ -104,6 +112,22 @@ def _sha256_prefix(path: Path, *, length: int = 12) -> str:
 def _looks_demo(run_dir: Path) -> bool:
     name = run_dir.name.lower()
     return any(token in name for token in _DEMO_TOKENS)
+
+
+def _telemetry_policy(path: Path) -> str | None:
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            for _index, line in zip(range(32), handle, strict=False):
+                if not line.startswith(TELEMETRY_META_PREFIX):
+                    continue
+                try:
+                    provenance = decode_meta_line(line)
+                except TelemetryDecodeError:
+                    return "unsupported_or_malformed"
+                return provenance.replay_policy or "legacy_uncertain"
+    except OSError:
+        return None
+    return "legacy_uncertain"
 
 
 def _record_for(run_dir: Path) -> RunRecord:
@@ -156,6 +180,9 @@ def _record_for(run_dir: Path) -> RunRecord:
         figures_dir=figures_dir if figures_dir.is_dir() else None,
         is_demo=_looks_demo(run_dir),
         has_telemetry=has_telemetry,
+        telemetry_replay_policy=(
+            _telemetry_policy(telemetry_path) if has_telemetry else None
+        ),
     )
 
 

@@ -97,13 +97,16 @@ def test_unsupported_schema_raises_monitor_banner(win) -> None:
     assert "v99" in w.page_monitor.problem_banner.text()
 
 
-def test_legacy_bare_json_also_lands_in_the_monitor_store(win) -> None:
+def test_legacy_bare_json_stays_readable_but_out_of_scientific_store(win) -> None:
     w, _ = win
     w._consume_stdout_line('{"t_s": 30.0, "alt_km": 49.0, "v_km_s": 1.6, "ecc": 0.02}')
     store = w.monitor_controller.store
-    assert store.counters.accepted == 1
-    t, v = store.snapshot("altitude_m")
-    assert v[0] == pytest.approx(49_000.0)
+    # Compatibility parsing still feeds the legacy progress/watchdog surface,
+    # but missing sample semantics cannot be promoted into trajectory science.
+    assert w._last_telem_t_s == pytest.approx(30.0)
+    assert store.counters.accepted == 0
+    assert store.counters.uncertain_samples == 1
+    assert store.snapshot("altitude_m")[0].size == 0
 
 
 def test_diag_payload_reaches_monitor_and_results_page(win) -> None:

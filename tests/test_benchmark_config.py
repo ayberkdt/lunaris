@@ -118,6 +118,44 @@ def test_output_directory_is_resolved_relative_to_config(tmp_path):
     assert loaded["outputs"]["out_dir"] == str((tmp_path / "benchmark_out").resolve())
 
 
+def test_cpu_adaptive_defaults_false_and_maps_to_argv(tmp_path):
+    loaded = load_benchmark_config(_write(tmp_path, _config()))
+    assert loaded["surrogate"]["cpu_adaptive"] is False
+
+    from lunaris.surrogate.st_lrps.evaluation.benchmark_pipeline import config_to_legacy_argv
+
+    argv = config_to_legacy_argv(loaded, tmp_path / "out")
+    assert "--cpu-adaptive-surrogate" not in argv
+
+    payload = _config()
+    payload["surrogate"]["cpu_adaptive"] = True
+    payload["surrogate"]["cpu_adaptive_rtol"] = 1.0e-7
+    loaded = load_benchmark_config(_write(tmp_path, payload))
+    argv = config_to_legacy_argv(loaded, tmp_path / "out")
+    assert "--cpu-adaptive-surrogate" in argv
+
+    # The legacy harness must actually accept the flags.
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = cgm.parse_args(argv)
+    assert args.cpu_adaptive_surrogate is True
+    assert args.cpu_adaptive_rtol == pytest.approx(1.0e-7)
+    assert args.cpu_adaptive_atol == pytest.approx(1.0e-6)  # default preserved
+
+
+def test_cpu_adaptive_requires_enabled_surrogate_and_bool(tmp_path):
+    payload = _config()
+    payload["surrogate"]["cpu_adaptive"] = "yes"
+    with pytest.raises(BenchmarkConfigError, match="cpu_adaptive"):
+        load_benchmark_config(_write(tmp_path, payload))
+
+    payload = _config()
+    payload["surrogate"]["enabled"] = False
+    payload["surrogate"]["cpu_adaptive"] = True
+    with pytest.raises(BenchmarkConfigError, match="cpu_adaptive"):
+        load_benchmark_config(_write(tmp_path, payload))
+
+
 def test_cli_override_changes_only_intended_fields(tmp_path):
     path = _write(tmp_path, _config())
     loaded = load_benchmark_config(

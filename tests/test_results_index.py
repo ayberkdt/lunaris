@@ -89,6 +89,30 @@ def test_index_exposes_canonical_analysis_artifacts(tmp_path: Path) -> None:
     assert run_dir / "report.pdf" in record.reports
 
 
+def test_index_reports_replay_semantics_policy(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, "run_telemetry", figures=0, reports=0)
+    (run_dir / "telemetry.ndjson").write_text(
+        '[TELEMETRY_META] {"schema_version":"lunaris_telemetry_v1",'
+        '"run_id":"r","time_system":"relative_s",'
+        '"replay_policy":"output_states_only"}\n',
+        encoding="utf-8",
+    )
+    (record,) = index_runs(tmp_path)
+    assert record.has_telemetry is True
+    assert record.telemetry_replay_policy == "output_states_only"
+
+
+def test_index_marks_metadata_free_replay_as_legacy_uncertain(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, "run_legacy", figures=0, reports=0)
+    (run_dir / "telemetry.ndjson").write_text(
+        '[TELEMETRY] {"schema_version":"lunaris_telemetry_v1","run_id":"r",'
+        '"sequence_id":0,"simulation_time_s":0.0}\n',
+        encoding="utf-8",
+    )
+    (record,) = index_runs(tmp_path)
+    assert record.telemetry_replay_policy == "legacy_uncertain"
+
+
 def test_index_root_itself_can_be_a_run(tmp_path: Path) -> None:
     (tmp_path / "run_config.json").write_text("{}", encoding="utf-8")
     (tmp_path / "alt.png").write_bytes(b"\x89PNG")

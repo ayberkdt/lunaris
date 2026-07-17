@@ -65,6 +65,9 @@ from .metrics import (
 from .plotting import (
     _color,
     _fmt_km,
+    _fmt_optional_float,
+    _is_sh_baseline,
+    _model_degree,
     estimate_stlrps_equivalent_sh_degree,
     plot_aggregate_stats,
     plot_batch_rk4_results,
@@ -110,6 +113,7 @@ from .types import (
     Scenario,
     TruthTrajectorySet,
     _cfg_with_integrator,
+    _cfg_with_tolerances,
     _find_st_lrps_weight_file,
     decompose_vector_ric,
     interpolate_state_to_times,
@@ -569,9 +573,10 @@ def _print_gpu_batch_summary(
     print(f"{'Model':<22} {'Runtime s':>10} {'Runtime/sc s':>14} "
           f"{'Traj-steps/s':>14} {'Speedup truth':>14}")
     for r in runtime_rows:
+        steps_str = _fmt_optional_float(r.get("trajectory_steps_per_second"), ".1f")
         print(f"{r['model']:<22} {r.get('total_runtime_s', np.nan):>10.3f} "
               f"{r.get('runtime_per_scenario_s', np.nan):>14.5f} "
-              f"{r.get('trajectory_steps_per_second', np.nan):>14.1f} "
+              f"{steps_str:>14} "
               f"{r.get('speedup_vs_truth_total', np.nan):>14.2f}")
 
     med_eq = equivalent.get("median_rms", {}) if isinstance(equivalent, dict) else {}
@@ -592,6 +597,106 @@ def _print_gpu_batch_summary(
     print(f"- Representative scenario id = {selected.get('representative', {}).get('scenario_id', 'n/a')}")
     print(f"- Worst scenario id = {selected.get('worst', {}).get('scenario_id', 'n/a')}")
     print(sep)
+
+
+def _cpu_adaptive_display_name(args: argparse.Namespace) -> str:
+    return f"ST_LRPS_CPU_{str(getattr(args, 'truth_integrator', 'DOP853')).upper()}"
+
+
+def _run_cpu_adaptive_surrogate_series(
+    args: argparse.Namespace,
+    cfg_base: SimConfig,
+    ephem: Any,
+    model_cache: GravityModelCache,
+    scenarios: list[Scenario],
+) -> BatchModelResult:
+    """Propagate ST-LRPS per scenario with the CPU adaptive truth integrator.
+
+    The surrogate runs through the same adaptive integrator as the ground-truth
+    reference, so this series differs from truth only through the gravity field
+    itself (plus a negligible, controlled integrator contribution). Compared
+    with the GPU fixed-step surrogate series it separates surrogate *field*
+    error from fixed-step integrator/dtype error inside a single benchmark
+    report. The integrator loop is CPU SciPy; the field evaluations run
+    wherever the loaded surrogate lives (see ``device``).
+
+    Tolerances come from ``--cpu-adaptive-rtol/--cpu-adaptive-atol`` rather
+    than the truth tolerances: a float32 surrogate RHS has a ~1e-7 relative
+    noise floor, and truth-grade tolerances (rtol 1e-10) stall the step
+    controller against that noise without buying accuracy. The defaults keep
+    the integrator-error contribution orders of magnitude below any surrogate
+    field error worth reporting.
+    """
+    integrator = str(getattr(args, "truth_integrator", "DOP853"))
+    rtol = float(getattr(args, "cpu_adaptive_rtol", 1.0e-8))
+    atol = float(getattr(args, "cpu_adaptive_atol", 1.0e-6))
+    display_name = _cpu_adaptive_display_name(args)
+    cfg = _cfg_with_tolerances(_cfg_with_integrator(cfg_base, integrator), rtol, atol)
+    print(f"[cpu-adaptive] integrator={integrator} rtol={rtol:g} atol={atol:g}", flush=True)
+    grav = model_cache.get("st_lrps")
+    device = str(getattr(grav, "device", "cpu") or "cpu")
+
+    n = len(scenarios)
+    t_ref: np.ndarray | None = None
+    y_batch: np.ndarray | None = None
+    nfev_total = 0
+    runtime_total = 0.0
+    ok_count = 0
+    t_start = time.perf_counter()
+    for idx, scenario in enumerate(scenarios, 1):
+        res, rt = propagate_for_scenario(
+            "st_lrps", scenario.initial_state, args, cfg, ephem, model_cache
+        )
+        runtime_total += float(rt)
+        ok = res is not None
+        if ok:
+            t_arr = np.asarray(res.t, dtype=np.float64)
+            y_arr = np.asarray(res.y, dtype=np.float64)
+            if t_ref is None:
+                t_ref = t_arr
+                y_batch = np.full((len(t_ref), n, 6), np.nan, dtype=np.float64)
+            if len(t_arr) != len(t_ref) or not np.allclose(t_arr, t_ref, rtol=0.0, atol=1e-6):
+                # Early-terminated / inconsistent output grid: keep the batch
+                # container rectangular and let the NaN fill mark it failed.
+                ok = False
+            else:
+                y_batch[:, idx - 1, :] = y_arr
+                ok_count += 1
+                ode = getattr(res, "ode", None)
+                nfev_total += int(getattr(ode, "nfev", 0) or 0)
+        if not ok:
+            print(f"[cpu-adaptive] WARNING: scenario {scenario.scenario_id} failed; "
+                  "omitted from metrics.", flush=True)
+        elapsed = time.perf_counter() - t_start
+        rate = idx / max(elapsed, 1e-9)
+        remaining = (n - idx) / max(rate, 1e-9)
+        print(f"[cpu-adaptive] Scenario {idx:03d}/{n} done in {rt:.2f}s "
+              f"| ETA {progress.format_eta(remaining)}", flush=True)
+
+    if t_ref is None or y_batch is None:
+        return BatchModelResult(
+            model_name="st_lrps_cpu_adaptive", display_name=display_name,
+            backend=f"scipy_{integrator.lower()}", device=device, dtype="float64",
+            t=np.array([], dtype=np.float64),
+            y=np.empty((0, n, 6), dtype=np.float64),
+            runtime_s=runtime_total, n_steps=0, n_scenarios=n,
+            rk4_dt_s=float("nan"), output_dt_s=float(args.dt_out),
+            status="failed", failure_reason="all_scenarios_failed",
+            integrator="cpu_adaptive", accel_evals_total=nfev_total or None,
+        )
+    # n_steps carries the mean RHS-evaluation count per scenario for the
+    # adaptive series (there is no fixed step grid); throughput fields are
+    # derived from accel_evals_total, not from this value.
+    mean_nfev = int(round(nfev_total / max(1, ok_count))) if nfev_total else 1
+    return BatchModelResult(
+        model_name="st_lrps_cpu_adaptive", display_name=display_name,
+        backend=f"scipy_{integrator.lower()}", device=device, dtype="float64",
+        t=t_ref, y=y_batch,
+        runtime_s=runtime_total, n_steps=max(1, mean_nfev), n_scenarios=n,
+        rk4_dt_s=float("nan"), output_dt_s=float(args.dt_out),
+        status="ok",
+        integrator="cpu_adaptive", accel_evals_total=nfev_total or None,
+    )
 
 
 def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ephem: Any) -> None:
@@ -618,7 +723,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         print(f"[gpu-batch] WARNING: requested truth={args.truth}; expected sh200 for this workflow.",
               flush=True)
 
-    if "st_lrps" in gpu_models and not getattr(args, "st_lrps_model_dir", None):
+    cpu_adaptive_requested = bool(getattr(args, "cpu_adaptive_surrogate", False))
+    if ("st_lrps" in gpu_models or cpu_adaptive_requested) and not getattr(args, "st_lrps_model_dir", None):
         if getattr(args, "rebuild_metrics", False):
             print("[gpu-batch] --rebuild-metrics is active; skipping ST-LRPS model dir lookup.", flush=True)
         else:
@@ -635,10 +741,17 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 print("[gpu-batch] WARNING: ST-LRPS model missing; removing st_lrps from --gpu-models.",
                       flush=True)
                 gpu_models = [m for m in gpu_models if m != "st_lrps"]
+                cpu_adaptive_requested = False
     gpu_tasks = _build_gpu_batch_tasks(gpu_models, args)
     gpu_cache_names = [task.cache_name for task in gpu_tasks]
 
     cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_trajectories", False))
+    if cpu_adaptive_requested and (cache_enabled or getattr(args, "rebuild_metrics", False)):
+        raise RuntimeError(
+            "--cpu-adaptive-surrogate is not supported together with trajectory-cache "
+            "flags or --rebuild-metrics yet: the cache rebuild path would silently drop "
+            "the CPU adaptive series. Drop the cache flags or the CPU series."
+        )
     cache_dir = _benchmark_cache_dir(args, out_dir)
     cache_warnings: list[str] = []
     if cache_enabled:
@@ -686,6 +799,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     if args.resume and per_scenario_csv.exists():
         existing_rows = [_coerce_numeric_row(r) for r in _read_csv_rows(per_scenario_csv)]
         needed_models = {task.display_name for task in gpu_tasks}
+        if cpu_adaptive_requested:
+            needed_models.add(_cpu_adaptive_display_name(args))
         by_id: dict[int, set] = {}
         for r in existing_rows:
             try:
@@ -892,6 +1007,28 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 failure_reason=str(exc),
             ))
 
+    if cpu_adaptive_requested and run_scenarios:
+        print(f"\n[cpu-adaptive] {_cpu_adaptive_display_name(args)} starting for "
+              f"{len(run_scenarios)} scenario(s) ...", flush=True)
+        try:
+            results.append(_run_cpu_adaptive_surrogate_series(
+                args, cfg_base, ephem, model_cache, run_scenarios))
+        except Exception as exc:
+            print(f"[cpu-adaptive] ERROR: {exc}", flush=True)
+            if args.fail_fast:
+                raise
+            results.append(BatchModelResult(
+                model_name="st_lrps_cpu_adaptive",
+                display_name=_cpu_adaptive_display_name(args),
+                backend="failed", device="cpu", dtype="float64",
+                t=np.array([], dtype=np.float64),
+                y=np.empty((0, len(run_scenarios), 6), dtype=np.float64),
+                runtime_s=float("nan"), n_steps=0, n_scenarios=len(run_scenarios),
+                rk4_dt_s=float("nan"), output_dt_s=float(args.dt_out),
+                status="failed", failure_reason=str(exc),
+                integrator="cpu_adaptive",
+            ))
+
     if cache_enabled:
         _write_cache_manifest(args, cache_dir, scenarios, gpu_cache_names)
         live_failed = sorted({r.display_name for r in results if getattr(r, "status", "") == "failed"})
@@ -952,9 +1089,11 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     )
     result_status = {r.display_name: getattr(r, "status", "") for r in results}
     models_in_agg = {str(r.get("model")) for r in aggregate_rows}
+    requested_display = [task.display_name for task in gpu_tasks]
+    if cpu_adaptive_requested:
+        requested_display.append(_cpu_adaptive_display_name(args))
     status_by_model: dict[str, str] = {}
-    for task in gpu_tasks:
-        disp = task.display_name
+    for disp in requested_display:
         st = result_status.get(disp)
         if st == "ok":
             status_by_model[disp] = "completed"
@@ -980,7 +1119,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         aggregate_rows=aggregate_rows,
         runtime_rows=runtime_rows,
         gpu_models=gpu_models,
-        requested_display=[task.display_name for task in gpu_tasks],
+        requested_display=requested_display,
         status_by_model=status_by_model,
         n_scenarios_total=len(scenarios),
         n_scenarios_new_this_run=len(run_scenarios),
@@ -997,9 +1136,17 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         json.dumps(summary, indent=4, default=str), encoding="utf-8"
     )
 
-    sh200_row = next((r for r in aggregate_rows if r.get("model") == "NUMBA_CUDA_SH200_RK4"), None)
-    if sh200_row and sh200_row.get("median_rms_pos_err_km", 0.0) > 10.0:
-        print("[gpu-batch] WARNING: GPU SH200 RK4 vs SH200 DOP853 error is high. "
+    # Integrator-error sanity check: the fixed-step series whose SH degree
+    # equals the truth degree differs from truth only through integrator /
+    # dtype / frame effects, so a large error there means a broken setup.
+    truth_degree = _model_degree(str(args.truth))
+    sh_truth_row = next(
+        (r for r in aggregate_rows
+         if _is_sh_baseline(str(r.get("model", ""))) and _model_degree(str(r.get("model", ""))) == truth_degree),
+        None,
+    ) if truth_degree is not None else None
+    if sh_truth_row and sh_truth_row.get("median_rms_pos_err_km", 0.0) > 10.0:
+        print(f"[gpu-batch] WARNING: GPU SH{truth_degree} RK4 vs SH{truth_degree} DOP853 error is high. "
               "Check RK4 dt, frame mode, and rotation consistency.", flush=True)
 
     progress.emit_progress(

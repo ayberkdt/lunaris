@@ -135,6 +135,21 @@ def run_scipy_propagation(
         # so callers never see stop_reason set while stopped_early is False.
         if int(getattr(sol, "status", 0)) == 1:
             stopped_early = True
+            terminal_endpoint = _terminal_event_endpoint(sol, events, state_size=y0_arr.size)
+            if terminal_endpoint is not None:
+                t_terminal, y_terminal = terminal_endpoint
+                keep = t_cat <= (t_terminal + 1e-9)
+                t_cat = t_cat[keep]
+                y_cat = y_cat[:, keep]
+                if t_cat.size == 0 or abs(float(t_cat[-1]) - t_terminal) > 1e-9:
+                    t_cat = np.concatenate(
+                        [t_cat, np.asarray([t_terminal], dtype=np.float64)]
+                    )
+                    y_cat = np.concatenate(
+                        [y_cat, y_terminal.reshape(-1, 1)], axis=1
+                    )
+                else:
+                    y_cat[:, -1] = y_terminal
         elif not bool(getattr(sol, "success", True)):
             stopped_early = True
             stop_reason = "integration failed"

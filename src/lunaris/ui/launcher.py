@@ -637,10 +637,10 @@ class LauncherWindow(QtWidgets.QWidget):
         return PropagationMainWindow()
 
     def _build_studio_window(self) -> QtWidgets.QWidget:
-        from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import (
+        from lunaris.surrogate.st_lrps.ui.embedding import (
             MainWindow as StudioMainWindow,
         )
-        from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import (
+        from lunaris.surrogate.st_lrps.ui.embedding import (
             apply_premium_dark_theme,
         )
         from lunaris.ui_foundation.event_filters import NoWheelOnSpinFilter

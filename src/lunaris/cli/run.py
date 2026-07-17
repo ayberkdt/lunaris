@@ -506,6 +506,7 @@ def build_telemetry_provenance(cfg: SimConfig, run_id: str, *, mu: float | None)
         frame_inertial=INERTIAL_FRAME_LABEL,
         mu_m3s2=mu,
         telemetry_cadence_s=cadence if cadence > 0.0 else None,
+        replay_policy="output_states_only",
     )
 
 

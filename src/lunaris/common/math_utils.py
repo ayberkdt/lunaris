@@ -1805,7 +1805,7 @@ def sample_2d_scaled_bilinear(
 # =============================================================================
 
 # Used by: batch.summary (screening), analysis.frozen (candidate validation)
-def osculating_elements_vec(
+def screening_orbital_elements_vec(
     r: np.ndarray, v: np.ndarray, mu: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Vectorized osculating ``(a_m, e, i_rad, argp_rad)`` for ``(..., 3)`` states.
@@ -1878,7 +1878,7 @@ __all__ = (
     # ------------------------------
     "rv_to_coe_select",          # Public: single RV->elements selector (coe6/coe10/kepler5)
     "batch_y_to_elements",       # Public: batch RV->elements selector (coe6/coe10/kepler5)
-    "osculating_elements_vec",   # Public: vectorized (a_m, e, i_rad, argp_rad) over (..., 3)
+    "screening_orbital_elements_vec",  # Screening summary: (a_m, e, i_rad, argp_rad)
     "coe_to_rv",                 # Public: inverse COE->(r, v) via the perifocal frame
 
     # ------------------------------

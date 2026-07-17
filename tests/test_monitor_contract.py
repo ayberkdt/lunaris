@@ -102,6 +102,18 @@ class TestSchemaVersion:
         with pytest.raises(TelemetryDecodeError):
             sample_from_payload(payload)
 
+    def test_missing_sample_kind_decodes_as_uncertain_legacy(self):
+        payload = sample_to_payload(make_sample())
+        del payload["sample_kind"]
+        decoded = sample_from_payload(payload)
+        assert decoded.sample_kind == "legacy_unknown"
+
+    def test_unknown_sample_kind_fails_closed(self):
+        payload = sample_to_payload(make_sample())
+        payload["sample_kind"] = "maybe_accepted"
+        with pytest.raises(TelemetryDecodeError, match="sample_kind"):
+            sample_from_payload(payload)
+
 
 class TestFinitePolicy:
     def test_constructor_rejects_non_finite_scalars(self):
@@ -177,6 +189,7 @@ class TestLegacyAdapter:
         assert sample.terrain_clearance_m == pytest.approx(48_200.0)
         assert sample.orbital_elements["ecc"] == pytest.approx(0.02)
         assert sample.sequence_id == 3
+        assert sample.sample_kind == "legacy_unknown"
 
     def test_legacy_t_with_hour_and_day_units(self):
         hours = sample_from_legacy_dict({"t": 2.0, "t_unit": "h"}, sequence_id=0)
