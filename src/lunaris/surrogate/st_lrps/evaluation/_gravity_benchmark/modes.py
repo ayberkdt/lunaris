@@ -123,6 +123,35 @@ from .types import (
 # Force evaluation mode
 # =============================================================================
 
+def _st_lrps_inertial_accels(
+    grav: Any,
+    ephem: Any,
+    t_ref: np.ndarray,
+    y_ref: np.ndarray,
+    batch_size: int,
+) -> np.ndarray:
+    """Evaluate ST-LRPS accelerations at inertial samples, honouring frames.
+
+    The surrogate field lives in the Moon-fixed frame while the truth
+    trajectory (and the truth RHS accelerations it is compared against) are
+    inertial, so every sample goes through r_I → r_F → a_F → a_I using the
+    same ephemeris rotation the truth dynamics engine uses. Treating inertial
+    positions as body-fixed is not acceptable for a non-axisymmetric lunar
+    field: the error grows directly with the Moon's rotation over the sampled
+    arc. An ephemeris without frame transforms raises (fail closed) instead
+    of silently comparing accelerations across two different frames.
+    """
+    n = len(t_ref)
+    r_fixed = np.empty((n, 3), dtype=np.float64)
+    for i in range(n):
+        r_fixed[i] = ephem.transform_inertial_to_fixed(float(t_ref[i]), y_ref[i, :3])
+    a_fixed = evaluate_st_lrps_forces_batched(grav, r_fixed, batch_size=batch_size)
+    a_inertial = np.empty((n, 3), dtype=np.float64)
+    for i in range(n):
+        a_inertial[i] = ephem.transform_fixed_to_inertial(float(t_ref[i]), a_fixed[i])
+    return a_inertial
+
+
 def evaluate_forces(
     models_to_test: list[str],
     truth_model: str,
@@ -173,10 +202,10 @@ def evaluate_forces(
         t0   = time.perf_counter()
 
         if m == "st_lrps":
-            # Use batched path for surrogate
-            r_body_fixed = y_ref[:, :3]   # inertial ≈ body-fixed approximation
-            a_test = evaluate_st_lrps_forces_batched(
-                grav, r_body_fixed, batch_size=args.force_batch_size
+            # Batched surrogate path with explicit frame handling; both sides
+            # of the comparison are inertial (see _st_lrps_inertial_accels).
+            a_test = _st_lrps_inertial_accels(
+                grav, ephem, t_ref, y_ref, batch_size=args.force_batch_size
             )
         else:
             dyn  = DynamicsEngine(cfg.spacecraft, cfg.flags,
@@ -631,9 +660,10 @@ def _run_cpu_adaptive_surrogate_series(
     Tolerances come from ``--cpu-adaptive-rtol/--cpu-adaptive-atol`` rather
     than the truth tolerances: a float32 surrogate RHS has a ~1e-7 relative
     noise floor, and truth-grade tolerances (rtol 1e-10) stall the step
-    controller against that noise without buying accuracy. The defaults keep
-    the integrator-error contribution orders of magnitude below any surrogate
-    field error worth reporting.
+    controller against that noise without buying accuracy. The defaults are
+    intended to keep the integrator contribution small relative to any
+    surrogate field error worth reporting; that margin is unverified until
+    the SH200 adaptive control series exists.
     """
     integrator = str(getattr(args, "truth_integrator", "DOP853"))
     rtol = float(getattr(args, "cpu_adaptive_rtol", 1.0e-8))
