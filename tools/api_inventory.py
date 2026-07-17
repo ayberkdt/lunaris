@@ -242,8 +242,11 @@ def cross_unit_private_accesses() -> list[str]:
                     is_package=path.name == "__init__.py",
                 )
             )
-        except SyntaxError:
-            continue
+        except SyntaxError as exc:
+            # Fail closed: a file the scanner cannot parse is a file it cannot
+            # vouch for. Silently skipping it would let boundary violations
+            # hide behind a syntax error.
+            raise SyntaxError(f"api_inventory could not parse {path}: {exc}") from exc
     return sorted(rows)
 
 

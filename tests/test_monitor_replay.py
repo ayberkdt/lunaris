@@ -149,7 +149,8 @@ class TestReplayLoader:
         _app()
         artifact = tmp_path / "telemetry.ndjson"
         good = encode_sample_line(TelemetrySample(
-            run_id="r", sequence_id=0, simulation_time_s=1.0, altitude_m=10.0,
+            run_id="r", sequence_id=0, simulation_time_s=1.0,
+            sample_kind="output_state", altitude_m=10.0,
         ))
         artifact.write_text(f"[TELEMETRY] {{broken\n{good}\n", encoding="utf-8")
         out = run_loader_sync(artifact)
@@ -290,7 +291,8 @@ class TestTimeline:
 
         controller.begin_live_run()
         controller.feed_line(encode_sample_line(TelemetrySample(
-            run_id="live", sequence_id=0, simulation_time_s=10.0, altitude_m=1.0,
+            run_id="live", sequence_id=0, simulation_time_s=10.0,
+            sample_kind="output_state", altitude_m=1.0,
         )))
         timeline = TimelineController(controller)
         timeline.play()
@@ -305,7 +307,7 @@ class TestLiveToReplayTransition:
         for i in range(5):
             controller.feed_line(encode_sample_line(TelemetrySample(
                 run_id="live", sequence_id=i, simulation_time_s=float(i * 10),
-                altitude_m=1000.0 + i,
+                sample_kind="output_state", altitude_m=1000.0 + i,
             )))
         controller.finish_live_run(exit_code=0)
         controller.enter_replay_of_live()

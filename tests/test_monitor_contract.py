@@ -35,6 +35,7 @@ def make_sample(**overrides) -> TelemetrySample:
         run_id="run_x",
         sequence_id=7,
         simulation_time_s=120.5,
+        sample_kind="output_state",
         wall_time_s=1.25,
         altitude_m=52_000.0,
         radius_m=1_789_400.0,
@@ -148,7 +149,9 @@ class TestFinitePolicy:
 
 class TestOptionalChannels:
     def test_minimal_sample_has_no_fake_values(self):
-        sample = TelemetrySample(run_id="r", sequence_id=0, simulation_time_s=0.0)
+        sample = TelemetrySample(
+            run_id="r", sequence_id=0, simulation_time_s=0.0, sample_kind="output_state"
+        )
         payload = sample_to_payload(sample)
         for absent in ("altitude_m", "radius_m", "state_inertial",
                        "orbital_elements", "diagnostics", "events"):
@@ -168,7 +171,8 @@ class TestOptionalChannels:
     def test_sample_mappings_are_defensively_copied(self):
         elements = {"ecc": 0.1}
         sample = TelemetrySample(
-            run_id="r", sequence_id=0, simulation_time_s=0.0, orbital_elements=elements
+            run_id="r", sequence_id=0, simulation_time_s=0.0,
+            sample_kind="output_state", orbital_elements=elements,
         )
         elements["ecc"] = 9.9
         assert sample.orbital_elements["ecc"] == pytest.approx(0.1)

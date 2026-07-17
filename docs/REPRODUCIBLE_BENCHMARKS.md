@@ -38,31 +38,49 @@ lunaris-benchmark \
 matrix needed to locate which SH degree ST-LRPS is equivalent to, and what each
 error component costs:
 
-| Series | Field | Integrator | Isolates |
+| Series | Field | Integrator | Characterizes |
 | --- | --- | --- | --- |
 | Truth | SH200 | CPU DOP853 | reference |
 | SH20…SH150 | SH ladder | GPU RK4 | degree-vs-error curve (equivalent-degree anchor) |
 | SH200 | SH200 | GPU RK4 | fixed-step integrator/dtype/frame error floor |
 | ST-LRPS | surrogate | GPU RK4 | deployed-configuration total error + speed |
-| ST-LRPS (CPU adaptive) | surrogate | CPU DOP853 | surrogate *field* error, integrator error removed |
+| ST-LRPS (adaptive) | surrogate | CPU DOP853 | surrogate-dominated error, fixed-step contribution substantially reduced |
 
 The SH200 GPU RK4 series duplicates the truth field on purpose; the config
 carries `validation.allow_truth_baseline` plus a written justification, which
-paper-safe mode requires. The CPU adaptive surrogate series is enabled with
+paper-safe mode requires. The adaptive surrogate series is enabled with
 `surrogate.cpu_adaptive: true` (CLI: `--cpu-adaptive-surrogate` in
-`--gpu-batch-compare` mode); it reuses the truth integrator so the difference
-from truth is the gravity field itself plus a negligible, controlled
-integrator contribution. Its tolerances default to `rtol 1e-8` / `atol 1e-6`
-(`surrogate.cpu_adaptive_rtol/atol`, CLI `--cpu-adaptive-rtol/--cpu-adaptive-atol`)
-rather than the truth tolerances: a float32 surrogate right-hand side carries a
-~1e-7 relative noise floor, and truth-grade tolerances stall the adaptive step
-controller against that noise without buying accuracy. The series is reported
-as `ST_LRPS_CPU_<integrator>` in every metrics table, with adaptive-honest
-runtime columns (no fabricated steps/s; eval throughput from the reported RHS
-count). It is not yet compatible with the trajectory-cache flags or
-`--rebuild-metrics`, and it is slow by construction — one SciPy integration per
-scenario with single-point surrogate evaluations — so use it on focused
-scenario sets, not throughput sweeps.
+`--gpu-batch-compare` mode); it reuses the truth integrator family so the
+fixed-step integrator/dtype contribution to its error is substantially
+reduced. It is **not** an independent isolation of surrogate field error: the
+series runs at looser tolerances than the truth (defaults `rtol 1e-8` /
+`atol 1e-6` via `surrogate.cpu_adaptive_rtol/atol`, CLI
+`--cpu-adaptive-rtol/--cpu-adaptive-atol`), so tolerance and local-truncation
+differences and the surrogate's own numerical noise remain entangled with the
+field error. The looser tolerances are deliberate: a float32 surrogate
+right-hand side carries a ~1e-7 relative noise floor, and truth-grade
+tolerances stall the adaptive step controller against that noise without
+buying accuracy. A rigorous decomposition would additionally need a control
+series — the SH200 truth field on the same adaptive integrator at both the
+truth tolerances and the surrogate tolerances — which this benchmark does not
+yet run.
+
+The series is reported as `ST_LRPS_ADAPTIVE_<integrator>` in every metrics
+table. Its runtime rows are adaptive-honest (no fabricated steps/s; eval
+throughput from the reported RHS count) and carry split provenance: `device`
+/ `dtype` describe the CPU float64 integrator loop while `model_device` /
+`model_dtype` record where the loaded surrogate actually evaluates (possibly
+CUDA float32). If some scenarios fail, the series reports `status="partial"`
+and the summary lists it under `partial_models`; only completed scenarios
+contribute metrics. The series is not yet compatible with the
+trajectory-cache flags or `--rebuild-metrics`, and it is slow by construction
+— one SciPy integration per scenario with single-point surrogate evaluations
+— so use it on focused scenario sets, not throughput sweeps.
+
+The shipped config sets `surrogate.require_st_lrps: true` (CLI:
+`--require-st-lrps`): a fit-region sweep whose scientific point is the
+surrogate refuses to start when no valid ST-LRPS model directory can be
+resolved, instead of silently degrading to an SH-only ladder.
 
 Reading the result: `metrics/gpu_batch_summary.json` carries the
 equivalent-degree estimate (interpolated on the SH ladder) and per-model

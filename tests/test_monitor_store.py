@@ -16,6 +16,7 @@ from lunaris.ui.monitor.store import RunOutcome, TelemetryStore
 
 
 def sample(seq: int, t: float | None = None, run_id: str = "run_a", **extra) -> TelemetrySample:
+    extra.setdefault("sample_kind", "output_state")
     return TelemetrySample(
         run_id=run_id,
         sequence_id=seq,

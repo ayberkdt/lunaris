@@ -6,8 +6,10 @@ propagation subprocess on ``stdout``:
 * ``[TELEMETRY_META] {json}`` — once per run, carries :class:`TelemetryProvenance`
   (backends, integrator, gravity model, hashes) so provenance never has to be
   repeated on every sample.
-* ``[TELEMETRY] {json}`` — one :class:`TelemetrySample` per telemetry cadence
-  tick (schema ``lunaris_telemetry_v1``).
+* ``[TELEMETRY] {json}`` — one :class:`TelemetrySample` per emitted sample
+  (schema ``lunaris_telemetry_v1``). ``sample_kind`` declares what each sample
+  scientifically is: an accepted integrator state, an output-grid state, or a
+  transient ``rhs_probe`` solver observation.
 
 This module is the single source of truth for that wire format: the producer
 (:mod:`lunaris.core.propagation`) encodes through it and the consumer
@@ -41,7 +43,10 @@ TELEMETRY_SCHEMA_VERSION = "lunaris_telemetry_v1"
 TELEMETRY_SAMPLE_PREFIX = "[TELEMETRY]"
 TELEMETRY_META_PREFIX = "[TELEMETRY_META]"
 #: File name of the optional per-run telemetry artifact (newline-delimited
-#: JSON: one meta line followed by sample lines, same payloads as stdout).
+#: JSON: one meta line followed by the persisted sample lines). The artifact
+#: is a *subset* of the stdout stream: transient ``rhs_probe`` samples are
+#: emitted on stdout only and never written here (see
+#: :meth:`lunaris.core.propagation.telemetry_emitter` / the replay loader).
 TELEMETRY_ARTIFACT_NAME = "telemetry.ndjson"
 
 #: Diagnostic value types allowed on the wire.
@@ -142,7 +147,14 @@ class TelemetryProvenance:
 
 @dataclass(frozen=True, slots=True)
 class TelemetrySample:
-    """One telemetry cadence tick.
+    """One structured telemetry sample.
+
+    ``sample_kind`` declares what the sample scientifically is (accepted
+    integrator state, output-grid state, or transient RHS probe) and has no
+    default: every producer must state the kind explicitly, so a new producer
+    cannot silently promote solver probes to trajectory science. Only the
+    decoder maps a *missing* kind (pre-``sample_kind`` artifacts) to
+    ``legacy_unknown``.
 
     All physical quantities use SI (m, m/s, s, rad). Unit conversion is a
     presentation-layer concern. Optional channels are ``None`` (scalars),
@@ -153,7 +165,7 @@ class TelemetrySample:
     run_id: str
     sequence_id: int
     simulation_time_s: float
-    sample_kind: SampleKind = "output_state"
+    sample_kind: SampleKind
     schema_version: str = TELEMETRY_SCHEMA_VERSION
     wall_time_s: float | None = None
     epoch_et_s: float | None = None

@@ -143,6 +143,58 @@ def test_cpu_adaptive_defaults_false_and_maps_to_argv(tmp_path):
     assert args.cpu_adaptive_atol == pytest.approx(1.0e-6)  # default preserved
 
 
+def test_require_st_lrps_defaults_false_and_maps_to_argv(tmp_path):
+    loaded = load_benchmark_config(_write(tmp_path, _config()))
+    assert loaded["surrogate"]["require_st_lrps"] is False
+
+    from lunaris.surrogate.st_lrps.evaluation.benchmark_pipeline import config_to_legacy_argv
+
+    argv = config_to_legacy_argv(loaded, tmp_path / "out")
+    assert "--require-st-lrps" not in argv
+
+    payload = _config()
+    payload["surrogate"]["require_st_lrps"] = True
+    loaded = load_benchmark_config(_write(tmp_path, payload))
+    argv = config_to_legacy_argv(loaded, tmp_path / "out")
+    assert "--require-st-lrps" in argv
+
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = cgm.parse_args(argv)
+    assert args.require_st_lrps is True
+
+
+def test_require_st_lrps_requires_enabled_surrogate_and_bool(tmp_path):
+    payload = _config()
+    payload["surrogate"]["require_st_lrps"] = "yes"
+    with pytest.raises(BenchmarkConfigError, match="require_st_lrps"):
+        load_benchmark_config(_write(tmp_path, payload))
+
+    payload = _config()
+    payload["surrogate"]["enabled"] = False
+    payload["surrogate"]["require_st_lrps"] = True
+    with pytest.raises(BenchmarkConfigError, match="require_st_lrps"):
+        load_benchmark_config(_write(tmp_path, payload))
+
+
+def test_fit_region_sweep_config_is_fail_closed_on_st_lrps():
+    """The shipped fit-region sweep exists to characterize ST-LRPS; it must
+    refuse to run (rather than silently degrade to an SH-only ladder) when no
+    valid surrogate model directory can be resolved."""
+    config_path = (
+        Path(__file__).resolve().parents[1]
+        / "configs" / "benchmarks" / "st_lrps_fit_region_sweep.json"
+    )
+    loaded = load_benchmark_config(config_path)
+    assert loaded["surrogate"]["enabled"] is True
+    assert loaded["surrogate"]["require_st_lrps"] is True
+
+    from lunaris.surrogate.st_lrps.evaluation.benchmark_pipeline import config_to_legacy_argv
+
+    argv = config_to_legacy_argv(loaded, Path("out"))
+    assert "--require-st-lrps" in argv
+
+
 def test_cpu_adaptive_requires_enabled_surrogate_and_bool(tmp_path):
     payload = _config()
     payload["surrogate"]["cpu_adaptive"] = "yes"
