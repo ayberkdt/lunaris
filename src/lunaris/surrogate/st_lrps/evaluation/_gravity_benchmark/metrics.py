@@ -291,7 +291,7 @@ def compute_gpu_batch_metrics_for_model(
             "argp_deg": scenario.argp_deg,
             "ta_deg": scenario.ta_deg,
         }
-        if result.status != "ok":
+        if result.status not in ("ok", "partial"):
             rows.append({
                 **base,
                 **{k: np.nan for k in _GPU_BATCH_METRICS_FIELDNAMES if k not in base},
@@ -299,6 +299,9 @@ def compute_gpu_batch_metrics_for_model(
                 "failure_reason": result.failure_reason,
             })
             continue
+        # A "partial" result keeps its failed scenarios as NaN columns; the
+        # non-finite check below marks those per-scenario rows failed while the
+        # completed scenarios still contribute real metrics.
         if scenario.scenario_id not in truth.t_by_scenario:
             rows.append({
                 **base,
@@ -754,6 +757,11 @@ def build_gpu_runtime_metrics(
             "backend": result.backend,
             "device": result.device,
             "dtype": result.dtype,
+            # Field-evaluation provenance when it differs from device/dtype
+            # (CPU adaptive surrogate series: CPU float64 integrator loop,
+            # model on its own device/dtype). Empty when they coincide.
+            "model_device": getattr(result, "model_device", None) or "",
+            "model_dtype": getattr(result, "model_dtype", None) or "",
             "integrator": integrator,
             "n_scenarios": n_scenarios,
             "n_steps": n_steps,

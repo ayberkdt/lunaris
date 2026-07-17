@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "st_lrps_fit_region_sweep",
-  "description": "Locate the SH-degree region where ST-LRPS sits. CPU DOP853 SH200 truth vs a GPU RK4 SH degree ladder (20-200) plus ST-LRPS both on GPU RK4 and on the CPU adaptive truth integrator. The SH200 GPU RK4 series isolates fixed-step integrator/dtype/frame error (the floor every GPU series inherits); the CPU adaptive surrogate series isolates surrogate field error from integrator error; the SH ladder anchors the equivalent-degree estimate; runtime rows carry the speed comparison including speedup vs the DOP853 truth.",
+  "description": "Locate the SH-degree region where ST-LRPS sits. CPU DOP853 SH200 truth vs a GPU RK4 SH degree ladder (20-200) plus ST-LRPS both on GPU RK4 and on the CPU adaptive truth integrator. The SH200 GPU RK4 series isolates fixed-step integrator/dtype/frame error (the floor every GPU series inherits); the adaptive surrogate series reports surrogate-dominated trajectory error with the fixed-step integrator contribution substantially reduced but NOT independently eliminated (its tolerances are looser than the truth run's, so tolerance/truncation/dtype residuals remain entangled with the field error); the SH ladder anchors the equivalent-degree estimate; runtime rows carry the speed comparison including speedup vs the DOP853 truth.",
   "scenario": {
     "seed": 42,
     "count": 64,
@@ -38,7 +38,7 @@
   ],
   "validation": {
     "allow_truth_baseline": true,
-    "truth_baseline_justification": "SH200 on the GPU fixed-step integrator shares the truth gravity field; its error against the SH200 DOP853 truth isolates integrator/dtype/frame error, the floor every other GPU series inherits. Without it the ST-LRPS error cannot be split into field vs integrator components."
+    "truth_baseline_justification": "SH200 on the GPU fixed-step integrator shares the truth gravity field; its error against the SH200 DOP853 truth isolates integrator/dtype/frame error, the floor every other GPU series inherits. Without it the ST-LRPS error cannot be attributed between field and integrator contributions."
   },
   "surrogate": {
     "enabled": true,
@@ -46,7 +46,8 @@
     "model_dir": null,
     "baseline_degree": 20,
     "runtime_model_kind": "potential_autograd",
-    "cpu_adaptive": true
+    "cpu_adaptive": true,
+    "require_st_lrps": true
   },
   "outputs": {
     "out_dir": null,

@@ -2,14 +2,45 @@
 
 ## Unreleased
 
-(nothing yet)
+- **Changed: fit-region benchmark honesty hardening (external review).** The
+  adaptive surrogate series is now reported as `ST_LRPS_ADAPTIVE_<integrator>`
+  (was `ST_LRPS_CPU_<integrator>`): the integrator loop is CPU SciPy, but the
+  surrogate field evaluates wherever the loaded model lives, and the runtime
+  rows now carry that split provenance (`device`/`dtype` = CPU float64
+  integrator state; new `model_device`/`model_dtype` columns = the model's
+  actual device/dtype). Config, CLI help, and docs no longer claim the series
+  "isolates surrogate field error from integrator error" — it substantially
+  reduces the fixed-step contribution but runs at looser tolerances than the
+  truth, so the residual is not an independent decomposition
+  (`docs/REPRODUCIBLE_BENCHMARKS.md` documents the missing control series).
+  A run where only some adaptive scenarios finish now reports
+  `status="partial"` (surfaced under `partial_models` in the summary) instead
+  of a blanket `status="ok"`.
+- **Added: `surrogate.require_st_lrps` benchmark-config key** (maps to
+  `--require-st-lrps`). `configs/benchmarks/st_lrps_fit_region_sweep.json`
+  sets it: the fit-region sweep now fails closed when no valid ST-LRPS model
+  directory resolves, instead of silently degrading to an SH-only ladder.
+- **Changed: `TelemetrySample.sample_kind` no longer defaults to
+  `output_state`.** Every producer must declare the kind explicitly so a new
+  producer cannot silently promote solver probes to trajectory science; only
+  the decoder still maps a missing kind to `legacy_unknown`. The
+  `telemetry.ndjson` artifact docstring now states that `rhs_probe` samples
+  are stdout-only (they were never written to the artifact).
+- **Changed: `tools/api_inventory.py` boundary scan fails closed on a file it
+  cannot parse** (previously a `SyntaxError` silently skipped the file).
+- **Docs consistency fixes:** `ALGORITHM_TRACEABILITY_POLICY.md` now matches
+  CI (the registry audit runs as an advisory step, not "not run in CI");
+  `PUBLIC_API.md` scopes the manifest claim to modules with a literal
+  `__all__`; the 0.1.0rc2 API-boundary entry now states that only the
+  `user-stable` tier is a stable surface at 0.x, matching `VERSIONING.md`.
 
 ## 0.1.0rc2 — 2026-07-17
 
 - **Changed: API-boundary cleanup — internal helpers consumed across
-  subsystem boundaries got public names.** (The Python module surface is not
-  a stable API at 0.x — see `docs/VERSIONING.md` — so no deprecation aliases
-  beyond those noted.) Renames, old → new:
+  subsystem boundaries got public names.** (Only the `user-stable` tier in
+  `docs/PUBLIC_API.md` is a stable surface at 0.x — see `docs/VERSIONING.md`;
+  the modules renamed here are outside it, so no deprecation aliases beyond
+  those noted.) Renames, old → new:
   `lunaris.common.math_utils._sample_grid_bilinear_kernel` →
   `sample_grid_bilinear_kernel`; `._sample_2d_scaled_bilinear_kernel` →
   `sample_2d_scaled_bilinear_kernel`;

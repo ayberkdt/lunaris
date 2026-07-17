@@ -49,6 +49,7 @@ def controller():
 
 
 def make_sample(seq: int, t: float, **extra) -> TelemetrySample:
+    extra.setdefault("sample_kind", "output_state")
     return TelemetrySample(run_id="run_t", sequence_id=seq, simulation_time_s=t, **extra)
 
 

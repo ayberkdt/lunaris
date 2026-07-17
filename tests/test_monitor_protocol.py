@@ -26,7 +26,8 @@ from lunaris.ui.monitor.protocol import (
 
 def sample_line(seq: int = 0, t: float = 10.0) -> str:
     return encode_sample_line(
-        TelemetrySample(run_id="run_a", sequence_id=seq, simulation_time_s=t, altitude_m=1000.0)
+        TelemetrySample(run_id="run_a", sequence_id=seq, simulation_time_s=t,
+                        sample_kind="output_state", altitude_m=1000.0)
     )
 
 

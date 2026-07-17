@@ -43,6 +43,7 @@ def _log_count(w) -> int:
 def _sample_line(seq: int, t: float, alt_m: float = 50_000.0) -> str:
     return encode_sample_line(TelemetrySample(
         run_id="run_it", sequence_id=seq, simulation_time_s=t,
+        sample_kind="output_state",
         altitude_m=alt_m, radius_m=1_737_400.0 + alt_m, speed_m_s=1650.0,
         orbital_elements={"ecc": 0.01, "sma_m": 1.8e6},
     ))
@@ -135,6 +136,7 @@ def test_terrain_sample_drives_the_collision_watchdog_fields(win) -> None:
     w, _ = win
     line = encode_sample_line(TelemetrySample(
         run_id="run_it", sequence_id=0, simulation_time_s=5.0,
+        sample_kind="output_state",
         altitude_m=1200.0, radius_m=1_738_600.0,
         surface_radius_m=1_738_000.0, terrain_clearance_m=600.0,
     ))

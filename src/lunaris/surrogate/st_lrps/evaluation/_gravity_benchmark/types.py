@@ -60,6 +60,8 @@ class BatchModelResult:
     n_scenarios: int
     rk4_dt_s: float
     output_dt_s: float
+    # "ok" (every scenario completed), "partial" (some scenarios failed and
+    # are NaN-filled / excluded from metrics), or "failed" (nothing usable).
     status: str
     failure_reason: str = ""
     # "fixed_step_rk" for the GPU batch kernels; "cpu_adaptive" for the
@@ -69,6 +71,13 @@ class BatchModelResult:
     # propagator reports them (adaptive series); None for fixed-step results
     # whose eval count is derived from n_steps * evals_per_step.
     accel_evals_total: int | None = None
+    # Field-evaluation provenance when it differs from the integrator/state
+    # provenance carried by ``device``/``dtype``. Only the CPU adaptive
+    # surrogate series sets these: its integrator loop and state arrays live
+    # on the CPU in float64 while the surrogate field evaluates on the device
+    # and dtype the loaded model uses. None means "same as device/dtype".
+    model_device: str | None = None
+    model_dtype: str | None = None
 
 
 @dataclass

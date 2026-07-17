@@ -279,6 +279,10 @@ def validate_benchmark_config(config: Mapping[str, Any]) -> None:
         raise BenchmarkConfigError("surrogate.cpu_adaptive must be a boolean")
     if surrogate.get("cpu_adaptive") and not surrogate.get("enabled"):
         raise BenchmarkConfigError("surrogate.cpu_adaptive requires surrogate.enabled=true")
+    if not isinstance(surrogate.get("require_st_lrps", False), bool):
+        raise BenchmarkConfigError("surrogate.require_st_lrps must be a boolean")
+    if surrogate.get("require_st_lrps") and not surrogate.get("enabled"):
+        raise BenchmarkConfigError("surrogate.require_st_lrps requires surrogate.enabled=true")
     for key in ("cpu_adaptive_rtol", "cpu_adaptive_atol"):
         value = surrogate.get(key)
         if value is not None and (not isinstance(value, int | float) or float(value) <= 0.0):
@@ -422,6 +426,7 @@ def _fill_safe_defaults(config: MutableMapping[str, Any]) -> None:
     surrogate.setdefault("model_dir", None)
     surrogate.setdefault("baseline_degree", 20)
     surrogate.setdefault("cpu_adaptive", False)
+    surrogate.setdefault("require_st_lrps", False)
 
 
 def _normalize_paths(config: MutableMapping[str, Any], config_path: Path) -> None:

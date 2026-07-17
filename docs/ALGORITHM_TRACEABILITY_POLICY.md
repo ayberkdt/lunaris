@@ -104,8 +104,10 @@ Fail closed: if you cannot confirm the defining section/equation, do **not** use
    referential-integrity errors, unresolved symbols, missing test paths, or a
    stale catalogue.
 
-`python tools/algorithm_registry.py audit` is an authoring aid (not run in CI):
-it lists `src/lunaris` files with algorithm-ish keywords that no entry covers.
+`python tools/algorithm_registry.py audit` is an authoring aid: it lists
+`src/lunaris` files with algorithm-ish keywords that no entry covers. CI runs
+it as an advisory step (it prints its findings but never fails the build); it
+is not a strict gate.
 
 ## Naming bugs vs numerical bugs
 

@@ -30,10 +30,13 @@ This table is the canonical console-script inventory: every entry in
 
 ## Python Surface Tiers
 
-Python imports have three explicit stability levels. The exact module list and
-each tier are machine-readable in `docs/public_api_manifest.json`; literal
-`__all__` exports for every manifest module are recorded in
-`docs/api_snapshot.json`.
+Python imports have three explicit stability levels. The tier tables below are
+the canonical inventory. `docs/public_api_manifest.json` machine-encodes the
+subset of these modules whose literal `__all__` is snapshotted in
+`docs/api_snapshot.json`; documented modules without a literal `__all__`
+(for example `lunaris.common`, whose exports are assembled dynamically, and
+the convenience modules `lunaris.common.hashing`, `lunaris.common.paths`, and
+`lunaris.analysis.postprocess`) appear in the tables only.
 
 ### User-stable public API (`user-stable`)
 

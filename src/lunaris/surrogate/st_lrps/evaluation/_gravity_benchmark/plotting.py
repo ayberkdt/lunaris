@@ -1200,13 +1200,16 @@ def plot_gpu_batch_report_figures(
         band_by_model: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         ric_by_model: dict[str, np.ndarray] = {}
         for result in results:
-            if result.status != "ok":
+            if result.status not in ("ok", "partial"):
                 continue
             pos_err, ric_err = [], []
             for i, sc in enumerate(scenarios):
                 if sc.scenario_id not in truth.t_by_scenario:
                     continue
                 y_model = interpolate_state_to_times(result.t, result.y[:, i, :], common_t)
+                if not np.isfinite(y_model).all():
+                    # partial result: this scenario failed and is NaN-filled.
+                    continue
                 y_truth = truth.y_by_scenario[sc.scenario_id]
                 pos_err.append(np.linalg.norm(y_model[:, :3] - y_truth[:, :3], axis=1) / 1000.0)
                 ric_err.append(compute_ric_errors(y_truth[:, :3], y_truth[:, 3:], y_model[:, :3]) / 1000.0)
@@ -1339,9 +1342,12 @@ def plot_gpu_batch_report_figures(
         ric_by_model = {}
         tau_by_model: dict[str, np.ndarray] = {}
         for result in results:
-            if result.status != "ok":
+            if result.status not in ("ok", "partial"):
                 continue
             y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
+            if not np.isfinite(y_model).all():
+                # partial result: this selected scenario failed for this model.
+                continue
             pos_by_model[result.display_name] = (
                 np.linalg.norm(y_model[:, :3] - y_truth[:, :3], axis=1) / 1000.0)
             alt_by_model[result.display_name] = (
@@ -1453,9 +1459,11 @@ def plot_gpu_batch_report_figures(
             rk = y_truth[:, :3] / 1000.0
             ax_3d.plot(rk[:, 0], rk[:, 1], rk[:, 2], color=_TRUTH_COLOR, lw=2.5, label=truth_label)
             for result in results:
-                if result.status != "ok":
+                if result.status not in ("ok", "partial"):
                     continue
                 y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
+                if not np.isfinite(y_model).all():
+                    continue
                 rk = y_model[:, :3] / 1000.0
                 ax_3d.plot(rk[:, 0], rk[:, 1], rk[:, 2], color=model_color(result.display_name),
                            lw=model_linewidth(result.display_name), label=display_label(result.display_name))

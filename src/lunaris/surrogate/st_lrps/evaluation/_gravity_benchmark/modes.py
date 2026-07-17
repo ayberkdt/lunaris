@@ -600,7 +600,11 @@ def _print_gpu_batch_summary(
 
 
 def _cpu_adaptive_display_name(args: argparse.Namespace) -> str:
-    return f"ST_LRPS_CPU_{str(getattr(args, 'truth_integrator', 'DOP853')).upper()}"
+    # "ADAPTIVE", not "CPU": the integrator control loop runs on the CPU, but
+    # the surrogate field evaluations run wherever the loaded model lives
+    # (possibly CUDA) — the name stays neutral and the result's device /
+    # model_device fields carry the split provenance.
+    return f"ST_LRPS_ADAPTIVE_{str(getattr(args, 'truth_integrator', 'DOP853')).upper()}"
 
 
 def _run_cpu_adaptive_surrogate_series(
@@ -612,13 +616,17 @@ def _run_cpu_adaptive_surrogate_series(
 ) -> BatchModelResult:
     """Propagate ST-LRPS per scenario with the CPU adaptive truth integrator.
 
-    The surrogate runs through the same adaptive integrator as the ground-truth
-    reference, so this series differs from truth only through the gravity field
-    itself (plus a negligible, controlled integrator contribution). Compared
-    with the GPU fixed-step surrogate series it separates surrogate *field*
-    error from fixed-step integrator/dtype error inside a single benchmark
-    report. The integrator loop is CPU SciPy; the field evaluations run
-    wherever the loaded surrogate lives (see ``device``).
+    The surrogate runs through the same adaptive integrator family as the
+    ground-truth reference, so compared with the GPU fixed-step surrogate
+    series this substantially reduces the fixed-step integrator/dtype
+    contribution to the reported error. It does NOT independently eliminate
+    it: the series runs at looser tolerances than the truth (see below), so
+    the residual mixes surrogate field error with tolerance/local-truncation
+    differences and the surrogate's own numerical noise. A clean decomposition
+    would need a control series (the truth field on this integrator at these
+    tolerances), which this benchmark does not run. The integrator loop is
+    CPU SciPy in float64 (``device``/``dtype``); the field evaluations run
+    wherever the loaded surrogate lives (``model_device``/``model_dtype``).
 
     Tolerances come from ``--cpu-adaptive-rtol/--cpu-adaptive-atol`` rather
     than the truth tolerances: a float32 surrogate RHS has a ~1e-7 relative
@@ -634,7 +642,14 @@ def _run_cpu_adaptive_surrogate_series(
     cfg = _cfg_with_tolerances(_cfg_with_integrator(cfg_base, integrator), rtol, atol)
     print(f"[cpu-adaptive] integrator={integrator} rtol={rtol:g} atol={atol:g}", flush=True)
     grav = model_cache.get("st_lrps")
-    device = str(getattr(grav, "device", "cpu") or "cpu")
+    model_device = str(getattr(grav, "device", "cpu") or "cpu")
+    model_dtype: str | None = None
+    diagnostics_fn = getattr(grav, "dtype_diagnostics", None)
+    if callable(diagnostics_fn):
+        try:
+            model_dtype = str(diagnostics_fn()["model_dtype"])
+        except Exception:  # noqa: BLE001 — provenance only, never break the run
+            model_dtype = None
 
     n = len(scenarios)
     t_ref: np.ndarray | None = None
@@ -676,13 +691,14 @@ def _run_cpu_adaptive_surrogate_series(
     if t_ref is None or y_batch is None:
         return BatchModelResult(
             model_name="st_lrps_cpu_adaptive", display_name=display_name,
-            backend=f"scipy_{integrator.lower()}", device=device, dtype="float64",
+            backend=f"scipy_{integrator.lower()}", device="cpu", dtype="float64",
             t=np.array([], dtype=np.float64),
             y=np.empty((0, n, 6), dtype=np.float64),
             runtime_s=runtime_total, n_steps=0, n_scenarios=n,
             rk4_dt_s=float("nan"), output_dt_s=float(args.dt_out),
             status="failed", failure_reason="all_scenarios_failed",
             integrator="cpu_adaptive", accel_evals_total=nfev_total or None,
+            model_device=model_device, model_dtype=model_dtype,
         )
     # n_steps carries the mean RHS-evaluation count per scenario for the
     # adaptive series (there is no fixed step grid); throughput fields are
@@ -690,12 +706,15 @@ def _run_cpu_adaptive_surrogate_series(
     mean_nfev = int(round(nfev_total / max(1, ok_count))) if nfev_total else 1
     return BatchModelResult(
         model_name="st_lrps_cpu_adaptive", display_name=display_name,
-        backend=f"scipy_{integrator.lower()}", device=device, dtype="float64",
+        backend=f"scipy_{integrator.lower()}", device="cpu", dtype="float64",
         t=t_ref, y=y_batch,
         runtime_s=runtime_total, n_steps=max(1, mean_nfev), n_scenarios=n,
         rk4_dt_s=float("nan"), output_dt_s=float(args.dt_out),
-        status="ok",
+        status=("ok" if ok_count == n else "partial"),
+        failure_reason=("" if ok_count == n
+                        else f"{n - ok_count}_of_{n}_scenarios_failed"),
         integrator="cpu_adaptive", accel_evals_total=nfev_total or None,
+        model_device=model_device, model_dtype=model_dtype,
     )
 
 
@@ -1097,6 +1116,9 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         st = result_status.get(disp)
         if st == "ok":
             status_by_model[disp] = "completed"
+        elif st == "partial":
+            # Some scenarios failed and were NaN-filled; metrics cover the rest.
+            status_by_model[disp] = "partial"
         elif st == "failed":
             status_by_model[disp] = "failed"
         elif disp in models_in_agg:

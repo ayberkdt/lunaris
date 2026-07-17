@@ -289,12 +289,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--cpu-adaptive-surrogate", action="store_true",
                    help="In --gpu-batch-compare mode, additionally propagate the "
                         "ST-LRPS surrogate per scenario with the CPU adaptive truth "
-                        "integrator (same integrator and tolerances as the truth run) "
-                        "and report it as the ST_LRPS_CPU_<integrator> series. "
-                        "Against the GPU fixed-step surrogate series this separates "
-                        "surrogate field error from fixed-step integrator/dtype error "
-                        "in one report. Not compatible with trajectory-cache flags or "
-                        "--rebuild-metrics.")
+                        "integrator and report it as the ST_LRPS_ADAPTIVE_<integrator> "
+                        "series. Against the GPU fixed-step surrogate series this "
+                        "substantially reduces the fixed-step integrator/dtype "
+                        "contribution to the reported error — it does not eliminate "
+                        "it independently, because the series runs at looser "
+                        "tolerances than the truth (see --cpu-adaptive-rtol). Not "
+                        "compatible with trajectory-cache flags or --rebuild-metrics.")
     p.add_argument("--cpu-adaptive-rtol", type=float, default=1.0e-8,
                    help="Relative tolerance for the CPU adaptive surrogate series. "
                         "Kept looser than the truth rtol on purpose: a float32 "

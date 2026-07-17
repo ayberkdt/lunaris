@@ -203,6 +203,11 @@ def config_to_legacy_argv(config: Mapping[str, Any], output_dir: str | Path) -> 
             argv.extend(["--cpu-adaptive-rtol", str(float(surrogate["cpu_adaptive_rtol"]))])
         if surrogate.get("cpu_adaptive_atol") is not None:
             argv.extend(["--cpu-adaptive-atol", str(float(surrogate["cpu_adaptive_atol"]))])
+    if surrogate.get("enabled") and surrogate.get("require_st_lrps"):
+        # Fail closed: a benchmark whose scientific point is the surrogate must
+        # refuse to run (rather than silently degrade to an SH-only ladder)
+        # when no valid model directory can be resolved.
+        argv.append("--require-st-lrps")
     return argv
 
 

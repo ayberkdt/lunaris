@@ -226,7 +226,7 @@ def test_runtime_metrics_cpu_adaptive_series_reports_honest_throughput():
     import numpy as np
     T, N = 11, 8
     res = cgm.BatchModelResult(
-        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_CPU_DOP853",
+        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_ADAPTIVE_DOP853",
         backend="scipy_dop853", device="cuda:0", dtype="float64",
         t=np.linspace(0, 600, T), y=np.zeros((T, N, 6)),
         runtime_s=4.0, n_steps=1200, n_scenarios=N, rk4_dt_s=float("nan"),
@@ -253,7 +253,7 @@ def test_cpu_adaptive_runtime_row_has_no_nan_cells():
     import numpy as np
     T, N = 6, 4
     res = cgm.BatchModelResult(
-        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_CPU_DOP853",
+        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_ADAPTIVE_DOP853",
         backend="scipy_dop853", device="cpu", dtype="float64",
         t=np.linspace(0, 600, T), y=np.zeros((T, N, 6)),
         runtime_s=3.0, n_steps=500, n_scenarios=N, rk4_dt_s=float("nan"),
@@ -269,6 +269,55 @@ def test_cpu_adaptive_runtime_row_has_no_nan_cells():
     # With no nfev, both throughput columns are the honest empty marker.
     assert row["trajectory_steps_per_second"] == ""
     assert row["acceleration_evaluations_per_second"] == ""
+
+
+def test_runtime_rows_carry_model_provenance_for_adaptive_series():
+    """The adaptive series' integrator loop is CPU float64 while the surrogate
+    field may evaluate on another device/dtype; the runtime row must carry both
+    sides instead of pretending everything ran where the state lives."""
+    import numpy as np
+    T, N = 6, 4
+    res = cgm.BatchModelResult(
+        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_ADAPTIVE_DOP853",
+        backend="scipy_dop853", device="cpu", dtype="float64",
+        t=np.linspace(0, 600, T), y=np.zeros((T, N, 6)),
+        runtime_s=3.0, n_steps=500, n_scenarios=N, rk4_dt_s=float("nan"),
+        output_dt_s=60.0, status="ok",
+        integrator="cpu_adaptive", accel_evals_total=1000,
+        model_device="cuda:0", model_dtype="float32")
+    truth = cgm.TruthTrajectorySet(
+        "sh200_dop853", {0: np.array([0.0])}, {0: np.zeros((1, 6))}, {0: 5.0})
+    row = cgm.build_gpu_runtime_metrics([res], truth, evals_per_step=4)[0]
+    assert row["device"] == "cpu" and row["dtype"] == "float64"
+    assert row["model_device"] == "cuda:0" and row["model_dtype"] == "float32"
+
+
+def test_partial_adaptive_result_keeps_completed_scenarios_in_metrics():
+    """A 'partial' result (some scenarios failed and NaN-filled) must yield
+    real metrics for its completed scenarios and per-scenario failed rows for
+    the rest, instead of being dropped or reported wholesale as ok."""
+    ds = _build(n=4)
+    truth = ds["truth"]
+    scenarios = ds["scenarios"]
+    t = truth.t_by_scenario[0]
+    y = np.zeros((len(t), 4, 6))
+    for sid in range(4):
+        y[:, sid, :] = truth.y_by_scenario[sid]
+    y[:, 2, :] = np.nan  # scenario 2 failed mid-run
+    res = cgm.BatchModelResult(
+        model_name="st_lrps_cpu_adaptive", display_name="ST_LRPS_ADAPTIVE_DOP853",
+        backend="scipy_dop853", device="cpu", dtype="float64",
+        t=t, y=y, runtime_s=3.0, n_steps=500, n_scenarios=4,
+        rk4_dt_s=float("nan"), output_dt_s=60.0,
+        status="partial", failure_reason="1_of_4_scenarios_failed",
+        integrator="cpu_adaptive")
+    rows = cgm.compute_gpu_batch_metrics_for_model(res, truth, scenarios, 1.0)
+    by_sid = {r["scenario_id"]: r for r in rows}
+    assert by_sid[2]["status"] == "failed"
+    assert by_sid[2]["failure_reason"] == "non_finite_model_state"
+    for sid in (0, 1, 3):
+        assert by_sid[sid]["status"] in ("ok", "warning_negative_altitude")
+        assert np.isfinite(float(by_sid[sid]["rms_pos_err_km"]))
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +363,7 @@ def test_plots_with_cpu_adaptive_series_do_not_crash(tmp_path):
     # A mixed report: GPU fixed-step baselines + both surrogate series.
     ds = _build(n=6, err_scale_km=0.05,
                 models=("NUMBA_CUDA_SH20_RK4", "NUMBA_CUDA_SH80_RK4",
-                        "GPU_ST_LRPS_RK4", "ST_LRPS_CPU_DOP853"))
+                        "GPU_ST_LRPS_RK4", "ST_LRPS_ADAPTIVE_DOP853"))
     saved, pdf = _run(tmp_path, ds, _make_args(random_scenarios=6))
     assert all(Path(p).exists() for p in saved)
     assert pdf.exists()

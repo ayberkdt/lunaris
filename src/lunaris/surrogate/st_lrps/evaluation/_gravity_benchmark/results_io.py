@@ -970,7 +970,8 @@ def _benchmark_consistency_warnings(
         for name in breakdown.get("failed_models", [])
     )
     warns.extend(
-        f"Model {name} has partial cache coverage; metrics cover only cached scenarios."
+        f"Model {name} completed only part of its scenarios (failed or uncached "
+        "ones are excluded); metrics cover the completed subset."
         for name in breakdown.get("partial_models", [])
     )
     warns.extend(
