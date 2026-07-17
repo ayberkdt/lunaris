@@ -4,7 +4,7 @@ The desktop pre-flight worker delegates to the shared core.preflight service.
 These lock the §5 wiring: the UI maps its snapshot to a registry backend +
 flags, and reaches its output-directory and backend verdicts through the same
 ``lunaris.core.preflight`` service the CLI / batch / benchmark use. CPU-only; the
-desktop mission-propagation path is the CPU full-fidelity backend.
+desktop mission-propagation path is the complete supported-force CPU backend.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def test_cpu_request_passes_capability_check() -> None:
     backend, flags = backend_request_from_snapshot(
         {"gravity_backend": "classic_sh", "albedo_enabled": True, "earth_j2_enabled": True}
     )
-    # CPU full-fidelity supports every force model → no capability issues.
+    # The CPU route supports every currently implemented force flag.
     assert check_backend_capability(requested_backend=backend, flags=flags) == []
 
 

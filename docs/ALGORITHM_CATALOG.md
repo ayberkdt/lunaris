@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**44 entries.**
+**49 entries.**
 
-Implementation class: adaptation (9), delegated_library (8), exact (14), exact_reformulation (1), heuristic (4), standard_implementation (8)
+Implementation class: adaptation (9), delegated_library (8), exact (15), exact_reformulation (1), heuristic (7), standard_implementation (9)
 
-Verification status: identifier_verified_content_pending (3), unverifiable (4), verified_primary_source (37)
+Verification status: identifier_verified_content_pending (3), unverifiable (7), verified_primary_source (38), verified_secondary_source (1)
 
 ## Index
 
@@ -44,10 +44,15 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
 | [`LUNARIS-ALG-SUM-001`](#lunarisalgsum001) | Kahan compensated summation | exact | verified_primary_source |
 | [`LUNARIS-ALG-TB-001`](#lunarisalgtb001) | Battin F(q) cancellation-resistant differential third-body formulation | exact_reformulation | identifier_verified_content_pending |
 | [`LUNARIS-ALG-TB-002`](#lunarisalgtb002) | Newtonian point-mass (monopole) central-body gravitational acceleration | exact | verified_primary_source |
+| [`LUNARIS-ALG-UQ-001`](#lunarisalguq001) | Empirical state covariance and eigendecomposed three-sigma position ellipsoid | standard_implementation | verified_secondary_source |
+| [`LUNARIS-ALG-UQ-002`](#lunarisalguq002) | Wilson score confidence interval for impact proportion | exact | verified_primary_source |
 | [`LUNARIS-DATA-CST-001`](#lunarisdatacst001) | CODATA 2018 recommended fundamental physical constants | standard_implementation | verified_primary_source |
 | [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001) | JPL DE440 planetary and lunar ephemeris | standard_implementation | verified_primary_source |
 | [`LUNARIS-DATA-GRAV-001`](#lunarisdatagrav001) | GRAIL GL1800F lunar spherical-harmonic gravity field (JGGRX_1800F) | standard_implementation | identifier_verified_content_pending |
 | [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001) | In-step event-time localization by bisection with a false-position final correction | heuristic | unverifiable |
+| [`LUNARIS-HEUR-FRZ-001`](#lunarisheurfrz001) | Lunaris thresholded frozen-orbit candidate screening and validation gate | heuristic | unverifiable |
+| [`LUNARIS-HEUR-IMP-001`](#lunarisheurimp001) | Outer-sphere rejection and terrain-height bisection for batched impact localization | heuristic | unverifiable |
+| [`LUNARIS-HEUR-INTP-001`](#lunarisheurintp001) | Latitude-clamped, longitude-periodic planetary grid sampling with missing-value fallback | heuristic | unverifiable |
 | [`LUNARIS-HEUR-ML-001`](#lunarisheurml001) | Multi-band SIREN variants and physics-informed input encodings (Lunaris-specific) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-001`](#lunarisheursh001) | Pole-stable spherical-harmonic order truncation (stable-m limit) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-002`](#lunarisheursh002) | Degree-switched spherical-harmonic evaluation with a cubic-Hermite (smoothstep) altitude blend | heuristic | unverifiable |
@@ -1038,6 +1043,39 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
 - **See also**: [`LUNARIS-ALG-EPH-001`](#lunarisalgeph001)
 - **Notes**: GPU/CPU parity: the torch ephemeris path was upgraded from linear to Catmull-Rom to match the CPU kernel.
 
+<a id="lunarisheurintp001"></a>
+### LUNARIS-HEUR-INTP-001 -- Latitude-clamped, longitude-periodic planetary grid sampling with missing-value fallback
+
+- **Slug**: `periodic_planetary_grid_sampling_policy`
+- **Category**: interpolation | **Domain**: INTP | **Status**: active
+- **Classification**: heuristic
+- **Verification**: unverifiable | **Scientific status**: implemented_and_tested
+- **Primary reference**: Lunaris-specific; no external primary reference.
+- **Mathematical contract**:
+  - Inputs: regular latitude/longitude raster or flat row-major storage, floating grid coordinates, DN scale/offset, and optional missing sentinel
+  - Outputs: interpolated physical scalar or NaN for an unavailable nearest sample
+  - Exactness: piecewise_bilinear_or_nearest_policy
+  - Preserves: latitude indices clamp at the polar rows
+  - Preserves: longitude indices wrap periodically across the raster seam
+  - Preserves: scaling is applied in physical-value space
+- **Implementing symbols**:
+  - `src/lunaris/common/math_utils.py` -- `sample_grid_bilinear` (api_entry_point)
+  - `src/lunaris/common/math_utils.py` -- `sample_2d_scaled_bilinear_kernel` (numba_implementation)
+  - `src/lunaris/common/math_utils.py` -- `sample_2d_scaled_nearest` (api_entry_point)
+- **Lunaris modifications**:
+  - any missing member of a bilinear stencil triggers nearest-neighbor fallback
+  - nearest indices use half-up rounding
+- **Assumptions**:
+  - regular equirectangular grid metadata and row-major latitude ordering
+- **Limitations**:
+  - no area weighting or spherical interpolation
+  - discontinuous at missing-data fallback boundaries
+  - clamping does not infer data beyond the supplied polar rows
+- **Validated by**:
+  - `tests/test_math_utils.py`
+- **See also**: [`LUNARIS-ALG-INTP-001`](#lunarisalgintp001)
+- **Notes**: Bilinear and nearest-neighbor interpolation are standard constructions; this record covers Lunaris' boundary, DN scaling, and missing-data policy, so no originality or external defining source is claimed.
+
 ## Orbital elements (OE)
 
 <a id="lunarisalgoe001"></a>
@@ -1087,6 +1125,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
 - **Implementing symbols**:
   - `src/lunaris/batch/sampling.py` -- `generate_standard_normal_design` (delegation_wrapper)
   - `src/lunaris/batch/sampling.py` -- `sample_initial_states` (api_entry_point)
+  - `src/lunaris/analysis/frozen/search.py` -- `sobol_element_samples` (delegation_wrapper)
 - **Lunaris modifications**:
   - Deterministic (unscrambled) Sobol discards the pathological all-zero first point; scrambled Sobol retains it (Lunaris policy documented in the sampler).
 - **Assumptions**:
@@ -1115,6 +1154,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - Preserves: one-dimensional stratification along every axis
 - **Implementing symbols**:
   - `src/lunaris/batch/sampling.py` -- `generate_standard_normal_design` (delegation_wrapper)
+  - `src/lunaris/analysis/frozen/search.py` -- `sobol_element_samples` (delegation_wrapper)
 - **Lunaris modifications**:
   - mapped to standardized normal inputs before physical range mapping
 - **Assumptions**:
@@ -1126,6 +1166,75 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - `tests/test_batch_sampling_designs.py`
 - **See also**: [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001)
 
+## Uncertainty quantification (UQ)
+
+<a id="lunarisalguq001"></a>
+### LUNARIS-ALG-UQ-001 -- Empirical state covariance and eigendecomposed three-sigma position ellipsoid
+
+- **Slug**: `empirical_state_covariance_and_principal_ellipsoid`
+- **Category**: diagnostic | **Domain**: UQ | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_secondary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Heckert2002NISTHandbook` -- Heckert, 2002. "{NIST/SEMATECH} e-Handbook of Statistical Methods" (chapter 6. Process or Product Monitoring and Control; section 6.3.4.1 sample covariance; 6.5.3.2 eigenstructure) [DOI: 10.18434/M32189]
+- **Verification notes**: The NIST/SEMATECH handbook gives the ddof=1 sample covariance matrix for independent multivariate observations and describes covariance eigenstructure. It is used here as an authoritative verification reference, not as an originality claim for covariance or symmetric eigendecomposition.
+- **Mathematical contract**:
+  - Inputs: N by 6 inertial Cartesian states [m, m/s], or a 6 by 6 state covariance applied to standardized design coordinates by a Cholesky factor
+  - Outputs: ddof=1 empirical 6 by 6 covariance, component standard deviations, and 3-sigma position semi-axes [m] with inertial principal-axis directions
+  - Exactness: empirical_finite_ensemble_summary
+  - Preserves: covariance is symmetrized before the ellipsoid eigendecomposition
+  - Preserves: negative eigenvalues caused only by roundoff are clipped to zero
+- **Implementing symbols**:
+  - `src/lunaris/analysis/ensemble/statistics.py` -- `_cov6` (cpu_implementation)
+  - `src/lunaris/analysis/ensemble/statistics.py` -- `_position_ellipsoid_axes` (cpu_implementation)
+  - `src/lunaris/analysis/ensemble/statistics.py` -- `compute_ensemble_statistics` (api_entry_point)
+  - `src/lunaris/common/batch_defs.py` -- `StateUncertainty` (config_surface)
+  - `src/lunaris/batch/sampling.py` -- `sample_initial_states` (cpu_implementation)
+- **Lunaris modifications**:
+  - altitude summaries use the configured reference radius
+  - invalid samples and, optionally, impacted samples are excluded
+- **Assumptions**:
+  - at least two valid ensemble members
+  - ddof=1 is an unbiased covariance estimator only for independent draws
+- **Limitations**:
+  - LHS and Sobol ensembles are non-IID designs; their covariance is an empirical design summary, not an unbiased Monte Carlo estimator
+  - a componentwise or 3-sigma ellipsoid is not a distribution-free coverage guarantee
+- **Validated by**:
+  - `tests/test_ensemble_statistics_validity.py`
+  - `tests/test_uq_report.py`
+- **See also**: [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001), [`LUNARIS-ALG-SAMP-002`](#lunarisalgsamp002), [`LUNARIS-ALG-PHZ-001`](#lunarisalgphz001)
+- **Notes**: Source scope is verification of the standard covariance/eigenstructure mathematics. Sample filtering, altitude summaries, and QMC interpretation warnings are Lunaris analysis policy.
+
+<a id="lunarisalguq002"></a>
+### LUNARIS-ALG-UQ-002 -- Wilson score confidence interval for impact proportion
+
+- **Slug**: `wilson_score_binomial_interval`
+- **Category**: diagnostic | **Domain**: UQ | **Status**: active
+- **Classification**: exact
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Wilson1927ScoreInterval` -- Wilson, 1927. "Probable Inference, the Law of Succession, and Statistical Inference" (pages 209-212) [DOI: 10.1080/01621459.1927.10502953]
+- **Verification notes**: Publisher DOI metadata and the original 1927 paper verify author, title, journal, volume 22(158), pages 209-212, and the score-based binomial interval. Lunaris evaluates the uncorrected two-sided form at z=1.96.
+- **Mathematical contract**:
+  - Inputs: impact count k, valid-sample count n, and normal quantile z
+  - Outputs: lower and upper binomial-proportion bounds clipped to [0, 1]
+  - Exactness: exact_wilson_score_formula
+  - Preserves: returns [0, 1] when n is zero
+  - Preserves: reported bounds remain within the probability interval
+- **Implementing symbols**:
+  - `src/lunaris/analysis/ensemble/statistics.py` -- `_binomial_ci_wilson` (cpu_implementation)
+  - `src/lunaris/analysis/ensemble/statistics.py` -- `compute_impact_statistics` (api_entry_point)
+- **Lunaris modifications**:
+  - fixed default z=1.96 is labelled as a nominal 95 percent interval
+- **Assumptions**:
+  - impact outcomes are interpreted as Bernoulli trials for interval reporting
+- **Limitations**:
+  - nominal frequentist coverage assumes an IID binomial sample; QMC designs and correlated uncertainty draws do not satisfy that interpretation
+  - no continuity correction
+- **Validated by**:
+  - `tests/test_ensemble_statistics_validity.py`
+  - `tests/test_uq_report.py`
+- **See also**: [`LUNARIS-ALG-UQ-001`](#lunarisalguq001)
+- **Notes**: This record attributes the interval formula only. Impact detection and the definition of a valid ensemble member are separate Lunaris contracts.
+
 ## Phase / perturbation diagnostics (PHZ)
 
 <a id="lunarisalgphz001"></a>
@@ -1136,7 +1245,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
 - **Classification**: standard_implementation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `Vallado2013Fundamentals` -- Vallado, 2013. "Fundamentals of Astrodynamics and Applications" (edition Fourth; chapter 9 (Special Perturbation Techniques); section Gauss variational equations and the RSW/RIC frame) [ISBN: 978-1-881883-18-0]
-- **Verification notes**: The diagnostic integrates the exact tangential Gauss variational equation for the semi-major axis, da/dt = 2 a^2 v / mu * a_tangential, to predict along-track (phase) drift from a measured tangential acceleration bias, and decomposes position error in the radial/in-track/cross-track (RIC, a.k.a. RSW) frame. Both are standard astrodynamics (Vallado 4th ed., ISBN 978-1-881883-18-0 verified); exact section numbers pending physical copy.
+- **Verification notes**: The diagnostic integrates the exact tangential Gauss variational equation for the semi-major axis, da/dt = 2 a^2 v / mu * a_tangential, to predict along-track (phase) drift from a measured tangential acceleration bias, and decomposes position error in the radial/in-track/cross-track (RIC, a.k.a. RSW) frame. Both are standard astrodynamics (Vallado 4th ed., ISBN 978-1-881883-18-0 verified); exact section numbers pending physical copy. NASA/TP-20250006484, Section 3.1.4, Eqs. 3.1-1 through 3.1-3, independently verifies the R, C = R x V, and I = C x R basis convention; it is a verification reference, not the claimed source of the Gauss VE.
 - **Mathematical contract**:
   - Inputs: reference and test trajectories (position/velocity) and mu
   - Outputs: predicted phase drift, RIC error history, and tangential-bias diagnosis
@@ -1147,6 +1256,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
   - `src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py` -- `diagnose_tangential_bias` (cpu_implementation)
   - `src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py` -- `compute_ric_error_history` (cpu_implementation)
   - `src/lunaris/surrogate/st_lrps/evaluation/phase_diagnostics.py` -- `osculating_sma` (cpu_implementation)
+  - `src/lunaris/analysis/orbit_analysis.py` -- `_to_ric` (cpu_implementation)
 - **Lunaris modifications**:
   - causal test tying surrogate acceleration bias to observed phase drift
 - **Assumptions**:
@@ -1156,8 +1266,81 @@ Verification status: identifier_verified_content_pending (3), unverifiable (4), 
 - **Validated by**:
   - `tests/test_phase_diagnostics.py`
   - `tests/test_orbit_drift.py`
+  - `tests/test_uq_report.py`
 - **See also**: [`LUNARIS-ALG-OE-001`](#lunarisalgoe001)
 - **Notes**: Central to the phase-drift analysis: along-track error is dominated by semi-major-axis drift from a tangential acceleration bias.
+
+## Frozen-orbit search (FRZ)
+
+<a id="lunarisheurfrz001"></a>
+### LUNARIS-HEUR-FRZ-001 -- Lunaris thresholded frozen-orbit candidate screening and validation gate
+
+- **Slug**: `thresholded_frozen_orbit_candidate_screening`
+- **Category**: heuristic | **Domain**: FRZ | **Status**: active
+- **Classification**: heuristic
+- **Verification**: unverifiable | **Scientific status**: implemented_and_tested
+- **Primary reference**: Lunaris-specific; no external primary reference.
+- **Mathematical contract**:
+  - Inputs: time histories of eccentricity, perilune altitude [m], inclination [rad], argument of periapsis [rad], termination state, and mission thresholds
+  - Outputs: lower-is-better screening score, boundedness reasons, and a candidate or validated classification label
+  - Exactness: mission_threshold_screening_heuristic
+  - Preserves: impacts, domain exits, escapes, and non-finite core metrics cannot rank as frozen
+  - Preserves: validated labels require explicit classical-SH long-horizon evidence
+- **Implementing symbols**:
+  - `src/lunaris/analysis/frozen/metrics.py` -- `compute_frozen_metrics` (cpu_implementation)
+  - `src/lunaris/analysis/frozen/classify.py` -- `frozen_score` (cpu_implementation)
+  - `src/lunaris/analysis/frozen/classify.py` -- `classify_candidate` (api_entry_point)
+  - `src/lunaris/analysis/frozen/classify.py` -- `FrozenClassificationConfig` (config_surface)
+- **Lunaris modifications**:
+  - combines envelopes, secular trends, omega behavior, and eccentricity-vector loop drift
+  - derives default drift thresholds from the requested mission duration
+- **Assumptions**:
+  - osculating elements are sampled densely enough to represent the screened arc
+  - mission-specific thresholds are supplied or consciously accepted
+- **Limitations**:
+  - not a universal mathematical definition of a frozen orbit
+  - a surrogate-only screen can produce candidate language, never validated frozen status
+  - classification applies only to the simulated duration and force/configuration evidence
+- **Validated by**:
+  - `tests/test_frozen_classification.py`
+  - `tests/test_frozen_search_pipeline.py`
+- **See also**: [`LUNARIS-ALG-OE-001`](#lunarisalgoe001)
+- **Notes**: No external primary source is claimed: the score, thresholds, and evidence gate are Lunaris policy. Scientific publications may motivate frozen-orbit searches but do not define this software-specific classifier.
+
+## Impact / terrain (IMP)
+
+<a id="lunarisheurimp001"></a>
+### LUNARIS-HEUR-IMP-001 -- Outer-sphere rejection and terrain-height bisection for batched impact localization
+
+- **Slug**: `terrain_segment_impact_localization`
+- **Category**: heuristic | **Domain**: IMP | **Status**: active
+- **Classification**: heuristic
+- **Verification**: unverifiable | **Scientific status**: implemented_and_tested
+- **Primary reference**: Lunaris-specific; no external primary reference.
+- **Mathematical contract**:
+  - Inputs: batched inertial segment endpoints [m], segment epoch/step [s], inertial-to-fixed frame, terrain raster, and impact altitude [m]
+  - Outputs: per-segment hit mask and interpolation fraction alpha in [0, 1]
+  - Exactness: fixed_iteration_segment_crossing_localization
+  - Preserves: non-hit rows return alpha=1
+  - Preserves: impacted state position and velocity use the same interpolation fraction
+- **Implementing symbols**:
+  - `src/lunaris/core/torch_frame.py` -- `terrain_segment_intersection` (torch_implementation)
+  - `src/lunaris/core/batched_fixed_step.py` -- `_propagate_chunk` (torch_implementation)
+- **Lunaris modifications**:
+  - outer maximum-terrain sphere rejects impossible crossings
+  - body-frame rotation is evaluated once at the segment midpoint
+  - fixed-count bisection runs on the terrain-height residual
+- **Assumptions**:
+  - one resolved downward crossing within the fixed step
+  - lunar rotation during one step is negligible relative to terrain relief
+- **Limitations**:
+  - transient dip-and-recovery crossings inside one step are not detected
+  - crossing state is linearly interpolated between integrator endpoints
+  - accuracy is bounded by the propagation step, raster, and midpoint-frame approximation
+- **Validated by**:
+  - `tests/test_torch_terrain_freeze.py`
+- **See also**: [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001), [`LUNARIS-HEUR-INTP-001`](#lunarisheurintp001)
+- **Notes**: This is a Lunaris batched-impact policy composed from elementary sphere intersection and bisection. It is not presented as a published terrain collision algorithm.
 
 ## Neural architectures (ML)
 

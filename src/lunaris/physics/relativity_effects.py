@@ -209,7 +209,15 @@ def external_1pn_components(
     body_vx: float, body_vy: float, body_vz: float,
     mu_body: float,
 ) -> tuple[float, float, float]:
-    """Combined external-body Schwarzschild differential + de Sitter terms."""
+    """Combine selected external-body 1PN terms in Moon-centred inertial axes.
+
+    Spacecraft and external-body position/velocity components are [m] and
+    [m/s] in one Moon-centred inertial frame; ``mu_body`` is m³/s². The returned
+    acceleration [m/s²] is the sum of the differential Schwarzschild correction
+    and the prograde de Sitter/geodetic term. It is a selected-term Lunaris
+    composition, not the full Einstein–Infeld–Hoffmann N-body equations; frame
+    dragging and relativistic oblateness couplings are excluded.
+    """
     sx, sy, sz = external_schwarzschild_diff_components(
         rx, ry, rz,
         vx, vy, vz,
@@ -229,7 +237,11 @@ def external_1pn_components(
 @njit(cache=True, nogil=True, inline="always")
 def calc_schwarzschild_accel_out(r_vec: np.ndarray, v_vec: np.ndarray, mu: float, out: np.ndarray) -> None:
     """
-    Allocation-free API for tight loops: writes result into `out` (shape (3,)).
+    Write the central-body Schwarzschild 1PN correction into ``out``.
+
+    ``r_vec`` [m], ``v_vec`` [m/s], and ``out`` [m/s²] are shape ``(3,)``
+    vectors in the same inertial frame; ``mu`` is m³/s². The function is
+    allocation-free and returns zero inside the module's near-origin guard.
     """
     ax, ay, az = schwarzschild_components(
         r_vec[0], r_vec[1], r_vec[2],
@@ -244,7 +256,11 @@ def calc_schwarzschild_accel_out(r_vec: np.ndarray, v_vec: np.ndarray, mu: float
 @njit(cache=True, nogil=True)
 def calc_schwarzschild_accel(r_vec: np.ndarray, v_vec: np.ndarray, mu: float) -> np.ndarray:
     """
-    Convenience wrapper (allocates a (3,) array). Prefer *_out in integrator loops.
+    Allocate and return the central-body Schwarzschild correction [m/s²].
+
+    Inputs are a shape-``(3,)`` inertial position [m], velocity [m/s], and
+    gravitational parameter [m³/s²]. Prefer :func:`calc_schwarzschild_accel_out`
+    in integrator loops to avoid the allocation.
     """
     out = np.empty(3, dtype=np.float64)
     calc_schwarzschild_accel_out(r_vec, v_vec, mu, out)
@@ -258,7 +274,13 @@ def calc_external_1pn_accel(
     body_vel_m_s: Vec3,
     mu_body: float,
 ) -> Vec3:
-    """Convenience wrapper for external-body Schwarzschild + de Sitter terms."""
+    """Return selected external-body 1PN acceleration in Moon-centred inertial axes.
+
+    ``r_vec``/``v_vec`` describe the spacecraft relative to the Moon and
+    ``body_pos_m``/``body_vel_m_s`` describe the external body relative to the
+    Moon, all in one inertial frame. Units are SI and the returned shape-``(3,)``
+    array is [m/s²]. See :func:`external_1pn_components` for model exclusions.
+    """
     r = np.asarray(r_vec, dtype=np.float64)
     v = np.asarray(v_vec, dtype=np.float64)
     b = np.asarray(body_pos_m, dtype=np.float64)

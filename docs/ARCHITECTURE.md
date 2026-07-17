@@ -398,8 +398,9 @@ Analysis code imports from `lunaris.analysis.ensemble`.
     `srp_shadow_model`.
   - **`torch_cuda_sh`** — the PyTorch CUDA RK4 path
     (`lunaris.core.torch_sh_propagator.TorchSHBatchPropagator`) using the canonical
-    `TorchSHGravityEvaluator`. Arbitrary degree, bounded only by the loaded
-    coefficient file, VRAM, batch size, dtype, and step. This first runtime form is
+    `TorchSHGravityEvaluator`. It has no hard-coded SH-degree ceiling; the usable
+    degree is bounded by the loaded coefficient file, VRAM, batch size, dtype, and
+    step. This first runtime form is
     **gravity-only** (lunar SH + per-RK-stage Moon inertial↔fixed frame transform).
 - **`degree > 24` with PyTorch CUDA available now uses `torch_cuda_sh`** (when the
   requested physics is supported), instead of falling back to CPU. The requested

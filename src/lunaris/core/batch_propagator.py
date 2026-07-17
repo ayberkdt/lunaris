@@ -21,11 +21,12 @@ GPU path  — ``GPUBatchPropagator``
 
     Physics CPU-only (not on GPU):
       * Albedo / thermal surface forces.
-      * High-degree SH (> 24).
+      * High-degree SH (> 24) on this Numba kernel; compatible gravity-only
+        requests can instead route to the separate Torch SH backend.
       * Tide models.
 
 CPU path  — ``CPUBatchPropagator``
-    Runs the full-fidelity ``core.propagation.propagator.propagate()`` path for each
+    Runs the complete supported-force ``core.propagation.propagator.propagate()`` path for each
     sample while reusing the same validated runtime assets as the main mission
     analysis pipeline.  All physics enabled in the parent ``SimConfig`` are
     therefore available on the CPU batch backend.
@@ -112,7 +113,7 @@ def gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
     J2, SRP, and selected 1PN corrections.  GPU SRP uses the cannonball Cr*A/m
     area model with a reduced-fidelity shadow model (cylindrical Moon umbra, no
     Earth eclipse); surface-lighting forces and solid tides still require the
-    CPU full-fidelity propagator.
+    CPU propagator supporting every currently implemented force flag.
     """
 
     unsupported: list[str] = []
@@ -2074,7 +2075,7 @@ class GPUBatchPropagator:
 
 
 # =============================================================================
-# 3.              CPU BATCH PROPAGATOR (full-fidelity multiprocessing)
+# 3.              CPU BATCH PROPAGATOR (supported-force multiprocessing)
 # =============================================================================
 
 
@@ -2106,7 +2107,7 @@ def _build_cpu_time_and_solver_config(
 
 class CPUBatchPropagator:
     """
-    Full-fidelity batch propagator for the CPU backend.
+    Batch propagator for the complete supported-force CPU backend.
 
     The previous implementation attempted to rebuild each sample inside worker
     processes using legacy helper APIs that no longer match the rest of the
@@ -2267,7 +2268,7 @@ class CPUBatchPropagator:
         callback: Callable[[float], None] | None = None,
     ) -> tuple[F64Array, F64Array, F64Array, F64Array]:
         """
-        Propagate N samples on CPU using the full-fidelity single-run solver.
+        Propagate N samples on CPU using the complete supported-force single-run solver.
 
         Returns the same ``(t_out, Y_out, impact_flags, t_impact)`` contract as
         the GPU path. The first successful sample defines the reference time

@@ -34,11 +34,15 @@ def generate_standard_normal_design(
     rng: np.random.Generator | None = None,
 ) -> F64Array:
     """
-    Generate standardized normal samples for ensemble propagation.
+    Generate an ``(n_samples, n_dim)`` float64 standard-normal design.
 
-    ``random`` is the classical Monte Carlo draw. Space-filling
-    methods generate unit-hypercube designs and transform them with the inverse
-    normal CDF so the existing covariance machinery can be reused.
+    ``random`` produces IID pseudorandom normal draws. ``lhs``, ``sobol``, and
+    ``sobol_scrambled`` first construct unit-hypercube designs and apply the
+    inverse normal CDF coordinatewise. The deterministic Sobol option discards
+    its all-zero first point before that transform; endpoint clipping prevents
+    infinities. QMC rows have standard-normal marginals but are not IID Monte
+    Carlo draws, so downstream covariance and confidence intervals must be
+    interpreted as design summaries unless their assumptions are re-established.
     """
 
     method = str(method or "random")
@@ -102,11 +106,18 @@ def sample_initial_states(
     standard_normal_samples: F64Array | None = None,
 ) -> F64Array:
     """
-    Draw N Gaussian samples around the nominal state.
+    Draw ``N`` Gaussian-design perturbations around a nominal Cartesian state.
 
     ``sampling_method`` can be ``random`` (classical Monte Carlo), ``lhs``,
     ``sobol``, or ``sobol_scrambled``. Non-random methods are transformed into
     standard-normal samples before the covariance factor is applied.
+
+    ``nominal_state`` is shape ``(6,)`` and ``uncertainty`` supplies a 6×6
+    covariance in the same component units/frame. The Cholesky map produces
+    correlated perturbations without rotating frames. ``sampling_method`` can
+    be ``random`` (IID Monte Carlo), ``lhs``, ``sobol``, or
+    ``sobol_scrambled``; the latter designs retain Gaussian marginals but are
+    not IID.
 
     Returns
     ----------

@@ -3,7 +3,7 @@ Tests for the central backend capability registry after the GPU SH split.
 
 The two GPU spherical-harmonics implementations are kept distinct:
 ``numba_cuda_sh`` (degree <= 24 kernel-workspace limit) and ``torch_cuda_sh``
-(arbitrary degree, no hard cap). Backend requests use canonical names only.
+(no hard-coded degree ceiling). Backend requests use canonical names only.
 
 These lock the registry to the *existing* batch propagation behavior (the Numba
 force-model matrix and degree limit) so the split changes labels/structure, not

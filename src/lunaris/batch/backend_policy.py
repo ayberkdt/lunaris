@@ -39,13 +39,16 @@ Notes
   Its degree-24 ceiling is a thread-local kernel-workspace limit, not a physical
   one. Requested degrees above 24 are never clipped.
 - GPU_TORCH_SH uses the PyTorch fixed-step RK4 classic-SH path
-  (``torch_cuda_sh``). It evaluates arbitrary degree (bounded by the loaded
-  coefficient file, VRAM, batch size, dtype, and step) and is the live
+  (``torch_cuda_sh``). It has no hard-coded degree ceiling (usable degree is
+  bounded by the loaded coefficient file, VRAM, batch size, dtype, and step)
+  and is the live
   high-degree GPU route: ``degree > 24`` with PyTorch CUDA available selects
   ``torch_cuda_sh`` when the requested physics is supported. This first runtime
   form is gravity-only; any added perturbation forces an explicit, recorded
   fallback (to ``numba_cuda_sh`` when it can honor the physics, else CPU).
-- CPU always uses the full-fidelity scipy DOP853 per-sample path.
+- CPU uses the SciPy DOP853 per-sample path and accepts every currently
+  implemented force flag; this support statement is not a claim that every
+  physical effect is modeled exactly.
 """
 
 from __future__ import annotations
@@ -378,8 +381,8 @@ class BatchBackend(str, Enum):
         Earth J2, SRP, and selected 1PN corrections on GPU.
 
     ``GPU_TORCH_SH``
-        PyTorch (CUDA or CPU) fixed-step RK4 evaluating classic spherical
-        harmonics at arbitrary degree via the canonical
+        PyTorch CUDA fixed-step RK4 evaluating classic spherical harmonics with
+        no hard-coded degree ceiling via the canonical
         :class:`~lunaris.physics.torch_spherical_harmonics.TorchSHGravityEvaluator`.
         Maps to the ``torch_cuda_sh`` backend.  Distinct runtime implementation
         from ``GPU_CLASSIC_SH`` — the two must never share an enum value.  First
@@ -387,8 +390,8 @@ class BatchBackend(str, Enum):
         recorded fallback.
 
     ``CPU``
-        Sequential full-fidelity per-sample scipy DOP853.  All physics flags
-        supported.
+        Sequential per-sample SciPy DOP853. All currently implemented physics
+        flags are supported; per-model approximations still apply.
     """
 
     CPU = "cpu"
@@ -416,7 +419,7 @@ _ST_LRPS_REQUESTS = frozenset({"gpu_st_lrps_potential", "gpu_st_lrps_third_body"
 
 # Classic-SH request names that select the Numba CUDA backend (degree <= 24).
 _NUMBA_SH_REQUESTS = frozenset({"numba_cuda_sh"})
-# Classic-SH request names that select the PyTorch SH backend (arbitrary degree).
+# Classic-SH request names that select PyTorch SH backends (no hard-coded degree ceiling).
 _TORCH_SH_REQUESTS = frozenset({"torch_cuda_sh", "torch_cpu_sh"})
 
 
@@ -522,7 +525,7 @@ class BatchBackendPlan:
             actual_sh_degree=None,
             actual_device="cpu",
             cuda_device_name=None,
-            # CPU full-fidelity path runs float64; record the effective change
+            # The complete supported-force CPU path runs float64; record the effective change
             # and flag it as a downgrade when the request was something else.
             dtype="float64",
             effective_dtype="float64",
@@ -713,7 +716,7 @@ def resolve_batch_backend_policy(
             msg = (
                 f"[BATCH] use_gpu=True with ST-LRPS gravity, but PyTorch CUDA is unavailable. "
                 f"{_avail_str}. "
-                "Falling back to the CPU full-fidelity backend. "
+                "Falling back to the complete supported-force CPU backend. "
                 "Selected batch backend: CPU."
             )
             if forbid_fallback:
@@ -781,7 +784,7 @@ def resolve_batch_backend_policy(
             msg = (
                 f"[BATCH] GPU ST-LRPS batch propagator ({actual_stlrps_backend}) "
                 f"does not currently model: {pretty}. "
-                "Falling back to the CPU full-fidelity backend. "
+                "Falling back to the complete supported-force CPU backend. "
                 "Selected batch backend: CPU."
             )
             if forbid_fallback:

@@ -39,6 +39,34 @@ def test_readme_names_every_st_lrps_gpu_backend() -> None:
     assert missing == [], f"README does not mention ST-LRPS backend(s): {missing}"
 
 
+def test_readme_windows_ci_claim_matches_workflows() -> None:
+    """Do not advertise a Windows CI lane that the workflow tree lacks."""
+    workflows = "\n".join(
+        path.read_text(encoding="utf-8")
+        for pattern in ("*.yml", "*.yaml")
+        for path in sorted((REPO_ROOT / ".github/workflows").glob(pattern))
+    )
+    has_windows_ci = re.search(r"windows-(?:latest|[0-9]+)", workflows, re.IGNORECASE) is not None
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    claims_no_windows_ci = "no Windows CI job currently" in readme
+    assert claims_no_windows_ci == (not has_windows_ci)
+
+
+def test_backend_explanatory_prose_avoids_unbounded_fidelity_language() -> None:
+    """Support coverage and resource ceilings must not be described as absolutes."""
+    paths = (
+        REPO_ROOT / "docs/backend_matrix.md",
+        REPO_ROOT / "docs/ARCHITECTURE.md",
+        REPO_ROOT / "src/lunaris/core/backend_capabilities.py",
+        REPO_ROOT / "src/lunaris/batch/backend_policy.py",
+        REPO_ROOT / "src/lunaris/ui/pages/batch_propagation_page.py",
+    )
+    for path in paths:
+        prose = path.read_text(encoding="utf-8").lower()
+        assert "full-fidelity" not in prose, path
+        assert "arbitrary degree" not in prose, path
+
+
 def test_architecture_document_points_to_phase_two_contract_tests() -> None:
     architecture = (REPO_ROOT / "docs/ARCHITECTURE.md").read_text(encoding="utf-8")
     for test_file in (
