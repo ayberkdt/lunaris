@@ -197,6 +197,12 @@ def config_to_legacy_argv(config: Mapping[str, Any], output_dir: str | Path) -> 
     model_dir = surrogate.get("model_dir")
     if model_dir:
         argv.extend(["--st-lrps-model-dir", str(model_dir)])
+    if surrogate.get("enabled") and surrogate.get("cpu_adaptive"):
+        argv.append("--cpu-adaptive-surrogate")
+        if surrogate.get("cpu_adaptive_rtol") is not None:
+            argv.extend(["--cpu-adaptive-rtol", str(float(surrogate["cpu_adaptive_rtol"]))])
+        if surrogate.get("cpu_adaptive_atol") is not None:
+            argv.extend(["--cpu-adaptive-atol", str(float(surrogate["cpu_adaptive_atol"]))])
     return argv
 
 

@@ -120,6 +120,30 @@ def _model_frame(per: pd.DataFrame, display: str) -> pd.DataFrame:
     return sub
 
 
+def _sh_display_name(frame: pd.DataFrame, degree: int) -> str:
+    """Resolve the display name of the SH<degree> fixed-step series.
+
+    Display-name prefixes have varied across releases, so figures must find
+    the series by its SH<degree> token instead of a hard-coded prefix.
+    """
+    from ._gravity_benchmark.plotting import _is_sh_baseline, _model_degree
+
+    matches = sorted({
+        str(name) for name in frame["model"].unique()
+        if _is_sh_baseline(str(name)) and _model_degree(str(name)) == int(degree)
+    })
+    if not matches:
+        raise SystemExit(
+            f"SH{degree} series not found in metrics. "
+            f"Available: {sorted(frame['model'].unique())}"
+        )
+    if len(matches) > 1:
+        raise SystemExit(
+            f"SH{degree} series is ambiguous (multiple dt variants?): {matches}"
+        )
+    return matches[0]
+
+
 def _save(fig, out: Path, stem: str) -> None:
     fig.savefig(out / f"{stem}.pdf", facecolor="white")
     fig.savefig(out / f"{stem}.png", facecolor="white")
@@ -146,10 +170,12 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     multi_agg = multi["agg"]
     multi_rt = multi["rt"]
 
-    sh20_per = _model_frame(multi_per, "NUMBA_CUDA_SH20_RK4")
-    sh60_per = _model_frame(multi_per, "NUMBA_CUDA_SH60_RK4")
-    sh20_agg = multi_agg[multi_agg["model"] == "NUMBA_CUDA_SH20_RK4"].iloc[0]
-    sh60_agg = multi_agg[multi_agg["model"] == "NUMBA_CUDA_SH60_RK4"].iloc[0]
+    sh20_name = _sh_display_name(multi_per, 20)
+    sh60_name = _sh_display_name(multi_per, 60)
+    sh20_per = _model_frame(multi_per, sh20_name)
+    sh60_per = _model_frame(multi_per, sh60_name)
+    sh20_agg = multi_agg[multi_agg["model"] == sh20_name].iloc[0]
+    sh60_agg = multi_agg[multi_agg["model"] == sh60_name].iloc[0]
     st_agg_row = st_agg[st_agg["model"] == "GPU_ST_LRPS_RK4"]
     st_agg_row = st_agg_row.iloc[0] if not st_agg_row.empty else st_agg.iloc[0]
 
@@ -164,11 +190,11 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     # ---- Figure 1: speed-accuracy tradeoff ----------------------------
     print("Fig 1: Speed-accuracy tradeoff")
     models = {
-        "SH20": {"t": multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH20_RK4"]["total_runtime_s"].iloc[0],
+        "SH20": {"t": multi_rt[multi_rt["model"] == sh20_name]["total_runtime_s"].iloc[0],
                  "err": sh20_agg["median_rms_pos_err_km"] * KM2M},
         "ST-LRPS": {"t": st_rt["total_runtime_s"].iloc[0],
                     "err": st_agg_row["median_rms_pos_err_km"] * KM2M},
-        "SH60": {"t": multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH60_RK4"]["total_runtime_s"].iloc[0],
+        "SH60": {"t": multi_rt[multi_rt["model"] == sh60_name]["total_runtime_s"].iloc[0],
                  "err": sh60_agg["median_rms_pos_err_km"] * KM2M},
     }
     fig1, ax = plt.subplots(figsize=(3.5, 2.8))
@@ -309,8 +335,8 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
 
     # ---- LaTeX summary table ------------------------------------------
     print("Table: validation summary (LaTeX)")
-    sh20_rt = multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH20_RK4"].iloc[0]
-    sh60_rt = multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH60_RK4"].iloc[0]
+    sh20_rt = multi_rt[multi_rt["model"] == sh20_name].iloc[0]
+    sh60_rt = multi_rt[multi_rt["model"] == sh60_name].iloc[0]
     st_rt_row = st_rt.iloc[0]
     denom = float(sh60_rt["total_runtime_s"]) or 1.0
     rows = [

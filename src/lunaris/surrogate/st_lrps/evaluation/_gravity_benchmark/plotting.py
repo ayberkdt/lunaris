@@ -107,6 +107,16 @@ def _is_stlrps(model: str) -> bool:
     return "ST_LRPS" in m or "ST-LRPS" in m
 
 
+def _is_sh_baseline(model: str) -> bool:
+    """True for a classical SH comparison series, whatever its backend prefix.
+
+    Display-name prefixes have varied across releases, so metrics rows from any
+    era (and any future backend) must keep matching: recognise the SH<degree>
+    token itself instead of a hard-coded prefix.
+    """
+    return not _is_stlrps(model) and _model_degree(model) is not None
+
+
 def _sh_degree_color(deg: int) -> str:
     anchors = _SH_DEGREE_ANCHORS
     if deg <= anchors[0][0]:
@@ -212,6 +222,22 @@ def _fmt_km(value: Any) -> str:
     if a < 1.0e-3:        # below ~1 m: %.4f would print "0.0000"
         return f"{x:.3e}"
     return f"{x:.4f}"
+
+
+def _fmt_optional_float(value: Any, spec: str = ".1f") -> str:
+    """Format a numeric metric, or ``"n/a"`` when it is empty/None/non-finite.
+
+    Some series legitimately have no value for a column (e.g. a steps/s rate on
+    an adaptive-integrator series). Those carry ``""`` in the data — never NaN —
+    so this renders them as ``n/a`` instead of raising on ``format("")``.
+    """
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if not math.isfinite(x):
+        return "n/a"
+    return format(x, spec)
 
 
 def _finite_positive(values: Sequence[float]) -> list[float]:
@@ -710,13 +736,19 @@ def estimate_stlrps_equivalent_sh_degree(aggregate_rows: list[dict[str, Any]]) -
     by_model = {str(r["model"]).upper(): r for r in aggregate_rows}
     st = by_model.get("GPU_ST_LRPS_RK4")
     if not st:
+        # Single dt-variant runs name the series e.g. GPU_ST_LRPS_RK4_DT10;
+        # accept it only when unambiguous. CPU-adaptive surrogate rows carry a
+        # different integrator and must never stand in for the GPU point.
+        candidates = [row for name, row in by_model.items() if _is_stlrps(name) and "_RK4" in name]
+        st = candidates[0] if len(candidates) == 1 else None
+    if not st:
         return {"status": "missing_st_lrps"}
 
     def _metric(metric_key: str) -> dict[str, Any]:
         sh_points = []
         for model, row in by_model.items():
             deg = _model_degree(model)
-            if model.startswith("NUMBA_CUDA_SH") and deg is not None:
+            if _is_sh_baseline(model) and deg is not None:
                 with contextlib.suppress(Exception):
                     sh_points.append((deg, float(row[metric_key]), model))
         sh_points.sort()
@@ -1067,7 +1099,7 @@ def plot_gpu_batch_report_figures(
     sh_points = []
     for m in models:
         deg = _model_degree(m)
-        if deg is not None and m.upper().startswith("NUMBA_CUDA_SH"):
+        if deg is not None and _is_sh_baseline(m):
             sh_points.append((deg, _safe(agg_by_model[m].get("median_rms_pos_err_km")),
                               _safe(agg_by_model[m].get("p95_rms_pos_err_km"))))
     sh_points.sort()
@@ -1795,7 +1827,7 @@ def write_gpu_batch_report_pdf(
                 str(r.get("model", "")),
                 f"{r.get('total_runtime_s', float('nan')):.3f}",
                 f"{r.get('runtime_per_scenario_s', float('nan')):.5f}",
-                f"{r.get('trajectory_steps_per_second', float('nan')):.1f}",
+                _fmt_optional_float(r.get('trajectory_steps_per_second'), ".1f"),
                 f"{r.get('speedup_vs_truth_total', float('nan')):.2f}",
             ] for r in runtime_rows]
             pager.table_page(

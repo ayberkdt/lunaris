@@ -32,6 +32,46 @@ lunaris-benchmark \
   --out outputs/gravity_benchmark/st_lrps_1day_high_degree
 ```
 
+## Fit-Region Sweep (Error Decomposition in One Run)
+
+`configs/benchmarks/st_lrps_fit_region_sweep.json` runs the full comparison
+matrix needed to locate which SH degree ST-LRPS is equivalent to, and what each
+error component costs:
+
+| Series | Field | Integrator | Isolates |
+| --- | --- | --- | --- |
+| Truth | SH200 | CPU DOP853 | reference |
+| SH20…SH150 | SH ladder | GPU RK4 | degree-vs-error curve (equivalent-degree anchor) |
+| SH200 | SH200 | GPU RK4 | fixed-step integrator/dtype/frame error floor |
+| ST-LRPS | surrogate | GPU RK4 | deployed-configuration total error + speed |
+| ST-LRPS (CPU adaptive) | surrogate | CPU DOP853 | surrogate *field* error, integrator error removed |
+
+The SH200 GPU RK4 series duplicates the truth field on purpose; the config
+carries `validation.allow_truth_baseline` plus a written justification, which
+paper-safe mode requires. The CPU adaptive surrogate series is enabled with
+`surrogate.cpu_adaptive: true` (CLI: `--cpu-adaptive-surrogate` in
+`--gpu-batch-compare` mode); it reuses the truth integrator so the difference
+from truth is the gravity field itself plus a negligible, controlled
+integrator contribution. Its tolerances default to `rtol 1e-8` / `atol 1e-6`
+(`surrogate.cpu_adaptive_rtol/atol`, CLI `--cpu-adaptive-rtol/--cpu-adaptive-atol`)
+rather than the truth tolerances: a float32 surrogate right-hand side carries a
+~1e-7 relative noise floor, and truth-grade tolerances stall the adaptive step
+controller against that noise without buying accuracy. The series is reported
+as `ST_LRPS_CPU_<integrator>` in every metrics table, with adaptive-honest
+runtime columns (no fabricated steps/s; eval throughput from the reported RHS
+count). It is not yet compatible with the trajectory-cache flags or
+`--rebuild-metrics`, and it is slow by construction — one SciPy integration per
+scenario with single-point surrogate evaluations — so use it on focused
+scenario sets, not throughput sweeps.
+
+Reading the result: `metrics/gpu_batch_summary.json` carries the
+equivalent-degree estimate (interpolated on the SH ladder) and per-model
+runtime/speedup rows including speedup vs the DOP853 truth; the
+`stlrps_equivalent_sh_degree` figure shows where the surrogate sits on the
+degree-error curve. If the ST-LRPS GPU RK4 error is close to the SH200 GPU RK4
+floor, the deployed error is integrator-dominated; if it is close to the CPU
+adaptive surrogate error, it is field-dominated.
+
 ## Artifact Contract Compatibility
 
 When `surrogate.model_dir` is set, the benchmark builds a requested

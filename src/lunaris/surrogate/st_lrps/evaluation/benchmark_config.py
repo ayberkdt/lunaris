@@ -275,6 +275,14 @@ def validate_benchmark_config(config: Mapping[str, Any]) -> None:
     _required_str(surrogate, "name", "surrogate.name")
     if int(_require(surrogate, "baseline_degree", "surrogate.baseline_degree")) <= 0:
         raise BenchmarkConfigError("surrogate.baseline_degree must be positive")
+    if not isinstance(surrogate.get("cpu_adaptive", False), bool):
+        raise BenchmarkConfigError("surrogate.cpu_adaptive must be a boolean")
+    if surrogate.get("cpu_adaptive") and not surrogate.get("enabled"):
+        raise BenchmarkConfigError("surrogate.cpu_adaptive requires surrogate.enabled=true")
+    for key in ("cpu_adaptive_rtol", "cpu_adaptive_atol"):
+        value = surrogate.get(key)
+        if value is not None and (not isinstance(value, int | float) or float(value) <= 0.0):
+            raise BenchmarkConfigError(f"surrogate.{key} must be a positive number")
 
     outputs = _required_mapping(config, "outputs")
     for key in ("write_figures", "write_csv", "write_json"):
@@ -413,6 +421,7 @@ def _fill_safe_defaults(config: MutableMapping[str, Any]) -> None:
     surrogate.setdefault("name", "ST-LRPS")
     surrogate.setdefault("model_dir", None)
     surrogate.setdefault("baseline_degree", 20)
+    surrogate.setdefault("cpu_adaptive", False)
 
 
 def _normalize_paths(config: MutableMapping[str, Any], config_path: Path) -> None:
