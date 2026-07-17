@@ -20,6 +20,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-core-smoke:
+    # Reliable Windows support gate for the dependency-light engine/CLI surface.
+    # This deliberately does not claim PySide6/OpenGL or CUDA validation.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build wheel
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install wheel and smoke headless commands outside the checkout
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP "lunaris-smoke-venv"
+          $dataRoot = Join-Path $env:RUNNER_TEMP "lunaris external data"
+          python -m venv $venv
+          $python = Join-Path $venv "Scripts\python.exe"
+          $lunaris = Join-Path $venv "Scripts\lunaris.exe"
+          $lunarisData = Join-Path $venv "Scripts\lunaris-data.exe"
+          $wheel = (Get-ChildItem -Path "dist\*.whl" | Select-Object -First 1).FullName
+          & $python -m pip install --upgrade pip
+          & $python -m pip install $wheel
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          Push-Location $env:RUNNER_TEMP
+          try {
+            & $python -c "import lunaris; print('lunaris', lunaris.__version__)"
+            & $lunaris --help
+            & $lunarisData --data-dir $dataRoot list
+          } finally {
+            Pop-Location
+          }
+
+      - name: Optional-dependency and Windows path boundary tests
+        shell: pwsh
+        run: |
+          python -m pip install -e ".[dev]"
+          pytest tests/test_optional_dependency_boundaries.py -q
+          pytest tests/test_data_downloader.py -k "resolve_data_root" -q
+
   minimal-optional-boundaries:
     # The documented .[dev] path intentionally excludes ML/UI extras. Keep the
     # import-safe core and every console --help contract executable there.
@@ -192,6 +239,11 @@ jobs:
           tests/test_propagator_physics.py
           tests/test_propagator_accuracy_tuning.py
           tests/test_propagation_plans.py
+          tests/test_accepted_state_telemetry.py
+          tests/test_monitor_contract.py
+          tests/test_monitor_emitter.py
+          tests/test_monitor_replay.py
+          tests/test_monitor_store.py
           tests/test_frame_policy.py
           tests/test_main_ephemeris_policy.py
           tests/test_gravity_provider_fallback_policy.py
@@ -211,7 +263,7 @@ jobs:
       - name: Enforce 80% coverage floor on critical contracts
         run: >-
           coverage report
-          --include="src/lunaris/batch/backend_policy.py,src/lunaris/common/state_vector.py,src/lunaris/common/time_grid_contract.py,src/lunaris/core/dynamics/contracts.py,src/lunaris/core/propagation/diagnostics.py,src/lunaris/core/propagation/fixed_step_runner.py,src/lunaris/core/propagation/time_grid.py,src/lunaris/surrogate/runtime/artifact.py,src/lunaris/surrogate/runtime/device.py,src/lunaris/surrogate/runtime/metadata.py,src/lunaris/surrogate/runtime/scalers.py"
+          --include="src/lunaris/batch/backend_policy.py,src/lunaris/common/state_vector.py,src/lunaris/common/telemetry_contract.py,src/lunaris/common/time_grid_contract.py,src/lunaris/core/dynamics/contracts.py,src/lunaris/core/propagation/diagnostics.py,src/lunaris/core/propagation/fixed_step_runner.py,src/lunaris/core/propagation/telemetry_emitter.py,src/lunaris/core/propagation/time_grid.py,src/lunaris/ui/monitor/replay.py,src/lunaris/ui/monitor/store.py,src/lunaris/surrogate/runtime/artifact.py,src/lunaris/surrogate/runtime/device.py,src/lunaris/surrogate/runtime/metadata.py,src/lunaris/surrogate/runtime/scalers.py"
           --fail-under=80
 
   wheel-install-smoke:

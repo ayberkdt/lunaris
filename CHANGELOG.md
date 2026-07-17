@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 0.1.0rc2 — 2026-07-17
+
 - **Changed: API-boundary cleanup — internal helpers consumed across
   subsystem boundaries got public names.** (The Python module surface is not
   a stable API at 0.x — see `docs/VERSIONING.md` — so no deprecation aliases
@@ -42,6 +46,20 @@
   `_`-prefixed symbols in `src/lunaris` (`tests/test_api_boundaries.py`),
   and the import-linter contract `mission UI does not import ST-LRPS studio
   widget internals`.
+- **Corrected Mission Monitor trajectory semantics.** Every structured sample
+  now declares `output_state`, `accepted_state`, or `rhs_probe`. Adaptive and
+  fixed-step replay artifacts are emitted from the exact solver-returned output
+  states; transient adaptive stages/trials remain explicitly labelled live
+  probes and are excluded from `telemetry.ndjson` and scientific trajectory
+  widgets. Terminal event states are retained once, including non-grid event
+  times, and chunk boundaries keep one monotonic sequence. Old v1/bare-JSON
+  samples remain readable as `legacy_unknown` but are not presented as proven
+  accepted states. Bounded build/serialization/writer/sink/terrain failure
+  diagnostics are reported without allowing telemetry to stop propagation.
+- **Added a Windows Python 3.11 core smoke gate.** The job builds and installs a
+  wheel, checks `import lunaris`, the headless CLI help and `lunaris-data list`,
+  optional-dependency boundaries, and external data-root path handling. It does
+  not claim Windows CUDA or full PySide6/OpenGL validation.
 
 - **Added the Mission Monitor (phases 1–3): a live/replay observation console.**
   New navigation page with a dockable widget workspace (Altitude/Radius,
@@ -52,8 +70,8 @@
   now emits `[TELEMETRY] {json}` samples (SI state, osculating elements with
   singularity-honest omission, sequence ids) and the CLI emits one
   `[TELEMETRY_META]` provenance line (config hash, git commit, gravity
-  model/degree, μ). `--telemetry-artifact on` mirrors the stream into
-  `telemetry.ndjson` in the run directory for replay (UI runs enable it).
+  model/degree, μ). `--telemetry-artifact on` writes solver-returned output
+  states to `telemetry.ndjson` in the run directory for replay (UI runs enable it).
   UI memory is bounded (ring-buffer store + min/max-envelope display
   downsampling); paint cadence is decoupled from telemetry cadence; legacy
   bare-JSON telemetry keeps working through a compatibility adapter. New
