@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lunaris"
-version = "0.1.0rc2"
+version = "0.1.0rc3.dev0"
 description = "Lunar orbit propagation and ST-LRPS surrogate gravity modeling tools"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -57,30 +57,88 @@ def _released_versions() -> list[tuple[str, str]]:
     return [(m.group("version"), m.group("date")) for m in _RELEASE_HEADING.finditer(text)]
 
 
+def _is_dev_version(version: str) -> bool:
+    """True for PEP 440 development versions (e.g. ``0.1.0rc3.dev0``).
+
+    Between releases, main carries a dev version so that a wheel built from it
+    never impersonates an already-cut release.
+    """
+    return ".dev" in version
+
+
 def test_citation_version_matches_pyproject() -> None:
-    assert _citation_field("version") == _project_version(), (
-        "CITATION.cff version and pyproject.toml version disagree; a citation "
-        "generated from this repo would name the wrong release"
-    )
+    version = _project_version()
+    cited = _citation_field("version")
+    if _is_dev_version(version):
+        # A citation names a *released* artifact, never a dev tree; between
+        # releases CITATION.cff must keep naming the newest cut release.
+        releases = _released_versions()
+        assert releases, (
+            f"pyproject carries dev version {version} but CHANGELOG.md documents "
+            "no release for CITATION.cff to point at"
+        )
+        assert cited == releases[0][0], (
+            f"CITATION.cff names {cited} but the newest CHANGELOG release is "
+            f"{releases[0][0]}; while main is a dev version, citations must "
+            "name the latest released version"
+        )
+    else:
+        assert cited == version, (
+            "CITATION.cff version and pyproject.toml version disagree; a citation "
+            "generated from this repo would name the wrong release"
+        )
 
 
 def test_changelog_documents_the_current_version() -> None:
     version = _project_version()
     versions = [v for v, _ in _released_versions()]
-    assert version in versions, (
-        f"pyproject version {version} has no '## {version} — <date>' heading in "
-        f"CHANGELOG.md (found: {versions or 'none'}). Either the release is "
-        f"undocumented or the version was bumped without a changelog section."
-    )
+    if _is_dev_version(version):
+        base = version.split(".dev", 1)[0]
+        assert base not in versions, (
+            f"pyproject version {version} is a dev pre-version of {base}, but "
+            f"CHANGELOG.md already documents {base} as released — either drop the "
+            f".dev suffix or bump past {base}"
+        )
+    else:
+        assert version in versions, (
+            f"pyproject version {version} has no '## {version} — <date>' heading in "
+            f"CHANGELOG.md (found: {versions or 'none'}). Either the release is "
+            f"undocumented or the version was bumped without a changelog section."
+        )
 
 
 def test_citation_release_date_matches_the_changelog() -> None:
-    version = _project_version()
+    cited = _citation_field("version")
     dates = dict(_released_versions())
-    assert _citation_field("date-released") == dates[version], (
+    assert cited in dates, (
+        f"CITATION.cff names version {cited} but CHANGELOG.md has no release "
+        "heading for it"
+    )
+    assert _citation_field("date-released") == dates[cited], (
         f"CITATION.cff date-released does not match the CHANGELOG date for "
-        f"{version}. date-released is the *release* date, not the date the file "
+        f"{cited}. date-released is the *release* date, not the date the file "
         f"was last edited — that is exactly how these two drifted apart before."
+    )
+
+
+def test_version_is_dev_while_unreleased_has_entries() -> None:
+    """Pending Unreleased entries mean the tree is past the last release.
+
+    A wheel built from such a tree must not report the released version: it
+    contains code the release does not. This is exactly how main advertised
+    itself as 0.1.0rc2 while carrying post-rc2 changes.
+    """
+    text = CHANGELOG.read_text(encoding="utf-8")
+    match = re.search(r"^##\s+Unreleased\s*$(.*?)(?=^##\s)", text, re.MULTILINE | re.DOTALL)
+    if match is None:
+        pytest.skip("no Unreleased section to check")
+    if not re.search(r"^\s*[-*]\s+\S", match.group(1), re.MULTILINE):
+        pytest.skip("Unreleased section is empty")
+    version = _project_version()
+    assert _is_dev_version(version), (
+        f"CHANGELOG.md has Unreleased entries but pyproject claims released "
+        f"version {version}; bump to the next '<version>.devN' so artifacts "
+        "built from this tree do not impersonate a release"
     )
 
 

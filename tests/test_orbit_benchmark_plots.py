@@ -292,6 +292,62 @@ def test_runtime_rows_carry_model_provenance_for_adaptive_series():
     assert row["model_device"] == "cuda:0" and row["model_dtype"] == "float32"
 
 
+def _rz(angle_rad: float) -> np.ndarray:
+    """Inertial→fixed rotation matrix about +z (Moon spin toy model)."""
+    c, s = np.cos(angle_rad), np.sin(angle_rad)
+    return np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+class _SpinningEphem:
+    """Stub ephemeris: uniform rotation about +z at OMEGA rad/s."""
+
+    OMEGA = 1.0e-3
+
+    def transform_inertial_to_fixed(self, t_s: float, v: np.ndarray) -> np.ndarray:
+        return _rz(self.OMEGA * t_s) @ np.asarray(v, dtype=np.float64)
+
+    def transform_fixed_to_inertial(self, t_s: float, v: np.ndarray) -> np.ndarray:
+        return _rz(self.OMEGA * t_s).T @ np.asarray(v, dtype=np.float64)
+
+
+class _AnisotropicGrav:
+    """Fake surrogate whose body-fixed field is deliberately not rotation-
+    equivariant, so any frame mishandling changes the answer."""
+
+    def acceleration_fixed_batch(self, r: np.ndarray) -> np.ndarray:
+        r = np.asarray(r, dtype=np.float64)
+        return np.stack([r[:, 0] ** 2, 2.0 * r[:, 1], np.full(len(r), 3.0)], axis=1)
+
+
+def test_force_sample_surrogate_accels_honour_moon_rotation():
+    """Regression: the force-sample benchmark treated inertial positions as
+    body-fixed for ST-LRPS while the truth acceleration was inertial. The
+    surrogate path must do r_I -> r_F -> a_F -> a_I with the ephemeris
+    rotation, matching an explicit per-sample reference and differing from
+    the old no-rotation shortcut."""
+    ephem = _SpinningEphem()
+    grav = _AnisotropicGrav()
+    t_ref = np.array([0.0, 400.0, 900.0, 1800.0])
+    rng = np.random.default_rng(7)
+    y_ref = rng.normal(scale=1.0e6, size=(4, 6))
+
+    a = cgm._st_lrps_inertial_accels(grav, ephem, t_ref, y_ref, batch_size=2)
+
+    expected = np.empty((4, 3))
+    for i, t in enumerate(t_ref):
+        r_f = ephem.transform_inertial_to_fixed(t, y_ref[i, :3])
+        a_f = grav.acceleration_fixed_batch(r_f[None, :])[0]
+        expected[i] = ephem.transform_fixed_to_inertial(t, a_f)
+    np.testing.assert_allclose(a, expected, rtol=1e-12, atol=0.0)
+
+    # The old shortcut (inertial positions fed straight to the fixed-frame
+    # field) must NOT match once the Moon has rotated (t > 0).
+    naive = grav.acceleration_fixed_batch(y_ref[:, :3])
+    assert not np.allclose(a[1:], naive[1:], rtol=1e-6)
+    # At t=0 the toy rotation is identity, so the two agree there.
+    np.testing.assert_allclose(a[0], naive[0], rtol=1e-12)
+
+
 def test_partial_adaptive_result_keeps_completed_scenarios_in_metrics():
     """A 'partial' result (some scenarios failed and NaN-filled) must yield
     real metrics for its completed scenarios and per-scenario failed rows for

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Changed: release/version hygiene.** 0.1.0rc2 is now tagged (`v0.1.0rc2`)
+  and main carries `0.1.0rc3.dev0`, so a wheel built from main no longer
+  advertises itself as the released rc2 while containing post-rc2 changes.
+  `CITATION.cff` keeps naming the newest *released* version.
+  `tests/test_release_metadata.py` now enforces this: a non-empty Unreleased
+  section requires a `.dev` version, dev versions must not duplicate an
+  already-released heading, and the citation version/date must match the
+  newest changelog release.
+- **Fixed (HIGH): frame mismatch in the force-sample benchmark
+  (`--force-sample-trajectory`).** The ST-LRPS path fed inertial truth
+  positions straight into the Moon-fixed surrogate field ("inertial ≈
+  body-fixed approximation") and compared the resulting fixed-frame
+  accelerations against the truth RHS's inertial accelerations — invalid for
+  a non-axisymmetric lunar field once the Moon rotates over the sampled arc.
+  Each sample now goes through r_I → r_F → a_F → a_I with the same ephemeris
+  rotation the truth dynamics engine uses, so both sides of the comparison
+  are inertial. Acceleration-error numbers produced by this mode before this
+  fix should be discarded. (The GPU batch orbit benchmark was already
+  frame-correct and is unaffected.)
 - **Changed: fit-region benchmark honesty hardening (external review).** The
   adaptive surrogate series is now reported as `ST_LRPS_ADAPTIVE_<integrator>`
   (was `ST_LRPS_CPU_<integrator>`): the integrator loop is CPU SciPy, but the
