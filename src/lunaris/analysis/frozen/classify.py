@@ -305,7 +305,14 @@ def frozen_score(
     metrics: FrozenOrbitMetrics,
     config: FrozenClassificationConfig,
 ) -> float:
-    """Return a lower-is-better score suitable for candidate ranking."""
+    """Return Lunaris' lower-is-better frozen-candidate screening score.
+
+    The dimensionless score sums selected envelope/drift ratios against the
+    quasi-frozen thresholds in ``config``. Impacts, domain exits, escapes,
+    unsafe perilune, and non-finite core metrics return infinity. This is a
+    ranking heuristic for one simulated duration, not a universal definition
+    of a frozen orbit and not validation evidence by itself.
+    """
 
     if _invalid_reasons(metrics, config):
         return float("inf")
@@ -365,7 +372,14 @@ def classify_candidate(
     validation_backend: str | None = None,
     long_horizon_validation_passed: bool = False,
 ) -> FrozenCandidateClassification:
-    """Classify one candidate from metrics and explicit validation evidence."""
+    """Classify one screened orbit using thresholds and explicit evidence.
+
+    Strict/quasi threshold satisfaction alone yields candidate language.
+    ``strict_frozen`` or ``quasi_frozen`` additionally requires a passed
+    long-horizon run on a recognized classical-SH backend. The classification
+    is scoped to the force model, thresholds, sampling cadence, and mission
+    duration that produced ``metrics``; it does not extrapolate beyond them.
+    """
 
     invalid = _invalid_reasons(metrics, config)
     score = frozen_score(metrics, config)

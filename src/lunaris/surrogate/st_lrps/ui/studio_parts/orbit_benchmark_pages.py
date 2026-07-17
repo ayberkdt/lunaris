@@ -5,10 +5,10 @@ Studio page for the orbit-level lunar gravity benchmark. It drives the relocated
 harness ``st_lrps.evaluation.compare_gravity_models`` as a subprocess, exposing
 the parameters most useful for orbit-level validation:
 
-* run mode — per-model DOP853 (RK8) vs a high-degree truth, OR GPU batch
+* run mode — per-model adaptive DOP853 vs a high-degree truth, OR GPU batch
   fixed-step RK4 vs a DOP853 truth;
 * which models to run (SH20..SH160, ST-LRPS) and which truth model;
-* the RK4 fixed step (GPU mode) and DOP853 tolerances (RK8 mode);
+* the RK4 fixed step (GPU mode) and DOP853 tolerances (adaptive CPU mode);
 * scenario count/seed/mode/sampling, altitude band, duration, output cadence.
 
 The page only builds and launches a command; the harness owns all physics.
@@ -192,7 +192,7 @@ class OrbitBenchmarkTab(QWidget):
         self.run_mode.addItem("GPU batch RK4 vs CPU truth", "gpu_rk4")
         self.run_mode.setCurrentIndex(0)
         self.run_mode.setToolTip(
-            "DOP853 (RK8): each model is propagated with the adaptive 8th-order "
+            "DOP853 (adaptive order 8): each model is propagated with SciPy's "
             "integrator and compared to the high-degree truth.\n"
             "GPU batch RK4: all scenarios are propagated together with a fixed-step "
             "RK4 kernel on the GPU and compared to a DOP853 truth."
@@ -211,7 +211,7 @@ class OrbitBenchmarkTab(QWidget):
         # Ground-truth integrator (applies in both modes).
         self.truth_integrator = NoScrollComboBox()
         for ti in _TRUTH_INTEGRATORS:
-            self.truth_integrator.addItem(ti + (" (RK8)" if ti == "DOP853" else ""), ti)
+            self.truth_integrator.addItem(ti + (" (adaptive order 8)" if ti == "DOP853" else ""), ti)
         self.truth_integrator.setCurrentIndex(0)
         self.truth_integrator.setToolTip(
             "Adaptive integrator used to build the ground-truth reference trajectories."
@@ -386,7 +386,7 @@ class OrbitBenchmarkTab(QWidget):
         _tune_form(form_cpu)
         # Per-model adaptive integrator (CPU / DOP853 mode).
         self.integrator = NoScrollComboBox()
-        self.integrator.addItem("DOP853 (RK8)", "DOP853")
+        self.integrator.addItem("DOP853 (adaptive order 8)", "DOP853")
         self.integrator.addItem("RK45", "RK45")
         self.integrator.setCurrentIndex(0)
         self.integrator.setToolTip("Adaptive integrator for the compared models (CPU mode).")

@@ -127,3 +127,13 @@ def test_grouped_labels_cover_catalog_in_order():
     families = [fam for fam, _ in grouped_labels()]
     # Families appear as contiguous, non-repeating blocks.
     assert len(families) == len(set(families))
+
+
+def test_legacy_integrator_tokens_disclose_the_actual_methods():
+    rk8 = spec_for_label("RK8")
+    y6 = spec_for_label("YOSHIDA6")
+    y8 = spec_for_label("YOSHIDA8")
+    assert rk8 is not None and "GBS extrapolation" in rk8.label
+    assert rk8.metric_type == "Extrapolation" and rk8.family == "extrapolation"
+    assert y6 is not None and "Recursive triple-jump" in y6.title
+    assert y8 is not None and "Recursive triple-jump" in y8.title

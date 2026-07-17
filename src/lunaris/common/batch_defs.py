@@ -311,7 +311,7 @@ class BatchPropagationConfig:
     -------
     ``use_gpu=True``  → request a GPU backend.
     ``use_gpu=False`` → CPU multiprocessing via existing :func:`core.propagation.propagator.propagate`
-                        (full-fidelity physics, slower for large N).
+                        (all currently implemented force flags, slower for large N).
 
     ``batch_backend`` is the explicit backend selector.  The default ``"auto"``
     resolves the backend from ``use_gpu`` + ``gravity_mode_override``.

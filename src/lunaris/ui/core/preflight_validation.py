@@ -53,7 +53,7 @@ _SNAPSHOT_FLAG_MAP = {
 def backend_request_from_snapshot(command_data: Mapping[str, Any]) -> tuple[str, SimpleNamespace]:
     """Translate a UI preflight snapshot into a (backend_name, flags) request.
 
-    The desktop mission-propagation run uses the CPU full-fidelity path, so the
+    The desktop mission-propagation run uses the complete supported-force CPU path, so the
     request maps to ``cpu_st_lrps`` (surrogate gravity) or ``cpu_sh`` (classic
     spherical harmonics). The returned ``flags`` object exposes the
     ``enable_*`` attributes the capability registry checks. Pure and Qt-free so
@@ -339,7 +339,7 @@ class PreFlightWorker(QtCore.QThread):
         reaches the same verdict as the CLI / batch / benchmark flows: an invalid
         backend, an over-limit SH degree, or an unsupported force model is caught
         here instead of being silently clipped or dropped at run time. The
-        desktop mission-propagation path is CPU full-fidelity, which supports
+        desktop mission-propagation path is the CPU route, which supports
         every force model, so this normally passes; it gates correctly if a GPU
         backend is ever selectable for this flow.
         """

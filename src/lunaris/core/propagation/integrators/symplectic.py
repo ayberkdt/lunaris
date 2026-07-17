@@ -9,6 +9,13 @@ import numpy as np
 # ---- Velocity-Verlet base step (symmetric, 2nd order) -----------------------
 
 def _vv_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    """Advance one velocity-Verlet kick–drift–kick step.
+
+    ``y6=[r,v]`` is SI Cartesian state, ``t``/``h`` are seconds, and ``accel``
+    returns [m/s²]. Symplectic/separable guarantees require acceleration to be
+    position dependent and conservative; time-, velocity-, or dissipative
+    forces can still be evaluated but void those guarantees.
+    """
     r = y6[:3]
     v = y6[3:6]
     a0 = accel(t, y6)
@@ -75,14 +82,27 @@ def _composed_step(
 
 
 def _y4_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    """Apply the fourth-order Yoshida triple-jump composition of Verlet."""
     return _composed_step(accel, t, y6, h, _Y4_WEIGHTS)
 
 
 def _y6_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    """Apply the recursive sixth-order triple-jump composition of Verlet.
+
+    The accepted ``YOSHIDA6`` token is retained for compatibility; these are
+    recursively composed weights, not Yoshida's optimized minimal-stage
+    sixth-order coefficient set.
+    """
     return _composed_step(accel, t, y6, h, _Y6_WEIGHTS)
 
 
 def _y8_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    """Apply the recursive eighth-order triple-jump composition of Verlet.
+
+    The accepted ``YOSHIDA8`` token is retained for compatibility; these are
+    recursively composed weights, not Yoshida's optimized minimal-stage
+    eighth-order coefficient set.
+    """
     return _composed_step(accel, t, y6, h, _Y8_WEIGHTS)
 
 
@@ -105,6 +125,14 @@ def _pack6(r: np.ndarray, v: np.ndarray) -> np.ndarray:
 
 
 def _pefrl_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    """Advance one fourth-order PEFRL split step for separable dynamics.
+
+    The Omelyan–Mryglod–Folk coefficients operate on SI ``[r,v]`` state with
+    second-based time/step and acceleration [m/s²]. Four force evaluations are
+    used. The symplectic guarantee applies only to smooth conservative,
+    position-dependent acceleration; non-conservative or velocity-dependent
+    terms void it.
+    """
     xi = _PEFRL_XI
     lam = _PEFRL_LAMBDA
     chi = _PEFRL_CHI

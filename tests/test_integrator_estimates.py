@@ -70,7 +70,7 @@ def test_cost_fixed_counts_steps_and_evals():
 
 
 def test_cost_fixed_uses_method_specific_evals():
-    est = estimate_fixed_step_cost(_spec("YOSHIDA8 (Symplectic)"), 86400.0, 60.0)
+    est = estimate_fixed_step_cost(_spec("YOSHIDA8"), 86400.0, 60.0)
     assert est.total_evals == 1440 * 54
 
 
