@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Changed: release/version hygiene.** 0.1.0rc2 is now tagged (`v0.1.0rc2`)
+  and main carries `0.1.0rc3.dev0`, so a wheel built from main no longer
+  advertises itself as the released rc2 while containing post-rc2 changes.
+  `CITATION.cff` keeps naming the newest *released* version.
+  `tests/test_release_metadata.py` now enforces this: a non-empty Unreleased
+  section requires a `.dev` version, dev versions must not duplicate an
+  already-released heading, and the citation version/date must match the
+  newest changelog release.
 - **Fixed (HIGH): frame mismatch in the force-sample benchmark
   (`--force-sample-trajectory`).** The ST-LRPS path fed inertial truth
   positions straight into the Moon-fixed surrogate field ("inertial ≈
