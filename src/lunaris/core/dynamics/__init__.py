@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .engine import DynamicsEngine
 from .requirements import (
+    extract_ephem_state_tables_strict,
     extract_ephem_tables_strict,
     extract_gravity_strict,
     extract_surface_provider_strict,
@@ -17,6 +18,7 @@ from .requirements import (
 # to package-level API.
 __all__ = [
     "DynamicsEngine",
+    "extract_ephem_state_tables_strict",
     "extract_ephem_tables_strict",
     "extract_gravity_strict",
     "extract_surface_provider_strict",

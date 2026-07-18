@@ -64,6 +64,14 @@ Use these definitions whenever publishing a table or figure.
 Always state the comparison frame for vector errors. A high-degree SH DOP853 run
 is a numerical reference, not physical truth.
 
+When the reference degree exceeds the ST-LRPS training target degree, state the
+representation ceiling next to the table: the band between the training target
+and the reference (e.g. SH61–100 for an SH60-trained surrogate against SH100)
+is structurally unrepresentable for the surrogate and is its irreducible error
+floor — the surrogate is not expected to approach the reference-degree
+baseline. Measured band shares of the non-spherical acceleration RMS are in
+`docs/ST_LRPS_VALIDATION_HYGIENE.md` ("What ST-LRPS is (and is not)").
+
 ## Required Context
 
 Every published benchmark table must state:

@@ -12,6 +12,7 @@ import math
 import time
 import warnings
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -37,15 +38,18 @@ from lunaris.core.propagation.integrators.fixed_step import (
     accel_form_velocity_dependence_violations,
     symplectic_breaks_separability,
     symplectic_discontinuous_gravity,
+    symplectic_impulsive_maneuver_violations,
     symplectic_nonconservative_gravity,
     symplectic_nonconservative_violations,
 )
 from lunaris.core.propagation.integrators.scipy import _resolve_scipy_method
 from lunaris.core.propagation.plans import (
     IntegrationPlan,
+    ManeuverPlan,
     StepSizePlan,
     TimeGridPlan,
     _osculating_periapsis_alt_km,
+    apply_impulsive_maneuver,
     resolve_integration_plan,
     resolve_step_size_policy,
     resolve_time_grid_plan,
@@ -101,6 +105,7 @@ def propagate(
     time_cfg: TimeConfig | None = None,
     topo_grid: Any = None,
     extra_events: Sequence[Callable[[float, np.ndarray], float]] | None = None,
+    maneuver_plan: ManeuverPlan | None = None,
 ) -> PropagationResult:
     """
     Propagate the trajectory for a configured duration and output sampling grid.
@@ -117,6 +122,17 @@ def propagate(
     - max_points_cap / verbosity / integration tolerances remain in PropagatorConfig unless also provided in TimeConfig.
     """
     y0_arr = _as_state_array(y0)
+
+    if maneuver_plan is not None and maneuver_plan.maneuvers:
+        return _propagate_with_maneuvers(
+            dynamics=dynamics,
+            y0=y0_arr,
+            cfg=cfg,
+            time_cfg=time_cfg,
+            topo_grid=topo_grid,
+            extra_events=extra_events,
+            maneuver_plan=maneuver_plan,
+        )
 
     t_wall0 = time.perf_counter()
 
@@ -153,7 +169,11 @@ def propagate(
     dt_out = time_plan.realized_output_dt_s
     t_eval = time_plan.t_eval
 
-    rhs = dynamics.build_rhs()
+    # The propagator owns the invariant that the solver state dimension is
+    # fixed for an integration. Use the trusted hot-path callable; external
+    # callers of DynamicsEngine.build_rhs retain validation on every call.
+    trusted_builder = getattr(dynamics, "_build_solver_rhs", None)
+    rhs = trusted_builder() if callable(trusted_builder) else dynamics.build_rhs()
     rhs_path = _rhs_path_for_diagnostics(dynamics)
     R_ref_m, mu_m3s2 = get_ref_radius_and_mu(dynamics)
 
@@ -456,6 +476,179 @@ def propagate(
         )
 
     return res
+
+
+def _propagate_with_maneuvers(
+    *,
+    dynamics: DynamicsEngine,
+    y0: np.ndarray,
+    cfg: PropagatorConfig,
+    time_cfg: TimeConfig | None,
+    topo_grid: Any,
+    extra_events: Sequence[Callable[[float, np.ndarray], float]] | None,
+    maneuver_plan: ManeuverPlan,
+) -> PropagationResult:
+    """Segment a propagation at burns and publish one post-burn row per boundary.
+
+    Terminal events have precedence over a burn at the same epoch. Checkpoint
+    artifacts are rejected because the current checkpoint contract is
+    diagnostic/write-only and cannot prove whether a boundary impulse was
+    already applied.
+    """
+    if time_cfg is None:
+        raise ValueError("time_cfg is required for maneuver propagation")
+    t0 = float(time_cfg.t0_s)
+    tf = t0 + float(time_cfg.duration_s)
+    maneuver_plan.validate_window(t0, tf)
+    if getattr(cfg, "checkpoint_path", None):
+        raise ValueError(
+            "checkpoint_path is not supported with maneuver_plan: the current "
+            "checkpoint schema has no burn-application cursor and resume could "
+            "double-apply an impulse"
+        )
+
+    maneuver_violations = symplectic_impulsive_maneuver_violations(cfg.method, maneuver_plan)
+    if maneuver_violations:
+        message = (
+            f"Symplectic method {cfg.method!r} cannot carry its smooth-flow "
+            "bounded-energy-drift guarantee across an impulsive maneuver."
+        )
+        if cfg.strict_symplectic:
+            raise ValueError(message + " strict_symplectic=True: refusing the run.")
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+    telemetry_disabled = bool(cfg.enable_telemetry or cfg.telem_cadence_s > 0.0)
+    segment_cfg = replace(
+        cfg,
+        compute_2body_baseline=False,
+        enable_telemetry=False,
+        telem_cadence_s=0.0,
+        telemetry_sink_path="",
+    )
+
+    t_rows: list[float] = []
+    y_rows: list[np.ndarray] = []
+    event_t_parts: list[list[np.ndarray]] = []
+    event_y_parts: list[list[np.ndarray]] = []
+    applied: list[dict[str, Any]] = []
+    segments: list[PropagationResult] = []
+    current_t = t0
+    current_y = np.asarray(y0, dtype=np.float64).copy()
+    terminal_result: PropagationResult | None = None
+    wall_start = time.perf_counter()
+
+    def append_segment(segment: PropagationResult) -> None:
+        nonlocal terminal_result
+        start = 1 if t_rows and np.isclose(segment.t[0], t_rows[-1], rtol=0.0, atol=1e-12) else 0
+        t_rows.extend(float(value) for value in segment.t[start:])
+        y_rows.extend(np.asarray(row, dtype=np.float64).copy() for row in segment.y[start:])
+        while len(event_t_parts) < len(segment.t_events):
+            event_t_parts.append([])
+            event_y_parts.append([])
+        for index, values in enumerate(segment.t_events):
+            event_t_parts[index].append(np.asarray(values, dtype=np.float64))
+        for index, values in enumerate(segment.y_events):
+            event_y_parts[index].append(np.asarray(values, dtype=np.float64))
+        segments.append(segment)
+        if segment.impacted or segment.stopped_early:
+            terminal_result = segment
+
+    def apply_boundary_burn(maneuver: Any) -> None:
+        nonlocal current_y
+        current_y, record = apply_impulsive_maneuver(current_y, maneuver)
+        applied.append(record)
+        if t_rows and np.isclose(t_rows[-1], maneuver.t_burn_s, rtol=0.0, atol=1e-12):
+            y_rows[-1] = current_y.copy()
+        else:
+            t_rows.append(float(maneuver.t_burn_s))
+            y_rows.append(current_y.copy())
+
+    for maneuver in maneuver_plan.maneuvers:
+        burn_t = float(maneuver.t_burn_s)
+        if burn_t > current_t:
+            segment_time = replace(time_cfg, t0_s=current_t, duration_s=burn_t - current_t)
+            segment = propagate(
+                dynamics,
+                current_y,
+                segment_cfg,
+                time_cfg=segment_time,
+                topo_grid=topo_grid,
+                extra_events=extra_events,
+            )
+            append_segment(segment)
+            current_t = float(segment.t[-1])
+            current_y = np.asarray(segment.y[-1], dtype=np.float64).copy()
+            if terminal_result is not None:
+                break
+            if not np.isclose(current_t, burn_t, rtol=0.0, atol=1e-9):
+                raise RuntimeError("maneuver segment did not reach its burn boundary")
+        apply_boundary_burn(maneuver)
+        current_t = burn_t
+
+    if terminal_result is None and current_t < tf:
+        segment_time = replace(time_cfg, t0_s=current_t, duration_s=tf - current_t)
+        segment = propagate(
+            dynamics,
+            current_y,
+            segment_cfg,
+            time_cfg=segment_time,
+            topo_grid=topo_grid,
+            extra_events=extra_events,
+        )
+        append_segment(segment)
+
+    if not t_rows:
+        t_rows.append(t0)
+        y_rows.append(current_y.copy())
+
+    last = terminal_result or (segments[-1] if segments else None)
+    diagnostics = dict(last.diagnostics) if last is not None else {}
+    diagnostics.update(
+        {
+            "maneuver_plan_sha256": maneuver_plan.plan_sha256,
+            "maneuver_output_contract": "single_timestamp_post_burn_v1",
+            "maneuver_event_precedence": "terminal_event_before_burn",
+            "maneuvers_requested": len(maneuver_plan.maneuvers),
+            "maneuvers_applied": applied,
+            "maneuver_segments_completed": len(segments),
+            "maneuver_checkpoint_policy": "unsupported_fail_closed",
+            "wall_time_s": float(time.perf_counter() - wall_start),
+        }
+    )
+    if cfg.compute_2body_baseline:
+        diagnostics["baseline_disabled_reason"] = (
+            "maneuver-aware two-body baseline is not implemented; no silent no-burn baseline emitted"
+        )
+    if telemetry_disabled:
+        diagnostics["telemetry_disabled_reason"] = (
+            "segmented maneuver telemetry requires a discontinuity-aware replay schema"
+        )
+
+    def combine(parts: list[np.ndarray], *, state: bool) -> np.ndarray:
+        nonempty = [part for part in parts if part.size]
+        if nonempty:
+            return np.concatenate(nonempty, axis=0)
+        n_state = int(y0.size)
+        return np.empty((0, n_state), dtype=np.float64) if state else np.empty(0, dtype=np.float64)
+
+    impacted = bool(last.impacted) if last is not None else False
+    stopped_early = bool(last.stopped_early) if last is not None else False
+    return PropagationResult(
+        t=np.asarray(t_rows, dtype=np.float64),
+        y=np.vstack(y_rows),
+        ode=None,
+        t_events=[combine(parts, state=False) for parts in event_t_parts],
+        y_events=[combine(parts, state=True) for parts in event_y_parts],
+        impacted=impacted,
+        t_impact_s=(last.t_impact_s if last is not None else None),
+        y_impact=(last.y_impact if last is not None else None),
+        stopped_early=stopped_early,
+        stop_reason=(last.stop_reason if last is not None else None),
+        t_stop_s=(last.t_stop_s if last is not None else None),
+        diagnostics=diagnostics,
+        baseline=None,
+    )
+
 
 def _compute_2body_baseline(
     *,

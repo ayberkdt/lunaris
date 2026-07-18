@@ -197,6 +197,34 @@ def extract_ephem_tables_strict(ephem: Any) -> tuple[float, np.ndarray, np.ndarr
     return dt_s, sun_tab, earth_tab, q_tab
 
 
+def extract_ephem_state_tables_strict(
+    ephem: Any,
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, bool]:
+    """Extend the position-table contract with optional matched velocity tables.
+
+    Canonical schema-v2 providers supply both velocities and use cubic Hermite.
+    Custom in-memory legacy providers may omit both; they remain an explicit
+    Catmull-Rom compatibility path. Supplying only one table or mismatched
+    shapes fails closed.
+    """
+    dt_s, sun, earth, qtab = extract_ephem_tables_strict(ephem)
+    provider = ephem.get_data_provider()
+    sun_v_raw = provider.get("v_sun_tab_m_s")
+    earth_v_raw = provider.get("v_earth_tab_m_s")
+    if (sun_v_raw is None) != (earth_v_raw is None):
+        raise KeyError("ephemeris provider must supply both Sun and Earth velocity tables")
+    if sun_v_raw is None:
+        return dt_s, sun, earth, np.zeros_like(sun), np.zeros_like(earth), qtab, False
+    sun_v = _as_f64_c(sun_v_raw, "v_sun_tab_m_s")
+    earth_v = _as_f64_c(earth_v_raw, "v_earth_tab_m_s")
+    if sun_v.shape != sun.shape or earth_v.shape != earth.shape:
+        raise ValueError("ephemeris velocity-table shapes must match position tables")
+    schema = int(provider.get("ephemeris_schema_version", 0))
+    if schema != 2:
+        raise ValueError("position+velocity ephemeris providers must declare schema version 2")
+    return dt_s, sun, earth, sun_v, earth_v, qtab, True
+
+
 def extract_surface_provider_strict(surface_provider: Any) -> dict[str, Any]:
     """
     STRICT surface provider contract.
@@ -243,6 +271,7 @@ def require_srp_props(sc: SpacecraftProps) -> tuple[float, float, float]:
 
 __all__ = [
     "extract_gravity_strict",
+    "extract_ephem_state_tables_strict",
     "extract_ephem_tables_strict",
     "extract_surface_provider_strict",
     "need_ephemeris",

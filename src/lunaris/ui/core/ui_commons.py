@@ -164,10 +164,10 @@ def with_alpha(color: str, alpha: float) -> str:
     return f"rgba({round(r * 255)}, {round(g * 255)}, {round(b * 255)}, {a:g})"
 
 # Window and Navigation Constants
-# The window title carries the beta marker; APP_NAME itself is left unchanged so
-# persisted session/profile files (keyed on APP_NAME) stay compatible.
+# Keep the visible title identical to APP_NAME; persisted session/profile files
+# are also keyed on APP_NAME.
 WINDOW_SETTINGS = {
-    "title": f"{APP_NAME} (Beta)",
+    "title": APP_NAME,
     "size": (1200, 900),
     "min_size": (1000, 840),
 }

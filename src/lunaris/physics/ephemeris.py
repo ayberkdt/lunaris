@@ -28,7 +28,8 @@ Responsibilities
      guaranteed >= duration_s so runtime interpolation never clamps inside the
      requested propagation span.
    - Stores:
-       * Observer→Earth and Observer→Sun position vectors in the inertial frame (meters)
+       * Observer→Earth and Observer→Sun position/velocity states in the
+         inertial frame (meters and meters/second)
        * Inertial→body-fixed attitude as a quaternion time series [w, x, y, z]
 
    Performance note:
@@ -70,6 +71,11 @@ The provider contains only canonical keys (no aliases):
 - "r_sun_tab_m"     : ndarray (N, 3) or (1, 3), float64
     Observer→Sun in the inertial frame, meters [m].
     Same degeneracy behavior as above when disabled.
+
+- "v_earth_tab_m_s" / "v_sun_tab_m_s" : ndarray matching position tables
+    SPICE state velocities in the same frame and epochs, meters/second. These
+    are mandatory in canonical schema-v2 artifacts and drive cubic Hermite
+    interpolation.
 
 - "mu_earth_m3s2"   : float
     Earth GM in SI units [m^3/s^2] (from kernel pool if available; fallback otherwise).
@@ -135,6 +141,7 @@ Typical usage
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -224,6 +231,8 @@ class EphemerisTables:
     q_i2f_tab: F64Array  # shape (N, 4) [w,x,y,z]
     r_earth_tab_m: F64Array  # shape (N, 3) or (1, 3) if disabled
     r_sun_tab_m: F64Array  # shape (N, 3) or (1, 3) if disabled
+    v_earth_tab_m_s: F64Array  # shape matches r_earth_tab_m
+    v_sun_tab_m_s: F64Array  # shape matches r_sun_tab_m
 
     mu_earth_m3s2: float
     mu_sun_m3s2: float
@@ -240,6 +249,9 @@ class EphemerisTables:
     # optional and never affects the numerical contract validated below.
     kernel_provenance: tuple[Mapping[str, Any], ...] = ()
     time_scale_note: str = ""
+    schema_version: int = 2
+    aberration_correction: str = "NONE"
+    interpolation_kind: str = "cubic_hermite_position_velocity"
 
     def __post_init__(self) -> None:
         # Strict contract validation. Runtime interpolation indexes tables by
@@ -296,6 +308,121 @@ class EphemerisTables:
             raise ValueError(f"r_sun_tab_m must be (N,3) or (1,3); got {self.r_sun_tab_m.shape}.")
         if not np.all(np.isfinite(self.r_sun_tab_m)):
             raise ValueError("r_sun_tab_m must contain only finite values.")
+
+        if self.v_earth_tab_m_s.shape != self.r_earth_tab_m.shape:
+            raise ValueError("v_earth_tab_m_s must match r_earth_tab_m shape.")
+        if self.v_sun_tab_m_s.shape != self.r_sun_tab_m.shape:
+            raise ValueError("v_sun_tab_m_s must match r_sun_tab_m shape.")
+        if not np.all(np.isfinite(self.v_earth_tab_m_s)):
+            raise ValueError("v_earth_tab_m_s must contain only finite values.")
+        if not np.all(np.isfinite(self.v_sun_tab_m_s)):
+            raise ValueError("v_sun_tab_m_s must contain only finite values.")
+        if int(self.schema_version) != 2:
+            raise ValueError("EphemerisTables requires schema_version=2 (position+velocity tables).")
+        if str(self.aberration_correction).upper() != "NONE":
+            raise ValueError("EphemerisTables currently requires aberration_correction='NONE'.")
+        if self.interpolation_kind != "cubic_hermite_position_velocity":
+            raise ValueError("EphemerisTables interpolation_kind must declare cubic Hermite.")
+
+
+def save_ephemeris_tables_npz(path: str | Path, tables: EphemerisTables) -> Path:
+    """Serialize canonical schema-v2 ephemeris tables without pickle payloads."""
+    out = Path(path)
+    if out.suffix.lower() != ".npz":
+        out = out.with_suffix(".npz")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        out,
+        schema_version=np.asarray(tables.schema_version, dtype=np.int64),
+        dt_s=np.asarray(tables.dt_s, dtype=np.float64),
+        t_tab_s=tables.t_tab_s,
+        et0=np.asarray(tables.et0, dtype=np.float64),
+        q_i2f_tab=tables.q_i2f_tab,
+        r_earth_tab_m=tables.r_earth_tab_m,
+        r_sun_tab_m=tables.r_sun_tab_m,
+        v_earth_tab_m_s=tables.v_earth_tab_m_s,
+        v_sun_tab_m_s=tables.v_sun_tab_m_s,
+        mu_earth_m3s2=np.asarray(tables.mu_earth_m3s2, dtype=np.float64),
+        mu_sun_m3s2=np.asarray(tables.mu_sun_m3s2, dtype=np.float64),
+        inertial_frame=np.asarray(tables.inertial_frame),
+        fixed_frame=np.asarray(tables.fixed_frame),
+        observer=np.asarray(tables.observer),
+        third_body_sampling_mode=np.asarray(tables.third_body_sampling_mode),
+        third_body_sampling_fallback_reason=np.asarray(
+            "" if tables.third_body_sampling_fallback_reason is None
+            else tables.third_body_sampling_fallback_reason
+        ),
+        kernel_provenance_json=np.asarray(
+            json.dumps(list(tables.kernel_provenance), sort_keys=True, default=str)
+        ),
+        time_scale_note=np.asarray(tables.time_scale_note),
+        aberration_correction=np.asarray(tables.aberration_correction),
+        interpolation_kind=np.asarray(tables.interpolation_kind),
+    )
+    return out
+
+
+def load_ephemeris_tables_npz(path: str | Path) -> EphemerisTables:
+    """Load only the complete schema-v2 position+velocity artifact contract.
+
+    Legacy position-only archives fail closed instead of silently changing the
+    interpolant used by a resumed propagation.
+    """
+    required = {
+        "schema_version", "dt_s", "t_tab_s", "et0", "q_i2f_tab",
+        "r_earth_tab_m", "r_sun_tab_m", "v_earth_tab_m_s", "v_sun_tab_m_s",
+        "mu_earth_m3s2", "mu_sun_m3s2", "inertial_frame", "fixed_frame",
+        "observer", "aberration_correction", "interpolation_kind",
+    }
+    with np.load(Path(path), allow_pickle=False) as data:
+        missing = sorted(required - set(data.files))
+        if missing:
+            raise ValueError(
+                "ephemeris archive is not schema v2; missing required keys: "
+                + ", ".join(missing)
+            )
+        schema_version = int(np.asarray(data["schema_version"]).item())
+        if schema_version != 2:
+            raise ValueError(f"unsupported ephemeris schema_version={schema_version}; expected 2")
+        provenance_raw = (
+            str(np.asarray(data["kernel_provenance_json"]).item())
+            if "kernel_provenance_json" in data.files else "[]"
+        )
+        provenance = json.loads(provenance_raw)
+        if not isinstance(provenance, list):
+            raise ValueError("kernel_provenance_json must decode to a list")
+        fallback = (
+            str(np.asarray(data["third_body_sampling_fallback_reason"]).item())
+            if "third_body_sampling_fallback_reason" in data.files else ""
+        )
+        return EphemerisTables(
+            dt_s=float(np.asarray(data["dt_s"]).item()),
+            t_tab_s=np.ascontiguousarray(data["t_tab_s"], dtype=np.float64),
+            et0=float(np.asarray(data["et0"]).item()),
+            q_i2f_tab=np.ascontiguousarray(data["q_i2f_tab"], dtype=np.float64),
+            r_earth_tab_m=np.ascontiguousarray(data["r_earth_tab_m"], dtype=np.float64),
+            r_sun_tab_m=np.ascontiguousarray(data["r_sun_tab_m"], dtype=np.float64),
+            v_earth_tab_m_s=np.ascontiguousarray(data["v_earth_tab_m_s"], dtype=np.float64),
+            v_sun_tab_m_s=np.ascontiguousarray(data["v_sun_tab_m_s"], dtype=np.float64),
+            mu_earth_m3s2=float(np.asarray(data["mu_earth_m3s2"]).item()),
+            mu_sun_m3s2=float(np.asarray(data["mu_sun_m3s2"]).item()),
+            inertial_frame=str(np.asarray(data["inertial_frame"]).item()),
+            fixed_frame=str(np.asarray(data["fixed_frame"]).item()),
+            observer=str(np.asarray(data["observer"]).item()),
+            third_body_sampling_mode=(
+                str(np.asarray(data["third_body_sampling_mode"]).item())
+                if "third_body_sampling_mode" in data.files else "not_requested"
+            ),
+            third_body_sampling_fallback_reason=fallback or None,
+            kernel_provenance=tuple(provenance),
+            time_scale_note=(
+                str(np.asarray(data["time_scale_note"]).item())
+                if "time_scale_note" in data.files else ""
+            ),
+            schema_version=schema_version,
+            aberration_correction=str(np.asarray(data["aberration_correction"]).item()),
+            interpolation_kind=str(np.asarray(data["interpolation_kind"]).item()),
+        )
 
 # =============================================================================
 # 3.                PRIVATE SPICE POOL QUERIES (GM, ETC)
@@ -378,36 +505,35 @@ def _normalize_quat_series_inplace(q_tab: np.ndarray) -> None:
             q_tab[k] *= -1.0
 
 
-def _try_fill_spkpos_table_m(
-    out_m: np.ndarray,
+def _try_fill_spkezr_state_tables_si(
+    out_position_m: np.ndarray,
+    out_velocity_m_s: np.ndarray,
     *,
-    spkpos,
+    spkezr,
     target: str,
     et_tab: np.ndarray,
     frame: str,
     observer: str,
 ) -> tuple[bool, str | None]:
     """
-    Attempts vectorized SPICE sampling for positions.
+    Attempts vectorized SPICE sampling for position and velocity.
 
-    Returns ``(True, None)`` on success and fills ``out_m`` (shape ``(N,3)``)
-    in meters. Returns ``(False, reason)`` if vectorized sampling is unsupported
-    or returns an unexpected shape.
+    CSPICE ``spkezr`` returns km and km/s. Both tables are converted to SI.
     """
     try:
-        pos_km, _ = spkpos(target, et_tab, frame, "NONE", observer)
-        arr = np.asarray(pos_km, dtype=np.float64)
+        state_km, _ = spkezr(target, et_tab, frame, "NONE", observer)
+        arr = np.asarray(state_km, dtype=np.float64)
         if arr.ndim != 2:
             return False, f"unexpected ndim={arr.ndim}"
 
-        n = int(out_m.shape[0])
-        if arr.shape == (3, n):
+        n = int(out_position_m.shape[0])
+        if arr.shape == (6, n):
             arr = arr.T
-        if arr.shape != (n, 3):
-            return False, f"unexpected shape={arr.shape}; expected {(n, 3)}"
+        if arr.shape != (n, 6):
+            return False, f"unexpected shape={arr.shape}; expected {(n, 6)}"
 
-        out_m[:] = arr
-        out_m *= KM_TO_M
+        out_position_m[:] = arr[:, :3] * KM_TO_M
+        out_velocity_m_s[:] = arr[:, 3:] * KM_TO_M
         return True, None
     except Exception as exc:
         # Any failure here falls back to the scalar loop path, but the caller
@@ -535,9 +661,13 @@ def build_tables(
     if include_third_body:
         rE = np.empty((Nt, 3), dtype=np.float64)
         rS = np.empty((Nt, 3), dtype=np.float64)
+        vE = np.empty((Nt, 3), dtype=np.float64)
+        vS = np.empty((Nt, 3), dtype=np.float64)
     else:
         rE = np.zeros((1, 3), dtype=np.float64)
         rS = np.zeros((1, 3), dtype=np.float64)
+        vE = np.zeros((1, 3), dtype=np.float64)
+        vS = np.zeros((1, 3), dtype=np.float64)
 
     mu_earth = 0.0
     mu_sun = 0.0
@@ -564,7 +694,7 @@ def build_tables(
         # Local bindings (tiny speedup in Python loops)
         pxform = spice.pxform
         m2q = spice.m2q
-        spkpos = spice.spkpos
+        spkezr = spice.spkezr
 
         # A) Attitude: inertial -> fixed (pxform is scalar ET; must loop)
         if need_moon_fixed_rotation:
@@ -581,17 +711,19 @@ def build_tables(
 
         # B) Third-body states: target relative to observer
         if include_third_body:
-            ok_e, earth_vectorized_reason = _try_fill_spkpos_table_m(
+            ok_e, earth_vectorized_reason = _try_fill_spkezr_state_tables_si(
                 rE,
-                spkpos=spkpos,
+                vE,
+                spkezr=spkezr,
                 target=earth_target,
                 et_tab=et_tab,
                 frame=inertial_frame,
                 observer=observer,
             )
-            ok_s, sun_vectorized_reason = _try_fill_spkpos_table_m(
+            ok_s, sun_vectorized_reason = _try_fill_spkezr_state_tables_si(
                 rS,
-                spkpos=spkpos,
+                vS,
+                spkezr=spkezr,
                 target=sun_target,
                 et_tab=et_tab,
                 frame=inertial_frame,
@@ -608,7 +740,7 @@ def build_tables(
                 third_body_sampling_mode = "scalar_fallback"
                 third_body_sampling_fallback_reason = "; ".join(reasons)
                 warnings.warn(
-                    "[SPICE] Vectorized third-body position sampling unavailable "
+                    "[SPICE] Vectorized third-body state sampling unavailable "
                     f"({third_body_sampling_fallback_reason}); using scalar SPICE calls.",
                     RuntimeWarning,
                     stacklevel=2,
@@ -616,20 +748,26 @@ def build_tables(
                 for i in range(Nt):
                     et = float(et_tab[i])
                     try:
-                        pos_earth_km, _ = spkpos(earth_target, et, inertial_frame, "NONE", observer)
-                        pos_sun_km, _ = spkpos(sun_target, et, inertial_frame, "NONE", observer)
+                        state_earth_km, _ = spkezr(earth_target, et, inertial_frame, "NONE", observer)
+                        state_sun_km, _ = spkezr(sun_target, et, inertial_frame, "NONE", observer)
                     except SpiceyError as e:
                         raise RuntimeError(
                             f"SPICE position lookup failed at i={i}, et={et:.3f}"
                         ) from e
 
-                    rE[i, 0] = float(pos_earth_km[0]) * KM_TO_M
-                    rE[i, 1] = float(pos_earth_km[1]) * KM_TO_M
-                    rE[i, 2] = float(pos_earth_km[2]) * KM_TO_M
+                    rE[i, 0] = float(state_earth_km[0]) * KM_TO_M
+                    rE[i, 1] = float(state_earth_km[1]) * KM_TO_M
+                    rE[i, 2] = float(state_earth_km[2]) * KM_TO_M
+                    vE[i, 0] = float(state_earth_km[3]) * KM_TO_M
+                    vE[i, 1] = float(state_earth_km[4]) * KM_TO_M
+                    vE[i, 2] = float(state_earth_km[5]) * KM_TO_M
 
-                    rS[i, 0] = float(pos_sun_km[0]) * KM_TO_M
-                    rS[i, 1] = float(pos_sun_km[1]) * KM_TO_M
-                    rS[i, 2] = float(pos_sun_km[2]) * KM_TO_M
+                    rS[i, 0] = float(state_sun_km[0]) * KM_TO_M
+                    rS[i, 1] = float(state_sun_km[1]) * KM_TO_M
+                    rS[i, 2] = float(state_sun_km[2]) * KM_TO_M
+                    vS[i, 0] = float(state_sun_km[3]) * KM_TO_M
+                    vS[i, 1] = float(state_sun_km[4]) * KM_TO_M
+                    vS[i, 2] = float(state_sun_km[5]) * KM_TO_M
             else:
                 third_body_sampling_mode = "vectorized"
                 third_body_sampling_fallback_reason = None
@@ -653,6 +791,8 @@ def build_tables(
         q_i2f_tab=q_tab,
         r_earth_tab_m=rE,
         r_sun_tab_m=rS,
+        v_earth_tab_m_s=vE,
+        v_sun_tab_m_s=vS,
         mu_earth_m3s2=float(mu_earth),
         mu_sun_m3s2=float(mu_sun),
         inertial_frame=str(inertial_frame),
@@ -665,6 +805,9 @@ def build_tables(
             f"start_utc={start_utc!r} parsed to ET (TDB seconds past J2000) via the "
             "furnished leapseconds kernel (LSK); table ET = et0 + t_tab_s"
         ),
+        schema_version=2,
+        aberration_correction="NONE",
+        interpolation_kind="cubic_hermite_position_velocity",
     )
 
 
@@ -755,11 +898,16 @@ class EphemerisManager:
             "q_i2f_tab": t.q_i2f_tab,
             "r_earth_tab_m": t.r_earth_tab_m,
             "r_sun_tab_m": t.r_sun_tab_m,
+            "v_earth_tab_m_s": t.v_earth_tab_m_s,
+            "v_sun_tab_m_s": t.v_sun_tab_m_s,
             "mu_earth_m3s2": float(t.mu_earth_m3s2),
             "mu_sun_m3s2": float(t.mu_sun_m3s2),
             "inertial_frame": t.inertial_frame,
             "fixed_frame": t.fixed_frame,
             "observer": t.observer,
+            "ephemeris_schema_version": int(t.schema_version),
+            "aberration_correction": t.aberration_correction,
+            "interpolation_kind": t.interpolation_kind,
         }
 
     def kernel_provenance(self) -> Mapping[str, Any]:
@@ -782,6 +930,11 @@ class EphemerisManager:
             "inertial_frame": t.inertial_frame,
             "fixed_frame": t.fixed_frame,
             "observer": t.observer,
+            "ephemeris_schema_version": int(t.schema_version),
+            "aberration_correction": t.aberration_correction,
+            "position_units": "m",
+            "velocity_units": "m/s",
+            "interpolation_kind": t.interpolation_kind,
         }
 
     # --- Properties --------------------------------------------------------
@@ -806,7 +959,14 @@ class EphemerisManager:
         out[0], out[1], out[2] = x, y, z
         return out
 
-    def _interp_vec3_table(self, t_s: float, tab: np.ndarray, *, out: F64Array | None) -> F64Array:
+    def _interp_vec3_table(
+        self,
+        t_s: float,
+        tab: np.ndarray,
+        velocity_tab: np.ndarray,
+        *,
+        out: F64Array | None,
+    ) -> F64Array:
         # third-body disabled: table holds a single zero row
         if tab.shape[0] == 1:
             if out is None:
@@ -814,7 +974,9 @@ class EphemerisManager:
             out[:] = tab[0]
             return out
 
-        x, y, z = interp_vec3_catmull(float(t_s), float(self.tables.dt_s), tab)
+        x, y, z = interp_vec3_hermite(
+            float(t_s), float(self.tables.dt_s), tab, velocity_tab
+        )
         return self._write_vec3(out, x, y, z)
 
     def _interp_quat_i2f(self, t_s: float) -> tuple[float, float, float, float]:
@@ -841,7 +1003,12 @@ class EphemerisManager:
         *,
         out: F64Array | None = None,
     ) -> F64Array:
-        return self._interp_vec3_table(t_s, self.tables.r_earth_tab_m, out=out)
+        return self._interp_vec3_table(
+            t_s,
+            self.tables.r_earth_tab_m,
+            self.tables.v_earth_tab_m_s,
+            out=out,
+        )
 
     def get_sun_position(
         self,
@@ -849,7 +1016,12 @@ class EphemerisManager:
         *,
         out: F64Array | None = None,
     ) -> F64Array:
-        return self._interp_vec3_table(t_s, self.tables.r_sun_tab_m, out=out)
+        return self._interp_vec3_table(
+            t_s,
+            self.tables.r_sun_tab_m,
+            self.tables.v_sun_tab_m_s,
+            out=out,
+        )
 
     # --- Frame transforms --------------------------------------------------
 
@@ -939,17 +1111,84 @@ def _lerp(a: float, b: float, f: float) -> float:
 
 
 @njit(cache=True, nogil=True)
-def interp_vec3_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, float, float]:
+def interp_vec3_hermite(
+    t_s: float,
+    dt_s: float,
+    position_tab: np.ndarray,
+    velocity_tab: np.ndarray,
+) -> tuple[float, float, float]:
+    """Cubic Hermite position interpolation on a uniform SI state table."""
+    n = int(position_tab.shape[0])
+    if n <= 1 or dt_s <= 0.0:
+        return _row3(position_tab, 0)
+    u = t_s / dt_s
+    i, f = _clamp_u_to_index_and_frac(u, n)
+    p0x, p0y, p0z = _row3(position_tab, i)
+    p1x, p1y, p1z = _row3(position_tab, i + 1)
+    v0x, v0y, v0z = _row3(velocity_tab, i)
+    v1x, v1y, v1z = _row3(velocity_tab, i + 1)
+    f2 = f * f
+    f3 = f2 * f
+    h00 = 2.0 * f3 - 3.0 * f2 + 1.0
+    h10 = f3 - 2.0 * f2 + f
+    h01 = -2.0 * f3 + 3.0 * f2
+    h11 = f3 - f2
+    return (
+        h00 * p0x + h10 * dt_s * v0x + h01 * p1x + h11 * dt_s * v1x,
+        h00 * p0y + h10 * dt_s * v0y + h01 * p1y + h11 * dt_s * v1y,
+        h00 * p0z + h10 * dt_s * v0z + h01 * p1z + h11 * dt_s * v1z,
+    )
+
+
+@njit(cache=True, nogil=True)
+def interp_vec3_hermite_derivative(
+    t_s: float,
+    dt_s: float,
+    position_tab: np.ndarray,
+    velocity_tab: np.ndarray,
+) -> tuple[float, float, float]:
+    """Analytic time derivative of :func:`interp_vec3_hermite`."""
+    n = int(position_tab.shape[0])
+    if n <= 1 or dt_s <= 0.0:
+        return _row3(velocity_tab, 0) if velocity_tab.shape[0] else (0.0, 0.0, 0.0)
+    u = t_s / dt_s
+    i, f = _clamp_u_to_index_and_frac(u, n)
+    p0x, p0y, p0z = _row3(position_tab, i)
+    p1x, p1y, p1z = _row3(position_tab, i + 1)
+    v0x, v0y, v0z = _row3(velocity_tab, i)
+    v1x, v1y, v1z = _row3(velocity_tab, i + 1)
+    f2 = f * f
+    dh00 = (6.0 * f2 - 6.0 * f) / dt_s
+    dh10 = 3.0 * f2 - 4.0 * f + 1.0
+    dh01 = (-6.0 * f2 + 6.0 * f) / dt_s
+    dh11 = 3.0 * f2 - 2.0 * f
+    return (
+        dh00 * p0x + dh10 * v0x + dh01 * p1x + dh11 * v1x,
+        dh00 * p0y + dh10 * v0y + dh01 * p1y + dh11 * v1y,
+        dh00 * p0z + dh10 * v0z + dh01 * p1z + dh11 * v1z,
+    )
+
+
+@njit(cache=True, nogil=True)
+def interp_vec3_safe(
+    t_s: float,
+    dt_s: float,
+    tab: np.ndarray,
+    velocity_tab: np.ndarray | None = None,
+) -> tuple[float, float, float]:
     """
     Safe vec3 interpolation:
       - n<=1 or dt<=0 : constant tab[0]
-      - 2<=n<4        : linear (clamped)
-      - n>=4          : Catmull-Rom (via interp_vec3_catmull)
+      - a matching velocity table: cubic Hermite
+      - otherwise n<4: linear, n>=4: legacy Catmull-Rom
     """
     n = int(tab.shape[0])
 
     if n <= 1 or dt_s <= 0.0:
         return _row3(tab, 0)
+
+    if velocity_tab is not None and velocity_tab.shape == tab.shape:
+        return interp_vec3_hermite(t_s, dt_s, tab, velocity_tab)
 
     if n < 4:
         u = t_s / dt_s
@@ -965,7 +1204,10 @@ def interp_vec3_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, f
 
 @njit(cache=True, nogil=True)
 def interp_vec3_derivative_safe(
-    t_s: float, dt_s: float, tab: np.ndarray
+    t_s: float,
+    dt_s: float,
+    tab: np.ndarray,
+    velocity_tab: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     """
     Analytic derivative of :func:`interp_vec3_safe` for a uniform vec3 table.
@@ -979,7 +1221,12 @@ def interp_vec3_derivative_safe(
     """
     n = int(tab.shape[0])
     if n <= 1 or dt_s <= 0.0:
+        if velocity_tab is not None and velocity_tab.shape == tab.shape:
+            return _row3(velocity_tab, 0)
         return 0.0, 0.0, 0.0
+
+    if velocity_tab is not None and velocity_tab.shape == tab.shape:
+        return interp_vec3_hermite_derivative(t_s, dt_s, tab, velocity_tab)
 
     u = t_s / dt_s
     if u <= 0.0:
@@ -1055,6 +1302,45 @@ def get_ephem_state(
     return sx, sy, sz, ex, ey, ez, qw, qx, qy, qz
 
 
+@njit(cache=True, nogil=True)
+def get_ephem_state_with_velocity(
+    t_s: float,
+    dt_s: float,
+    sun_tab_m: np.ndarray,
+    earth_tab_m: np.ndarray,
+    sun_velocity_tab_m_s: np.ndarray,
+    earth_velocity_tab_m_s: np.ndarray,
+    q_i2f_tab: np.ndarray,
+    use_hermite: bool,
+) -> tuple[float, float, float, float, float, float, float, float, float, float]:
+    """Sample position/attitude using the schema-v2 position+velocity contract."""
+    if use_hermite:
+        sx, sy, sz = interp_vec3_hermite(t_s, dt_s, sun_tab_m, sun_velocity_tab_m_s)
+        ex, ey, ez = interp_vec3_hermite(t_s, dt_s, earth_tab_m, earth_velocity_tab_m_s)
+    else:
+        # Compatibility path for explicit in-memory providers without velocity
+        # tables. Serialized ephemeris artifacts are schema v2 and never enter
+        # this branch.
+        sx, sy, sz = interp_vec3_safe(t_s, dt_s, sun_tab_m)
+        ex, ey, ez = interp_vec3_safe(t_s, dt_s, earth_tab_m)
+    qw, qx, qy, qz = interp_quat_safe(t_s, dt_s, q_i2f_tab)
+    return sx, sy, sz, ex, ey, ez, qw, qx, qy, qz
+
+
+@njit(cache=True, nogil=True)
+def interp_vec3_state_derivative(
+    t_s: float,
+    dt_s: float,
+    position_tab: np.ndarray,
+    velocity_tab: np.ndarray,
+    use_hermite: bool,
+) -> tuple[float, float, float]:
+    """Differentiate the canonical state interpolant or its legacy fallback."""
+    if use_hermite:
+        return interp_vec3_hermite_derivative(t_s, dt_s, position_tab, velocity_tab)
+    return interp_vec3_derivative_safe(t_s, dt_s, position_tab)
+
+
 # =============================================================================
 # 9.                          PUBLIC API
 # =============================================================================
@@ -1066,10 +1352,16 @@ __all__ = (
     # --- Builders ---
     "build_spice_tables",  # Recommended builder: TimeConfig + SpiceBuildConfig -> EphemerisTables
     "build_tables",  # Low-level/legacy builder: explicit args -> EphemerisTables
+    "save_ephemeris_tables_npz",
+    "load_ephemeris_tables_npz",
     # --- Runtime manager ---
     "EphemerisManager",  # Runtime interface: interpolation, queries, and frame transforms
     # --- Low-level kernel (dynamics loop) ---
     "get_ephem_state",  # Numba-friendly, allocation-free ephemeris sampler for the integrator loop
+    "get_ephem_state_with_velocity",
+    "interp_vec3_hermite",
+    "interp_vec3_hermite_derivative",
+    "interp_vec3_state_derivative",
     "interp_vec3_derivative_safe",
     # --- Utilities (debug/tools) ---
     "resolve_kernel_paths",  # Validates kernel paths and tries common extension fixes (e.g., .tls vs .tls.txt)

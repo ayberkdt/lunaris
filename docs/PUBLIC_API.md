@@ -50,7 +50,7 @@ the changelog.
 | `lunaris` | `__version__` |
 | `lunaris.api` | `load_default_config`, `replace_sim_config`, `DynamicsEngine`, `propagate`, `BatchPropagationConfig`, `BatchPropagationEngine`, `BatchPropagationResult` |
 | `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_batch_result`, `batch_entry` |
-| `lunaris.core.propagation` | `propagate`, `make_time_grid`, `build_events`, `PropagationResult`, `EventOutcome`, `EventSpec`, `event_outcome_from_solver_events`, `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`, `resolve_time_grid_plan`, `resolve_step_size_policy`, `resolve_integration_plan` |
+| `lunaris.core.propagation` | `propagate`, `make_time_grid`, `build_events`, `PropagationResult`, `EventOutcome`, `EventSpec`, `event_outcome_from_solver_events`, `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`, `ImpulsiveManeuver`, `ManeuverPlan`, `resolve_time_grid_plan`, `resolve_step_size_policy`, `resolve_integration_plan` |
 | `lunaris.surrogate.runtime` | `SurrogateGravityModel`, `SurrogateGravityMetadata`, `DEFAULT_ST_LRPS_RUNS_DIR`, `discover_st_lrps_model_dirs`, `find_checkpoint_for_st_lrps_run`, `find_latest_st_lrps_model_dir` |
 
 ### Documented provisional Python API (`documented-provisional`)
@@ -72,7 +72,7 @@ alias for at least one MINOR line.
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
 | `lunaris.core.dynamics` | `DynamicsEngine` and dependency-extraction helpers |
 | `lunaris.physics.spherical_harmonics` | `GravityModel` and documented SH evaluators |
-| `lunaris.physics.ephemeris` | `SpiceBuildConfig`, `EphemerisManager`, `build_spice_tables`, `build_tables` |
+| `lunaris.physics.ephemeris` | `SpiceBuildConfig`, `EphemerisTables`, `EphemerisManager`, `build_spice_tables`, `build_tables`, `save_ephemeris_tables_npz`, `load_ephemeris_tables_npz` |
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
 | `lunaris.analysis.reporting.manager` | `plot_all` and report assembly helpers |
 | `lunaris.analysis.ensemble.statistics` | Propagated-ensemble statistics, covariance, RIC uncertainty, impact statistics, OE dispersion |

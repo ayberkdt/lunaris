@@ -65,6 +65,11 @@ runs the requested `module load`s, and activates your venv/conda env before the
 headless entry point runs. The manual installation and per-workflow details
 below still apply when you need finer control.
 
+Scheduler resources can also be centralized there with
+`LUNARIS_CPUS_PER_TASK`, `LUNARIS_MEM`, `LUNARIS_TIME`, and `LUNARIS_SIGNAL`.
+Leave them empty to keep each `.sbatch` default. Flags passed directly to
+`hpc/submit.sh` are appended last and override the site defaults.
+
 > **HDF5 on parallel filesystems.** `env_template.sh` exports
 > `HDF5_USE_FILE_LOCKING=FALSE` by default. HDF5 ≥ 1.10 takes POSIX file locks
 > on open, and Lustre/GPFS/NFS mounts commonly reject them with
@@ -308,6 +313,7 @@ The committed sweep files live under `hpc/scenarios/`:
 
 | File | Array range | Purpose |
 |------|-------------|---------|
+| `st_lrps_resume_denemesi_reproduction.jsonl` | `0-0` | Frozen reproduction of the successful May 2026 512x5, 2-band SH20 -> SH200 run |
 | `st_lrps_strong_model_production.jsonl` | `0-0` | Production strong-model run: TrainConfig defaults + `--run-preset paper` |
 | `st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl` | `0-6` | Cumulative scalar-potential ablation A0→A6 (mirrors `lunaris-ablation`) |
 | `st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl` | `0-4` | A6-full architecture-size sweep (4×256 … 5×768) |
@@ -320,6 +326,12 @@ The committed sweep files live under `hpc/scenarios/`:
 > fixed input representation. The production strong model instead uses the
 > TrainConfig defaults — the `recommended_physical_radial_decay` encoding and
 > direction weight 0.10 — via `st_lrps_strong_model_production.jsonl`.
+
+> **Frozen reproduction versus current defaults.** The historical
+> `resume_denemesi` artifact used two frequency bands (`[13.7, 42.4]`) and
+> several schedule/loss values that no longer all match `TrainConfig` defaults.
+> Use `st_lrps_resume_denemesi_reproduction.jsonl` when the goal is to repeat
+> that model, rather than follow the evolving strong-model profile.
 
 **How submission works.** The first positional argument to the `.sbatch` file is
 the scenario JSONL path; **everything after it is forwarded to every array task**

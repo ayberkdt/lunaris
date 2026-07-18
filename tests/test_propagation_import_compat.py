@@ -10,6 +10,8 @@ _PROPAGATION_PUBLIC_SURFACE = {
     "TimeGridPlan",
     "StepSizePlan",
     "IntegrationPlan",
+    "ImpulsiveManeuver",
+    "ManeuverPlan",
     "build_events",
     "make_time_grid",
     "resolve_time_grid_plan",
@@ -70,13 +72,22 @@ def test_propagation_facade_exposes_only_public_contracts() -> None:
 
 def test_propagation_public_and_internal_import_paths_resolve() -> None:
     from lunaris.core import propagate as core_propagate
-    from lunaris.core.propagation import EventOutcome, EventSpec, TimeGridPlan, propagate
+    from lunaris.core.propagation import (
+        EventOutcome,
+        EventSpec,
+        ImpulsiveManeuver,
+        ManeuverPlan,
+        TimeGridPlan,
+        propagate,
+    )
     from lunaris.core.propagation.integrators.rk import _rk4_step_full
 
     assert propagate is core_propagate
     assert TimeGridPlan.__name__ == "TimeGridPlan"
     assert EventOutcome.__name__ == "EventOutcome"
     assert EventSpec.__name__ == "EventSpec"
+    assert ImpulsiveManeuver.__name__ == "ImpulsiveManeuver"
+    assert ManeuverPlan.__name__ == "ManeuverPlan"
     assert callable(_rk4_step_full)
 
 

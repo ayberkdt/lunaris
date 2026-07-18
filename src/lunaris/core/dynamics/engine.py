@@ -93,7 +93,10 @@ from lunaris.core.dynamics.preparation import (
     resolve_effective_requirements,
     validate_dependencies,
 )
-from lunaris.physics.ephemeris import get_ephem_state, interp_vec3_derivative_safe
+from lunaris.physics.ephemeris import (
+    get_ephem_state_with_velocity,
+    interp_vec3_state_derivative,
+)
 from lunaris.physics.lunar_albedo import (
     accel_albedo_facets_numba,
 )
@@ -114,7 +117,16 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_rhs_state_vector(y: Any) -> np.ndarray:
-    """Return a 1D state vector accepted by the dynamics RHS."""
+    """Return a 1D state vector accepted by the dynamics RHS.
+
+    The trusted solver RHS closures run this full check on the FIRST evaluation only:
+    multi-stage integrators (DOP853: 12+ evaluations per step) pay the Python
+    shape-validation cost per call, while the solver guarantees an unchanged
+    state layout for the whole integration. Subsequent calls keep only the
+    ``np.asarray`` float64 coercion, so callers that hand-drive an RHS with a
+    changed state shape after the first call are outside that internal contract.
+    The public :meth:`DynamicsEngine.build_rhs` wrapper validates every call.
+    """
 
     arr = np.asarray(y, dtype=np.float64)
     if arr.ndim != 1 or arr.shape[0] not in (6, 7):
@@ -200,6 +212,7 @@ class DynamicsEngine:
         self.allow_identity_rotation = self.frame_policy.allow_identity_rotation
 
         self._rhs_cache: Callable[[float, np.ndarray], np.ndarray] | None = None
+        self._rhs_public_cache: Callable[[float, np.ndarray], np.ndarray] | None = None
         self._prep: dict[str, Any] = {}  # debug/reporting packs + requirements
 
         self._validate_dependencies()
@@ -268,11 +281,36 @@ class DynamicsEngine:
         return _PreparedForces(req, gp, ep, ap, ej, tp, th)
 
     # -------------------------------------------------------------------------
-    # Public: build RHS
+    # Public and trusted-solver RHS surfaces
     # -------------------------------------------------------------------------
     def build_rhs(self, *, force_rebuild: bool = False) -> Callable[[float, np.ndarray], np.ndarray]:
+        """Return the public, state-validating dynamics callable.
+
+        Every invocation validates the state layout. Internal integrator
+        orchestration uses :meth:`_build_solver_rhs`, where SciPy/fixed-step
+        owns the invariant that the state dimension remains constant and the
+        full shape check is therefore paid only once.
+        """
+        raw_rhs = self._build_solver_rhs(force_rebuild=force_rebuild)
+        if self._rhs_public_cache is not None and not force_rebuild:
+            return self._rhs_public_cache
+
+        def validated_rhs(t: float, y: np.ndarray) -> np.ndarray:
+            return raw_rhs(t, _validate_rhs_state_vector(y))
+
+        self._rhs_public_cache = validated_rhs
+        return validated_rhs
+
+    def _build_solver_rhs(
+        self,
+        *,
+        force_rebuild: bool = False,
+    ) -> Callable[[float, np.ndarray], np.ndarray]:
+        """Return the internal first-call-validated RHS used by integrators."""
         if self._rhs_cache is not None and not force_rebuild:
             return self._rhs_cache
+        if force_rebuild:
+            self._rhs_public_cache = None
 
         t0 = time.perf_counter()
 
@@ -338,7 +376,10 @@ class DynamicsEngine:
         EPH_DT_S = float(ep.dt_s)
         EPH_SUN = ep.r_sun_tab_m
         EPH_EARTH = ep.r_earth_tab_m
+        EPH_SUN_V = ep.v_sun_tab_m_s
+        EPH_EARTH_V = ep.v_earth_tab_m_s
         EPH_QTAB = ep.q_i2f_tab
+        EPH_USE_HERMITE = bool(ep.use_hermite)
 
         # Gravity scalars/arrays
         G_NMAX = int(gp.nmax)
@@ -440,9 +481,15 @@ class DynamicsEngine:
 
         if USE_SURROGATE:
             surrogate = self.grav
+            rhs_state_checked = False
 
             def rhs(t: float, y: np.ndarray) -> np.ndarray:
-                y = _validate_rhs_state_vector(y)
+                nonlocal rhs_state_checked
+                if rhs_state_checked:
+                    y = np.asarray(y, dtype=np.float64)
+                else:
+                    y = _validate_rhs_state_vector(y)
+                    rhs_state_checked = True
                 rx, ry, rz = float(y[0]), float(y[1]), float(y[2])
                 vx, vy, vz = float(y[3]), float(y[4]), float(y[5])
 
@@ -465,8 +512,9 @@ class DynamicsEngine:
                 q3 = 0.0
 
                 if NEED_EPH:
-                    sunx, suny, sunz, earthx, earthy, earthz, q0, q1, q2, q3 = get_ephem_state(
-                        float(t), EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_QTAB
+                    sunx, suny, sunz, earthx, earthy, earthz, q0, q1, q2, q3 = get_ephem_state_with_velocity(
+                        float(t), EPH_DT_S, EPH_SUN, EPH_EARTH,
+                        EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE,
                     )
 
                 rfx = rx
@@ -633,7 +681,9 @@ class DynamicsEngine:
                     ay += ary
                     az += arz
                     if USE_REL_EXTERNAL:
-                        svx, svy, svz = interp_vec3_derivative_safe(float(t), EPH_DT_S, EPH_SUN)
+                        svx, svy, svz = interp_vec3_state_derivative(
+                            float(t), EPH_DT_S, EPH_SUN, EPH_SUN_V, EPH_USE_HERMITE
+                        )
                         erx, ery, erz = external_1pn_components(
                             rx, ry, rz, vx, vy, vz,
                             sunx, suny, sunz,
@@ -644,7 +694,9 @@ class DynamicsEngine:
                         ay += ery
                         az += erz
 
-                        evx, evy, evz = interp_vec3_derivative_safe(float(t), EPH_DT_S, EPH_EARTH)
+                        evx, evy, evz = interp_vec3_state_derivative(
+                            float(t), EPH_DT_S, EPH_EARTH, EPH_EARTH_V, EPH_USE_HERMITE
+                        )
                         erx, ery, erz = external_1pn_components(
                             rx, ry, rz, vx, vy, vz,
                             earthx, earthy, earthz,
@@ -704,8 +756,9 @@ class DynamicsEngine:
                 q2 = 0.0
                 q3 = 0.0
                 if NEED_EPH:
-                    _sunx, _suny, _sunz, _earthx, _earthy, _earthz, q0, q1, q2, q3 = get_ephem_state(
-                        t, EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_QTAB
+                    _sunx, _suny, _sunz, _earthx, _earthy, _earthz, q0, q1, q2, q3 = get_ephem_state_with_velocity(
+                        t, EPH_DT_S, EPH_SUN, EPH_EARTH,
+                        EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE,
                     )
 
                 rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
@@ -756,8 +809,16 @@ class DynamicsEngine:
                     dydt[6] = 0.0
                 return dydt
 
+            rhs_state_checked = False
+
             def rhs(t: float, y: np.ndarray) -> np.ndarray:
+                nonlocal rhs_state_checked
+                if rhs_state_checked:
+                    return _rhs_sh_only_numba(
+                        t, np.asarray(y, dtype=np.float64), WS_P, WS_DP, WS_COS, WS_SIN
+                    )
                 y = _validate_rhs_state_vector(y)
+                rhs_state_checked = True
                 return _rhs_sh_only_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
             self._rhs_cache = rhs
@@ -803,8 +864,9 @@ class DynamicsEngine:
             q3 = 0.0
 
             if NEED_EPH:
-                sunx, suny, sunz, earthx, earthy, earthz, q0, q1, q2, q3 = get_ephem_state(
-                    t, EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_QTAB
+                sunx, suny, sunz, earthx, earthy, earthz, q0, q1, q2, q3 = get_ephem_state_with_velocity(
+                    t, EPH_DT_S, EPH_SUN, EPH_EARTH,
+                    EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE,
                 )
 
             rfx = rx
@@ -1111,7 +1173,9 @@ class DynamicsEngine:
                 ay += ary
                 az += arz
                 if USE_REL_EXTERNAL:
-                    svx, svy, svz = interp_vec3_derivative_safe(t, EPH_DT_S, EPH_SUN)
+                    svx, svy, svz = interp_vec3_state_derivative(
+                        t, EPH_DT_S, EPH_SUN, EPH_SUN_V, EPH_USE_HERMITE
+                    )
                     erx, ery, erz = external_1pn_components(
                         rx, ry, rz, vx, vy, vz,
                         sunx, suny, sunz,
@@ -1122,7 +1186,9 @@ class DynamicsEngine:
                     ay += ery
                     az += erz
 
-                    evx, evy, evz = interp_vec3_derivative_safe(t, EPH_DT_S, EPH_EARTH)
+                    evx, evy, evz = interp_vec3_state_derivative(
+                        t, EPH_DT_S, EPH_EARTH, EPH_EARTH_V, EPH_USE_HERMITE
+                    )
                     erx, ery, erz = external_1pn_components(
                         rx, ry, rz, vx, vy, vz,
                         earthx, earthy, earthz,
@@ -1144,8 +1210,16 @@ class DynamicsEngine:
                 dydt[6] = 0.0
             return dydt
 
+        rhs_state_checked = False
+
         def rhs(t: float, y: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
+            nonlocal rhs_state_checked
+            if rhs_state_checked:
+                return _rhs_kernel_numba(
+                    t, np.asarray(y, dtype=np.float64), WS_P, WS_DP, WS_COS, WS_SIN
+                )
             y = _validate_rhs_state_vector(y)
+            rhs_state_checked = True
             return _rhs_kernel_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
         self._rhs_cache = rhs
@@ -1185,7 +1259,7 @@ class DynamicsEngine:
         either the aggregate or its constituents to avoid double counting.
         """
         if not self._prep:
-            self.build_rhs(force_rebuild=False)
+            self._build_solver_rhs(force_rebuild=False)
 
         req: DynamicsRequirements = self._prep["req"]
         gp: _GravPack = self._prep["grav"]
@@ -1213,12 +1287,15 @@ class DynamicsEngine:
         have_eph = bool(self.ephem is not None)
         need_eph = bool(have_eph and (req.need_sun or req.need_earth or req.need_q))
         if need_eph:
-            sx, sy, sz, ex, ey, ez, q0, q1, q2, q3 = get_ephem_state(
+            sx, sy, sz, ex, ey, ez, q0, q1, q2, q3 = get_ephem_state_with_velocity(
                 float(t),
                 float(ep.dt_s),
                 np.ascontiguousarray(ep.r_sun_tab_m, dtype=np.float64),
                 np.ascontiguousarray(ep.r_earth_tab_m, dtype=np.float64),
+                np.ascontiguousarray(ep.v_sun_tab_m_s, dtype=np.float64),
+                np.ascontiguousarray(ep.v_earth_tab_m_s, dtype=np.float64),
                 np.ascontiguousarray(ep.q_i2f_tab, dtype=np.float64),
+                bool(ep.use_hermite),
             )
             sun[:] = (sx, sy, sz)
             earth[:] = (ex, ey, ez)
@@ -1539,10 +1616,12 @@ class DynamicsEngine:
             _record("Relativity (Moon Schwarzschild)", arx, ary, arz)
 
             if req.use_rel_external:
-                svx, svy, svz = interp_vec3_derivative_safe(
+                svx, svy, svz = interp_vec3_state_derivative(
                     float(t),
                     float(ep.dt_s),
                     np.ascontiguousarray(ep.r_sun_tab_m, dtype=np.float64),
+                    np.ascontiguousarray(ep.v_sun_tab_m_s, dtype=np.float64),
+                    bool(ep.use_hermite),
                 )
                 exx, exy, exz = external_1pn_components(
                     float(r[0]), float(r[1]), float(r[2]),
@@ -1551,10 +1630,12 @@ class DynamicsEngine:
                     float(svx), float(svy), float(svz),
                     mu_s,
                 )
-                evx, evy, evz = interp_vec3_derivative_safe(
+                evx, evy, evz = interp_vec3_state_derivative(
                     float(t),
                     float(ep.dt_s),
                     np.ascontiguousarray(ep.r_earth_tab_m, dtype=np.float64),
+                    np.ascontiguousarray(ep.v_earth_tab_m_s, dtype=np.float64),
+                    bool(ep.use_hermite),
                 )
                 eex, eey, eez = external_1pn_components(
                     float(r[0]), float(r[1]), float(r[2]),

@@ -179,6 +179,35 @@ class TorchSHGravityEvaluator:
         ax = dv_dr * u_r[:, 0] + phi_factor * u_phi[:, 0] - dv_dlambda * y * inv_rho_sq
         ay = dv_dr * u_r[:, 1] + phi_factor * u_phi[:, 1] + dv_dlambda * x * inv_rho_sq
         az = dv_dr * u_r[:, 2] + phi_factor * u_phi[:, 2]
+
+        # Polar-axis limit: inside the pole-safe cutoff the longitudinal term is
+        # zeroed and the lambda=0 fallback contaminates the transverse
+        # components, so replace them with the analytic m=1 limit
+        #   a_x = sum_n (mu/r^2)(R/r)^n sqrt(n(n+1)(2n+1)/2) sigma_n C_n1
+        # (a_y with S_n1; sigma_n = 1 north, (-1)^(n+1) south). Mirrors the
+        # serial numba kernel's _axis_transverse_m1 for backend parity; the
+        # axial component from the m=0 sector is already correct.
+        axis_mask = rho_sq < EPS_1E24
+        if nmax >= 1 and bool(torch.any(axis_mask)):
+            idx = torch.nonzero(axis_mask, as_tuple=True)[0]
+            inv_r_ax = inv_r[idx]
+            n_idx = torch.arange(1, nmax + 1, device=self.device, dtype=self.dtype)
+            lam = torch.sqrt(0.5 * n_idx * (n_idx + 1.0) * (2.0 * n_idx + 1.0))
+            base = (self.r_ref * inv_r_ax)[:, None].repeat(1, nmax)
+            powers = torch.cumprod(base, dim=1)  # (R/r)^n, n = 1..nmax
+            north = sin_phi[idx][:, None] >= 0.0
+            odd_n = (n_idx[None, :] % 2.0) >= 0.5
+            sigma = torch.where(
+                north | odd_n,
+                torch.ones_like(powers),
+                -torch.ones_like(powers),
+            )
+            k = (self.mu * inv_r_ax * inv_r_ax)[:, None] * powers * lam[None, :] * sigma
+            ax_axis = torch.sum(k * self.C[1 : nmax + 1, 1][None, :], dim=1)
+            ay_axis = torch.sum(k * self.S[1 : nmax + 1, 1][None, :], dim=1)
+            ax = ax.index_put((idx,), ax_axis)
+            ay = ay.index_put((idx,), ay_axis)
+
         return torch.stack((ax, ay, az), dim=1)
 
 

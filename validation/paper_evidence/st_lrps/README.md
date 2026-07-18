@@ -5,6 +5,10 @@ training runs, field/orbit validation, worst-case analysis, multi-seed
 comparison, provenance manifests, and the tables/figures that back any
 scientific claim about ST-LRPS.
 
+Legacy-claim restrictions, including the five-day float32 result, are recorded
+in [`EVIDENCE_STATUS.md`](EVIDENCE_STATUS.md). That scope gate applies even when
+a legacy number appears in an external slide deck or report.
+
 > This pipeline **prepares reproducible ST-LRPS evidence generation**. It does
 > not by itself prove ST-LRPS performance or "complete validation". Random
 > validation measures **interpolation**; spatial/OOD validation are

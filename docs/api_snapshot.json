@@ -138,9 +138,11 @@
       "R_SUN_MEAN",
       "SIGMA_SB",
       "SOLAR_FLUX_1AU",
+      "STANDARD_GRAVITY",
       "TWO_PI"
     ],
     "lunaris.common.math_utils": [
+      "LUNAR_DEGREE_POWER_EXPONENT",
       "batch_y_to_elements",
       "clamp",
       "coe_to_rv",
@@ -206,6 +208,7 @@
     ],
     "lunaris.core.dynamics": [
       "DynamicsEngine",
+      "extract_ephem_state_tables_strict",
       "extract_ephem_tables_strict",
       "extract_gravity_strict",
       "extract_surface_provider_strict"
@@ -213,7 +216,9 @@
     "lunaris.core.propagation": [
       "EventOutcome",
       "EventSpec",
+      "ImpulsiveManeuver",
       "IntegrationPlan",
+      "ManeuverPlan",
       "PropagationResult",
       "StepSizePlan",
       "TimeGridPlan",
@@ -233,8 +238,14 @@
       "build_tables",
       "get_body_gm_m3s2",
       "get_ephem_state",
+      "get_ephem_state_with_velocity",
       "interp_vec3_derivative_safe",
-      "resolve_kernel_paths"
+      "interp_vec3_hermite",
+      "interp_vec3_hermite_derivative",
+      "interp_vec3_state_derivative",
+      "load_ephemeris_tables_npz",
+      "resolve_kernel_paths",
+      "save_ephemeris_tables_npz"
     ],
     "lunaris.physics.relativity_effects": [
       "RelativityModel",

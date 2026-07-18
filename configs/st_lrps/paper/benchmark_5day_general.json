@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "st_lrps_paper_5day_general",
-  "description": "Paper-safe 5-day general low-lunar-orbit stability benchmark: ST-LRPS vs SH baselines against an SH100 DOP853 numerical reference. SH100 is a numerical reference, not physical truth. Results are valid for this dataset/split/artifact and benchmark configuration only.",
+  "description": "Paper-safe 5-day general low-lunar-orbit stability benchmark: ST-LRPS vs SH baselines against an SH100 DOP853 numerical reference. SH100 is a numerical reference, not physical truth. The SH61-100 band is above the ST-LRPS training target (SH60) and is the surrogate's irreducible representation floor (3.60% of non-spherical acceleration RMS at 80 km; see docs/ST_LRPS_VALIDATION_HYGIENE.md), so ST-LRPS is not expected to approach the SH100 baseline. Results are valid for this dataset/split/artifact and benchmark configuration only.",
   "paper_safe": true,
   "scenario": {
     "seed": 123,

@@ -34,6 +34,7 @@ from lunaris.core.torch_batch_propagator import (  # noqa: E402
 from lunaris.core.torch_third_body import (  # noqa: E402
     TorchEphemerisTables,
     interp_vec3_catmull_torch,
+    interp_vec3_hermite_torch,
     third_body_accel_batch,
 )
 from lunaris.physics.third_body_effects import accel_third_body_numba  # noqa: E402
@@ -68,6 +69,21 @@ def test_catmull_interp_degenerate_tables():
     )
     empty = torch.empty((0, 3), dtype=torch.float64)
     np.testing.assert_allclose(interp_vec3_catmull_torch(5.0, 60.0, empty).numpy(), [0.0, 0.0, 0.0])
+
+
+def test_hermite_torch_matches_cpu_state_interpolant():
+    from lunaris.physics.ephemeris import interp_vec3_hermite
+
+    dt = 30.0
+    t = np.arange(8, dtype=np.float64) * dt
+    p = np.column_stack((t**3, 2.0 * t**2, -4.0 * t + 7.0))
+    v = np.column_stack((3.0 * t**2, 4.0 * t, np.full_like(t, -4.0)))
+    p_t = torch.as_tensor(p, dtype=torch.float64)
+    v_t = torch.as_tensor(v, dtype=torch.float64)
+    for tq in np.linspace(0.0, t[-1], 23):
+        expected = np.asarray(interp_vec3_hermite(float(tq), dt, p, v))
+        got = interp_vec3_hermite_torch(float(tq), dt, p_t, v_t).numpy()
+        np.testing.assert_allclose(got, expected, rtol=2e-15, atol=2e-9)
 
 
 def test_battin_third_body_matches_cpu_reference():

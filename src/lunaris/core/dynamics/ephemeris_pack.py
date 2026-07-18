@@ -21,7 +21,10 @@ class _EphemPack:
     dt_s: float
     r_sun_tab_m: F64Array     # (N,3) or (1,3)
     r_earth_tab_m: F64Array   # (N,3) or (1,3)
+    v_sun_tab_m_s: F64Array
+    v_earth_tab_m_s: F64Array
     q_i2f_tab: F64Array       # (N,4)
+    use_hermite: bool = False
     mu_earth_m3s2: float = float(MU_EARTH)
     mu_sun_m3s2: float = float(MU_SUN)
 
@@ -35,12 +38,16 @@ class _EphemPack:
 
         sun = _as_f64_c(self.r_sun_tab_m, "r_sun_tab_m")
         earth = _as_f64_c(self.r_earth_tab_m, "r_earth_tab_m")
+        sun_v = _as_f64_c(self.v_sun_tab_m_s, "v_sun_tab_m_s")
+        earth_v = _as_f64_c(self.v_earth_tab_m_s, "v_earth_tab_m_s")
         q = _as_f64_c(self.q_i2f_tab, "q_i2f_tab")
 
         if sun.ndim != 2 or sun.shape[1] != 3:
             raise ValueError(f"r_sun_tab_m must be (N,3), got {sun.shape}")
         if earth.ndim != 2 or earth.shape[1] != 3:
             raise ValueError(f"r_earth_tab_m must be (N,3), got {earth.shape}")
+        if sun_v.shape != sun.shape or earth_v.shape != earth.shape:
+            raise ValueError("ephemeris velocity-table shapes must match their position tables")
         if q.ndim != 2 or q.shape[1] != 4:
             raise ValueError(f"q_i2f_tab must be (N,4), got {q.shape}")
         q_count = int(q.shape[0])
@@ -56,8 +63,11 @@ class _EphemPack:
 
         object.__setattr__(self, "r_sun_tab_m", sun)
         object.__setattr__(self, "r_earth_tab_m", earth)
+        object.__setattr__(self, "v_sun_tab_m_s", sun_v)
+        object.__setattr__(self, "v_earth_tab_m_s", earth_v)
         object.__setattr__(self, "q_i2f_tab", q)
         object.__setattr__(self, "mu_earth_m3s2", float(self.mu_earth_m3s2))
         object.__setattr__(self, "mu_sun_m3s2", float(self.mu_sun_m3s2))
+        object.__setattr__(self, "use_hermite", bool(self.use_hermite))
 
 __all__ = ["_EphemPack"]

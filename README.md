@@ -1,14 +1,9 @@
-# Lunaris (Beta)
+# Lunaris
 
-**Lunar orbit propagation and gravity-modeling framework — beta.**
+**Lunar orbit propagation and gravity-modeling framework.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](https://pypi.org/classifiers/)
-
-> **Beta software.** Lunaris is released as a beta: interfaces, on-disk
-> contracts, and results may still change between versions. Pin a version for
-> reproducible work.
 
 Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It
 bundles spherical-harmonic lunar gravity, configurable physical force models, orbit
@@ -150,7 +145,9 @@ Optional dependency groups (`pyproject.toml`): `ml`, `hpc`, `ui`, `reports`,
 cannot silently pull in an incompatible major release. For reproducible
 environments, exact pins live in `locks/*.lock.txt` (generated with `uv`). For
 clusters, use the headless `.[hpc]` extra and the Slurm templates in `hpc/`; see
-the [HPC guide](docs/HPC.md).
+the [HPC guide](docs/HPC.md). The frozen recipe for reproducing the successful
+May 2026 `resume_denemesi` ST-LRPS run is
+[`hpc/scenarios/st_lrps_resume_denemesi_reproduction.jsonl`](hpc/scenarios/st_lrps_resume_denemesi_reproduction.jsonl).
 
 Large mission data (SPICE kernels, gravity coefficients, topography, albedo) is
 **not bundled**. Fetch and verify it with the headless `lunaris-data` tool into

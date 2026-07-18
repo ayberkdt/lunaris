@@ -46,7 +46,7 @@ from lunaris.core.dynamics.perturbation_packs import (
     _TidePack,
 )
 from lunaris.core.dynamics.requirements import (
-    extract_ephem_tables_strict,
+    extract_ephem_state_tables_strict,
     extract_gravity_strict,
     extract_surface_provider_strict,
 )
@@ -437,12 +437,23 @@ def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
             dt_s=1.0,
             r_sun_tab_m=z23,
             r_earth_tab_m=z23,
+            v_sun_tab_m_s=z23,
+            v_earth_tab_m_s=z23,
             q_i2f_tab=q_ident,
+            use_hermite=False,
             mu_earth_m3s2=float(MU_EARTH),
             mu_sun_m3s2=float(MU_SUN),
         )
 
-    dt_s, sun_tab, earth_tab, qtab = extract_ephem_tables_strict(ephem_manager)
+    (
+        dt_s,
+        sun_tab,
+        earth_tab,
+        sun_vel_tab,
+        earth_vel_tab,
+        qtab,
+        use_hermite,
+    ) = extract_ephem_state_tables_strict(ephem_manager)
     provider = ephem_manager.get_data_provider()
     mu_earth = float(provider_get(provider, "mu_earth_m3s2", MU_EARTH))
     mu_sun = float(provider_get(provider, "mu_sun_m3s2", MU_SUN))
@@ -492,7 +503,10 @@ def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
         dt_s=float(dt_s),
         r_sun_tab_m=sun_tab,
         r_earth_tab_m=earth_tab,
+        v_sun_tab_m_s=sun_vel_tab,
+        v_earth_tab_m_s=earth_vel_tab,
         q_i2f_tab=qtab,
+        use_hermite=use_hermite,
         mu_earth_m3s2=mu_earth,
         mu_sun_m3s2=mu_sun,
     )

@@ -21,8 +21,9 @@ force_direct learns acceleration directly, which:
 - splits the paper narrative into two model identities with different
   validation obligations.
 
-Decision source: external system review 2026-07-05, item R01 in
-`LUNARIS_ROADMAP_PLAN.md` on main. This supersedes the earlier
+Decision source: the 2026-07-05 external system review concluded that the
+non-conservative direct-force runtime could not support the repository's
+energy/curl evidence contract. This supersedes the earlier
 "ST-LRPS clarity remediation" Phase 2 plan that would have made
 force_direct first-class.
 

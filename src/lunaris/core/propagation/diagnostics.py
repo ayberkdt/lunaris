@@ -10,7 +10,11 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.contracts.diagnostics import PROPAGATION_DIAGNOSTICS_SCHEMA_VERSION
-from lunaris.common.math_utils import recommended_sh_degree, specific_energy_drift_stats
+from lunaris.common.math_utils import (
+    LUNAR_DEGREE_POWER_EXPONENT,
+    recommended_sh_degree,
+    specific_energy_drift_stats,
+)
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig
 from lunaris.core.propagation.integrators.fixed_step import _is_symplectic_method
 from lunaris.core.propagation.plans import (
@@ -121,14 +125,25 @@ def build_propagation_diagnostics(
             )
             if alt_peri_km is not None:
                 rec_deg = recommended_sh_degree(alt_peri_km, float(R_ref_m))
+                rec_deg_spectrum = recommended_sh_degree(
+                    alt_peri_km,
+                    float(R_ref_m),
+                    kaula_exponent=LUNAR_DEGREE_POWER_EXPONENT,
+                )
                 diagnostics["periapsis_alt_km"] = float(alt_peri_km)
                 diagnostics["recommended_degree"] = float(rec_deg)
-                if rec_deg > int(degree):
+                diagnostics["recommended_degree_spectrum_weighted"] = float(rec_deg_spectrum)
+                # Warn on the spectrum-weighted value: the attenuation-only
+                # figure assumes a flat spectrum and over-alarms legitimate
+                # truncations (e.g. SH100 truth at 80 km periapsis).
+                if rec_deg_spectrum > int(degree):
                     deg_msg = (
                         f"SH truncation degree={int(degree)} may be too low for periapsis "
-                        f"altitude {alt_peri_km:.1f} km: upward continuation suggests degree "
-                        f">= {rec_deg} to retain gravity signal above the 1e-3 floor. "
-                        "Low-degree truncation, not the integrator, is then the dominant "
+                        f"altitude {alt_peri_km:.1f} km: with the measured lunar degree "
+                        f"power law, degree >= {rec_deg_spectrum} is needed to keep the "
+                        "discarded band under 1% of the non-spherical acceleration RMS "
+                        f"(flat-spectrum attenuation bound: {rec_deg}). Low-degree "
+                        "truncation, not the integrator, is then the dominant "
                         "position-error term."
                     )
                     warnings.warn(deg_msg, RuntimeWarning, stacklevel=2)

@@ -181,6 +181,31 @@ def test_paper_safe_fails_on_missing_provenance_field(key):
         validate_paper_safe_error_decomposition(block)
 
 
+@pytest.mark.parametrize("key", ["requested_dtype", "effective_dtype"])
+@pytest.mark.parametrize("dtype", ["float32", "fp16", "bfloat16", "torch.float32"])
+def test_paper_safe_fails_on_sub_float64_dtype(key, dtype):
+    # An fp32 5-day run produces km-scale trajectory error: a decomposition
+    # whose provenance records any sub-float64 dtype measures the dtype, not
+    # the gravity model, and must never validate as paper-safe.
+    block = _complete_block(**{key: dtype})
+    with pytest.raises(ValueError, match="float64 numerics"):
+        validate_paper_safe_error_decomposition(block)
+
+
+@pytest.mark.parametrize("dtype", ["float64", "FLOAT64", "torch.float64", "double", "fp64"])
+def test_paper_safe_accepts_float64_spellings(dtype):
+    block = _complete_block(requested_dtype=dtype, effective_dtype=dtype)
+    validate_paper_safe_error_decomposition(block)  # no raise
+
+
+def test_paper_safe_fails_on_fp32_request_even_if_effective_is_float64():
+    # Requesting fp32 in a paper-safe run is a config error even when the
+    # backend upgraded: the intent to measure with fp32 must be rejected.
+    block = _complete_block(requested_dtype="float32", effective_dtype="float64")
+    with pytest.raises(ValueError, match="requested_dtype"):
+        validate_paper_safe_error_decomposition(block)
+
+
 def test_paper_safe_fails_when_synthetic():
     block = _complete_block(synthetic=True)
     with pytest.raises(ValueError, match="synthetic"):
