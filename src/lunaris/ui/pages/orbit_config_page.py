@@ -50,6 +50,9 @@ from dataclasses import dataclass
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+# Qt's public C++ QWIDGETSIZE_MAX constant is not exported by PySide6.
+_QWIDGETSIZE_MAX = 16_777_215
+
 # Modern Icon Library
 try:
     import qtawesome as qta  # noqa: F401  # availability probe for HAS_QTAWESOME
@@ -305,6 +308,8 @@ class OrbitViz3D(QtWidgets.QWidget):
     """
 
 
+    focus_mode_requested = QtCore.Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # A hard minimum the compact (stacked) layout cannot honor makes the
@@ -347,6 +352,10 @@ class OrbitViz3D(QtWidgets.QWidget):
         # fills the viewport instead of floating as a small moon in a dark void),
         # after which the user's manual camera moves are respected.
         self._did_autofit = False
+        self._camera_user_modified = False
+        self._fit_resize_pending = False
+        self._compact_controls: bool | None = None
+        self._focus_mode_active = False
         # Set when the line of nodes collapses onto the line of apsides
         # (argp ~ 0 or 180): the node markers/labels are then redundant and are
         # suppressed so "Apoapsis" and "AN" stop colliding into illegible mush.
@@ -389,8 +398,9 @@ class OrbitViz3D(QtWidgets.QWidget):
             self._install_fallback(layout)
             return
 
+        self._install_scene_interactions(self.gl_widget)
         layout.addWidget(self.gl_widget, 1)
-        layout.addLayout(self._build_controls())
+        layout.addWidget(self._build_controls())
 
         # Initial draw
         QtCore.QTimer.singleShot(100, self.update_orbit)
@@ -399,7 +409,7 @@ class OrbitViz3D(QtWidgets.QWidget):
     # Construction helpers
     # -------------------------------------------------------------------------
 
-    def _build_controls(self) -> QtWidgets.QVBoxLayout:
+    def _build_controls(self) -> QtWidgets.QFrame:
         """Two compact control rows below the scene.
 
         Row 1 — camera presets (Reset | Top | Side | Iso | Fit).
@@ -409,8 +419,10 @@ class OrbitViz3D(QtWidgets.QWidget):
         """
         from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
-        col = QtWidgets.QVBoxLayout()
-        col.setContentsMargins(8, 6, 8, 4)
+        panel = QtWidgets.QFrame()
+        panel.setObjectName("orbitControlBar")
+        col = QtWidgets.QVBoxLayout(panel)
+        col.setContentsMargins(10, 8, 10, 8)
         col.setSpacing(6)
 
         # --- Row 1: camera presets ---
@@ -425,19 +437,42 @@ class OrbitViz3D(QtWidgets.QWidget):
             ("Top", "Look straight down +Z", self._view_top),
             ("Side", "Equatorial side view", self._view_side),
             ("Iso", "Isometric mission view", self._view_iso),
-            ("Fit", "Frame the whole orbit", self._view_fit),
         )
         self._cam_buttons = []
+        self._camera_button_group = QtWidgets.QButtonGroup(self)
+        self._camera_button_group.setExclusive(True)
         for label, tip, handler in presets:
-            btn = QtWidgets.QPushButton(label)
+            btn = QtWidgets.QToolButton()
+            btn.setText(label)
+            btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
             btn.setObjectName("orbitPresetBtn")
             btn.setCursor(QtCore.Qt.PointingHandCursor)
             btn.setFixedHeight(DESIGN_TOKENS.controls.compact_height)
-            btn.setMinimumWidth(46)
+            btn.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
+            btn.setCheckable(True)
             btn.setToolTip(tip)
             btn.clicked.connect(handler)
+            self._camera_button_group.addButton(btn)
             self._cam_buttons.append(btn)
             bar.addWidget(btn)
+
+        self._cam_buttons[0].setChecked(True)
+        bar.addSpacing(DESIGN_TOKENS.spacing.sm)
+
+        self._fit_button = QtWidgets.QToolButton()
+        self._fit_button.setText("Fit orbit")
+        self._fit_button.setObjectName("orbitFitBtn")
+        self._fit_button.setIcon(get_icon("fa6s.expand", THEME["fg_soft"]))
+        self._fit_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self._fit_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self._fit_button.setFixedHeight(DESIGN_TOKENS.controls.compact_height)
+        self._fit_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed
+        )
+        self._fit_button.setToolTip("Frame the whole orbit (F)")
+        self._fit_button.clicked.connect(self._view_fit)
+        bar.addWidget(self._fit_button)
+
         bar.addStretch(1)
         col.addLayout(bar)
 
@@ -464,9 +499,114 @@ class OrbitViz3D(QtWidgets.QWidget):
             self._layer_checks[key] = chk
             layers.addWidget(chk)
         layers.addStretch(1)
+
+        self._focus_button = QtWidgets.QToolButton()
+        self._focus_button.setText("Focus")
+        self._focus_button.setObjectName("orbitFocusBtn")
+        self._focus_button.setIcon(get_icon("fa6s.expand", THEME["fg_soft"]))
+        self._focus_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self._focus_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self._focus_button.setFixedHeight(DESIGN_TOKENS.controls.compact_height)
+        self._focus_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed
+        )
+        self._focus_button.setToolTip("Expand the orbit preview; double-click also toggles")
+        self._focus_button.clicked.connect(
+            lambda _checked=False: self.focus_mode_requested.emit()
+        )
+        layers.addWidget(self._focus_button)
         col.addLayout(layers)
 
-        return col
+        QtCore.QTimer.singleShot(0, self._update_control_density)
+
+        return panel
+
+    def _update_control_density(self) -> None:
+        """Shorten secondary actions before a narrow toolbar can clip them."""
+        if not hasattr(self, "_focus_button"):
+            return
+        compact = self.width() < 620
+        if compact == self._compact_controls:
+            return
+        self._compact_controls = compact
+        self._fit_button.setText("Fit" if compact else "Fit orbit")
+        self._focus_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonIconOnly
+            if compact
+            else QtCore.Qt.ToolButtonTextBesideIcon
+        )
+        self._refresh_focus_button()
+
+    def _refresh_focus_button(self) -> None:
+        active = self._focus_mode_active
+        self._focus_button.setText("Exit focus" if active else "Focus")
+        self._focus_button.setIcon(
+            get_icon(
+                "fa6s.compress" if active else "fa6s.expand",
+                THEME["fg_soft"],
+            )
+        )
+        self._focus_button.setAccessibleName(
+            "Exit orbit preview focus mode" if active else "Enter orbit preview focus mode"
+        )
+        self._focus_button.setToolTip(
+            "Restore the orbit form (Esc or double-click)"
+            if active
+            else "Expand the orbit preview; double-click also toggles"
+        )
+
+    def _install_scene_interactions(self, scene: QtWidgets.QWidget) -> None:
+        """Expose useful power-user actions without hiding the primary controls."""
+        self._scene_widget = scene
+        scene.setFocusPolicy(QtCore.Qt.StrongFocus)
+        scene.setAccessibleName("Interactive orbit preview")
+        scene.setAccessibleDescription(
+            "Drag to orbit the camera, use the wheel to zoom, press F to fit, "
+            "or double-click to toggle preview focus mode."
+        )
+        scene.setToolTip(
+            "Drag to orbit · Wheel to zoom · F to fit · Double-click to focus"
+        )
+        scene.installEventFilter(self)
+
+        self._fit_shortcut = QtGui.QShortcut(QtGui.QKeySequence("F"), scene)
+        self._fit_shortcut.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        self._fit_shortcut.activated.connect(self._view_fit)
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "_scene_widget", None):
+            if event.type() in (
+                QtCore.QEvent.MouseButtonPress,
+                QtCore.QEvent.Wheel,
+            ):
+                self._camera_user_modified = True
+            elif event.type() == QtCore.QEvent.MouseButtonDblClick:
+                self.focus_mode_requested.emit()
+            elif event.type() == QtCore.QEvent.Resize:
+                self._update_control_density()
+                self._schedule_auto_refit()
+        return super().eventFilter(watched, event)
+
+    def _schedule_auto_refit(self) -> None:
+        if (
+            not self._did_autofit
+            or self._camera_user_modified
+            or self._fit_resize_pending
+        ):
+            return
+        self._fit_resize_pending = True
+
+        def apply_fit() -> None:
+            self._fit_resize_pending = False
+            if not self._camera_user_modified:
+                self._fit_camera(mark_user=False)
+
+        QtCore.QTimer.singleShot(0, apply_fit)
+
+    def set_focus_mode(self, active: bool) -> None:
+        """Keep the reversible focus-mode control honest and discoverable."""
+        self._focus_mode_active = bool(active)
+        self._refresh_focus_button()
 
     def _on_layer_toggled(self, key: str, on: bool) -> None:
         """Persist a layer toggle and refresh the scene's annotation visibility."""
@@ -503,7 +643,16 @@ class OrbitViz3D(QtWidgets.QWidget):
     def _install_fallback(self, layout: QtWidgets.QVBoxLayout) -> None:
         """Install a deterministic engineering schematic when GL cannot paint."""
         self.schematic_widget = OrbitSchematic2D()
+        self._install_scene_interactions(self.schematic_widget)
         layout.addWidget(self.schematic_widget, 1)
+        controls = self._build_controls()
+        for button in (*self._cam_buttons, self._fit_button):
+            button.setEnabled(False)
+            button.setToolTip("Camera presets require the interactive 3D renderer")
+        for checkbox in self._layer_checks.values():
+            checkbox.setEnabled(False)
+            checkbox.setToolTip("Scene layers require the interactive 3D renderer")
+        layout.addWidget(controls)
 
     def _add_axes(self):
         """Add muted ECI reference axes — orientation hints, not the focus.
@@ -729,7 +878,7 @@ class OrbitViz3D(QtWidgets.QWidget):
             # leave the camera where the user put it.
             if not self._did_autofit:
                 self._did_autofit = True
-                self._view_fit()
+                self._fit_camera(mark_user=False)
 
         except Exception as exc:
             print(f"[3D Viz] Error updating orbit: {exc}")
@@ -1012,21 +1161,30 @@ class OrbitViz3D(QtWidgets.QWidget):
 
     def reset_view(self, _checked: bool = False):
         """Reset camera to the default mission view."""
-        self._set_camera(distance=8000, elevation=28, azimuth=45)
+        self._camera_user_modified = True
+        self._set_camera(elevation=28, azimuth=45)
+        self._fit_camera(mark_user=True)
 
     def _view_top(self, _checked: bool = False):
         """Look straight down the +Z axis."""
+        self._camera_user_modified = True
         self._set_camera(elevation=90, azimuth=0)
 
     def _view_side(self, _checked: bool = False):
         """Equatorial side view."""
+        self._camera_user_modified = True
         self._set_camera(elevation=0, azimuth=0)
 
     def _view_iso(self, _checked: bool = False):
         """Isometric, mission-style view."""
-        self._set_camera(distance=8000, elevation=26, azimuth=135)
+        self._camera_user_modified = True
+        self._set_camera(elevation=26, azimuth=135)
+        self._fit_camera(mark_user=True)
 
     def _view_fit(self, _checked: bool = False):
+        self._fit_camera(mark_user=True)
+
+    def _fit_camera(self, *, mark_user: bool) -> None:
         """Frame the whole orbit with margin, also keeping the Moon in view.
 
         The camera distance is driven by whichever is larger — the aposelene
@@ -1034,9 +1192,27 @@ class OrbitViz3D(QtWidgets.QWidget):
         orbit sit comfortably inside the viewport instead of being clipped at
         the edges (the previous 2.6x framing cropped the Moon on low orbits).
         """
+        if mark_user:
+            self._camera_user_modified = True
         ra = self._a_km * (1.0 + self._e)  # aposelene radius (km)
         extent = max(ra, R_MOON)
-        self._set_camera(distance=max(4200.0, 3.4 * extent))
+
+        # GLViewWidget treats ``fov`` as horizontal. A wide, shallow preview
+        # therefore has a much smaller vertical field of view than a square one;
+        # a constant 3.4x multiplier clips the Moon at precisely the desktop
+        # aspect ratios where the preview is most useful. Derive the vertical
+        # half-angle from the live scene geometry and leave 18% annotation room.
+        scene = getattr(self, "gl_widget", None)
+        if scene is None:
+            return
+        width = max(scene.width(), 1)
+        height = max(scene.height(), 1)
+        aspect = width / height
+        horizontal_fov = float(scene.opts.get("fov", 60.0))
+        half_h = math.radians(horizontal_fov / 2.0)
+        half_v = math.atan(math.tan(half_h) / max(aspect, 0.1))
+        distance = 1.18 * extent / max(math.sin(half_v), 0.08)
+        self._set_camera(distance=max(4200.0, distance))
 
 
 
@@ -1054,6 +1230,8 @@ class OrbitPage(QtWidgets.QWidget):
         super().__init__(parent)
         self._updating_ghost = False # Flag to prevent recursive signal loops
         self._compact_layout = None
+        self._preview_focus_active = False
+        self._focus_restore_sizes: list[int] | None = None
 
         # The last orbit state that validated cleanly. Invalid or partial input
         # never overwrites it, so the preview keeps showing the last good orbit.
@@ -1068,9 +1246,11 @@ class OrbitPage(QtWidgets.QWidget):
 
         self._build_ui()
 
-    def _create_card(self, title: str, description: str = "") -> Section:
+    def _create_card(
+        self, title: str, description: str = "", *, elevated: bool = False
+    ) -> Section:
         """Factory for standard titled cards built on the shared ``Section`` primitive."""
-        return Section(title, description)
+        return Section(title, description, elevated=elevated)
 
     def _metric_chip(self, title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QLabel]:
         """Return a compact ``(frame, value_label)`` metric chip for the info strip."""
@@ -1118,7 +1298,7 @@ class OrbitPage(QtWidgets.QWidget):
         self._params_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self._params_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self._params_scroll.setWidget(self.group_params)
-        self._params_scroll.setMinimumWidth(360)
+        self._params_scroll.setMinimumWidth(440)
         # A scroll area's own minimum-size hint is tiny (~2 scrollbar widths),
         # so in the stacked compact layout the splitter could crush the whole
         # form into an unusable sliver. Guarantee roughly six visible form
@@ -1130,7 +1310,8 @@ class OrbitPage(QtWidgets.QWidget):
 
         # Right pane: the fixed 3D preview.
         self.group_viz = self._create_viz_group()
-        self.group_viz.setMinimumWidth(380)
+        self.group_viz.setMinimumWidth(520)
+        self.group_viz.installEventFilter(self)
 
         self._split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self._split.setObjectName("orbitSplit")
@@ -1138,9 +1319,14 @@ class OrbitPage(QtWidgets.QWidget):
         self._split.setHandleWidth(8)
         self._split.addWidget(self._params_scroll)
         self._split.addWidget(self.group_viz)
-        self._split.setStretchFactor(0, 6)
-        self._split.setStretchFactor(1, 5)
+        self._split.setStretchFactor(0, 2)
+        self._split.setStretchFactor(1, 3)
+        self._split.splitterMoved.connect(lambda *_: self._update_metric_layout())
         root.addWidget(self._split)
+
+        self._exit_focus_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Escape"), self)
+        self._exit_focus_shortcut.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        self._exit_focus_shortcut.activated.connect(self._exit_preview_focus)
 
         QtCore.QTimer.singleShot(0, self._update_responsive_layout)
 
@@ -1148,28 +1334,62 @@ class OrbitPage(QtWidgets.QWidget):
         super().resizeEvent(event)
         self._update_responsive_layout()
 
+    def eventFilter(self, watched, event):
+        if (
+            watched is getattr(self, "group_viz", None)
+            and event.type() == QtCore.QEvent.Resize
+        ):
+            QtCore.QTimer.singleShot(0, self._update_metric_layout)
+        return super().eventFilter(watched, event)
+
     def _update_responsive_layout(self) -> None:
         """Stack the form above the preview only when the workspace is narrow."""
         if not hasattr(self, "_split"):
             return
-        # 900, not 1000: at the default 1280x860 window the page content is
-        # ~980 px wide, which must stay in the two-pane layout. Below 900 the
-        # side-by-side panes drop under their comfortable minimums (360+380px
-        # plus handle/margins) and stacking wins.
-        compact = self.width() < 900
+        # The measured comfortable budget is 440px for the form, 520px for the
+        # preview and an 8px handle. Below that, stacking preserves both surfaces.
+        compact = self.width() < 968
         if compact == self._compact_layout:
             return
         self._compact_layout = compact
         if compact:
             self._split.setOrientation(QtCore.Qt.Vertical)
+            self._params_scroll.setMaximumWidth(_QWIDGETSIZE_MAX)
             # Explicit sizes: without them the splitter leaves the form pane
             # at its (tiny) hint and the preview swallows the page.
             total = max(self.height(), 1)
             self._split.setSizes([int(total * 0.55), int(total * 0.45)])
         else:
             self._split.setOrientation(QtCore.Qt.Horizontal)
+            # Scientific form rows stop becoming easier to read beyond this
+            # width; donate the remaining workspace to the visual result.
+            self._params_scroll.setMaximumWidth(620)
             total = max(self.width(), 1)
-            self._split.setSizes([int(total * 0.56), int(total * 0.44)])
+            self._split.setSizes([min(620, int(total * 0.40)), int(total * 0.60)])
+        self._update_metric_layout()
+
+    def _toggle_preview_focus(self) -> None:
+        self._set_preview_focus(not self._preview_focus_active)
+
+    def _exit_preview_focus(self) -> None:
+        if self._preview_focus_active:
+            self._set_preview_focus(False)
+
+    def _set_preview_focus(self, active: bool) -> None:
+        """Temporarily give the visual workspace the full canvas, reversibly."""
+        active = bool(active)
+        if active == self._preview_focus_active:
+            return
+        if active:
+            self._focus_restore_sizes = self._split.sizes()
+            self._params_scroll.hide()
+        else:
+            self._params_scroll.show()
+            if self._focus_restore_sizes:
+                self._split.setSizes(self._focus_restore_sizes)
+        self._preview_focus_active = active
+        self.orbit_viz_3d.set_focus_mode(active)
+        QtCore.QTimer.singleShot(0, self._update_metric_layout)
 
     def _create_params_group(self) -> Section:
         """Orbit parameters card with Modern Segmented Control."""
@@ -1354,6 +1574,7 @@ class OrbitPage(QtWidgets.QWidget):
         gb = self._create_card(
             "Orbit Preview",
             "Two-body preview. The mission run adds the selected perturbations.",
+            elevated=True,
         )
         layout = gb.content_layout
         layout.setSpacing(DESIGN_TOKENS.spacing.md)
@@ -1368,6 +1589,7 @@ class OrbitPage(QtWidgets.QWidget):
 
         self.orbit_viz_3d = OrbitViz3D()
         self.orbit_viz_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.orbit_viz_3d.focus_mode_requested.connect(self._toggle_preview_focus)
         layout.addWidget(self.orbit_viz_3d)
 
         # Compact metric strip — period, periselene, aposelene, e, i, energy.
@@ -1385,16 +1607,33 @@ class OrbitPage(QtWidgets.QWidget):
         chip_i, self.lbl_inc = self._metric_chip("Inclination (°)")
         chip_energy, self.lbl_energy = self._metric_chip("Energy (km²/s²)")
 
-        for col, chip in enumerate((chip_period, chip_hp, chip_ha)):
-            info_grid.addWidget(chip, 0, col)
-            info_grid.setColumnStretch(col, 1)
-        for col, chip in enumerate((chip_e, chip_i, chip_energy)):
-            info_grid.addWidget(chip, 1, col)
+        self._metric_grid = info_grid
+        self._metric_chips = (
+            chip_period, chip_hp, chip_ha, chip_e, chip_i, chip_energy,
+        )
+        self._metric_columns: int | None = None
+        self._update_metric_layout()
 
         layout.addWidget(info_frame)
 
         QtCore.QTimer.singleShot(100, self._update_orbit_3d)
         return gb
+
+    def _update_metric_layout(self) -> None:
+        """Use one metric row when the preview earns enough horizontal space."""
+        if not hasattr(self, "_metric_grid"):
+            return
+        preview = getattr(self, "group_viz", self._metric_grid.parentWidget())
+        columns = 6 if preview.width() >= 700 else 3
+        if columns == self._metric_columns:
+            return
+        self._metric_columns = columns
+        for chip in self._metric_chips:
+            self._metric_grid.removeWidget(chip)
+        for index, chip in enumerate(self._metric_chips):
+            self._metric_grid.addWidget(chip, index // columns, index % columns)
+        for column in range(6):
+            self._metric_grid.setColumnStretch(column, 1 if column < columns else 0)
 
     # =========================================================================
     # 3.                        LOGIC & MATH

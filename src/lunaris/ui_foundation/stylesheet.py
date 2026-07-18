@@ -596,7 +596,7 @@ def build_app_stylesheet(
         QLabel#datasetInfo {{
             color: {theme['fg_soft']};
             font-size: {type_tokens.size_caption_pt:g}pt;
-            padding: 3px 10px;
+            padding: 3px 6px;
             background: {with_alpha(theme['accent'], 0.06)};
             border-left: 2px solid {with_alpha(theme['accent'], 0.35)};
             border-radius: 0 6px 6px 0;
@@ -1304,7 +1304,12 @@ def build_app_stylesheet(
             font-weight: 700;
             letter-spacing: 0.6px;
         }}
-        QPushButton#orbitPresetBtn {{
+        QFrame#orbitControlBar {{
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 9px;
+        }}
+        QToolButton#orbitPresetBtn {{
             background: {theme['bg_card_alt']};
             border: 1px solid {theme['border_soft']};
             border-radius: 7px;
@@ -1313,13 +1318,34 @@ def build_app_stylesheet(
             font-weight: 600;
             color: {theme['fg_soft']};
         }}
-        QPushButton#orbitPresetBtn:hover {{
+        QToolButton#orbitPresetBtn:hover {{
             border-color: {acc_hover_border};
             background: {theme['bg_hover']};
             color: {theme['fg_main']};
         }}
-        QPushButton#orbitPresetBtn:pressed {{
+        QToolButton#orbitPresetBtn:pressed {{
             background: {theme['bg_inset']};
+        }}
+        QToolButton#orbitPresetBtn:checked {{
+            background: {acc_20};
+            border-color: {theme['accent']};
+            color: {theme['fg_main']};
+        }}
+        QToolButton#orbitFitBtn,
+        QToolButton#orbitFocusBtn {{
+            background: transparent;
+            border: 1px solid {theme['border']};
+            border-radius: 7px;
+            padding: 3px 8px;
+            font-size: 9pt;
+            font-weight: 600;
+            color: {theme['fg_soft']};
+        }}
+        QToolButton#orbitFitBtn:hover,
+        QToolButton#orbitFocusBtn:hover {{
+            background: {theme['bg_hover']};
+            border-color: {acc_hover_border};
+            color: {theme['fg_main']};
         }}
         /* Orbit workspace split: transparent scroll surface + subtle handle */
         QScrollArea#orbitParamsScroll {{
