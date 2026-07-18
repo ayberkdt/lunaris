@@ -1,5 +1,3 @@
-# ST_LRPS/ui_parts/orbit_config_page.py
-
 """
 Orbit Configuration & Visualization Module for Lunaris Mission Studio.
 
@@ -34,7 +32,7 @@ Key Features:
 Dependencies:
     - PySide6 (UI Widgets)
     - pyqtgraph.opengl (3D Rendering)
-    - ui_parts.ui_commons (Shared styling and custom widgets)
+    - lunaris.ui.core.ui_commons (Shared styling and custom widgets)
 """
 
 # =============================================================================
@@ -43,12 +41,15 @@ Dependencies:
 from __future__ import annotations
 
 import contextlib
+import logging as _logging
 import math
 import os
 from dataclasses import dataclass
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
+
+_log = _logging.getLogger(__name__)
 
 # Qt's public C++ QWIDGETSIZE_MAX constant is not exported by PySide6.
 _QWIDGETSIZE_MAX = 16_777_215
@@ -59,7 +60,7 @@ try:
     HAS_QTAWESOME = True
 except ImportError:
     HAS_QTAWESOME = False
-    print("[Warning] qtawesome not installed. Icons will be disabled.")
+    _log.warning("qtawesome not installed. Icons will be disabled.")
 
 # Live Plotting & 3D Visualization
 try:
@@ -72,7 +73,7 @@ try:
 except ImportError as e:
     HAS_PYQTGRAPH = False
     HAS_OPENGL = False
-    print(f"[Warning] PyQtGraph/OpenGL not installed. Advanced visualization disabled: {e}")
+    _log.warning("PyQtGraph/OpenGL not installed. Advanced visualization disabled: %s", e)
 
 
 try:
@@ -393,7 +394,7 @@ class OrbitViz3D(QtWidgets.QWidget):
             self._create_moon()
         except Exception as exc:
             # A 3D preview must never prevent the mission window from opening.
-            print(f"[3D Viz] GL initialization failed, using fallback: {exc}")
+            _log.warning("3D viz: GL initialization failed, using fallback: %s", exc)
             self.gl_widget = None
             self._install_fallback(layout)
             return
@@ -687,7 +688,9 @@ class OrbitViz3D(QtWidgets.QWidget):
                 )
                 self.gl_widget.addItem(label)
             except Exception:
-                pass
+                # Axis labels are decoration; the scene must survive a pyqtgraph
+                # GLTextItem API break, but not silently — leave a trace.
+                _log.debug("GLTextItem axis label %r failed; skipping", name, exc_info=True)
 
     def _create_moon(self):
         """Create the Moon as a softly shaded regolith sphere.
@@ -881,7 +884,7 @@ class OrbitViz3D(QtWidgets.QWidget):
                 self._fit_camera(mark_user=False)
 
         except Exception as exc:
-            print(f"[3D Viz] Error updating orbit: {exc}")
+            _log.warning("3D viz: error updating orbit: %s", exc, exc_info=True)
 
     def _marker_radius_km(self) -> float:
         """Marker radius (km) scaled to the orbit so it never looks cartoonish.
