@@ -1230,6 +1230,12 @@ def _write_run_metadata(
         "gpu_fallback": str(args.gpu_fallback),
         "gpu_finite_check_mode": str(getattr(args, "gpu_finite_check_mode", "snapshot")),
         "torch_dtype": str(args.torch_dtype),
+        "precision_scope": (
+            "throughput_exploratory_only"
+            if getattr(args, "precision_scope_warning", None)
+            else "dtype_scope_not_restricted_by_duration_guard"
+        ),
+        "precision_scope_warning": getattr(args, "precision_scope_warning", None),
         "force_batch_size": int(args.force_batch_size),
         "cache_trajectories": bool(getattr(args, "cache_trajectories", False)),
         "reuse_cache": bool(getattr(args, "reuse_cache", False)),

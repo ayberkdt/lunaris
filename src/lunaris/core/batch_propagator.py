@@ -245,7 +245,7 @@ if _CUDA_AVAILABLE:
         out[2] = pref * (rz + bz * f_q)
 
     @cuda.jit(device=True, inline=True)
-    def _interp3_cuda(t, dt_s, tab, n_tab, result):
+    def _interp3_cuda(t, dt_s, tab, velocity_tab, n_tab, use_hermite, result):
         """Interpolate a (N, 3) pre-tabulated vector at time t.
 
         Mirrors the CPU runtime path
@@ -290,6 +290,18 @@ if _CUDA_AVAILABLE:
         elif f > 1.0:
             f = 1.0
 
+        if use_hermite == 1:
+            f2 = f * f
+            f3 = f2 * f
+            h00 = 2.0 * f3 - 3.0 * f2 + 1.0
+            h10 = f3 - 2.0 * f2 + f
+            h01 = -2.0 * f3 + 3.0 * f2
+            h11 = f3 - f2
+            result[0] = h00 * tab[i, 0] + h10 * dt_s * velocity_tab[i, 0] + h01 * tab[i + 1, 0] + h11 * dt_s * velocity_tab[i + 1, 0]
+            result[1] = h00 * tab[i, 1] + h10 * dt_s * velocity_tab[i, 1] + h01 * tab[i + 1, 1] + h11 * dt_s * velocity_tab[i + 1, 1]
+            result[2] = h00 * tab[i, 2] + h10 * dt_s * velocity_tab[i, 2] + h01 * tab[i + 1, 2] + h11 * dt_s * velocity_tab[i + 1, 2]
+            return
+
         if n_tab < 4:
             # Linear (matches interp_vec3_safe small-table branch).
             result[0] = tab[i, 0] * (1.0 - f) + tab[i + 1, 0] * f
@@ -311,12 +323,17 @@ if _CUDA_AVAILABLE:
         result[2] = 0.5 * (tab[i0, 2] * w0 + tab[i, 2] * w1 + tab[i + 1, 2] * w2 + tab[i3, 2] * w3)
 
     @cuda.jit(device=True, inline=True)
-    def _interp3_derivative_cuda(t, dt_s, tab, n_tab, result):
+    def _interp3_derivative_cuda(t, dt_s, tab, velocity_tab, n_tab, use_hermite, result):
         """Analytic derivative of the matching `_interp3_cuda` polynomial."""
         if n_tab <= 1 or dt_s <= 0.0:
-            result[0] = 0.0
-            result[1] = 0.0
-            result[2] = 0.0
+            if use_hermite == 1:
+                result[0] = velocity_tab[0, 0]
+                result[1] = velocity_tab[0, 1]
+                result[2] = velocity_tab[0, 2]
+            else:
+                result[0] = 0.0
+                result[1] = 0.0
+                result[2] = 0.0
             return
 
         u = t / dt_s
@@ -335,6 +352,16 @@ if _CUDA_AVAILABLE:
                 f = u - float(i)
 
         inv_dt = 1.0 / dt_s
+        if use_hermite == 1:
+            f2 = f * f
+            dh00 = (6.0 * f2 - 6.0 * f) * inv_dt
+            dh10 = 3.0 * f2 - 4.0 * f + 1.0
+            dh01 = (-6.0 * f2 + 6.0 * f) * inv_dt
+            dh11 = 3.0 * f2 - 2.0 * f
+            result[0] = dh00 * tab[i, 0] + dh10 * velocity_tab[i, 0] + dh01 * tab[i + 1, 0] + dh11 * velocity_tab[i + 1, 0]
+            result[1] = dh00 * tab[i, 1] + dh10 * velocity_tab[i, 1] + dh01 * tab[i + 1, 1] + dh11 * velocity_tab[i + 1, 1]
+            result[2] = dh00 * tab[i, 2] + dh10 * velocity_tab[i, 2] + dh01 * tab[i + 1, 2] + dh11 * velocity_tab[i + 1, 2]
+            return
         if n_tab < 4:
             result[0] = (tab[i + 1, 0] - tab[i, 0]) * inv_dt
             result[1] = (tab[i + 1, 1] - tab[i, 1]) * inv_dt
@@ -907,8 +934,11 @@ if _CUDA_AVAILABLE:
         ephem_dt,
         sun_tab,
         earth_tab,
+        sun_velocity_tab,
+        earth_velocity_tab,
         q_tab,
         n_ephem,
+        use_hermite,
         # Gravity
         n_sh,
         r_ref,
@@ -973,8 +1003,8 @@ if _CUDA_AVAILABLE:
         az = 0.0
 
         # Ephemeris interpolation
-        _interp3_cuda(t, ephem_dt, sun_tab, n_ephem, sun)
-        _interp3_cuda(t, ephem_dt, earth_tab, n_ephem, earth)
+        _interp3_cuda(t, ephem_dt, sun_tab, sun_velocity_tab, n_ephem, use_hermite, sun)
+        _interp3_cuda(t, ephem_dt, earth_tab, earth_velocity_tab, n_ephem, use_hermite, earth)
         _interp4_cuda(t, ephem_dt, q_tab, n_ephem, quat)
 
         # A) Gravity (SH or PM)
@@ -1071,7 +1101,9 @@ if _CUDA_AVAILABLE:
             ax += accel[0]
             ay += accel[1]
             az += accel[2]
-            _interp3_derivative_cuda(t, ephem_dt, sun_tab, n_ephem, sun_vel)
+            _interp3_derivative_cuda(
+                t, ephem_dt, sun_tab, sun_velocity_tab, n_ephem, use_hermite, sun_vel
+            )
             _external_1pn_cuda(
                 rx,
                 ry,
@@ -1091,7 +1123,9 @@ if _CUDA_AVAILABLE:
             ax += accel[0]
             ay += accel[1]
             az += accel[2]
-            _interp3_derivative_cuda(t, ephem_dt, earth_tab, n_ephem, earth_vel)
+            _interp3_derivative_cuda(
+                t, ephem_dt, earth_tab, earth_velocity_tab, n_ephem, use_hermite, earth_vel
+            )
             _external_1pn_cuda(
                 rx,
                 ry,
@@ -1129,8 +1163,11 @@ if _CUDA_AVAILABLE:
         ephem_dt,
         sun_tab,
         earth_tab,
+        sun_velocity_tab,
+        earth_velocity_tab,
         q_tab,
         n_ephem,
+        use_hermite,
         # Gravity
         n_sh,
         r_ref,
@@ -1211,8 +1248,11 @@ if _CUDA_AVAILABLE:
             ephem_dt,
             sun_tab,
             earth_tab,
+            sun_velocity_tab,
+            earth_velocity_tab,
             q_tab,
             n_ephem,
+            use_hermite,
             n_sh,
             r_ref,
             gm,
@@ -1256,8 +1296,11 @@ if _CUDA_AVAILABLE:
             ephem_dt,
             sun_tab,
             earth_tab,
+            sun_velocity_tab,
+            earth_velocity_tab,
             q_tab,
             n_ephem,
+            use_hermite,
             n_sh,
             r_ref,
             gm,
@@ -1300,8 +1343,11 @@ if _CUDA_AVAILABLE:
             ephem_dt,
             sun_tab,
             earth_tab,
+            sun_velocity_tab,
+            earth_velocity_tab,
             q_tab,
             n_ephem,
+            use_hermite,
             n_sh,
             r_ref,
             gm,
@@ -1344,8 +1390,11 @@ if _CUDA_AVAILABLE:
             ephem_dt,
             sun_tab,
             earth_tab,
+            sun_velocity_tab,
+            earth_velocity_tab,
             q_tab,
             n_ephem,
+            use_hermite,
             n_sh,
             r_ref,
             gm,
@@ -1510,8 +1559,11 @@ class _EphemGPUPack:
     dt_s: float
     d_sun: Any  # device array (N, 3)
     d_earth: Any  # device array (N, 3)
+    d_sun_velocity: Any  # device array (N, 3), m/s
+    d_earth_velocity: Any  # device array (N, 3), m/s
     d_quat: Any  # device array (N, 4)
     n_rows: int
+    use_hermite: bool
 
 
 @dataclass
@@ -1649,7 +1701,7 @@ class GPUBatchPropagator:
         shared row count for all three tables, so we expand those constant rows
         to the quaternion timeline length here.
         """
-        from lunaris.core.dynamics import extract_ephem_tables_strict
+        from lunaris.core.dynamics import extract_ephem_state_tables_strict
 
         ep = getattr(dyn, "ephem", None)
         if ep is None:
@@ -1657,15 +1709,28 @@ class GPUBatchPropagator:
             rows = 2
             sun_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
             earth_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
+            sun_v_h = np.zeros((rows, 3), dtype=np.float64)
+            earth_v_h = np.zeros((rows, 3), dtype=np.float64)
             q_h = np.tile([1.0, 0.0, 0.0, 0.0], (rows, 1)).astype(np.float64)
             dt_s = 1.0
+            use_hermite = False
         else:
-            dt_s, sun_h, earth_h, q_h = extract_ephem_tables_strict(ep)
+            (
+                dt_s,
+                sun_h,
+                earth_h,
+                sun_v_h,
+                earth_v_h,
+                q_h,
+                use_hermite,
+            ) = extract_ephem_state_tables_strict(ep)
             q_rows = int(q_h.shape[0])
             if int(sun_h.shape[0]) == 1 and q_rows > 1:
                 sun_h = np.repeat(sun_h, q_rows, axis=0)
+                sun_v_h = np.repeat(sun_v_h, q_rows, axis=0)
             if int(earth_h.shape[0]) == 1 and q_rows > 1:
                 earth_h = np.repeat(earth_h, q_rows, axis=0)
+                earth_v_h = np.repeat(earth_v_h, q_rows, axis=0)
             if q_rows == 1:
                 max_rows = max(int(sun_h.shape[0]), int(earth_h.shape[0]), 1)
                 if max_rows > 1:
@@ -1674,14 +1739,19 @@ class GPUBatchPropagator:
         with cuda.gpus[self._device_id]:
             d_sun = cuda.to_device(np.ascontiguousarray(sun_h, dtype=np.float64))
             d_earth = cuda.to_device(np.ascontiguousarray(earth_h, dtype=np.float64))
+            d_sun_v = cuda.to_device(np.ascontiguousarray(sun_v_h, dtype=np.float64))
+            d_earth_v = cuda.to_device(np.ascontiguousarray(earth_v_h, dtype=np.float64))
             d_q = cuda.to_device(np.ascontiguousarray(q_h, dtype=np.float64))
 
         return _EphemGPUPack(
             dt_s=float(dt_s),
             d_sun=d_sun,
             d_earth=d_earth,
+            d_sun_velocity=d_sun_v,
+            d_earth_velocity=d_earth_v,
             d_quat=d_q,
             n_rows=max(int(sun_h.shape[0]), int(earth_h.shape[0]), int(q_h.shape[0])),
+            use_hermite=bool(use_hermite),
         )
 
     def _build_grav_pack(self, dyn: Any) -> _GravGPUPack:
@@ -2006,8 +2076,11 @@ class GPUBatchPropagator:
                         np.float64(ep.dt_s),
                         ep.d_sun,
                         ep.d_earth,
+                        ep.d_sun_velocity,
+                        ep.d_earth_velocity,
                         ep.d_quat,
                         np.int32(ep.n_rows),
+                        np.int32(1 if ep.use_hermite else 0),
                         np.int32(gp.n_sh),
                         np.float64(gp.r_ref),
                         np.float64(gp.gm),

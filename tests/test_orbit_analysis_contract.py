@@ -112,6 +112,32 @@ def test_circular_equatorial_analysis_marks_singular_angles_unavailable() -> Non
     assert analysis.metrics_payload()["analysis_schema_version"] == 2
 
 
+def test_maneuver_diagnostics_become_events_metrics_and_disable_invariant_claim() -> None:
+    result = _circular_result()
+    burn_t = float(result.t[10])
+    result.diagnostics["maneuvers_applied"] = [
+        {
+            "t_burn_s": burn_t,
+            "frame": "ric",
+            "dv_norm_mps": 12.5,
+            "mass_before_kg": 1000.0,
+            "mass_after_kg": 995.0,
+        }
+    ]
+    analysis = build_orbit_analysis(
+        result,
+        config=_config(),
+        meta={"mu_m3s2": MU, "body_radius_m": RADIUS_M},
+    )
+    maneuver = next(event for event in analysis.events if event.event_type == "maneuver")
+    assert maneuver.simulation_time_s == pytest.approx(burn_t)
+    assert "delta-v=12.5 m/s" in (maneuver.note or "")
+    assert analysis.metric_map["mission.maneuver.count"].value == 1
+    assert analysis.metric_map["mission.maneuver.total_delta_v"].value == pytest.approx(12.5)
+    assert analysis.metric_map["mission.maneuver.propellant_used"].value == pytest.approx(5.0)
+    assert analysis.metric_map["diagnostic.energy.max_relative_drift"].kind == "diagnostic"
+
+
 def test_live_force_budget_excludes_aggregate_terms_from_ranking() -> None:
     class Context:
         R_body_m = RADIUS_M

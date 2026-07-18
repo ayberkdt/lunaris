@@ -3,17 +3,15 @@
 Covers the runtime samplers that feed the integrator with Sun/Earth positions and
 the Moon-fixed attitude quaternion:
 
-* ``interp_vec3_safe``  - constant / linear / Catmull-Rom by table size,
+* ``interp_vec3_hermite`` - canonical position+velocity state interpolation,
+* ``interp_vec3_safe``  - legacy position-only compatibility interpolation,
 * ``interp_quat_safe``  - SLERP with unit-norm and shortest-path guarantees,
 * ``EphemerisManager``  - inertial<->fixed frame round-trip.
 
-It also pins the GPU device kernel's interpolation *formula*. The CUDA
-``_interp3_cuda`` (batch_propagator) was aligned to use the same constant/linear/
-Catmull-Rom scheme as the CPU path; this module reproduces that exact device
-logic as a numba.njit mirror and asserts it matches ``interp_vec3_safe`` to
-machine precision. Identical f64 arithmetic on both backends means agreement here
-implies agreement on a real GPU (end-to-end CPU/GPU parity is exercised
-separately by tests/test_real_asset_cpu_gpu_validation.py).
+It also pins the retained legacy CUDA interpolation formula; schema-v2 parity
+for cubic Hermite is exercised through the CPU/Torch state contract and the
+CUDA implementation consumes the same position/velocity arrays. End-to-end GPU
+acceptance remains CUDA-gated in tests/test_real_asset_cpu_gpu_validation.py.
 """
 
 from __future__ import annotations
@@ -31,8 +29,61 @@ from lunaris.physics.ephemeris import (
     get_ephem_state,
     interp_quat_safe,
     interp_vec3_derivative_safe,
+    interp_vec3_hermite,
+    interp_vec3_hermite_derivative,
     interp_vec3_safe,
 )
+
+
+def test_hermite_is_exact_for_cubic_position_and_velocity() -> None:
+    dt = 2.0
+    times = np.arange(6, dtype=np.float64) * dt
+
+    def position(t):
+        return np.column_stack((t**3 - 2 * t**2 + t + 4, -0.5 * t**3 + 3 * t, 2 * t**2 - 7))
+
+    def velocity(t):
+        return np.column_stack((3 * t**2 - 4 * t + 1, -1.5 * t**2 + 3, 4 * t))
+
+    p = np.ascontiguousarray(position(times))
+    v = np.ascontiguousarray(velocity(times))
+    for tq in np.linspace(0.0, times[-1], 41):
+        np.testing.assert_allclose(interp_vec3_hermite(tq, dt, p, v), position(np.array([tq]))[0], atol=2e-12)
+        np.testing.assert_allclose(interp_vec3_hermite_derivative(tq, dt, p, v), velocity(np.array([tq]))[0], atol=3e-12)
+
+
+def test_hermite_matches_node_velocities_and_is_c1() -> None:
+    dt = 5.0
+    t = np.arange(8, dtype=np.float64) * dt
+    p = np.column_stack((np.sin(t / 20.0), np.cos(t / 30.0), t**2 / 1000.0))
+    v = np.column_stack((np.cos(t / 20.0) / 20.0, -np.sin(t / 30.0) / 30.0, t / 500.0))
+    p = np.ascontiguousarray(p)
+    v = np.ascontiguousarray(v)
+    for k in range(1, len(t) - 1):
+        np.testing.assert_allclose(interp_vec3_hermite(t[k], dt, p, v), p[k], atol=2e-15)
+        np.testing.assert_allclose(interp_vec3_hermite_derivative(t[k], dt, p, v), v[k], atol=2e-15)
+        h = 1e-7
+        left = interp_vec3_hermite_derivative(t[k] - h, dt, p, v)
+        right = interp_vec3_hermite_derivative(t[k] + h, dt, p, v)
+        np.testing.assert_allclose(left, right, atol=2e-8)
+
+
+def test_spice_state_hermite_reduces_smooth_orbit_interpolation_error() -> None:
+    dt = 1200.0
+    t = np.arange(12, dtype=np.float64) * dt
+    omega = 2.0 * np.pi / (27.3 * 86400.0)
+    radius = 1.5e11
+    p = np.column_stack((radius * np.cos(omega * t), radius * np.sin(omega * t), 0.1 * radius * np.sin(2 * omega * t)))
+    v = np.column_stack((-radius * omega * np.sin(omega * t), radius * omega * np.cos(omega * t), 0.2 * radius * omega * np.cos(2 * omega * t)))
+    p = np.ascontiguousarray(p)
+    v = np.ascontiguousarray(v)
+    catmull_err = []
+    hermite_err = []
+    for tq in np.linspace(dt, t[-2], 101):
+        truth = np.array((radius * np.cos(omega * tq), radius * np.sin(omega * tq), 0.1 * radius * np.sin(2 * omega * tq)))
+        catmull_err.append(np.linalg.norm(np.asarray(interp_vec3_safe(tq, dt, p)) - truth))
+        hermite_err.append(np.linalg.norm(np.asarray(interp_vec3_hermite(tq, dt, p, v)) - truth))
+    assert max(hermite_err) < max(catmull_err) * 1.0e-3
 
 
 # -----------------------------------------------------------------------------
@@ -319,13 +370,17 @@ def test_get_ephem_state_matches_component_samplers() -> None:
 # -----------------------------------------------------------------------------
 def _build_manager(n: int = 12, dt: float = 60.0) -> EphemerisManager:
     t_tab = np.arange(n, dtype=np.float64) * dt
+    earth = _smooth_vec_table(n, dt) * 0.001
+    sun = _smooth_vec_table(n, dt)
     tables = EphemerisTables(
         dt_s=dt,
         t_tab_s=t_tab,
         et0=0.0,
         q_i2f_tab=_quat_table(n, dt),
-        r_earth_tab_m=_smooth_vec_table(n, dt) * 0.001,
-        r_sun_tab_m=_smooth_vec_table(n, dt),
+        r_earth_tab_m=earth,
+        r_sun_tab_m=sun,
+        v_earth_tab_m_s=np.gradient(earth, dt, axis=0, edge_order=2),
+        v_sun_tab_m_s=np.gradient(sun, dt, axis=0, edge_order=2),
         mu_earth_m3s2=3.986004418e14,
         mu_sun_m3s2=1.32712440018e20,
     )

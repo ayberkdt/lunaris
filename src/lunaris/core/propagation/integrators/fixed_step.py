@@ -144,6 +144,14 @@ def symplectic_discontinuous_gravity(method: str, gravity_pack: Any) -> list[str
         return ["adaptive-degree SH gravity (field discontinuous at altitude thresholds)"]
     return []
 
+
+def symplectic_impulsive_maneuver_violations(method: str, maneuver_plan: Any) -> list[str]:
+    """Return a violation for a discontinuous velocity jump under a symplectic method."""
+    if not _is_symplectic_method(method):
+        return []
+    maneuvers = getattr(maneuver_plan, "maneuvers", ())
+    return ["impulsive maneuver velocity discontinuity"] if maneuvers else []
+
 def symplectic_breaks_separability(method: str, flags: Any) -> bool:
     """True when a *velocity-dependent* force is active under a symplectic method.
 
@@ -570,6 +578,7 @@ __all__ = [
     "symplectic_nonconservative_violations",
     "symplectic_nonconservative_gravity",
     "symplectic_discontinuous_gravity",
+    "symplectic_impulsive_maneuver_violations",
     "symplectic_breaks_separability",
     "accel_form_velocity_dependence_violations",
     "_is_fixed_step_method",

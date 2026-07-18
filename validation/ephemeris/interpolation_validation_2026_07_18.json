@@ -1,0 +1,78 @@
+{
+  "claim_scope": "interpolation_and_step_response_for_this_configuration_only",
+  "configuration": {
+    "duration_s": 86400.0,
+    "grid_step_s": 60.0,
+    "kernel_dir_hint": "data/ephemeris_models",
+    "output_hint": "validation/ephemeris/interpolation_validation_2026_07_18.json",
+    "queries": 1000,
+    "seed": 20260718,
+    "start_utc": "2026-01-01T00:00:00"
+  },
+  "dop853": {
+    "catmull_rom": {
+      "nfev": 4250,
+      "success": true
+    },
+    "hermite": {
+      "nfev": 4190,
+      "success": true
+    }
+  },
+  "dop853_final_position_difference_m": 0.0029185736386467273,
+  "ephemeris_contract": {
+    "aberration_correction": "NONE",
+    "interpolation_kind": "cubic_hermite_position_velocity",
+    "kernel_provenance": [
+      {
+        "kind": "LSK",
+        "name": "naif0012.tls",
+        "path_hint": "data/ephemeris_models/naif0012.tls",
+        "sha256": "678e32bdb5a744117a467cd9601cd6b373f0e9bc9bbde1371d5eee39600a039b"
+      },
+      {
+        "kind": "SPK",
+        "name": "de440.bsp",
+        "path_hint": "data/ephemeris_models/de440.bsp",
+        "sha256": "a4ce9bf9b3282becc9f4b2ac3cebe03a2ae7599981aabd7265fd8482fff7c4b5"
+      },
+      {
+        "kind": "PCK",
+        "name": "moon_pa_de440_200625.bpc",
+        "path_hint": "data/ephemeris_models/moon_pa_de440_200625.bpc",
+        "sha256": "60cd55aa401ea2ea97360636f567554bfe4e37bb829f901b4460a455dfaf783f"
+      },
+      {
+        "kind": "FK",
+        "name": "moon_de440_250416.tf",
+        "path_hint": "data/ephemeris_models/moon_de440_250416.tf",
+        "sha256": "a47c71e9c9f33796bdafb2c9d69a7ee447b6016ecad80f71cd6f3e479f9cf768"
+      }
+    ],
+    "schema_version": 2
+  },
+  "generated_at_utc": "2026-07-18T09:47:34.426349Z",
+  "off_node_position_error_m": {
+    "earth": {
+      "catmull_rom_m": {
+        "max": 4852.958067094332,
+        "rms": 156.91045004031838
+      },
+      "hermite_m": {
+        "max": 6.509970793600524e-05,
+        "rms": 3.7795977964720964e-05
+      }
+    },
+    "sun": {
+      "catmull_rom_m": {
+        "max": 139055.31480389365,
+        "rms": 4496.007212478583
+      },
+      "hermite_m": {
+        "max": 0.0018683451032881053,
+        "rms": 0.0010827964935789984
+      }
+    }
+  },
+  "schema_version": "lunaris_ephemeris_interpolation_validation_v1"
+}

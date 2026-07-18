@@ -1643,6 +1643,30 @@ def test_backend_run_metadata_enriched_fields(tmp_path, monkeypatch):
     assert "sampling" in meta and meta["sampling"]["scenario_count"] == 3
 
 
+def test_long_duration_fp32_warning_is_persisted_as_scope_provenance(monkeypatch, tmp_path):
+    import sys as _sys
+
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    monkeypatch.setattr(_sys, "argv", [
+        "compare_gravity_models",
+        "--output-dir", str(tmp_path),
+        "--duration-days", "5",
+        "--torch-dtype", "float32",
+    ])
+    args = cgm.parse_args()
+    warning = cgm._long_duration_precision_warning(args)
+    assert warning is not None and "throughput/exploratory" in warning
+    args.precision_scope_warning = warning
+    cgm._write_run_metadata(args, tmp_path)
+    meta = json.loads((tmp_path / "run_metadata.json").read_text(encoding="utf-8"))
+    assert meta["precision_scope"] == "throughput_exploratory_only"
+    assert meta["precision_scope_warning"] == warning
+
+    args.torch_dtype = "float64"
+    assert cgm._long_duration_precision_warning(args) is None
+
+
 def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
     import sys as _sys
 

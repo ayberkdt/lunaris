@@ -1119,7 +1119,7 @@ def _cover_page(result: OrbitAnalysisResult, preset: ReportPreset) -> plt.Figure
     commit = str(git.get("commit") or "unavailable")[:12]
     dirty = "dirty" if git.get("dirty") else "clean"
     fig.text(0.08, 0.105, f"commit {commit} / {dirty}", family="monospace", fontsize=6.7, color=REPORT_PALETTE["muted"])
-    fig.text(0.92, 0.105, "RESEARCH / BETA", ha="right", fontsize=6.7, fontweight="bold", color=REPORT_PALETTE["indigo"])
+    fig.text(0.92, 0.105, "RESEARCH SOFTWARE", ha="right", fontsize=6.7, fontweight="bold", color=REPORT_PALETTE["indigo"])
     return fig
 
 
@@ -1193,6 +1193,7 @@ def _executive_page(result: OrbitAnalysisResult, preset: ReportPreset) -> plt.Fi
         ["Integrator", _display(_metric(result, "numerical.integrator"))],
         ["Backend", _display(_metric(result, "numerical.integration_backend"))],
         ["RHS path", _display(_metric(result, "physics.rhs_path.effective"))],
+        ["Maneuvers / Δv", f"{_display(_metric(result, 'mission.maneuver.count'))} / {_display(_metric(result, 'mission.maneuver.total_delta_v'))}"],
         ["Runtime", _display(_metric(result, "numerical.wall_time"))],
     ]
     ax_health = fig.add_axes([0.64, 0.185, 0.285, 0.17])
@@ -1384,6 +1385,7 @@ def _events_page(result: OrbitAnalysisResult, preset: ReportPreset) -> plt.Figur
             "eclipse_exit",
             "backend_fallback",
             "numerical_warning",
+            "maneuver",
         }
     ][:14]
     rows = [

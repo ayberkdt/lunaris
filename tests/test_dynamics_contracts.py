@@ -317,9 +317,7 @@ def _surrogate_rhs():
     return eng.build_rhs()
 
 
-def test_rhs_validates_first_call_and_later_calls_are_identical():
-    # Validation runs on the first evaluation only (performance: DOP853 makes
-    # 12+ evaluations per step); later calls must produce bit-identical output.
+def test_public_rhs_validates_every_call_and_results_are_identical():
     rhs = _surrogate_rhs()
     y = np.array([2.0e6, 0.0, 0.0, 0.0, 1.5e3, 0.0])
     first = rhs(0.0, y)
@@ -327,6 +325,23 @@ def test_rhs_validates_first_call_and_later_calls_are_identical():
     third = rhs(0.0, list(y))  # non-ndarray input still coerced after first call
     np.testing.assert_array_equal(first, second)
     np.testing.assert_array_equal(first, third)
+    with pytest.raises(ValueError, match="6 elements"):
+        rhs(0.0, np.zeros(5))
+
+
+def test_trusted_solver_rhs_validates_first_call_only():
+    eng = DynamicsEngine(
+        _sc(),
+        PerturbationFlags(enable_sh=True),
+        gravity_model=_StubSurrogate(),
+        ephem_manager=None,
+        allow_identity_rotation=True,
+    )
+    rhs = eng._build_solver_rhs()
+    y = np.array([2.0e6, 0.0, 0.0, 0.0, 1.5e3, 0.0])
+    first = rhs(0.0, y)
+    second = rhs(0.0, list(y))
+    np.testing.assert_array_equal(first, second)
 
 
 def test_rhs_rejects_bad_state_on_first_call_and_stays_armed_after_failure():
@@ -449,7 +464,8 @@ def test_external_1pn_downgrade_returns_new_object_and_never_mutates_raw():
     q_ident = np.array([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
     zeros = np.zeros((2, 3))
     degenerate = _EphemPack(
-        dt_s=1.0, r_sun_tab_m=zeros, r_earth_tab_m=zeros, q_i2f_tab=q_ident
+        dt_s=1.0, r_sun_tab_m=zeros, r_earth_tab_m=zeros,
+        v_sun_tab_m_s=zeros, v_earth_tab_m_s=zeros, q_i2f_tab=q_ident
     )
     with pytest.warns(RuntimeWarning, match="external-body relativity terms disabled"):
         eff = resolve_effective_requirements(raw, degenerate)
@@ -505,7 +521,11 @@ def test_effective_requirements_pass_through_when_tables_present():
     )
     q_ident = np.array([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
     ones = np.ones((2, 3))
-    ep = _EphemPack(dt_s=1.0, r_sun_tab_m=ones, r_earth_tab_m=ones, q_i2f_tab=q_ident)
+    ep = _EphemPack(
+        dt_s=1.0, r_sun_tab_m=ones, r_earth_tab_m=ones,
+        v_sun_tab_m_s=np.zeros_like(ones), v_earth_tab_m_s=np.zeros_like(ones),
+        q_i2f_tab=q_ident,
+    )
     eff = resolve_effective_requirements(raw, ep)
     assert eff.use_rel_external is True
 

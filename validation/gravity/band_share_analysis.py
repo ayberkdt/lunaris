@@ -32,8 +32,11 @@ with full provenance (model path, seed, point count, degrees).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +44,78 @@ import numpy as np
 
 from lunaris.common.lunar_data import resolve_lunar_gravity_path
 from lunaris.physics.spherical_harmonics import GravityModel
+
+EVIDENCE_SCHEMA_VERSION = "lunaris_gravity_band_share_v1"
+COEFFICIENT_NORMALIZATION = "fully_normalized_real_4pi"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _repo_commit_sha() -> str | None:
+    """Return the source commit when Git metadata is available."""
+    repo_root = Path(__file__).resolve().parents[2]
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = result.stdout.strip()
+    return value if len(value) == 40 else None
+
+
+def build_evidence_payload(
+    *,
+    gravity_file: Path,
+    model: GravityModel,
+    band_edges: tuple[int, int],
+    n_points: int,
+    seed: int,
+    results: list[dict[str, Any]],
+    repo_commit_sha: str | None = None,
+    generated_at_utc: str | None = None,
+) -> dict[str, Any]:
+    """Build the self-contained, versioned evidence record written to JSON."""
+    path = gravity_file.resolve()
+    repo_root = Path(__file__).resolve().parents[2]
+    try:
+        path_hint = path.relative_to(repo_root).as_posix()
+    except ValueError:
+        path_hint = path.name
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "generated_at_utc": generated_at_utc or datetime.now(timezone.utc).isoformat(),
+        "repo_commit_sha": repo_commit_sha if repo_commit_sha is not None else _repo_commit_sha(),
+        "method": {
+            "sampler": "seeded_gaussian_normalized_directions",
+            "acceleration_evaluator": "GravityModel.accel_fixed_serial_kahan",
+            "share_denominator": "rms_norm_of_a_nmax_minus_point_mass",
+        },
+        "gravity_model": {
+            "path_hint": path_hint,
+            "file_name": path.name,
+            "sha256": _sha256_file(path),
+            "normalization": COEFFICIENT_NORMALIZATION,
+            "mu_m3_s2": float(model.mu),
+            "reference_radius_m": float(model.r_ref),
+            "evaluated_max_degree": int(model.max_degree),
+        },
+        "band_edges": [int(band_edges[0]), int(band_edges[1])],
+        "n_points_per_altitude": int(n_points),
+        "seed": int(seed),
+        "results": results,
+    }
 
 
 def _sample_directions(n_points: int, seed: int) -> np.ndarray:
@@ -145,14 +220,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.out_json is not None:
-        payload = {
-            "gravity_file": str(gravity_file),
-            "max_degree": int(model.max_degree),
-            "band_edges": [lo, hi],
-            "n_points": int(args.n_points),
-            "seed": int(args.seed),
-            "results": results,
-        }
+        payload = build_evidence_payload(
+            gravity_file=gravity_file,
+            model=model,
+            band_edges=(lo, hi),
+            n_points=args.n_points,
+            seed=args.seed,
+            results=results,
+        )
         args.out_json.parent.mkdir(parents=True, exist_ok=True)
         args.out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"\nwrote {args.out_json}")

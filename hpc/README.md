@@ -23,7 +23,7 @@ hpc/submit.sh train -- \
     --out-dir "$LUNARIS_OUTPUT_DIR/training/run1"
 ```
 
-`hpc/submit.sh` reads the partition / account / qos / gres from
+`hpc/submit.sh` reads scheduler placement and optional resource overrides from
 `hpc/cluster.env`, so you never edit those into the `.sbatch` files. Everything
 before `--` is passed to `sbatch`; everything after `--` goes to the program.
 
@@ -42,7 +42,30 @@ before `--` is passed to `sbatch`; everything after `--` goes to the program.
 | `slurm_batch_array.sbatch` | Batch propagation / uncertainty ensembles (`lunaris-batch`). |
 | `scenarios/*.jsonl` | Self-describing experiment sweeps (ablations, capacity, encoding/loss). |
 
+Scenarios use JSONL rather than YAML because the launcher validates one
+self-contained scenario per line and records the resolved JSON beside every
+run. Slurm settings stay in `.sbatch`/`cluster.env`, avoiding a second,
+unvalidated configuration source.
+
 ## Common jobs
+
+To reproduce the successful local `resume_denemesi` architecture and training
+run, keep all four HDF5 files in the same validated SH20 -> SH200 suite:
+
+```bash
+SUITE_DIR="$LUNARIS_DATA_DIR/datasets/second_run_100_1000km_10Mp_20260520_203208"
+hpc/submit.sh scenario --array=0-0 --time=48:00:00 -- \
+    hpc/scenarios/st_lrps_resume_denemesi_reproduction.jsonl \
+    --train-data "$SUITE_DIR/train_hybrid_10M.h5" \
+    --val-data   "$SUITE_DIR/val_uniform_2M.h5" \
+    --test-data  "$SUITE_DIR/test_uniform_2M.h5" \
+    --ood-data   "$SUITE_DIR/ood_combined_1000k.h5"
+```
+
+Resume after a walltime stop by using the same command with `--resume` after
+the JSONL path. For persistent site defaults, set `LUNARIS_CPUS_PER_TASK`,
+`LUNARIS_MEM`, `LUNARIS_TIME`, and `LUNARIS_SIGNAL` in `hpc/cluster.env`.
+Explicit options passed to `hpc/submit.sh` override those defaults.
 
 ```bash
 # Paper ablation A0–A6 as a 7-task array:

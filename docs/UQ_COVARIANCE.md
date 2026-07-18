@@ -90,6 +90,14 @@ projection to the benchmark implementation so the two cannot drift.
 - **Linear (STM) cross-check** — `lunaris.analysis.ensemble.linear_check`
   builds state-transition matrices by central finite differences of any
   propagation callable and compares `Φ P₀ Φᵀ` with the ensemble covariance.
+  Relative finite-difference mode uses blockwise characteristic position and
+  velocity scales, avoiding coordinate-axis dependence when a state component
+  is zero. The optional epsilon-halving check spends twelve additional
+  propagations to verify that the selected step is in the linear regime.
+  Symplecticity diagnostics are evaluated only for a complete smooth
+  Hamiltonian force stack and only after `(r,v)` has been nondimensionalized
+  with explicit `[R,R,R,V,V,V]` scales; raw SI Frobenius norms are not reported
+  as physical quality metrics.
   For exactly linear dynamics the two agree to sampling error; for a short
   point-mass arc with small dispersion they agree within the sampling +
   mild-nonlinearity budget (both are locked as tests). On real force models,

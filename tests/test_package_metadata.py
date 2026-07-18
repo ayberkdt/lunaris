@@ -46,9 +46,8 @@ def test_lunaris_api_facade_exports_stable_names() -> None:
     assert api.BatchPropagationEngine.__name__ == "BatchPropagationEngine"
 
 
-def test_distribution_status_classifier_matches_beta_readme() -> None:
+def test_distribution_metadata_avoids_redundant_maturity_labels() -> None:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
 
-    assert "Development Status :: 4 - Beta" in text
-    assert "Development Status :: 3 - Alpha" not in text
+    assert "Development Status ::" not in text

@@ -79,9 +79,14 @@ Numerical engine and configuration.
   live in sibling modules. The `lunaris.core.propagation`
   package facade explicitly exposes `propagate`, `PropagationResult`,
   `EventOutcome`, `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`,
+  `ImpulsiveManeuver`, `ManeuverPlan`,
   `build_events`, `make_time_grid`, `resolve_time_grid_plan`,
   `resolve_step_size_policy`, `resolve_integration_plan`, and
   `event_outcome_from_solver_events`.
+  Maneuver propagation is segmented at strictly ordered burn times. Each burn
+  has one output row with the post-burn state; terminal events take precedence
+  over a later burn. Checkpoint/resume and segmented telemetry fail closed until
+  their artifact schemas can encode a burn cursor/discontinuity.
 - The temporary `core/propagator.py` compatibility alias has been **removed**;
   import `lunaris.core.propagation.propagator` (or `lunaris.core.propagation`)
   directly. See `docs/refactor_notes.md` for the removal rationale.

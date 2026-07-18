@@ -377,6 +377,76 @@ class TestLauncherResume:
         apply_model_preset(production_cfg)
         assert compute_architecture_signature(production_cfg) == compute_architecture_signature(default_cfg)
 
+    def test_resume_denemesi_reproduction_scenario_pins_historical_model(self):
+        """The reproduction recipe must not drift with TrainConfig defaults."""
+        path = (
+            _REPO_ROOT
+            / "hpc"
+            / "scenarios"
+            / "st_lrps_resume_denemesi_reproduction.jsonl"
+        )
+        scenarios = launcher.load_scenarios(path)
+        assert len(scenarios) == 1
+        scenario = scenarios[0]
+        launcher.validate_scenario(scenario)
+
+        flags = scenario["flags"]
+
+        def value(name: str) -> str:
+            return flags[flags.index(name) + 1]
+
+        assert value("--runtime-model-kind") == "potential_autograd"
+        assert value("--model-preset") == "recommended_physical_radial_decay"
+        assert value("--hidden") == "512"
+        assert value("--depth") == "5"
+        assert value("--n-bands") == "2"
+        assert value("--epochs") == "400"
+        assert value("--batch-size") == "8192"
+        assert value("--lr") == "7e-5"
+        assert value("--fit-rows") == "2000000"
+        assert value("--direction-loss-ramp-epochs") == "70"
+        assert value("--n-hutchinson-samples") == "2"
+        assert "--deterministic" in flags
+        assert "--no-amp" in flags
+
+        from lunaris.surrogate.st_lrps.networks.models import build_model_from_config
+        from lunaris.surrogate.st_lrps.training.config import TrainConfig, apply_model_preset
+
+        cfg = TrainConfig(
+            data="train.h5",
+            out="run-reproduction",
+            hidden=int(value("--hidden")),
+            depth=int(value("--depth")),
+            activation=value("--activation"),
+            dropout=float(value("--dropout")),
+            w0_first=float(value("--w0-first")),
+            w0_hidden=float(value("--w0-hidden")),
+            model_preset=value("--model-preset"),
+            runtime_model_kind=value("--runtime-model-kind"),
+            use_residual_blocks=True,
+            n_bands=int(value("--n-bands")),
+            multiscale_mode=value("--multiscale-mode"),
+            degree_min=20,
+            degree_max=200,
+            x_scale_m=2_738_000.0,
+            resolved_r_ref_m=1_738_000.0,
+        )
+        apply_model_preset(cfg)
+        model = build_model_from_config(cfg)
+        assert sum(p.numel() for p in model.parameters()) == 1_848_321
+        assert model.backbone.w0_bands == pytest.approx([13.7, 42.4])
+
+    def test_submit_helper_supports_cluster_resource_overrides(self):
+        text = (_REPO_ROOT / "hpc" / "submit.sh").read_text(encoding="utf-8")
+        for variable, flag in (
+            ("LUNARIS_CPUS_PER_TASK", "--cpus-per-task="),
+            ("LUNARIS_MEM", "--mem="),
+            ("LUNARIS_TIME", "--time="),
+            ("LUNARIS_SIGNAL", "--signal="),
+        ):
+            assert variable in text
+            assert flag in text
+
     def test_fresh_collision_error_mentions_resume(self, tmp_path, capsys, monkeypatch):
         scenario_file = _write_scenario_file(tmp_path)
         out_root = tmp_path / "training"

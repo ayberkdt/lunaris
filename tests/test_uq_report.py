@@ -19,7 +19,10 @@ torch = pytest.importorskip("torch")
 from lunaris.analysis.ensemble.linear_check import (
     compare_covariance_histories,
     finite_difference_stm,
+    finite_difference_stm_with_quality,
     linear_covariance_history,
+    resolve_fd_steps,
+    stm_quality,
 )
 from lunaris.analysis.ensemble.statistics import (
     compute_ensemble_statistics,
@@ -271,6 +274,49 @@ def test_fd_stm_exact_for_linear_dynamics():
         # atol budget: differencing ~1.9e6-m positions leaves ~4e-10 m round-off,
         # amplified by the 1e-3 m/s velocity step to ~1e-7 in the STM entries.
         np.testing.assert_allclose(Phi[k], expected, rtol=0.0, atol=1e-6)
+
+
+def test_relative_fd_steps_are_blockwise_and_rotation_neutral():
+    y0 = np.array([2.0e6, 0.0, 0.0, 0.0, 1.6e3, 0.0])
+    steps = resolve_fd_steps(y0, eps_mode="relative", rel_step=1.0e-6)
+    np.testing.assert_array_equal(steps[:3], np.full(3, 2.0))
+    np.testing.assert_allclose(steps[3:], np.full(3, 1.6e-3), rtol=1e-15, atol=0.0)
+
+
+def test_stm_quality_requires_dimensionless_scales_and_handles_not_applicable():
+    Phi = finite_difference_stm(_propagate_drift, _circular_state())
+    not_applicable = stm_quality(Phi, symplectic_applicable=False)
+    assert not_applicable["symplecticity_status"] == "not_applicable"
+    assert not_applicable["symplecticity_error"] is None
+    with pytest.raises(ValueError, match="state_scales"):
+        stm_quality(Phi, symplectic_applicable=True)
+
+
+def test_two_body_fd_stm_quality_and_eps_halving_are_reported():
+    y0 = _circular_state()
+    Phi, quality = finite_difference_stm_with_quality(
+        _propagate_two_body,
+        y0,
+        eps_mode="relative",
+        rel_step=1.0e-6,
+        symplectic_applicable=True,
+        check_eps_halving=True,
+    )
+    assert Phi.shape[1:] == (6, 6)
+    assert quality["symplecticity_status"] == "evaluated_dimensionless"
+    assert quality["symplecticity_error"] < 1.0e-4
+    assert quality["det_deviation"] < 1.0e-4
+    assert quality["eps_halving_rel_diff"] < 1.0e-4
+
+
+def test_covariance_comparison_fans_in_stm_quality():
+    P = np.repeat(np.eye(6)[None, :, :], 2, axis=0)
+    report = compare_covariance_histories(
+        P,
+        P,
+        stm_quality_metrics={"symplecticity_status": "not_applicable"},
+    )
+    assert report["stm_quality"]["symplecticity_status"] == "not_applicable"
 
 
 def test_linear_vs_batch_agree_for_linear_dynamics():

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Thin submit helper. Picks the right hpc/*.sbatch template for a named job and
-# injects the scheduler placement (partition / account / qos / gres) from
+# injects scheduler placement and optional resource overrides from
 # hpc/cluster.env, so you never have to edit account or partition into each
 # .sbatch file by hand.
 #
@@ -61,7 +61,7 @@ for arg in "$@"; do
   if [[ ${seen_sep} -eq 0 ]]; then sbatch_extra+=("${arg}"); else prog_args+=("${arg}"); fi
 done
 
-# Load cluster.env for the scheduler placement values.
+# Load cluster.env for scheduler placement and resource values.
 if [[ -f "${_HPC_DIR}/cluster.env" ]]; then
   set -a; source "${_HPC_DIR}/cluster.env"; set +a
 fi
@@ -71,6 +71,10 @@ sbatch_flags=()
 [[ -n "${LUNARIS_ACCOUNT:-}"   ]] && sbatch_flags+=("--account=${LUNARIS_ACCOUNT}")
 [[ -n "${LUNARIS_QOS:-}"       ]] && sbatch_flags+=("--qos=${LUNARIS_QOS}")
 [[ -n "${LUNARIS_GRES:-}"      ]] && sbatch_flags+=("--gres=${LUNARIS_GRES}")
+[[ -n "${LUNARIS_CPUS_PER_TASK:-}" ]] && sbatch_flags+=("--cpus-per-task=${LUNARIS_CPUS_PER_TASK}")
+[[ -n "${LUNARIS_MEM:-}"            ]] && sbatch_flags+=("--mem=${LUNARIS_MEM}")
+[[ -n "${LUNARIS_TIME:-}"           ]] && sbatch_flags+=("--time=${LUNARIS_TIME}")
+[[ -n "${LUNARIS_SIGNAL:-}"         ]] && sbatch_flags+=("--signal=${LUNARIS_SIGNAL}")
 # User-supplied sbatch flags come last so they can override cluster.env defaults.
 # Guard empty-array expansion for bash < 4.4 under `set -u`.
 sbatch_flags+=(${sbatch_extra[@]+"${sbatch_extra[@]}"})

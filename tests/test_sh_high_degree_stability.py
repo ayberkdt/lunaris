@@ -10,7 +10,7 @@ jggrx_1800f model (2026-07-14, 30 km altitude, 12 latitudes):
 
 * runtime kernel vs batch potential kernel:   worst rel 3.6e-14
 * analytic accel vs central-diff of V (h=0.5): worst rel 6.3e-08
-* exact pole: finite, tangential components exactly zero.
+* exact pole: finite analytic m=1 transverse limit, continuous from both sides.
 
 The forward-column recurrence with the stable-m order cut is valid for
 N <= ~1900 in float64 (Holmes & Featherstone 2002); at N = 1800 the smallest
@@ -125,16 +125,12 @@ def test_deg1800_exact_pole_matches_limit(model_1800: GravityModel) -> None:
     """The exact pole must be finite and continuous with the lat -> 90 limit."""
     a_pole = model_1800.accel_fixed(np.array([0.0, 0.0, R_EVAL]))
     assert np.isfinite(a_pole).all()
-    # At the exact pole the longitude is degenerate; the kernel's pole branch
-    # must return a purely axial acceleration.
-    assert a_pole[0] == pytest.approx(0.0, abs=1e-15)
-    assert a_pole[1] == pytest.approx(0.0, abs=1e-15)
-
-    a_near = model_1800.accel_fixed(_point(89.9999, lon_deg=0.0))
-    # The axial component is continuous through the pole (the small tangential
-    # part at 89.9999 deg is real field, not a numerical artifact).
-    rel_axial = abs(a_pole[2] - a_near[2]) / abs(a_near[2])
-    assert rel_axial < 1e-6, f"pole axial discontinuity rel={rel_axial:.3e}"
+    # The m=1 tesseral sector has a finite, generally nonzero transverse
+    # gradient on the axis.  Approach along longitude zero closely enough to
+    # resolve the continuous vector limit, not merely its axial component.
+    a_near = model_1800.accel_fixed(_point(89.9999999, lon_deg=0.0))
+    rel = np.linalg.norm(a_pole - a_near) / np.linalg.norm(a_near)
+    assert rel < 3e-9, f"north-pole vector discontinuity rel={rel:.3e}"
 
 
 def test_deg1800_exact_south_pole_matches_limit(model_1800: GravityModel) -> None:
@@ -145,12 +141,37 @@ def test_deg1800_exact_south_pole_matches_limit(model_1800: GravityModel) -> Non
     """
     a_pole = model_1800.accel_fixed(np.array([0.0, 0.0, -R_EVAL]))
     assert np.isfinite(a_pole).all()
-    assert a_pole[0] == pytest.approx(0.0, abs=1e-15)
-    assert a_pole[1] == pytest.approx(0.0, abs=1e-15)
+    a_near = model_1800.accel_fixed(_point(-89.9999999, lon_deg=0.0))
+    rel = np.linalg.norm(a_pole - a_near) / np.linalg.norm(a_near)
+    assert rel < 3e-9, f"south-pole vector discontinuity rel={rel:.3e}"
 
-    a_near = model_1800.accel_fixed(_point(-89.9999, lon_deg=0.0))
-    rel_axial = abs(a_pole[2] - a_near[2]) / abs(a_near[2])
-    assert rel_axial < 1e-6, f"south-pole axial discontinuity rel={rel_axial:.3e}"
+
+@pytest.mark.parametrize("z_sign", (1.0, -1.0))
+def test_deg1800_exact_pole_runtime_batch_and_potential_gradient_agree(
+    model_1800: GravityModel, z_sign: float,
+) -> None:
+    """The analytic m=1 pole limit is shared and equals +grad(V)."""
+    c = np.asarray(model_1800.c_coeffs)
+    s = np.asarray(model_1800.s_coeffs)
+    p = np.array([0.0, 0.0, z_sign * R_EVAL])
+    a_run = model_1800.accel_fixed(p)
+    _, a_batch = sh_potential_accel_fixed(p[None, :], c, s, MU, R_REF, DEG, -1)
+    np.testing.assert_allclose(a_batch[0], a_run, rtol=2e-13, atol=1e-14)
+
+    # The transverse signal is only O(1e-5 m/s^2) atop an O(1e6 m^2/s^2)
+    # potential.  A 5 m step keeps high-degree truncation negligible while
+    # lifting the central-difference numerator safely above float64 roundoff.
+    h = 5.0
+    fd_xy = np.empty(2)
+    for axis in range(2):
+        dp = p.copy()
+        dm = p.copy()
+        dp[axis] += h
+        dm[axis] -= h
+        vp, _ = sh_potential_accel_fixed(dp[None, :], c, s, MU, R_REF, DEG, -1)
+        vm, _ = sh_potential_accel_fixed(dm[None, :], c, s, MU, R_REF, DEG, -1)
+        fd_xy[axis] = (vp[0] - vm[0]) / (2.0 * h)
+    np.testing.assert_allclose(a_run[:2], fd_xy, rtol=2e-4, atol=2e-9)
 
 
 def test_deg1800_kernels_agree_across_longitudes(model_1800: GravityModel) -> None:

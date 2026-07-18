@@ -1004,6 +1004,36 @@ def build_orbit_analysis(
                 note="Run diagnostics contain a numerical/backend warning; see Numerical Health.",
             )
         )
+    raw_maneuvers = diagnostics.get("maneuvers_applied", [])
+    maneuver_records = [item for item in raw_maneuvers if isinstance(item, Mapping)] if isinstance(raw_maneuvers, list | tuple) else []
+    for number, record in enumerate(maneuver_records, start=1):
+        burn_t = _finite_float(record.get("t_burn_s"))
+        if burn_t is None:
+            continue
+        index = int(np.argmin(np.abs(t_s - burn_t)))
+        dv_norm = _finite_float(record.get("dv_norm_mps"))
+        mass_before = _finite_float(record.get("mass_before_kg"))
+        mass_after = _finite_float(record.get("mass_after_kg"))
+        note_parts = [
+            f"frame={record.get('frame', 'unavailable')}",
+            f"delta-v={dv_norm:.6g} m/s" if dv_norm is not None else "delta-v unavailable",
+        ]
+        if mass_before is not None and mass_after is not None:
+            note_parts.append(f"propellant={mass_before - mass_after:.6g} kg")
+        events.append(
+            _event(
+                event_id=f"maneuver_{number:04d}",
+                event_type="maneuver",
+                index=index,
+                t_s=t_s,
+                state=state,
+                altitude_m=altitude,
+                start_epoch=start_epoch,
+                frame=frame,
+                source="propagation diagnostics (post-burn state)",
+                note="; ".join(note_parts),
+            )
+        )
     events.append(
         _event(
             event_id="terminal",
@@ -1034,9 +1064,10 @@ def build_orbit_analysis(
     orbit_count = duration_s / period_s if period_s is not None and period_s > 0.0 else None
 
     flags = _active_flags(config)
-    noncentral_active = any(flags.values())
+    maneuvers_active = bool(maneuver_records)
+    noncentral_active = any(flags.values()) or maneuvers_active
     conservation_note = (
-        "Diagnostic only - not expected to be conserved under the active force model."
+        "Diagnostic only - not expected to be conserved under the active force model or impulsive maneuvers."
         if noncentral_active
         else "Expected invariant for the active point-mass conservative force model."
     )
@@ -1087,12 +1118,25 @@ def build_orbit_analysis(
         "Full-history least-squares slope. Osculating periodic terms are not removed; "
         "interpret as a compact trend indicator, not a force attribution."
     )
+    maneuver_delta_v = sum(
+        value for item in maneuver_records
+        if (value := _finite_float(item.get("dv_norm_mps"))) is not None
+    )
+    maneuver_propellant = sum(
+        max(0.0, before - after)
+        for item in maneuver_records
+        if (before := _finite_float(item.get("mass_before_kg"))) is not None
+        and (after := _finite_float(item.get("mass_after_kg"))) is not None
+    )
 
     metrics: list[MetricValue] = [
         _metric("run.status", "Run status", termination_reason, None, source="PropagationResult", kind="measured", status=termination_status),
         _metric("mission.start_epoch", "Mission start epoch", start_epoch, None, source="TimeConfig.start_date", kind="configuration", time_system=time_system, unavailable_reason="Start epoch was not configured."),
         _metric("mission.duration", "Propagation duration", duration_s, "s", source="full-resolution time history", kind="measured", time_system="simulation elapsed time"),
         _metric("mission.output_samples", "Output sample count", int(t_s.size), "1", source="PropagationResult.t", kind="measured"),
+        _metric("mission.maneuver.count", "Applied maneuver count", len(maneuver_records), "1", source="propagation diagnostics", kind="measured"),
+        _metric("mission.maneuver.total_delta_v", "Total commanded delta-v", maneuver_delta_v, "m/s", source="propagation diagnostics", kind="measured"),
+        _metric("mission.maneuver.propellant_used", "Propellant used", maneuver_propellant, "kg", source="ideal rocket equation burn records", kind="measured"),
         _metric("orbit.altitude.minimum", "Minimum altitude", float(np.min(altitude)), "m", source="full-resolution state history", frame=frame),
         _metric("orbit.altitude.maximum", "Maximum altitude", float(np.max(altitude)), "m", source="full-resolution state history", frame=frame),
         _metric("orbit.altitude.initial", "Initial altitude", float(altitude[0]), "m", source="full-resolution state history", frame=frame),

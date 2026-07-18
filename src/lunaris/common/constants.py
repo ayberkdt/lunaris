@@ -58,6 +58,10 @@ SIGMA_SB: float = 5.670_374_419e-8
 # Newtonian gravitational constant [m^3 kg^-1 s^-2] (CODATA 2018)
 G: float = 6.6743e-11
 
+# Conventional standard acceleration of gravity [m/s^2] (exact by definition).
+# Used by the ideal rocket equation for impulsive maneuver mass bookkeeping.
+STANDARD_GRAVITY: float = 9.80665
+
 
 # =============================================================================
 # 2.                            TIME CONSTANTS
@@ -174,6 +178,7 @@ CONSTANT_SOURCES: Final[Mapping[str, str]] = MappingProxyType({
     "C_LIGHT": "SI definition (exact)",
     "SIGMA_SB": "SI/CODATA exact value after 2019 SI redefinition",
     "G": "CODATA 2018",
+    "STANDARD_GRAVITY": "Conventional standard gravity (exact): 9.80665 m/s^2",
 
     # --- Time / epochs (conventions) ---
     "DAY_S": "SI day = 86400 s (definition)",
@@ -211,6 +216,7 @@ __all__ = (
     "C_LIGHT",                   # Speed of light in vacuum [m/s]
     "SIGMA_SB",                   # Stefan-Boltzmann constant [W m^-2 K^-4]
     "G",                         # Newtonian constant of gravitation [m^3/(kg*s^2)]
+    "STANDARD_GRAVITY",          # Conventional standard gravity [m/s^2]
 
     # 2. Time & Epoch Standards
     "DAY_S",                     # Seconds in a Julian day [s]

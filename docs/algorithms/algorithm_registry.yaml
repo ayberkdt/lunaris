@@ -55,9 +55,10 @@ entries:
         C. H. Acton, "Ancillary data services of NASA's Navigation and Ancillary
         Information Facility", Planetary and Space Science 44(1):65-70, 1996.
         DOI 10.1016/0032-0633(95)00107-7 verified via ScienceDirect/ADS. Lunaris
-        samples SPICE (via spiceypy) onto uniform-grid tables of third-body
-        positions and lunar-orientation quaternions; the underlying ephemeris
-        data product is DE440 (see LUNARIS-DATA-EPH-001).
+        samples SPICE ``spkezr`` states (km and km/s, converted to SI) onto
+        uniform-grid tables of third-body positions/velocities and
+        lunar-orientation quaternions; the underlying ephemeris data product is
+        DE440 (see LUNARIS-DATA-EPH-001).
     symbols:
       - path: src/lunaris/physics/ephemeris.py
         symbol: build_tables
@@ -68,11 +69,14 @@ entries:
       - path: src/lunaris/physics/ephemeris.py
         symbol: EphemerisManager
         role: api_entry_point
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: load_ephemeris_tables_npz
+        role: api_entry_point
     mathematical_contract:
       inputs: duration, output step, and loaded SPICE kernels
       outputs: >-
-        uniform-grid tables of body positions (m) and unit orientation
-        quaternions, plus GM lookups
+        uniform-grid tables of body positions (m), velocities (m/s), and unit
+        orientation quaternions, plus GM lookups
       exact_or_approximate: sampled_from_reference_ephemeris
       preserved_properties:
         - values match SPICE at grid nodes
@@ -83,13 +87,13 @@ entries:
     assumptions:
       - required SPICE kernels (incl. DE440) are loaded
     limitations:
-      - off-node values require interpolation (see LUNARIS-ALG-INTP-001, LUNARIS-ALG-FRM-001)
+      - off-node values require interpolation (see LUNARIS-ALG-INTP-002, LUNARIS-ALG-FRM-001)
     validation:
       - tests/test_ephemeris.py
       - tests/test_main_ephemeris_policy.py
     see_also:
       - LUNARIS-DATA-EPH-001
-      - LUNARIS-ALG-INTP-001
+      - LUNARIS-ALG-INTP-002
       - LUNARIS-ALG-FRM-001
     notes: ""
 
@@ -908,8 +912,79 @@ entries:
     see_also:
       - LUNARIS-ALG-EPH-001
     notes: >-
-      GPU/CPU parity: the torch ephemeris path was upgraded from linear to
-      Catmull-Rom to match the CPU kernel.
+      Retained as the explicit compatibility path for legacy in-memory
+      position-only providers. Canonical schema-v2 ephemeris artifacts use
+      LUNARIS-ALG-INTP-002.
+
+  - id: LUNARIS-ALG-INTP-002
+    slug: cubic_hermite_ephemeris_state_interpolation
+    canonical_name: Cubic Hermite interpolation of ephemeris position and velocity states
+    category: interpolation
+    domain: INTP
+    status: active
+    added: "2026-07-18"
+    implementation_class: exact
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Hermite1878Interpolation
+    primary_reference:
+      type: article
+      citation_key: Hermite1878Interpolation
+      identifier_kind: doi
+      doi: 10.1515/crelle-1878-18788405
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://doi.org/10.1515/crelle-1878-18788405
+      edition: null
+      chapter: null
+      section: interpolation formula
+      equations: []
+      pages: "70-79"
+      verification_notes: >-
+        Charles Hermite, "Sur la formule d'interpolation de Lagrange", Journal
+        fÃ¼r die reine und angewandte Mathematik 84:70-79, 1878; DOI
+        10.1515/crelle-1878-18788405 verified. Lunaris uses the standard cubic
+        endpoint-value/endpoint-derivative Hermite basis on each uniform SPICE
+        state interval.
+    symbols:
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: interp_vec3_hermite
+        role: cpu_implementation
+      - path: src/lunaris/core/torch_third_body.py
+        symbol: interp_vec3_hermite_torch
+        role: torch_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _interp3_cuda
+        role: cuda_implementation
+    mathematical_contract:
+      inputs: uniform sample step, position table (m), and matched velocity table (m/s)
+      outputs: interpolated position and its analytic time derivative
+      exact_or_approximate: exact_piecewise_cubic_hermite
+      preserved_properties:
+        - exact position and velocity at every table node
+        - C1 continuity across table nodes
+        - exact reproduction of cubic position histories
+    lunaris_modifications:
+      - endpoint time clamping to the covered SPICE interval
+      - schema-v2 artifact enforcement with legacy archives rejected
+    assumptions:
+      - position and velocity use the same frame, observer, aberration correction, and epochs
+      - uniformly spaced samples in SI units
+    limitations:
+      - piecewise cubic interpolation is C1 but not generally C2
+    validation:
+      - tests/test_ephemeris.py
+      - tests/test_ephemeris_interpolation.py
+      - tests/test_numba_ephemeris_hermite.py
+      - tests/test_torch_third_body.py
+    see_also:
+      - LUNARIS-ALG-EPH-001
+      - LUNARIS-ALG-INTP-001
+    notes: >-
+      CPU, Numba CUDA, and Torch paths consume the same position+velocity table
+      contract; the Catmull-Rom route is compatibility-only.
 
   - id: LUNARIS-ALG-ML-001
     slug: siren_sinusoidal_representation_network
@@ -2543,6 +2618,79 @@ entries:
     notes: >-
       The smoothstep polynomial 3t^2-2t^3 is a standard cubic-Hermite S-curve;
       the degree-switching schedule itself is a Lunaris-specific heuristic.
+
+  - id: LUNARIS-HEUR-SH-003
+    slug: spectrum_weighted_gravity_degree_recommendation
+    canonical_name: >-
+      Spectrum-weighted spherical-harmonic truncation-degree recommendation
+    category: heuristic
+    domain: SH
+    status: active
+    added: "2026-07-18"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Lemoine2014GRGM900C
+    primary_reference:
+      type: article
+      citation_key: Lemoine2014GRGM900C
+      identifier_kind: doi
+      doi: 10.1002/2014GL060027
+      isbn: null
+      report_number: GSFC-E-DAA-TN31860
+      standard_number: null
+      official_url: https://ntrs.nasa.gov/citations/20160005754
+      edition: null
+      chapter: null
+      section: Gravity-coefficient power spectrum and high-degree power-law constraint
+      equations: []
+      pages: "3382-3389"
+      verification_notes: >-
+        Lemoine et al. (2014), DOI 10.1002/2014GL060027, was verified through
+        NASA NTRS record 20160005754. The paper reports the measured lunar
+        gravity power spectrum and an explicit 3.6e-4/l^2 constraint above
+        degree 600. Lunaris follows the spectrum-weighting construction, but
+        its exponent p=1.7 is an empirical fit to the bundled JGGRX 1800F
+        coefficients rather than a constant asserted by that paper.
+    symbols:
+      - path: src/lunaris/common/math_utils.py
+        symbol: recommended_sh_degree
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/diagnostics.py
+        symbol: build_propagation_diagnostics
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        altitude, body reference radius, maximum degree, a fitted degree-power
+        exponent, and an admissible discarded RMS tail fraction
+      outputs: >-
+        smallest degree whose modeled power-law acceleration tail is below the
+        requested fraction of total non-spherical acceleration power
+      exact_or_approximate: model_calibrated_spectrum_heuristic
+      preserved_properties:
+        - recommendation is bounded by the available model degree
+        - tighter tail fractions never reduce the recommended degree
+        - disabling spectrum weighting preserves the attenuation-only behavior
+    lunaris_modifications:
+      - p=1.7 is fitted to JGGRX 1800F rather than copied from a terrestrial Kaula rule
+      - the cumulative RMS acceleration tail, not a single coefficient, controls the threshold
+    assumptions:
+      - the active lunar coefficient spectrum is represented adequately by the fitted power law
+      - the requested altitude is outside the reference radius
+    limitations:
+      - configuration recommendation only; not a guaranteed trajectory-error bound
+      - the p=1.7 default is JGGRX-specific and must not be promoted as universal lunar physics
+      - surrogate representation ceilings require a separate residual-band comparison
+    validation:
+      - tests/test_math_utils.py
+      - tests/test_band_share_analysis.py
+    see_also:
+      - LUNARIS-ALG-SH-001
+      - LUNARIS-ALG-SH-002
+    notes: >-
+      Primary-source verification covers the spectrum/power-law method. The
+      fitted exponent and acceptance threshold are explicitly project-specific.
 
   - id: LUNARIS-MODEL-J2E-001
     slug: differential_earth_j2_oblateness

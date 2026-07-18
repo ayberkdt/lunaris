@@ -533,8 +533,25 @@ def _apply_common_aliases(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
+def _long_duration_precision_warning(args: argparse.Namespace) -> str | None:
+    """Label long-duration fp32 benchmarks as throughput/exploratory evidence."""
+    duration_days = float(getattr(args, "duration_days", 0.0) or 0.0)
+    dtype = str(getattr(args, "torch_dtype", "")).strip().lower()
+    if duration_days >= 1.0 and dtype in {"float32", "fp32", "single"}:
+        return (
+            "Long-duration GPU propagation requested in float32. Roundoff and fixed-step "
+            "error may dominate model differences; this run is throughput/exploratory "
+            "evidence only and must not support a trajectory-accuracy claim. Use float64 "
+            "and paper-safe validation for accuracy evidence."
+        )
+    return None
+
+
 def run_from_args(args: argparse.Namespace) -> int:
     args = _apply_common_aliases(args)
+    args.precision_scope_warning = _long_duration_precision_warning(args)
+    if args.precision_scope_warning:
+        print(f"WARNING: {args.precision_scope_warning}", flush=True)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -21,7 +21,9 @@ or:
 
 from __future__ import annotations
 
+import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -44,9 +46,12 @@ from lunaris.physics.ephemeris import (
     _build_time_grid,
     _capture_kernel_provenance,
     _classify_kernel,
-    _try_fill_spkpos_table_m,
+    _try_fill_spkezr_state_tables_si,
     get_ephem_state,
+    get_ephem_state_with_velocity,
     interp_vec3_derivative_safe,
+    load_ephemeris_tables_npz,
+    save_ephemeris_tables_npz,
 )
 
 
@@ -93,13 +98,28 @@ def _make_tables(
     r_earth_tab_m: np.ndarray,
     q_i2f_tab: np.ndarray,
 ) -> EphemerisTables:
+    sun = np.asarray(r_sun_tab_m, dtype=np.float64)
+    earth = np.asarray(r_earth_tab_m, dtype=np.float64)
+    edge_order = 2 if sun.shape[0] >= 3 else 1
+    sun_v = (
+        np.gradient(sun, float(dt_s), axis=0, edge_order=edge_order)
+        if sun.shape[0] > 1
+        else np.zeros_like(sun)
+    )
+    earth_v = (
+        np.gradient(earth, float(dt_s), axis=0, edge_order=edge_order)
+        if earth.shape[0] > 1
+        else np.zeros_like(earth)
+    )
     return EphemerisTables(
         dt_s=float(dt_s),
         t_tab_s=np.asarray(t_tab_s, dtype=np.float64),
         et0=0.0,
         q_i2f_tab=np.asarray(q_i2f_tab, dtype=np.float64),
-        r_earth_tab_m=np.asarray(r_earth_tab_m, dtype=np.float64),
-        r_sun_tab_m=np.asarray(r_sun_tab_m, dtype=np.float64),
+        r_earth_tab_m=earth,
+        r_sun_tab_m=sun,
+        v_earth_tab_m_s=earth_v,
+        v_sun_tab_m_s=sun_v,
         mu_earth_m3s2=3.986004418e14,
         mu_sun_m3s2=1.32712440018e20,
         inertial_frame="MOCK_INERTIAL",
@@ -118,12 +138,13 @@ def test_build_time_grid_covers_noninteger_duration() -> None:
 
 
 def test_vectorized_spice_probe_reports_the_fallback_cause() -> None:
-    def failing_spkpos(*_args, **_kwargs):
+    def failing_spkezr(*_args, **_kwargs):
         raise RuntimeError("vectorized ET arrays unsupported")
 
-    ok, reason = _try_fill_spkpos_table_m(
+    ok, reason = _try_fill_spkezr_state_tables_si(
         np.empty((2, 3), dtype=np.float64),
-        spkpos=failing_spkpos,
+        np.empty((2, 3), dtype=np.float64),
+        spkezr=failing_spkezr,
         target="EARTH",
         et_tab=np.asarray([0.0, 60.0]),
         frame="J2000",
@@ -195,6 +216,11 @@ def test_ephemeris_vec3_derivative_safe_linear_and_degenerate() -> None:
     one_row = np.array([[5.0, 6.0, 7.0]], dtype=np.float64)
     got_zero = np.array(interp_vec3_derivative_safe(0.0, dt_s, one_row), dtype=np.float64)
     np.testing.assert_allclose(got_zero, np.zeros(3), rtol=0.0, atol=0.0)
+    one_velocity = np.array([[4.0, 5.0, 6.0]], dtype=np.float64)
+    np.testing.assert_allclose(
+        interp_vec3_derivative_safe(0.0, dt_s, one_row, one_velocity),
+        one_velocity[0],
+    )
 
 
 @pytest.mark.parametrize("tq", [-123.0, 0.0, 1.0, 999.0])
@@ -283,12 +309,15 @@ def test_ephemeris_case_d_high_level_vs_kernel_random_regression() -> None:
         quat_h = mgrD.get_inertial_to_fixed_rotation(tq)
 
         # Kernel returns floats (sx,sy,sz, ex,ey,ez, qw,qx,qy,qz)
-        sx, sy, sz, ex, ey, ez, qw, qx, qy, qz = get_ephem_state(
+        sx, sy, sz, ex, ey, ez, qw, qx, qy, qz = get_ephem_state_with_velocity(
             float(tq),
             float(dtD),
             r_sun_D,
             r_earth_D,
+            tablesD.v_sun_tab_m_s,
+            tablesD.v_earth_tab_m_s,
             qD,
+            True,
         )
         sun_k = np.array([sx, sy, sz], dtype=np.float64)
         earth_k = np.array([ex, ey, ez], dtype=np.float64)
@@ -312,6 +341,8 @@ def _valid_table_kwargs(n: int = 4, dt: float = 60.0) -> dict:
         "q_i2f_tab": q,
         "r_earth_tab_m": np.ones((n, 3), dtype=np.float64),
         "r_sun_tab_m": np.ones((n, 3), dtype=np.float64),
+        "v_earth_tab_m_s": np.zeros((n, 3), dtype=np.float64),
+        "v_sun_tab_m_s": np.zeros((n, 3), dtype=np.float64),
         "mu_earth_m3s2": 3.986004418e14,
         "mu_sun_m3s2": 1.32712440018e20,
     }
@@ -319,6 +350,42 @@ def _valid_table_kwargs(n: int = 4, dt: float = 60.0) -> dict:
 
 def test_tables_valid_construction_passes():
     EphemerisTables(**_valid_table_kwargs())
+
+
+def test_schema_v2_npz_round_trip_and_legacy_fail_closed(tmp_path):
+    tables = EphemerisTables(**_valid_table_kwargs())
+    path = save_ephemeris_tables_npz(tmp_path / "ephem", tables)
+    loaded = load_ephemeris_tables_npz(path)
+    assert loaded.schema_version == 2
+    assert loaded.interpolation_kind == "cubic_hermite_position_velocity"
+    np.testing.assert_array_equal(loaded.r_sun_tab_m, tables.r_sun_tab_m)
+    np.testing.assert_array_equal(loaded.v_sun_tab_m_s, tables.v_sun_tab_m_s)
+
+    legacy = tmp_path / "legacy.npz"
+    np.savez_compressed(
+        legacy,
+        schema_version=np.asarray(1),
+        dt_s=np.asarray(60.0),
+        t_tab_s=np.arange(2) * 60.0,
+    )
+    with pytest.raises(ValueError, match="not schema v2"):
+        load_ephemeris_tables_npz(legacy)
+
+
+def test_tracked_ephemeris_evidence_has_no_workstation_absolute_paths():
+    evidence_path = (
+        _REPO_ROOT
+        / "validation"
+        / "ephemeris"
+        / "interpolation_validation_2026_07_18.json"
+    )
+    text = evidence_path.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert re.search(r"(?i)[a-z]:[\\/]", text) is None
+    assert not str(payload["configuration"]["kernel_dir_hint"]).startswith(("/", "\\"))
+    for record in payload["ephemeris_contract"]["kernel_provenance"]:
+        assert "path" not in record
+        assert not str(record["path_hint"]).startswith(("/", "\\"))
 
 
 # -----------------------------------------------------------------------------

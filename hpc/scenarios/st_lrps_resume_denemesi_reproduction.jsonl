@@ -1,0 +1,26 @@
+# Reproduction of the successful local `resume_denemesi` model (May 2026).
+#
+# Source artifact contract:
+#   architecture: 512 x 5 residual SIREN, physical radial-decay input,
+#                 2 harmonic bands [13.7, 42.4], 1,848,321 parameters
+#   target:       potential_autograd residual, SH20 baseline -> SH200 target
+#   data suite:   second_run_100_1000km_10Mp_20260520_203208
+#   optimization: 400 total epochs, batch 8192, AdamW lr=7e-5
+#
+# Architecture, loss, schedule, loader, and scaler-fit flags are intentionally
+# explicit. Do not replace them with TrainConfig defaults: defaults can evolve,
+# while this file is a frozen reproduction recipe. Dataset metadata remains the
+# source of truth for the SH20 -> SH200 target contract and is validated by the
+# trainer before any optimization step.
+#
+# Fresh run (SUITE_DIR must contain the four files named below):
+#   hpc/submit.sh scenario --array=0-0 --time=48:00:00 -- \
+#     hpc/scenarios/st_lrps_resume_denemesi_reproduction.jsonl \
+#     --train-data "$SUITE_DIR/train_hybrid_10M.h5" \
+#     --val-data   "$SUITE_DIR/val_uniform_2M.h5" \
+#     --test-data  "$SUITE_DIR/test_uniform_2M.h5" \
+#     --ood-data   "$SUITE_DIR/ood_combined_1000k.h5"
+#
+# Continue the same run after a walltime signal: use the same command and add
+# `--resume` immediately after the scenario JSONL path.
+{"name":"PotentialAutograd_ResumeDenemesi_Reproduction_SH20to200_2Band_Seed42","entrypoint":"lunaris-train","description":"Frozen HPC reproduction of the successful May 2026 resume_denemesi run: 512x5 residual multi-scale SIREN with physical radial-decay encoding, two SH20-to-SH200 frequency bands, and the original loss/schedule/scaler-fit settings.","runtime_model_kind":"potential_autograd","tags":["potential_autograd","production","reproduction","resume_denemesi","sh20-to-sh200","2-band","seed42"],"flags":["--runtime-model-kind","potential_autograd","--hidden","512","--depth","5","--activation","sine","--w0-first","30.0","--w0-hidden","30.0","--dropout","0.0","--model-preset","recommended_physical_radial_decay","--no-fourier","--use-residual-blocks","--n-bands","2","--multiscale-mode","concat_shared","--epochs","400","--batch-size","8192","--lr","7e-5","--weight-decay","1e-6","--output-head-lr-mult","1.0","--grad-clip","0.5","--t-max","350","--warmup-epochs","5","--min-lr-ratio","0.05","--patience","80","--w-u","1.0","--w-a","1.0","--gradnorm-mode","ntk_init","--gradnorm-w-a-min","0.05","--gradnorm-w-a-max","2.0","--potential-only-epochs","10","--accel-ramp-epochs","80","--accel-min-factor","0.05","--a-sign","auto","--use-si","--direction-loss-weight","0.1","--direction-loss-start-epoch","30","--direction-loss-ramp-epochs","70","--direction-loss-floor-abs","3e-6","--best-ckpt-start-epoch","-1","--checkpoint-settle-epochs","5","--best-metric","hybrid","--hybrid-direction-alpha","0.30","--use-altitude-balanced-loss","--altitude-bin-width-km","50.0","--altitude-min-km","100.0","--altitude-max-km","1000.0","--use-radial-cross-loss","--radial-loss-weight","0.05","--cross-loss-weight","0.05","--use-laplacian-regularization","--laplacian-mode","diagnostic","--laplacian-weight","1e-6","--laplacian-every-n-batches","1000","--laplacian-subset-size","512","--n-hutchinson-samples","2","--num-workers","4","--cache-rows","65536","--fit-rows","2000000","--fit-seed","123","--fit-chunk-rows","131072","--sampler-block-size","65536","--split-seed","42","--seed","42","--log-every-mode","auto","--log-every","500","--preload-policy","auto","--auto-preload-mb","1024.0","--pin-memory","--grad-accumulation-steps","1","--u-scale-mode","hybrid","--a-scale-mode","hybrid","--target-scale-multiplier","6.0","--deterministic","--no-amp"]}

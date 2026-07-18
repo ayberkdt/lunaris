@@ -644,6 +644,7 @@ def _axis_transverse_m1(
     inv_r: float, inv_r_sq: float,
     r_ref: float, mu: float,
     c_coeffs: np.ndarray, s_coeffs: np.ndarray,
+    degree_min: int,
     eval_degree: int,
 ) -> tuple[float, float]:
     """
@@ -661,7 +662,9 @@ def _axis_transverse_m1(
     and sigma_n = 1 at the north pole, (-1)^(n+1) at the south pole (from the
     parity P_nm(-x) = (-1)^(n+m) P_nm(x)). The m=0 sector contributes only the
     axial component and m>=2 sectors vanish as O(rho^(m-1)); both are handled
-    by the calling kernel. Kahan-compensated to match the serial kernel.
+    by the calling kernel. Only degrees in ``(degree_min, eval_degree]`` are
+    accumulated, so the same expression is valid for both a full field and a
+    residual degree band. Kahan-compensated to match the serial kernel.
     """
     ax, ay = 0.0, 0.0
     kx, ky = 0.0, 0.0
@@ -669,6 +672,9 @@ def _axis_transverse_m1(
     r_ratio_n = r_ratio_base
     mu_inv_r_sq = mu * inv_r_sq
     for n in range(1, eval_degree + 1):
+        if n <= degree_min:
+            r_ratio_n *= r_ratio_base
+            continue
         lam = math.sqrt(0.5 * n * (n + 1.0) * (2.0 * n + 1.0))
         k = mu_inv_r_sq * r_ratio_n * lam
         if (not z_positive) and (n % 2 == 0):
@@ -872,7 +878,7 @@ def _compute_sh_acceleration_serial(
     if rho_sq < EPS_1E24 and eval_degree >= 1:
         ax, ay = _axis_transverse_m1(
             sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
-            c_coeffs, s_coeffs, eval_degree,
+            c_coeffs, s_coeffs, -1, eval_degree,
         )
 
     return ax, ay, az
@@ -1005,7 +1011,7 @@ def _compute_sh_acceleration_parallel(
     if rho_sq < EPS_1E24 and eval_degree >= 1:
         ax, ay = _axis_transverse_m1(
             sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
-            c_coeffs, s_coeffs, eval_degree,
+            c_coeffs, s_coeffs, -1, eval_degree,
         )
 
     return ax, ay, az
@@ -1232,12 +1238,12 @@ def _compute_sh_acceleration_dual_numba(
         if n_lo >= 1:
             ax_lo, ay_lo = _axis_transverse_m1(
                 sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
-                c_coeffs, s_coeffs, n_lo,
+                c_coeffs, s_coeffs, -1, n_lo,
             )
         if n_hi >= 1:
             ax_hi, ay_hi = _axis_transverse_m1(
                 sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
-                c_coeffs, s_coeffs, n_hi,
+                c_coeffs, s_coeffs, -1, n_hi,
             )
 
     return ax_lo, ay_lo, az_lo, ax_hi, ay_hi, az_hi
@@ -1455,11 +1461,11 @@ def sh_potential_accel_batch_serial(
     included; ``degree_min < 0`` includes the structural ``mu/r`` monopole and
     intentionally ignores stored ``C[0,0]``.
 
-    The pole branch fixes longitude at zero and suppresses the singular
-    longitudinal component. Positions within the kernel's near-origin guard
-    return zero rather than a singular field. This serial Numba kernel performs
-    no shape validation; callers must provide recurrence tables through
-    ``degree_max``.
+    At a polar-axis point, the removable transverse 0/0 form is evaluated with
+    its analytic, longitude-independent m=1 limit; it is generally nonzero for
+    tesseral fields. Positions within the kernel's near-origin guard return zero
+    rather than a singular field. This serial Numba kernel performs no shape
+    validation; callers must provide recurrence tables through ``degree_max``.
     """
     M = xyz_m.shape[0]
     N = degree_max
@@ -1606,6 +1612,15 @@ def sh_potential_accel_batch_serial(
         ax = a_r * rx + a_phi * phix + a_lam * lamx
         ay = a_r * ry + a_phi * phiy + a_lam * lamy
         az = a_r * rz + a_phi * phiz
+
+        # On the axis the separate latitude/longitude expressions are 0/0.
+        # Their sum has a finite, longitude-independent value carried by m=1.
+        # Preserve degree-band semantics for residual-field evaluation.
+        if rho <= eps_rho and N >= 1:
+            ax, ay = _axis_transverse_m1(
+                s >= 0.0, 1.0 / r, inv_r2, r_ref_m, mu_si,
+                C, S, degree_min, N,
+            )
 
         V_out[k] = V
         a_out[k, 0] = ax

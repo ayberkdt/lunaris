@@ -119,6 +119,12 @@ single run directory self-describing without re-reading the original HDF5 file.
 
 ## Runtime Checks
 
+Canonical ephemeris archives use schema version 2 and store matched SPICE
+position and velocity tables in SI units. Loading a position-only legacy NPZ
+fails closed so a resumed run cannot silently switch from cubic Hermite to a
+different interpolant. In-memory custom providers may omit both velocity tables
+only through the explicitly labelled Catmull-Rom compatibility path.
+
 `load_surrogate_force_model(...)` validates the checkpoint contract before
 returning a runtime object. The returned `SurrogateForceModel` exposes:
 

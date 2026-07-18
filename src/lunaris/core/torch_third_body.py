@@ -95,6 +95,28 @@ def interp_vec3_catmull_torch(t_s: float, dt_s: float, v_tab: Any) -> Any:
     return 0.5 * (w0 * v_tab[i0] + w1 * v_tab[i1] + w2 * v_tab[i2] + w3 * v_tab[i3])
 
 
+def interp_vec3_hermite_torch(t_s: float, dt_s: float, p_tab: Any, v_tab: Any) -> Any:
+    """Cubic Hermite interpolation of matched device position/velocity tables."""
+    n = int(p_tab.shape[0])
+    if n == 0:
+        return p_tab.new_zeros(3)
+    if n == 1 or float(dt_s) <= 0.0:
+        return p_tab[0]
+    i, f = _table_index_frac(float(t_s), float(dt_s), n)
+    f2 = f * f
+    f3 = f2 * f
+    h00 = 2.0 * f3 - 3.0 * f2 + 1.0
+    h10 = f3 - 2.0 * f2 + f
+    h01 = -2.0 * f3 + 3.0 * f2
+    h11 = f3 - f2
+    return (
+        h00 * p_tab[i]
+        + h10 * float(dt_s) * v_tab[i]
+        + h01 * p_tab[i + 1]
+        + h11 * float(dt_s) * v_tab[i + 1]
+    )
+
+
 def third_body_accel_batch(r_sc: Any, r_body: Any, mu: float) -> Any:
     """Batched Battin ``F(q)`` third-body differential acceleration.
 
@@ -154,6 +176,9 @@ class TorchEphemerisTables:
         dt_s: float,
         r_sun_tab_m: np.ndarray,
         r_earth_tab_m: np.ndarray,
+        v_sun_tab_m_s: np.ndarray | None = None,
+        v_earth_tab_m_s: np.ndarray | None = None,
+        use_hermite: bool = False,
         device: Any,
         dtype: Any,
         need_sun: bool,
@@ -188,16 +213,32 @@ class TorchEphemerisTables:
             )
         self.r_sun_tab = torch.as_tensor(sun, device=device, dtype=dtype)
         self.r_earth_tab = torch.as_tensor(earth, device=device, dtype=dtype)
+        if (v_sun_tab_m_s is None) != (v_earth_tab_m_s is None):
+            raise ValueError("both Sun and Earth velocity tables are required together")
+        self.use_hermite = bool(use_hermite)
+        if self.use_hermite and v_sun_tab_m_s is None:
+            raise ValueError("use_hermite=True requires velocity tables")
+        sun_v = np.zeros_like(sun) if v_sun_tab_m_s is None else np.ascontiguousarray(v_sun_tab_m_s, dtype=np.float64)
+        earth_v = np.zeros_like(earth) if v_earth_tab_m_s is None else np.ascontiguousarray(v_earth_tab_m_s, dtype=np.float64)
+        if sun_v.shape != sun.shape or earth_v.shape != earth.shape:
+            raise ValueError("ephemeris velocity-table shapes must match position tables")
+        self.v_sun_tab = torch.as_tensor(sun_v, device=device, dtype=dtype)
+        self.v_earth_tab = torch.as_tensor(earth_v, device=device, dtype=dtype)
 
     def sun_position(self, t_s: float) -> Any:
+        if self.use_hermite:
+            return interp_vec3_hermite_torch(t_s, self.dt_s, self.r_sun_tab, self.v_sun_tab)
         return interp_vec3_catmull_torch(t_s, self.dt_s, self.r_sun_tab)
 
     def earth_position(self, t_s: float) -> Any:
+        if self.use_hermite:
+            return interp_vec3_hermite_torch(t_s, self.dt_s, self.r_earth_tab, self.v_earth_tab)
         return interp_vec3_catmull_torch(t_s, self.dt_s, self.r_earth_tab)
 
 
 __all__ = [
     "TorchEphemerisTables",
     "interp_vec3_catmull_torch",
+    "interp_vec3_hermite_torch",
     "third_body_accel_batch",
 ]

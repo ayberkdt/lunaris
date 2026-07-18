@@ -188,11 +188,19 @@ def _resolve_third_body_tables(
         )
 
     try:
-        from lunaris.core.dynamics import extract_ephem_tables_strict
+        from lunaris.core.dynamics import extract_ephem_state_tables_strict
         from lunaris.core.dynamics.preparation import provider_get, provider_has
         from lunaris.core.torch_third_body import TorchEphemerisTables
 
-        dt_s, sun_tab, earth_tab, _q_tab = extract_ephem_tables_strict(ephem)
+        (
+            dt_s,
+            sun_tab,
+            earth_tab,
+            sun_velocity_tab,
+            earth_velocity_tab,
+            _q_tab,
+            use_hermite,
+        ) = extract_ephem_state_tables_strict(ephem)
         provider = ephem.get_data_provider()
         has_mu_sun = provider_has(provider, "mu_sun_m3s2")
         has_mu_earth = provider_has(provider, "mu_earth_m3s2")
@@ -206,6 +214,9 @@ def _resolve_third_body_tables(
             dt_s=dt_s,
             r_sun_tab_m=sun_tab,
             r_earth_tab_m=earth_tab,
+            v_sun_tab_m_s=sun_velocity_tab,
+            v_earth_tab_m_s=earth_velocity_tab,
+            use_hermite=use_hermite,
             device=device,
             dtype=dtype,
             need_sun="third_body_sun" in bodies,
