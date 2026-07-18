@@ -701,10 +701,22 @@ def nyquist_max_step_s(
     return T_lam / float(safety_div)
 
 
+#: Degree-power-law exponent calibrated to the real JGGRX 1800F spectrum.
+#: Kaula's classical rule uses sigma_n ~ K/n^2, but p=2 underestimates the
+#: measured lunar high-degree acceleration content ~2.5x in the 60-200 band;
+#: p=1.7 reproduces the band shares measured from the actual coefficients
+#: (validation/gravity/band_share_analysis.py: 61-100 band = 3.60% of the
+#: non-spherical acceleration RMS at 80 km; the p=1.7 proxy gives ~3.4%).
+LUNAR_DEGREE_POWER_EXPONENT: float = 1.7
+
+
 def recommended_sh_degree(
     min_alt_km: float,
     R_ref_m: float,
     attenuation_floor: float = 1e-3,
+    *,
+    kaula_exponent: float | None = None,
+    kaula_tail_fraction: float = 1e-2,
 ) -> int:
     """
     Recommend a minimum spherical-harmonic truncation degree for an orbit
@@ -715,15 +727,36 @@ def recommended_sh_degree(
     A surface gravity feature of degree ``n`` attenuates with radius as
     ``(R / r)^n`` (upward continuation of a harmonic field). At orbital radius
     ``r = R + h`` the relative contribution of degree ``n`` is ``(R/(R+h))^n``.
-    Truncating below the degree ``N`` where this factor first drops under
-    ``attenuation_floor`` discards signal still above the floor, so ``N`` is the
-    smallest *defensible* max degree for that altitude::
+
+    **Attenuation-only mode** (``kaula_exponent=None``, the default): truncating
+    below the degree ``N`` where this factor first drops under
+    ``attenuation_floor`` discards signal still above the floor::
 
         (R / (R + h))^N = floor   =>   N = ln(floor) / ln(R / (R + h))
 
-    This is a Kaula-style upper bound, NOT a guaranteed position error: the true
-    requirement also depends on the field's per-degree power. Use it to flag
-    clearly-undersized truncations, not to certify accuracy.
+    This ignores the field's per-degree power (it implicitly assumes a flat
+    spectrum), so it is deliberately conservative and can demand degrees whose
+    actual acceleration contribution is negligible.
+
+    **Spectrum-weighted mode** (``kaula_exponent`` set, e.g.
+    :data:`LUNAR_DEGREE_POWER_EXPONENT`): the per-degree acceleration RMS is
+    modelled with a Kaula-style power law ``sigma_n ~ K / n^p`` as::
+
+        a_n ~ (n + 1) * (R/r)^n * sqrt(2n + 1) / n^p
+
+    (the constant ``K`` cancels in ratios, which is why there is no
+    ``kaula_constant`` parameter) and the recommendation is the smallest ``N``
+    whose discarded tail satisfies::
+
+        sqrt( sum_{n>N} a_n^2 / sum_{n>=2} a_n^2 ) <= kaula_tail_fraction
+
+    i.e. the truncation drops at most ``kaula_tail_fraction`` of the
+    non-spherical acceleration RMS. The default 1e-2 flags truncations that
+    discard more than 1% of the perturbation signal.
+
+    Neither mode is a guaranteed position error. Use the result to flag
+    clearly-undersized truncations, not to certify accuracy; the two modes'
+    thresholds are not comparable to each other.
 
     Parameters
     ----------
@@ -732,7 +765,15 @@ def recommended_sh_degree(
     R_ref_m : float
         Gravity-model reference radius, in meters.
     attenuation_floor : float
-        Per-degree contribution treated as negligible (default 1e-3), in (0, 1).
+        Attenuation-only mode: per-degree contribution treated as negligible
+        (default 1e-3), in (0, 1). Ignored in spectrum-weighted mode.
+    kaula_exponent : float | None
+        Degree-power-law exponent ``p``; ``None`` selects attenuation-only
+        mode. :data:`LUNAR_DEGREE_POWER_EXPONENT` (1.7) is calibrated to the
+        measured JGGRX spectrum; Kaula's classical rule is 2.0.
+    kaula_tail_fraction : float
+        Spectrum-weighted mode: maximum acceptable discarded fraction of the
+        non-spherical acceleration RMS (default 1e-2), in (0, 1).
 
     Returns
     -------
@@ -754,8 +795,47 @@ def recommended_sh_degree(
         return 0
 
     ratio = R / (R + h)  # in (0, 1)
-    n = math.log(float(attenuation_floor)) / math.log(ratio)
-    return int(math.ceil(n)) if math.isfinite(n) and n > 0.0 else 0
+
+    if kaula_exponent is None:
+        n = math.log(float(attenuation_floor)) / math.log(ratio)
+        return int(math.ceil(n)) if math.isfinite(n) and n > 0.0 else 0
+
+    p = float(kaula_exponent)
+    frac = float(kaula_tail_fraction)
+    if not (p > 0.0 and math.isfinite(p)):
+        raise ValueError(f"kaula_exponent must be finite and > 0, got {kaula_exponent}")
+    if not (0.0 < frac < 1.0):
+        raise ValueError(f"kaula_tail_fraction must be in (0, 1), got {kaula_tail_fraction}")
+
+    # Per-degree squared acceleration proxy, summed until geometric decay makes
+    # further degrees irrelevant (the polynomial prefactor is dominated once
+    # ratio^n has fallen ~16 orders below the running peak).
+    terms: list[float] = []
+    ratio_n = ratio * ratio  # (R/r)^n starting at n = 2
+    peak = 0.0
+    n = 2
+    while n <= 100_000:
+        a_n = (n + 1.0) * ratio_n * math.sqrt(2.0 * n + 1.0) / float(n) ** p
+        t = a_n * a_n
+        terms.append(t)
+        peak = max(peak, t)
+        if t < peak * 1e-32:
+            break
+        ratio_n *= ratio
+        n += 1
+
+    total = math.fsum(terms)
+    if not (total > 0.0 and math.isfinite(total)):
+        return 0
+
+    # Walk suffix sums: smallest N with tail(N) <= frac.
+    budget = frac * frac * total
+    tail = total
+    for i, t in enumerate(terms):  # dropping degree n = i + 2 and above
+        if tail <= budget:
+            return max(i + 1, 1)  # keep degrees up to (i + 2) - 1
+        tail -= t
+    return n  # tail never fit the budget within the summed range
 
 
 def specific_energy_drift_stats(
@@ -1871,6 +1951,7 @@ __all__ = (
     # Physics Helpers
     "nyquist_max_step_s",        # Calculate max safe integrator step size
     "recommended_sh_degree",     # Min SH degree for an altitude (upward continuation)
+    "LUNAR_DEGREE_POWER_EXPONENT",  # JGGRX-calibrated degree-power-law exponent
     "specific_energy_drift_stats",  # Two-body energy / angular-momentum drift over a trajectory
 
     # ------------------------------

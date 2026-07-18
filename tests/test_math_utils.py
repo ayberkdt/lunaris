@@ -384,6 +384,60 @@ def test_recommended_sh_degree_sentinel_and_validation():
         math_utils.recommended_sh_degree(50.0, R, attenuation_floor=0.0)
 
 
+# --- spectrum-weighted (Kaula) mode ---
+
+
+def test_recommended_sh_degree_spectrum_weighted_below_attenuation_only():
+    # A decaying spectrum always needs no more degrees than the flat-spectrum
+    # attenuation bound.
+    R = 1738.0e3
+    for alt in (50.0, 80.0, 100.0, 200.0, 500.0, 1000.0):
+        flat = math_utils.recommended_sh_degree(alt, R)
+        weighted = math_utils.recommended_sh_degree(
+            alt, R, kaula_exponent=math_utils.LUNAR_DEGREE_POWER_EXPONENT
+        )
+        assert 0 < weighted < flat, (alt, weighted, flat)
+
+
+def test_recommended_sh_degree_spectrum_weighted_supports_sh100_paper_truth():
+    # The external-review false alarm: attenuation-only demanded degree >= 154
+    # at 80 km / >= 124 at 100 km against the paper's SH100 truth. With the
+    # measured lunar degree power law the recommendation stays at or below 100.
+    R = 1738.0e3
+    p = math_utils.LUNAR_DEGREE_POWER_EXPONENT
+    assert math_utils.recommended_sh_degree(80.0, R) >= 150   # unchanged legacy
+    assert math_utils.recommended_sh_degree(80.0, R, kaula_exponent=p) <= 100
+    assert math_utils.recommended_sh_degree(100.0, R, kaula_exponent=p) <= 100
+
+
+def test_recommended_sh_degree_spectrum_weighted_monotonicity():
+    R = 1738.0e3
+    p = math_utils.LUNAR_DEGREE_POWER_EXPONENT
+    # Decreases with altitude.
+    n50 = math_utils.recommended_sh_degree(50.0, R, kaula_exponent=p)
+    n200 = math_utils.recommended_sh_degree(200.0, R, kaula_exponent=p)
+    assert n50 > n200
+    # A steeper spectrum (more power in low degrees) needs fewer degrees.
+    steep = math_utils.recommended_sh_degree(80.0, R, kaula_exponent=2.5)
+    shallow = math_utils.recommended_sh_degree(80.0, R, kaula_exponent=1.2)
+    assert steep < shallow
+    # A looser tail budget needs fewer degrees.
+    loose = math_utils.recommended_sh_degree(80.0, R, kaula_exponent=p, kaula_tail_fraction=5e-2)
+    tight = math_utils.recommended_sh_degree(80.0, R, kaula_exponent=p, kaula_tail_fraction=1e-3)
+    assert loose < tight
+
+
+def test_recommended_sh_degree_spectrum_weighted_validation():
+    R = 1738.0e3
+    assert math_utils.recommended_sh_degree(-10.0, R, kaula_exponent=1.7) == 0
+    with pytest.raises(ValueError):
+        math_utils.recommended_sh_degree(50.0, R, kaula_exponent=0.0)
+    with pytest.raises(ValueError):
+        math_utils.recommended_sh_degree(50.0, R, kaula_exponent=1.7, kaula_tail_fraction=0.0)
+    with pytest.raises(ValueError):
+        math_utils.recommended_sh_degree(50.0, R, kaula_exponent=1.7, kaula_tail_fraction=1.0)
+
+
 # =============================================================================
 # 4c) Energy / angular-momentum drift diagnostic
 # =============================================================================

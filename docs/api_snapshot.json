@@ -141,6 +141,7 @@
       "TWO_PI"
     ],
     "lunaris.common.math_utils": [
+      "LUNAR_DEGREE_POWER_EXPONENT",
       "batch_y_to_elements",
       "clamp",
       "coe_to_rv",
