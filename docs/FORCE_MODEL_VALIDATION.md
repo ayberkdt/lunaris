@@ -145,6 +145,18 @@ enabling adaptive degree under a paper-safe / benchmark / strict posture raises
 (`core/dynamics/preparation.prepare_adaptive_gravity_policy`), it is never a
 silent downgrade.
 
+The cost is not limited to symplectic methods. The production selector
+quantizes the degree downward at discrete altitude thresholds, so the
+acceleration is a discontinuous function of position at every threshold.
+Adaptive-step integrators (DOP853/RK45) absorb the jump through their error
+control rather than breaking, but the local error estimator sees each crossing
+as a model change: step rejections can rise near thresholds and small phase
+artifacts can enter the trajectory. This is the second reason (besides error
+attributability) that reference runs use a single fixed degree. A
+potential-level spectral taper whose derivative is included in the acceleration
+would remove the discontinuity at its source; that is a physics-changing
+design decision, deliberately not implemented alongside the current kernels.
+
 Quantitative study (`tools/blend_error_study.py`, synthetic degree-64 field,
 5–400 km, transition band 50–250 km):
 

@@ -441,7 +441,12 @@ Analysis code imports from `lunaris.analysis.ensemble`.
   symplectic bounded-energy-drift argument: the propagator warns when a
   symplectic method (VV/Yoshida/PEFRL) runs with adaptive degree enabled, and
   `strict_symplectic=True` escalates it to a hard error. Use a fixed degree with
-  symplectic methods, or RK4/an adaptive integrator with adaptive degree. (A
+  symplectic methods. Adaptive-step integrators (DOP853/RK45) tolerate the
+  discontinuity but do not erase it — the local error estimator sees each
+  threshold as a model change, which can raise step rejections near crossings —
+  so fixed degree remains the reference posture and paper-safe / benchmark /
+  strict runs forbid adaptive degree outright
+  (`prepare_adaptive_gravity_policy(strict_fixed_degree=True)`). (A
   smooth-blend kernel exists but is not routed into the RHS; switching to it is
   a physics-changing decision that needs parity benchmarks.)
 - Acceleration-form fixed-step methods (the symplectic set *and* RKN4) assume

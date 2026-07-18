@@ -382,8 +382,11 @@ def propagate(
             "guarantee of symplectic integrators assumes a smooth Hamiltonian; "
             "each degree-threshold crossing injects an energy kick, so drift "
             "may accumulate on orbits that cross thresholds. Use a fixed SH "
-            "degree with symplectic methods, or prefer RK4 or an adaptive "
-            "method (DOP853/RK45) with adaptive degree."
+            "degree with symplectic methods. Adaptive-step methods (DOP853/RK45) "
+            "tolerate the discontinuity but are not free of it either: the local "
+            "error estimator sees each threshold as a model change, which can "
+            "raise step rejections near crossings. Fixed degree is the reference "
+            "posture; adaptive degree is a speed option for exploratory runs."
         )
         if bool(getattr(cfg, "strict_symplectic", False)):
             raise ValueError(
