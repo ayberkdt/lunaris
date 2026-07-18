@@ -82,6 +82,18 @@ _REQUIRED_PROVENANCE_KEYS: tuple[str, ...] = (
     "paper_safe",
 )
 
+#: Dtype spellings accepted as float64 numerics under ``paper_safe``. Canonical
+#: provenance is lowercase ``"float64"`` (see ``resolve_effective_dtype``); the
+#: aliases tolerate torch-/C-style spellings without widening the gate.
+_PAPER_SAFE_FLOAT64_DTYPES: frozenset[str] = frozenset({"float64", "fp64", "double"})
+
+
+def _is_float64_dtype(value: Any) -> bool:
+    name = str(value).strip().lower()
+    if name.startswith("torch."):
+        name = name[len("torch."):]
+    return name in _PAPER_SAFE_FLOAT64_DTYPES
+
 
 def _metric_block(name: str, metrics: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
@@ -190,7 +202,10 @@ def validate_paper_safe_error_decomposition(
     """Reject a decomposition block that cannot back a paper-safe claim.
 
     Raises ``ValueError`` listing every violation. A paper-safe artifact must
-    always carry orbit_error and runtime, full backend/dtype/frame provenance,
+    always carry orbit_error and runtime, full backend/dtype/frame provenance
+    with **float64** requested and effective dtypes (recording a sub-float64
+    dtype is not enough: fp32 state integration alone produces km-scale 5-day
+    trajectory error, so the number would measure the dtype, not the model),
     must not be synthetic, and must not have used identity rotation for
     Moon-fixed gravity. Whether ``field_error`` is additionally mandatory
     depends on ``claim_type`` (see
@@ -227,6 +242,16 @@ def validate_paper_safe_error_decomposition(
             value = provenance.get(key)
             if value is None or str(value).strip() == "":
                 problems.append(f"paper-safe provenance must record {key!r}")
+        for key in ("requested_dtype", "effective_dtype"):
+            value = provenance.get(key)
+            if value is None or str(value).strip() == "":
+                continue  # already reported as missing above
+            if not _is_float64_dtype(value):
+                problems.append(
+                    f"paper-safe reports require float64 numerics: provenance "
+                    f"records {key}={str(value)!r}; sub-float64 state "
+                    "integration measures the dtype, not the gravity model"
+                )
         if bool(provenance.get("identity_rotation_used", False)):
             problems.append(
                 "identity_rotation_used=True: Moon-fixed gravity evaluated with an "
