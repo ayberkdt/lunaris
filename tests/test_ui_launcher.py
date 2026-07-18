@@ -42,6 +42,51 @@ def test_launcher_module_imports_and_exposes_surface() -> None:
     assert callable(launcher.main)
 
 
+def test_workspace_cards_are_named_and_keyboard_operable() -> None:
+    import lunaris.ui.launcher as launcher
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    card = launcher._LaunchCard(
+        title="Mission Analysis",
+        description="Configure and run a lunar mission.",
+        icon_name="fa6s.rocket",
+        accent="#6AA9FF",
+        action_text="Open",
+    )
+    activations: list[bool] = []
+    card.clicked.connect(lambda: activations.append(True))
+    try:
+        assert card.focusPolicy() == QtCore.Qt.StrongFocus
+        assert card.accessibleName() == "Mission Analysis workspace"
+        event = QtGui.QKeyEvent(
+            QtCore.QEvent.KeyPress,
+            QtCore.Qt.Key_Return,
+            QtCore.Qt.NoModifier,
+        )
+        QtWidgets.QApplication.sendEvent(card, event)
+        assert activations == [True]
+    finally:
+        card.deleteLater()
+    _ = app
+
+
+def test_launcher_panel_respects_measured_content_width() -> None:
+    import lunaris.ui.launcher as launcher
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    win = launcher.LauncherWindow()
+    win.resize(900, 600)
+    win.show()
+    try:
+        app.processEvents()
+        assert win._scroll.viewport().width() >= win._content.minimumSizeHint().width()
+        assert win._scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        win.close()
+        win.deleteLater()
+    _ = app
+
+
 def test_launcher_open_flow_shows_overlay_then_hides_launcher() -> None:
     """
     The open flow must:

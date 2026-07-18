@@ -1826,8 +1826,13 @@ entries:
         subtractive cancellation of the direct differential form; this identity
         is elementary and was checked independently, and the F(q)/Encke device is
         attributed to Battin by GMAT's MathSpec and multiple modern propagators.
-        PENDING: exact Battin chapter/section/equation number (physical copy
-        needed) before this may be promoted to verified_primary_source.
+        Narrowed 2026-07-18: Gkolias & Colombo (arXiv:2104.01240, ref [25])
+        cite the Battin-Giorgi/Encke q-device to Battin (1999 rev. ed.)
+        pp. 448-450, 490-494, 529-530, and Vallado (2007) Ch. 8 cites Battin
+        (1987:450) for Encke rectification; no online source exposes the exact
+        F(q) equation number. PENDING: exact Battin chapter/section/equation
+        number (physical copy needed) before this may be promoted to
+        verified_primary_source.
     symbols:
       - path: src/lunaris/physics/third_body_effects.py
         symbol: accel_third_body_numba
@@ -2198,11 +2203,12 @@ entries:
     status: active
     added: "2026-07-14"
     implementation_class: standard_implementation
-    verification_status: identifier_verified_content_pending
+    verification_status: verified_primary_source
     scientific_status: implemented_and_tested
     citation_keys:
       - GrailGL1800FSHADR
       - Konopliv2014GRAIL
+      - Park2025MoonThermalAsymmetry
     primary_reference:
       type: dataset
       citation_key: GrailGL1800FSHADR
@@ -2221,10 +2227,16 @@ entries:
         The shipped coefficient set is GL1800F (file jggrx_1800f_sha), read
         directly from its PDS SHADR label: degree/order 1800, fully normalized,
         reference radius 1738.0 km, DE440 principal-axis frame, k2=0.024223,
-        k3=0.0163. PENDING: the label attributes the field to R. S. Park, A.
-        Berne, A. S. Konopliv & J. T. Keane, but that specific GL1800 journal
-        citation was not fully resolved; the GRAIL high-resolution field
-        methodology is Konopliv et al. 2014 (DOI 10.1002/2013GL059066 verified).
+        k3=0.0163. Attribution resolved (2026-07-18): the PDS label (updated
+        2025-05-16) credits the JPL Level-2 team with model developers R. S.
+        Park, A. Berne, A. S. Konopliv, J. T. Keane, I. Matsuyama, F. Nimmo,
+        M. Rovira-Navarro, M. P. Panning, M. Simons, D. J. Stevenson and
+        R. C. Weber, and cites Park et al., "Thermal asymmetry in the Moon's
+        mantle inferred from monthly tidal response", Nature 641(8065),
+        1188-1192 (2025), DOI 10.1038/s41586-025-08949-5 (DOI and author list
+        verified; the label's k3=0.0163 matches the paper's k3=0.0163+-0.0007).
+        The GRAIL high-resolution field methodology remains Konopliv et al.
+        2014 (DOI 10.1002/2013GL059066 verified).
     symbols:
       - path: src/lunaris/loaders/io_gravity.py
         symbol: load_shadr_ascii
@@ -2598,11 +2610,11 @@ entries:
     mathematical_contract:
       inputs: position, two evaluation degrees, and a blend altitude band
       outputs: >-
-        acceleration that transitions C1-continuously between a low and a high
-        evaluation degree across the band
+        acceleration that transitions C0-continuously (piecewise smooth)
+        between a low and a high evaluation degree across the band
       exact_or_approximate: continuous_policy_blend
       preserved_properties:
-        - C1 continuity of the blended acceleration across the altitude band
+        - C0 continuity of the blended acceleration across the altitude band
     lunaris_modifications:
       - >-
         The blend weight uses the standard cubic-Hermite smoothstep 3t^2-2t^3;
@@ -2611,6 +2623,16 @@ entries:
       - the high-degree field is only needed at low altitude
     limitations:
       - the blended result is a policy, not the exact field at intermediate degrees
+      - >-
+        not C1 in general: the spatial derivative jumps where the discrete
+        degree ladder switches its blend pair inside the band
+      - >-
+        non-conservative inside the transition band: the acceleration-level
+        blend omits the (U_hi - U_lo) * grad(w) term of the blended-potential
+        gradient, so the field is not curl-free there and must not back
+        symplectic or energy-conservation studies (the propagator's symplectic
+        guard rejects adaptive-degree gravity)
+      - not routed into the production RHS (reachable only via accel_adaptive)
     validation:
       - tests/test_spherical_harmonics.py
     see_also:

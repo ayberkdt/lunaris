@@ -64,6 +64,46 @@ def test_invalid_intermediate_input_preserves_last_valid_state() -> None:
         p.deleteLater()
 
 
+def test_inverted_altitudes_are_not_silently_reinterpreted() -> None:
+    p = _page()
+    try:
+        p.ent_hp.setText("200")
+        p.ent_ha.setText("100")
+        p._update_ghost_orbit()
+        p._apply_orbit_update()
+
+        assert not p.validate_inputs()
+        assert p._compute_orbit_state() is None
+        assert p.ent_hp.text() == "200"
+        assert p.ent_ha.text() == "100"
+        assert p.ent_a.text() == "—"
+        assert p.ent_e.text() == "—"
+        assert p.orbit_validation_notice.isVisibleTo(p)
+        assert p.preview_validation_notice.isVisibleTo(p)
+        assert all(
+            label.text() == "—"
+            for label in (
+                p.lbl_period,
+                p.lbl_hp,
+                p.lbl_ha,
+                p.lbl_ecc,
+                p.lbl_inc,
+                p.lbl_energy,
+            )
+        )
+
+        p.btn_swap_apsides.click()
+        assert p.validate_inputs()
+        assert p.ent_hp.text() == "100"
+        assert p.ent_ha.text() == "200"
+        assert p.ent_a.text() != "—"
+        assert p.ent_e.text() != "—"
+        assert p.orbit_validation_notice.isHidden()
+        assert p.preview_validation_notice.isHidden()
+    finally:
+        p.deleteLater()
+
+
 def test_metric_strip_and_preview_use_same_validated_state() -> None:
     p = _page()
     try:
@@ -109,6 +149,114 @@ def test_session_load_results_in_one_validated_refresh() -> None:
         assert abs(state.e) < 1e-9
     finally:
         p.deleteLater()
+
+
+def test_wide_workspace_prioritizes_preview_and_compacts_metrics() -> None:
+    app = _app()
+    p = _page()
+    p.resize(1400, 760)
+    p.show()
+    app.processEvents()
+    try:
+        p._update_responsive_layout()
+        app.processEvents()
+        form_width, preview_width = p._split.sizes()
+        assert p._split.orientation() == QtCore.Qt.Horizontal
+        assert form_width <= 620
+        assert preview_width > form_width
+        assert p.group_viz.property("elevated") is True
+        assert p._metric_columns == 6
+    finally:
+        p.close()
+        p.deleteLater()
+        app.processEvents()
+
+
+def test_orbit_toolbar_actions_fit_at_minimum_two_pane_width() -> None:
+    app = _app()
+    p = _page()
+    p.resize(980, 720)
+    p.show()
+    app.processEvents()
+    try:
+        buttons = (
+            *p.orbit_viz_3d._cam_buttons,
+            p.orbit_viz_3d._fit_button,
+            p.orbit_viz_3d._focus_button,
+        )
+        assert p.orbit_viz_3d._compact_controls
+        assert all(button.width() >= button.sizeHint().width() for button in buttons)
+        assert p.orbit_viz_3d._focus_button.accessibleName()
+    finally:
+        p.close()
+        p.deleteLater()
+        app.processEvents()
+
+
+def test_preview_focus_mode_is_reversible_without_recreating_widgets() -> None:
+    app = _app()
+    p = _page()
+    p.resize(1280, 760)
+    p.show()
+    app.processEvents()
+    try:
+        form_id = id(p.group_params)
+        preview_id = id(p.orbit_viz_3d)
+        original_sizes = p._split.sizes()
+
+        p._toggle_preview_focus()
+        app.processEvents()
+        assert p._preview_focus_active
+        assert p._params_scroll.isHidden()
+        assert p.orbit_viz_3d._focus_button.text() == "Exit focus"
+
+        p._exit_preview_focus()
+        app.processEvents()
+        assert not p._preview_focus_active
+        assert p._params_scroll.isVisibleTo(p)
+        assert p._split.sizes() == original_sizes
+        assert id(p.group_params) == form_id
+        assert id(p.orbit_viz_3d) == preview_id
+    finally:
+        p.close()
+        p.deleteLater()
+        app.processEvents()
+
+
+def test_camera_fit_accounts_for_wide_shallow_viewport() -> None:
+    class FakeScene:
+        def __init__(self, width: int, height: int):
+            self._width = width
+            self._height = height
+            self.opts = {"fov": 60.0}
+            self.distance = 0.0
+
+        def width(self) -> int:
+            return self._width
+
+        def height(self) -> int:
+            return self._height
+
+        def setCameraPosition(self, **kwargs) -> None:
+            self.distance = float(kwargs["distance"])
+
+    _app()
+    viz = OrbitViz3D()
+    try:
+        viz._a_km = 2000.0
+        viz._e = 0.1
+        square = FakeScene(600, 600)
+        viz.gl_widget = square
+        viz._fit_camera(mark_user=False)
+
+        wide = FakeScene(900, 300)
+        viz.gl_widget = wide
+        viz._fit_camera(mark_user=False)
+
+        assert wide.distance > square.distance
+        assert wide.distance > 3.4 * viz._a_km * (1.0 + viz._e)
+    finally:
+        viz.deleteLater()
 
 
 # --------------------------------------------------------------------------- #

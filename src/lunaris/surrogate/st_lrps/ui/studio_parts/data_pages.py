@@ -204,6 +204,7 @@ from .common_widgets import (
     _tune_form,
     _tune_inputs,
 )
+from .local_primitives import ResponsiveColumns
 from .workspace_widgets import StudioNotice
 
 
@@ -298,6 +299,71 @@ def _attr_lookup(attrs: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+class _ResponsiveActionRow(QWidget):
+    """Keep action text intact and wrap the live controls when space is tight."""
+
+    def __init__(
+        self,
+        leading: QBoxLayout | QWidget | None,
+        secondary_buttons: list[QPushButton],
+        primary_button: QPushButton,
+    ) -> None:
+        super().__init__()
+        if isinstance(leading, QBoxLayout):
+            leading_widget = QWidget()
+            leading_widget.setLayout(leading)
+            self._leading = leading_widget
+        else:
+            self._leading = leading
+        self._secondary = secondary_buttons
+        self._primary = primary_button
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(8)
+        self._compact: bool | None = None
+        for button in [*secondary_buttons, primary_button]:
+            button.setMinimumWidth(button.sizeHint().width())
+        self._relayout(True)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        controls = [*self._secondary, self._primary]
+        required = sum(widget.sizeHint().width() for widget in controls)
+        if self._leading is not None:
+            required += self._leading.sizeHint().width()
+        required += self._grid.horizontalSpacing() * max(0, len(controls))
+        self._relayout(self.width() < required)
+
+    def _relayout(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        while self._grid.count():
+            self._grid.takeAt(0)
+        for column in range(len(self._secondary) + 3):
+            self._grid.setColumnStretch(column, 0)
+        if compact:
+            if self._leading is not None:
+                self._grid.addWidget(
+                    self._leading, 0, 0, 1, len(self._secondary) + 2
+                )
+            self._grid.setColumnStretch(0, 1)
+            for index, button in enumerate(self._secondary, start=1):
+                self._grid.addWidget(button, 1, index)
+            self._grid.addWidget(self._primary, 1, len(self._secondary) + 1)
+            return
+        column = 0
+        if self._leading is not None:
+            self._grid.addWidget(self._leading, 0, column)
+            column += 1
+        self._grid.setColumnStretch(column, 1)
+        column += 1
+        for button in self._secondary:
+            self._grid.addWidget(button, 0, column)
+            column += 1
+        self._grid.addWidget(self._primary, 0, column)
+
+
 def _data_action_card(
     title: str,
     subtitle: str,
@@ -336,25 +402,13 @@ def _data_action_card(
     primary_button.setMinimumHeight(38)
     primary_button.setMinimumWidth(132)
 
-    action_row = QHBoxLayout()
-    action_row.setContentsMargins(0, 0, 0, 0)
-    action_row.setSpacing(8)
-    # Optional leading content (e.g. a workflow selector) sits on the far left so
-    # the card resolves to a single dense action row instead of stacked, mostly
-    # empty button rows.
-    if leading is not None:
-        if isinstance(leading, QWidget):
-            action_row.addWidget(leading)
-        else:
-            action_row.addLayout(leading)
-    action_row.addStretch(1)
-    if secondary_buttons:
-        for button in secondary_buttons:
-            button.setProperty("kind", button.property("kind") or "ghost")
-            button.setMinimumHeight(36)
-            action_row.addWidget(button)
-    action_row.addWidget(primary_button)
-    top.addLayout(action_row)
+    secondary_buttons = secondary_buttons or []
+    for button in secondary_buttons:
+        button.setProperty("kind", button.property("kind") or "ghost")
+        button.setMinimumHeight(36)
+    top.addWidget(
+        _ResponsiveActionRow(leading, secondary_buttons, primary_button)
+    )
     layout.addLayout(top)
 
     if detail is not None:
@@ -969,10 +1023,12 @@ class CloudGenTab(QWidget):
         right.addWidget(grp_seeds)
         right.addStretch(1)
 
-        cols = QHBoxLayout()
-        cols.setSpacing(12)
-        cols.addLayout(left, 1)
-        cols.addLayout(right, 1)
+        left_widget = QWidget()
+        left_widget.setLayout(left)
+        right_widget = QWidget()
+        right_widget.setLayout(right)
+        cols = ResponsiveColumns(left_widget, right_widget, spacing=12)
+        cols.setObjectName("suiteResponsiveColumns")
 
         for grp in (grp_phys, grp_train, grp_vto, grp_seeds, grp_presets, grp_suite_out):
             _tune_inputs(grp)
@@ -983,7 +1039,7 @@ class CloudGenTab(QWidget):
         lo = QVBoxLayout()
         lo.setContentsMargins(4, 4, 4, 4)
         lo.setSpacing(6)
-        lo.addLayout(cols)
+        lo.addWidget(cols)
         w.setLayout(lo)
         return w
 
@@ -2115,7 +2171,11 @@ class CloudAnalysisTab(QWidget):
         bottom_tabs.addTab(self._gallery, "Visual Gravity Cloud Plots")
 
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(_scroll_wrap(top))
+        self._configuration_scroll = _scroll_wrap(top)
+        self._configuration_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        splitter.addWidget(self._configuration_scroll)
         splitter.addWidget(bottom_tabs)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)

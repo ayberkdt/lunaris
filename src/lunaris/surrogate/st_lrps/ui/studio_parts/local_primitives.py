@@ -10,6 +10,128 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui_foundation import DESIGN_TOKENS
 
+_ACCESSIBLE_INTERACTIVE = (
+    QtWidgets.QAbstractButton,
+    QtWidgets.QComboBox,
+    QtWidgets.QAbstractSpinBox,
+    QtWidgets.QLineEdit,
+    QtWidgets.QPlainTextEdit,
+    QtWidgets.QTextEdit,
+    QtWidgets.QAbstractSlider,
+    QtWidgets.QAbstractItemView,
+)
+
+
+def _is_composite_child(widget: QtWidgets.QWidget) -> bool:
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(
+            parent,
+            QtWidgets.QComboBox
+            | QtWidgets.QAbstractSpinBox
+            | QtWidgets.QAbstractItemView
+            | QtWidgets.QCalendarWidget,
+        ):
+            return True
+        if parent.metaObject().className() == "QComboBoxPrivateContainer":
+            return True
+        parent = parent.parentWidget()
+    return False
+
+
+def _focusable_controls(widget: QtWidgets.QWidget) -> list[QtWidgets.QWidget]:
+    controls: list[QtWidgets.QWidget] = []
+    candidates = [widget, *widget.findChildren(QtWidgets.QWidget)]
+    for candidate in candidates:
+        if not isinstance(candidate, _ACCESSIBLE_INTERACTIVE):
+            continue
+        if isinstance(candidate, QtWidgets.QScrollBar):
+            continue
+        if candidate.focusPolicy() == QtCore.Qt.NoFocus or _is_composite_child(candidate):
+            continue
+        if isinstance(candidate, QtWidgets.QAbstractButton) and candidate.text().strip():
+            continue
+        controls.append(candidate)
+    return controls
+
+
+def _clean_label(text: str) -> str:
+    return text.replace("&", "").rstrip(": *").strip()
+
+
+def _nearest_accessible_context(widget: QtWidgets.QWidget) -> str:
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QtWidgets.QGroupBox) and parent.title().strip():
+            return _clean_label(parent.title())
+        for label in parent.findChildren(QtWidgets.QLabel, options=QtCore.Qt.FindDirectChildrenOnly):
+            if label.objectName() in {
+                "pageTitle",
+                "panelTitle",
+                "sectionTitle",
+            } and label.text().strip():
+                return _clean_label(label.text())
+        parent = parent.parentWidget()
+    return "Workspace"
+
+
+def assign_accessible_names(root: QtWidgets.QWidget) -> None:
+    """Bind form labels and panel context to otherwise unnamed controls.
+
+    QFormLayout labels point at wrapper widgets when a field is composed from a
+    path edit plus a Browse button. Screen readers therefore miss the actual
+    edit. This pass assigns the visible row label to the wrapper's focusable
+    field while leaving explicitly authored names untouched.
+    """
+
+    for form in root.findChildren(QtWidgets.QFormLayout):
+        for row in range(form.rowCount()):
+            label_item = form.itemAt(row, QtWidgets.QFormLayout.LabelRole)
+            field_item = form.itemAt(row, QtWidgets.QFormLayout.FieldRole)
+            label = label_item.widget() if label_item is not None else None
+            field = field_item.widget() if field_item is not None else None
+            if not isinstance(label, QtWidgets.QLabel) or field is None:
+                continue
+            name = _clean_label(label.text())
+            if not name:
+                continue
+            for control in _focusable_controls(field):
+                if not control.accessibleName().strip():
+                    control.setAccessibleName(name)
+
+    for grid in root.findChildren(QtWidgets.QGridLayout):
+        for row in range(grid.rowCount()):
+            label_item = grid.itemAtPosition(row, 0)
+            field_item = grid.itemAtPosition(row, 1)
+            label = label_item.widget() if label_item is not None else None
+            field = field_item.widget() if field_item is not None else None
+            if not isinstance(label, QtWidgets.QLabel) or field is None:
+                continue
+            name = _clean_label(label.text())
+            if not name:
+                continue
+            for control in _focusable_controls(field):
+                if not control.accessibleName().strip():
+                    control.setAccessibleName(name)
+
+    for control in _focusable_controls(root):
+        if control.accessibleName().strip():
+            continue
+        context = _nearest_accessible_context(control)
+        if isinstance(control, QtWidgets.QTableView):
+            role = "table"
+        elif isinstance(control, QtWidgets.QAbstractItemView):
+            role = "list"
+        elif isinstance(control, QtWidgets.QPlainTextEdit | QtWidgets.QTextEdit):
+            role = "output"
+        elif isinstance(control, QtWidgets.QComboBox):
+            role = "selector"
+        elif isinstance(control, QtWidgets.QLineEdit):
+            role = "input"
+        else:
+            role = "control"
+        control.setAccessibleName(f"{context} {role}")
+
 
 class StatusBadge(QtWidgets.QLabel):
     def __init__(self, text: str = "WAITING", kind: str = "info", parent=None):
@@ -350,6 +472,87 @@ class InlineNotice(QtWidgets.QFrame):
         self.setAccessibleName(f"{kind} notice")
         layout.addWidget(self.label)
 
+    def set_notice(self, text: str, kind: str) -> None:
+        """Update notice content without replacing the live widget."""
+        self.label.setText(text)
+        self.setProperty("kind", kind)
+        self.setAccessibleName(f"{kind} notice")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+class ResponsiveColumns(QtWidgets.QWidget):
+    """Lay out two live widgets side-by-side when their minima genuinely fit.
+
+    The child widgets are never reconstructed, so their signals, text, and
+    process state survive direction changes.  The breakpoint is measured from
+    the children's minimum size hints rather than from a magic window width.
+    """
+
+    def __init__(
+        self,
+        first: QtWidgets.QWidget,
+        second: QtWidgets.QWidget,
+        *,
+        spacing: int | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._first = first
+        self._second = second
+        self._spacing = spacing if spacing is not None else DESIGN_TOKENS.spacing.md
+        self._layout = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight, self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(self._spacing)
+        self._layout.addWidget(first, 1)
+        self._layout.addWidget(second, 1)
+        self._stacked: bool | None = None
+        QtCore.QTimer.singleShot(0, self._refresh_direction)
+
+    @property
+    def stacked(self) -> bool:
+        return bool(self._stacked)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._refresh_direction()
+
+    def event(self, event: QtCore.QEvent) -> bool:  # noqa: A003
+        handled = super().event(event)
+        if event.type() in (
+            QtCore.QEvent.Type.LayoutRequest,
+            QtCore.QEvent.Type.PolishRequest,
+            QtCore.QEvent.Type.Show,
+        ):
+            QtCore.QTimer.singleShot(0, self._refresh_direction)
+        return handled
+
+    def _refresh_direction(self) -> None:
+        first_min = max(
+            self._first.minimumWidth(), self._first.minimumSizeHint().width()
+        )
+        second_min = max(
+            self._second.minimumWidth(), self._second.minimumSizeHint().width()
+        )
+        required = first_min + second_min + self._spacing
+        stacked = self.width() < required
+        if stacked == self._stacked:
+            return
+        self._stacked = stacked
+        direction = (
+            QtWidgets.QBoxLayout.TopToBottom
+            if stacked
+            else QtWidgets.QBoxLayout.LeftToRight
+        )
+        self._layout.setDirection(direction)
+        self._layout.invalidate()
+        self._layout.activate()
+        self.updateGeometry()
+        self._first.update()
+        self._second.update()
+        self.update()
+        self.window().update()
+
 
 class ActionBar(QtWidgets.QFrame):
     def __init__(self, parent: QtWidgets.QWidget | None = None):
@@ -430,6 +633,23 @@ class EmptyState(QtWidgets.QFrame):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(DESIGN_TOKENS.spacing.sm)
         layout.setAlignment(QtCore.Qt.AlignCenter)
+        self.material_mark = QtWidgets.QFrame()
+        self.material_mark.setObjectName("emptyStateMark")
+        self.material_mark.setFixedSize(30, 30)
+        self.material_mark.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        mark_layout = QtWidgets.QHBoxLayout(self.material_mark)
+        mark_layout.setContentsMargins(0, 0, 0, 0)
+        self.material_node = QtWidgets.QFrame()
+        self.material_node.setObjectName("emptyStateNode")
+        self.material_node.setFixedSize(6, 6)
+        mark_layout.addWidget(
+            self.material_node, 0, QtCore.Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            self.material_mark, 0, QtCore.Qt.AlignmentFlag.AlignHCenter
+        )
         self.title_label = QtWidgets.QLabel(title)
         self.title_label.setObjectName("emptyStateTitle")
         self.title_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -590,12 +810,14 @@ class DataTable(QtWidgets.QTableWidget):
 
 __all__ = [
     "ActionBar",
+    "assign_accessible_names",
     "CompactSearchField",
     "DataTable",
     "EmptyState",
     "FormGrid",
     "InlineNotice",
     "KeyValueList",
+    "ResponsiveColumns",
     "LabeledField",
     "MetricRow",
     "OverflowMenuButton",

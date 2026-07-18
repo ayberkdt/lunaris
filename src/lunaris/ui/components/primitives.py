@@ -431,6 +431,76 @@ class FormGrid(QtWidgets.QWidget):
         return False
 
 
+class ResponsiveColumns(QtWidgets.QWidget):
+    """Keep live column widgets side-by-side only while their minima fit."""
+
+    def __init__(
+        self,
+        first: QtWidgets.QWidget,
+        second: QtWidgets.QWidget,
+        *,
+        spacing: int | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._first = first
+        self._second = second
+        self._spacing = spacing if spacing is not None else DESIGN_TOKENS.spacing.md
+        self._layout = QtWidgets.QBoxLayout(
+            QtWidgets.QBoxLayout.Direction.LeftToRight,
+            self,
+        )
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(self._spacing)
+        self._layout.addWidget(first, 1)
+        self._layout.addWidget(second, 1)
+        self._stacked: bool | None = None
+        QtCore.QTimer.singleShot(0, self._refresh_direction)
+
+    @property
+    def stacked(self) -> bool:
+        return bool(self._stacked)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._refresh_direction()
+
+    def event(self, event: QtCore.QEvent) -> bool:  # noqa: A003
+        handled = super().event(event)
+        if event.type() in (
+            QtCore.QEvent.Type.LayoutRequest,
+            QtCore.QEvent.Type.PolishRequest,
+            QtCore.QEvent.Type.Show,
+        ):
+            QtCore.QTimer.singleShot(0, self._refresh_direction)
+        return handled
+
+    def _refresh_direction(self) -> None:
+        first_min = max(
+            self._first.minimumWidth(), self._first.minimumSizeHint().width()
+        )
+        second_min = max(
+            self._second.minimumWidth(), self._second.minimumSizeHint().width()
+        )
+        required = first_min + second_min + self._spacing
+        stacked = self.width() < required
+        if stacked == self._stacked:
+            return
+        self._stacked = stacked
+        self._layout.setDirection(
+            QtWidgets.QBoxLayout.Direction.TopToBottom
+            if stacked
+            else QtWidgets.QBoxLayout.Direction.LeftToRight
+        )
+        self._layout.invalidate()
+        self._layout.activate()
+        self.updateGeometry()
+        self._first.update()
+        self._second.update()
+        self.update()
+        self.window().update()
+
+
 class LabeledField(QtWidgets.QWidget):
     def __init__(
         self,
@@ -701,6 +771,23 @@ class EmptyState(QtWidgets.QFrame):
         # card). Children span the full width — the text centers itself — and
         # the stretches keep the block vertically centered in tall frames.
         layout.addStretch(1)
+        self.material_mark = QtWidgets.QFrame()
+        self.material_mark.setObjectName("emptyStateMark")
+        self.material_mark.setFixedSize(30, 30)
+        self.material_mark.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        mark_layout = QtWidgets.QHBoxLayout(self.material_mark)
+        mark_layout.setContentsMargins(0, 0, 0, 0)
+        self.material_node = QtWidgets.QFrame()
+        self.material_node.setObjectName("emptyStateNode")
+        self.material_node.setFixedSize(6, 6)
+        mark_layout.addWidget(
+            self.material_node, 0, QtCore.Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            self.material_mark, 0, QtCore.Qt.AlignmentFlag.AlignHCenter
+        )
         self.title_label = QtWidgets.QLabel(title)
         self.title_label.setObjectName("emptyStateTitle")
         self.title_label.setAlignment(QtCore.Qt.AlignCenter)

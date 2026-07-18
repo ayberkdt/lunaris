@@ -1709,8 +1709,8 @@ class GPUBatchPropagator:
             rows = 2
             sun_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
             earth_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
-            sun_v_h = np.zeros((rows, 3), dtype=np.float64)
-            earth_v_h = np.zeros((rows, 3), dtype=np.float64)
+            sun_v_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
+            earth_v_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
             q_h = np.tile([1.0, 0.0, 0.0, 0.0], (rows, 1)).astype(np.float64)
             dt_s = 1.0
             use_hermite = False

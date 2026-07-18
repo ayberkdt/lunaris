@@ -209,12 +209,32 @@ def test_build_app_stylesheet_has_no_legacy_neon() -> None:
 
 
 def test_build_app_stylesheet_reserves_gradients_for_primary_action() -> None:
-    """Gradients are reserved for the primary action, not every surface."""
+    """Balanced Material Minimalism does not use decorative gradients."""
     from lunaris.ui.theme import build_app_stylesheet
 
     qss = build_app_stylesheet(THEME, LOG_COLORS)
     # A calm theme should use very few gradients in the global sheet.
     assert qss.count("qlineargradient") <= 2
+
+
+def test_dense_scientific_surfaces_are_opaque_graphite() -> None:
+    """Data-heavy cards use solid surface tokens, not glass-like alpha fills."""
+    import re
+
+    from lunaris.ui.theme import build_app_stylesheet
+
+    qss = build_app_stylesheet(THEME, LOG_COLORS)
+    expected = {
+        "dashCard": THEME["bg_card"],
+        "dataActionCard": THEME["bg_card_alt"],
+        "studioWorkflowOverview": THEME["bg_card"],
+        "studioWorkflowCell": THEME["bg_inset"],
+        "studioReadinessPanel": THEME["bg_card"],
+    }
+    for object_name, color in expected.items():
+        match = re.search(rf"QFrame#{object_name}\s*\{{([^}}]*)\}}", qss)
+        assert match is not None, f"missing #{object_name} selector"
+        assert f"background: {color};" in match.group(1)
 
 
 # ---------------------------------------------------------------------------

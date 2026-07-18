@@ -8,7 +8,7 @@
 # Usage:
 #   hpc/submit.sh <job> [extra sbatch flags...] -- [program args...]
 #
-#   <job> is one of: train | scenario | benchmark | batch
+#   <job> is one of: train | scenario | benchmark | batch | generate
 #   Anything before `--` is passed to sbatch (e.g. --array=0-6, --time=48:00:00).
 #   Anything after  `--` is forwarded to the job's program ($@ in the .sbatch).
 #
@@ -39,13 +39,18 @@ usage() {
 [[ $# -lt 1 ]] && usage 64
 job="$1"; shift
 
+# `needs_gpu=0` jobs skip the LUNARIS_GRES injection below, so a GPU site
+# profile (e.g. LUNARIS_GRES="gpu:1") cannot leak a GPU request into a
+# CPU-only job.
+needs_gpu=1
 case "${job}" in
   train)     script="slurm_train_stlrps.sbatch" ;;
   scenario)  script="slurm_train_scenario_array.sbatch" ;;
   benchmark) script="slurm_benchmark_gpu.sbatch" ;;
   batch)     script="slurm_batch_array.sbatch" ;;
+  generate)  script="slurm_generate_dataset.sbatch"; needs_gpu=0 ;;
   -h|--help) usage 0 ;;
-  *) echo "error: unknown job '${job}' (use train|scenario|benchmark|batch)" >&2; usage 64 ;;
+  *) echo "error: unknown job '${job}' (use train|scenario|benchmark|batch|generate)" >&2; usage 64 ;;
 esac
 script_path="${_HPC_DIR}/${script}"
 [[ -f "${script_path}" ]] || { echo "error: missing ${script_path}" >&2; exit 66; }
@@ -67,10 +72,14 @@ if [[ -f "${_HPC_DIR}/cluster.env" ]]; then
 fi
 
 sbatch_flags=()
-[[ -n "${LUNARIS_PARTITION:-}" ]] && sbatch_flags+=("--partition=${LUNARIS_PARTITION}")
+# CPU-only jobs prefer LUNARIS_CPU_PARTITION (when set) over the GPU queue in
+# LUNARIS_PARTITION, so a GPU site profile doesn't route them to a GPU queue.
+partition="${LUNARIS_PARTITION:-}"
+[[ ${needs_gpu} -eq 0 && -n "${LUNARIS_CPU_PARTITION:-}" ]] && partition="${LUNARIS_CPU_PARTITION}"
+[[ -n "${partition}" ]] && sbatch_flags+=("--partition=${partition}")
 [[ -n "${LUNARIS_ACCOUNT:-}"   ]] && sbatch_flags+=("--account=${LUNARIS_ACCOUNT}")
 [[ -n "${LUNARIS_QOS:-}"       ]] && sbatch_flags+=("--qos=${LUNARIS_QOS}")
-[[ -n "${LUNARIS_GRES:-}"      ]] && sbatch_flags+=("--gres=${LUNARIS_GRES}")
+[[ -n "${LUNARIS_GRES:-}" && ${needs_gpu} -eq 1 ]] && sbatch_flags+=("--gres=${LUNARIS_GRES}")
 [[ -n "${LUNARIS_CPUS_PER_TASK:-}" ]] && sbatch_flags+=("--cpus-per-task=${LUNARIS_CPUS_PER_TASK}")
 [[ -n "${LUNARIS_MEM:-}"            ]] && sbatch_flags+=("--mem=${LUNARIS_MEM}")
 [[ -n "${LUNARIS_TIME:-}"           ]] && sbatch_flags+=("--time=${LUNARIS_TIME}")

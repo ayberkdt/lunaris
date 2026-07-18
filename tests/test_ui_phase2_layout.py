@@ -15,6 +15,61 @@ def _app() -> QtWidgets.QApplication:
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+@pytest.mark.parametrize("size", [(1024, 768), (1280, 860)])
+def test_batch_setup_uses_one_primary_scroll_owner(size) -> None:
+    from lunaris.ui.pages.batch_propagation_page import BatchPropagationPage
+
+    app = _app()
+    page = BatchPropagationPage()
+    page.resize(*size)
+    page.show()
+    app.processEvents()
+    try:
+        visible_scrolls = [
+            scroll
+            for scroll in page.findChildren(QtWidgets.QScrollArea)
+            if scroll.isVisibleTo(page)
+        ]
+        assert visible_scrolls == [page._run_scroll]
+        assert page._run_scroll.horizontalScrollBar().maximum() == 0
+        assert page._run_action_strip.isVisibleTo(page)
+        assert page.btn_run_batch.isVisibleTo(page)
+    finally:
+        page.close()
+        page.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("size", [(1024, 768), (1280, 860)])
+def test_frozen_search_uses_one_primary_scroll_owner(size) -> None:
+    from lunaris.ui.pages.frozen_search_page import FrozenSearchPage
+
+    app = _app()
+    page = FrozenSearchPage()
+    # The page sits inside Mission Studio's navigation/header chrome; exercise
+    # the actual content budget produced by the requested desktop viewport.
+    page.resize(size[0] - 280, size[1] - 140)
+    page.show()
+    app.processEvents()
+    try:
+        visible_scrolls = [
+            scroll
+            for scroll in page.findChildren(QtWidgets.QScrollArea)
+            if scroll.isVisibleTo(page)
+        ]
+        assert visible_scrolls == [page._workspace_scroll]
+        assert page._workspace_scroll.horizontalScrollBar().maximum() == 0
+        assert page._action_strip.isVisibleTo(page)
+        assert page.btn_run.isVisibleTo(page)
+        assert page.btn_cancel.isVisibleTo(page)
+        assert page.txt_command.isHidden()
+        assert page._workspace_columns.stacked is (size == (1024, 768))
+    finally:
+        page.close()
+        page.deleteLater()
+        app.processEvents()
+
+
 def test_mission_shell_compacts_and_exposes_only_relevant_run_actions(
     tmp_path, monkeypatch
 ) -> None:
@@ -44,6 +99,32 @@ def test_mission_shell_compacts_and_exposes_only_relevant_run_actions(
         window._set_run_state("idle")
         app.processEvents()
         assert window.btn_stop.isHidden()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_mission_preflight_blocks_inverted_apsides(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("LUNARIS_APP_DATA_DIR", str(tmp_path / "appdata"))
+    from lunaris.ui.app import MainWindow
+
+    app = _app()
+    window = MainWindow()
+    window.resize(1024, 768)
+    window.show()
+    app.processEvents()
+    try:
+        window.page_orbit.ent_hp.setText("200")
+        window.page_orbit.ent_ha.setText("100")
+        window._start_preflight_validation()
+        app.processEvents()
+
+        assert window.preflight_worker is None
+        assert window.nav_list.currentRow() == window._page_map["Orbit"]
+        assert window.page_orbit.ent_hp.property("fieldError") is True
+        assert window.page_orbit.ent_ha.property("fieldError") is True
+        assert window.page_orbit.ent_hp.selectedText() == "200"
     finally:
         window.close()
         window.deleteLater()
