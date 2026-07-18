@@ -33,6 +33,8 @@ what those scripts do and the individual workflows.
 # 1. Configure your cluster once: account, partition, modules, venv, storage.
 cp hpc/cluster.env.example hpc/cluster.env
 $EDITOR hpc/cluster.env
+#    Pre-filled site profiles live in hpc/clusters/ (currently UHeM Altay):
+#    cp hpc/clusters/uhem_altay.env.example hpc/cluster.env
 
 # 2. Build the headless environment once (creates a venv, installs .[hpc]).
 bash hpc/setup_env.sh
@@ -502,12 +504,21 @@ shows `actual_batch_backend=torch_cuda_sh` and an `actual_sh_degree` at the requ
 
 ### Dataset generation and evaluation
 
-Dataset/spatial-cloud generation (step 1) and ST-LRPS evaluation (step 3) do not
-ship dedicated templates. Run them through the headless CLI, or copy one of the
-`.sbatch` files and swap in the relevant command:
+Dataset/spatial-cloud generation (step 1) ships a dedicated CPU-only template,
+`hpc/slurm_generate_dataset.sbatch`, submitted as `hpc/submit.sh generate`.
+Because the generator is a numba/NumPy pipeline, that job requests no GPU:
+`submit.sh` skips the `LUNARIS_GRES` injection for it and prefers
+`LUNARIS_CPU_PARTITION` (when set in `cluster.env`) over the GPU queue in
+`LUNARIS_PARTITION`. ST-LRPS evaluation (step 3) still has no dedicated
+template — run it through the headless CLI, or copy one of the `.sbatch`
+files and swap in the relevant command:
 
 ```bash
-# Dataset / spatial cloud generation
+# Dataset / spatial cloud generation (flags: see --help)
+hpc/submit.sh generate -- \
+  --degree-max 200 --degree-min 20 --n-samples 10000000 \
+  --alt-range 100 1000 --workers 16 --format h5 \
+  --out "$LUNARIS_DATA_DIR/datasets/train_hybrid_10M.h5"
 python -m lunaris.surrogate.st_lrps.data.spatial_cloud_generator --help
 
 # Evaluation of a trained model

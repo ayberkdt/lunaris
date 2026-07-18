@@ -10,6 +10,8 @@ surrogate-gravity workflow) on a Slurm cluster. Full reference:
 # 1. Configure your cluster once (account, partition, modules, venv, storage).
 cp hpc/cluster.env.example hpc/cluster.env
 $EDITOR hpc/cluster.env
+#    On UHeM Altay, start from the pre-filled profile instead:
+#    cp hpc/clusters/uhem_altay.env.example hpc/cluster.env
 
 # 2. Build the headless environment once (creates a venv, installs .[hpc]).
 bash hpc/setup_env.sh
@@ -32,6 +34,7 @@ before `--` is passed to `sbatch`; everything after `--` goes to the program.
 | File | Purpose |
 |------|---------|
 | `cluster.env.example` | Site-config template — copy to `cluster.env` (git-ignored) and fill in once. |
+| `clusters/uhem_altay.env.example` | Pre-filled site profile for UHeM Altay (a100q, 1×A100, `$HOME` storage) — copy to `cluster.env`. |
 | `env_template.sh` | Sourced by every job: loads `cluster.env`, modules, and activates the env. |
 | `setup_env.sh` | Run once on a login node: creates the venv and installs `.[hpc]`. |
 | `preflight.sh` | Pre-submit sanity check (imports, entry points, CUDA, storage). |
@@ -40,6 +43,7 @@ before `--` is passed to `sbatch`; everything after `--` goes to the program.
 | `slurm_train_scenario_array.sbatch` | Reproducible scenario sweeps (array jobs). |
 | `slurm_benchmark_gpu.sbatch` | Orbit-level gravity benchmark (`lunaris-benchmark`). |
 | `slurm_batch_array.sbatch` | Batch propagation / uncertainty ensembles (`lunaris-batch`). |
+| `slurm_generate_dataset.sbatch` | CPU-only ST-LRPS dataset / spatial-cloud generation (no GPU request). |
 | `scenarios/*.jsonl` | Self-describing experiment sweeps (ablations, capacity, encoding/loss). |
 
 Scenarios use JSONL rather than YAML because the launcher validates one
@@ -76,6 +80,13 @@ hpc/submit.sh scenario --array=0-6 -- \
     --test-data  "$LUNARIS_DATA_DIR/datasets/test.h5" \
     --ood-data   "$LUNARIS_DATA_DIR/datasets/ood_high.h5" \
     --epochs 300 --batch-size 8192 --split-policy spatial_block
+
+# CPU-only dataset / spatial-cloud generation (skips LUNARIS_GRES; uses
+# LUNARIS_CPU_PARTITION over LUNARIS_PARTITION when set):
+hpc/submit.sh generate -- \
+    --degree-max 200 --degree-min 20 --n-samples 10000000 \
+    --alt-range 100 1000 --workers 16 --format h5 \
+    --out "$LUNARIS_DATA_DIR/datasets/train_hybrid_10M.h5"
 
 # Gravity benchmark against a trained run:
 hpc/submit.sh benchmark -- --gpu-batch-compare \
