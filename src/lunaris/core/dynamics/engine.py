@@ -114,7 +114,15 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_rhs_state_vector(y: Any) -> np.ndarray:
-    """Return a 1D state vector accepted by the dynamics RHS."""
+    """Return a 1D state vector accepted by the dynamics RHS.
+
+    The built RHS closures run this full check on the FIRST evaluation only:
+    multi-stage integrators (DOP853: 12+ evaluations per step) pay the Python
+    shape-validation cost per call, while the solver guarantees an unchanged
+    state layout for the whole integration. Subsequent calls keep only the
+    ``np.asarray`` float64 coercion, so callers that hand-drive an RHS with a
+    changed state shape after the first call are outside the contract.
+    """
 
     arr = np.asarray(y, dtype=np.float64)
     if arr.ndim != 1 or arr.shape[0] not in (6, 7):
@@ -440,9 +448,15 @@ class DynamicsEngine:
 
         if USE_SURROGATE:
             surrogate = self.grav
+            rhs_state_checked = False
 
             def rhs(t: float, y: np.ndarray) -> np.ndarray:
-                y = _validate_rhs_state_vector(y)
+                nonlocal rhs_state_checked
+                if rhs_state_checked:
+                    y = np.asarray(y, dtype=np.float64)
+                else:
+                    y = _validate_rhs_state_vector(y)
+                    rhs_state_checked = True
                 rx, ry, rz = float(y[0]), float(y[1]), float(y[2])
                 vx, vy, vz = float(y[3]), float(y[4]), float(y[5])
 
@@ -756,8 +770,16 @@ class DynamicsEngine:
                     dydt[6] = 0.0
                 return dydt
 
+            rhs_state_checked = False
+
             def rhs(t: float, y: np.ndarray) -> np.ndarray:
+                nonlocal rhs_state_checked
+                if rhs_state_checked:
+                    return _rhs_sh_only_numba(
+                        t, np.asarray(y, dtype=np.float64), WS_P, WS_DP, WS_COS, WS_SIN
+                    )
                 y = _validate_rhs_state_vector(y)
+                rhs_state_checked = True
                 return _rhs_sh_only_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
             self._rhs_cache = rhs
@@ -1144,8 +1166,16 @@ class DynamicsEngine:
                 dydt[6] = 0.0
             return dydt
 
+        rhs_state_checked = False
+
         def rhs(t: float, y: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
+            nonlocal rhs_state_checked
+            if rhs_state_checked:
+                return _rhs_kernel_numba(
+                    t, np.asarray(y, dtype=np.float64), WS_P, WS_DP, WS_COS, WS_SIN
+                )
             y = _validate_rhs_state_vector(y)
+            rhs_state_checked = True
             return _rhs_kernel_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
         self._rhs_cache = rhs

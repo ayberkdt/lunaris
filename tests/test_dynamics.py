@@ -118,7 +118,11 @@ def test_rhs_supports_optional_mass_state(engine_point_mass: tuple[DynamicsEngin
 
 
 def test_rhs_rejects_unknown_augmented_state(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
-    _, rhs = engine_point_mass
+    # State validation is enforced on the FIRST evaluation only (the solver
+    # guarantees a fixed layout afterwards), so the rejection contract must be
+    # asserted on a freshly built RHS - the module fixture's is already warmed.
+    eng, _ = engine_point_mass
+    rhs = eng.build_rhs(force_rebuild=True)
     y8 = np.concatenate([_build_default_state(), np.asarray([12.0, 1.0])])
 
     with pytest.raises(ValueError, match="exactly 6 elements or 7 elements"):

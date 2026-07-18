@@ -310,6 +310,37 @@ def test_rhs_state_vector_guard_rejects_2d_input():
         _validate_rhs_state_vector(np.zeros((2, 3), dtype=np.float64))
 
 
+def _surrogate_rhs():
+    eng = DynamicsEngine(_sc(), PerturbationFlags(enable_sh=True),
+                         gravity_model=_StubSurrogate(), ephem_manager=None,
+                         allow_identity_rotation=True)
+    return eng.build_rhs()
+
+
+def test_rhs_validates_first_call_and_later_calls_are_identical():
+    # Validation runs on the first evaluation only (performance: DOP853 makes
+    # 12+ evaluations per step); later calls must produce bit-identical output.
+    rhs = _surrogate_rhs()
+    y = np.array([2.0e6, 0.0, 0.0, 0.0, 1.5e3, 0.0])
+    first = rhs(0.0, y)
+    second = rhs(0.0, y)
+    third = rhs(0.0, list(y))  # non-ndarray input still coerced after first call
+    np.testing.assert_array_equal(first, second)
+    np.testing.assert_array_equal(first, third)
+
+
+def test_rhs_rejects_bad_state_on_first_call_and_stays_armed_after_failure():
+    rhs = _surrogate_rhs()
+    with pytest.raises(ValueError, match="6 elements"):
+        rhs(0.0, np.zeros(5))
+    # A failed first call must not disarm the guard.
+    with pytest.raises(ValueError, match="6 elements"):
+        rhs(0.0, np.zeros((2, 3)))
+    # A valid state then evaluates normally.
+    out = rhs(0.0, np.array([2.0e6, 0.0, 0.0, 0.0, 1.5e3, 0.0]))
+    assert out.shape == (6,) and np.all(np.isfinite(out))
+
+
 def test_extract_gravity_strict_rejects_none():
     with pytest.raises(ValueError, match="gravity_model is None"):
         extract_gravity_strict(None)
