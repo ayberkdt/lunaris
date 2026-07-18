@@ -1513,6 +1513,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message("[Warning] Pre-flight validation already in progress", severity="warning")
             return
 
+        # Orbit semantics are a desktop validity rule: the backend keeps its
+        # legacy compatibility behavior, but Mission Studio never launches an
+        # orbit whose labeled periselene exceeds its aposelene.
+        orbit_page = getattr(self, "page_orbit", None)
+        if (
+            orbit_page is not None
+            and hasattr(orbit_page, "validate_inputs")
+            and not orbit_page.validate_inputs()
+        ):
+            self._switch_page("Orbit")
+            self._log_message(
+                "[Error] Correct the periselene and aposelene altitudes before running.",
+                severity="error",
+            )
+            return
+
         # Field-level gate: surface every invalid propagation field inline and
         # move focus to the first one instead of failing later in preflight.
         page = getattr(self, "page_propagation", None)

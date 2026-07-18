@@ -149,3 +149,52 @@ def test_main_window_focusable_widgets_have_accessible_identity(tmp_path, monkey
         )
     finally:
         window.close()
+
+
+@pytest.mark.slow
+def test_st_lrps_focusable_widgets_have_accessible_identity() -> None:
+    """ST-LRPS wrapper fields, logs, queues, and tables expose real names."""
+    _app()
+    from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import MainWindow
+    from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import (
+        apply_premium_dark_theme,
+    )
+
+    app = _app()
+    apply_premium_dark_theme(app)
+    window = MainWindow()
+    try:
+        interactive = _interactive_types()
+        buddies = {
+            id(lbl.buddy()): lbl
+            for lbl in window.findChildren(QtWidgets.QLabel)
+            if lbl.buddy() is not None
+        }
+        missing: list[str] = []
+        for widget in window.findChildren(QtWidgets.QWidget):
+            if not isinstance(widget, interactive):
+                continue
+            if isinstance(widget, QtWidgets.QScrollBar):
+                continue
+            if widget.objectName() in _SKIP_OBJECT_NAMES:
+                continue
+            if widget.focusPolicy() == QtCore.Qt.NoFocus:
+                continue
+            if _in_composite_control(widget):
+                continue
+            if widget.accessibleName().strip():
+                continue
+            if isinstance(widget, QtWidgets.QAbstractButton) and widget.text().strip():
+                continue
+            buddy = buddies.get(id(widget))
+            if buddy is not None and buddy.text().strip():
+                continue
+            missing.append(f"{type(widget).__name__}: {_widget_path(widget)}")
+        assert not missing, (
+            "Focusable ST-LRPS widgets without an accessible identity:\n"
+            + "\n".join(missing)
+        )
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

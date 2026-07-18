@@ -73,7 +73,7 @@ except ImportError as e:
 
 
 try:
-    from lunaris.ui.components.primitives import Section
+    from lunaris.ui.components.primitives import InlineNotice, Section
     from lunaris.ui.core.ui_commons import (
         MU_MOON_KM3_S2,
         ORBIT_THEME,
@@ -1273,9 +1273,22 @@ class OrbitPage(QtWidgets.QWidget):
         # Add to Form
         add_param(1, "Periselene Altitude (hp)", self.ent_hp, "km")
         add_param(2, "Aposelene Altitude (ha)", self.ent_ha, "km")
-        add_param(3, "Semi-major Axis (a)", self.ent_a, "km")
-        add_param(4, "Eccentricity (e)", self.ent_e, "")
-        add_param(5, "Circular Altitude", self.ent_alt_circular, "km")
+
+        self.orbit_validation_notice = InlineNotice("", "error")
+        self.orbit_validation_notice.setAccessibleName("Orbit input error")
+        self.btn_swap_apsides = QtWidgets.QPushButton("Swap values")
+        self.btn_swap_apsides.setObjectName("ghostBtn")
+        self.btn_swap_apsides.setAccessibleName("Swap periselene and aposelene values")
+        self.btn_swap_apsides.clicked.connect(self._swap_apsides)
+        notice_layout = self.orbit_validation_notice.layout()
+        if notice_layout is not None:
+            notice_layout.addWidget(self.btn_swap_apsides, 0, QtCore.Qt.AlignVCenter)
+        self.orbit_validation_notice.hide()
+        form_layout.addWidget(self.orbit_validation_notice, 3, 0, 1, 4)
+
+        add_param(4, "Semi-major Axis (a)", self.ent_a, "km")
+        add_param(5, "Eccentricity (e)", self.ent_e, "")
+        add_param(6, "Circular Altitude", self.ent_alt_circular, "km")
 
         # A flat 1px rule styled from the theme — the old beveled QFrame.HLine
         # read as a dated Win-Forms divider. ``#formDivider`` is themed in QSS.
@@ -1284,16 +1297,16 @@ class OrbitPage(QtWidgets.QWidget):
         sep.setFrameShape(QtWidgets.QFrame.HLine)
         sep.setFrameShadow(QtWidgets.QFrame.Plain)
         sep.setFixedHeight(1)
-        form_layout.addWidget(sep, 6, 0, 1, 3)
+        form_layout.addWidget(sep, 7, 0, 1, 3)
 
         orientation_lbl = QtWidgets.QLabel("Plane and orientation")
         orientation_lbl.setObjectName("sectionTitle")
-        form_layout.addWidget(orientation_lbl, 7, 0, 1, 3)
+        form_layout.addWidget(orientation_lbl, 8, 0, 1, 3)
 
-        add_param(8, "Inclination (i)", self.ent_inc, "deg")
-        add_param(9, "RAAN (Omega)", self.ent_raan, "deg")
-        add_param(10, "Argument of Periapsis (omega)", self.ent_argp, "deg")
-        add_param(11, "True Anomaly (nu)", self.ent_ta, "deg")
+        add_param(9, "Inclination (i)", self.ent_inc, "deg")
+        add_param(10, "RAAN (Omega)", self.ent_raan, "deg")
+        add_param(11, "Argument of Periapsis (omega)", self.ent_argp, "deg")
+        add_param(12, "True Anomaly (nu)", self.ent_ta, "deg")
 
         layout.addLayout(form_layout)
 
@@ -1344,6 +1357,14 @@ class OrbitPage(QtWidgets.QWidget):
         )
         layout = gb.content_layout
         layout.setSpacing(DESIGN_TOKENS.spacing.md)
+
+        self.preview_validation_notice = InlineNotice(
+            "Last valid preview — correct orbit inputs.",
+            "warning",
+        )
+        self.preview_validation_notice.setAccessibleName("Orbit preview status")
+        self.preview_validation_notice.hide()
+        layout.addWidget(self.preview_validation_notice)
 
         self.orbit_viz_3d = OrbitViz3D()
         self.orbit_viz_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
@@ -1456,13 +1477,15 @@ class OrbitPage(QtWidgets.QWidget):
                         hp = float(hp_text)
                         ha = float(ha_text) if ha_text else hp
 
+                        error = self._altitude_order_error(hp, ha)
+                        self._set_altitude_validation(error)
+                        if error:
+                            self._set_derived_values_unavailable()
+                            return
+
                         # Formulas: From Altitude to Classical
                         rp = R_MOON + hp
                         ra = R_MOON + ha
-
-                        # Ensure periapsis <= apoapsis
-                        if rp > ra:
-                            rp, ra = ra, rp
 
                         a = (rp + ra) / 2.0
                         e = (ra - rp) / (ra + rp) if (ra + rp) > 0 else 0.0
@@ -1477,6 +1500,7 @@ class OrbitPage(QtWidgets.QWidget):
                 except ValueError:
                     pass
             else:
+                self._set_altitude_validation(None)
                 # Classical mode active: calculate hp/ha from a/e
                 try:
                     a_text = self.ent_a.text().strip()
@@ -1512,6 +1536,76 @@ class OrbitPage(QtWidgets.QWidget):
         finally:
             self._updating_ghost = False
 
+    @staticmethod
+    def _altitude_order_error(hp: float, ha: float) -> str | None:
+        if hp > ha:
+            return "Periselene altitude cannot exceed aposelene altitude."
+        return None
+
+    def _set_altitude_validation(self, message: str | None) -> None:
+        """Expose apsis ordering errors without silently reinterpreting values."""
+        is_error = bool(message)
+        for field in (self.ent_hp, self.ent_ha):
+            field.setProperty("fieldError", is_error)
+            field.setAccessibleDescription(message or "")
+            field.setToolTip(message or "")
+            field.style().unpolish(field)
+            field.style().polish(field)
+        self.orbit_validation_notice.label.setText(message or "")
+        self.orbit_validation_notice.setVisible(is_error)
+        if hasattr(self, "preview_validation_notice"):
+            self.preview_validation_notice.setVisible(is_error)
+
+    def _set_derived_values_unavailable(self) -> None:
+        for field in (self.ent_a, self.ent_e):
+            field.blockSignals(True)
+            field.setText("—")
+            field.blockSignals(False)
+        for label in (
+            self.lbl_period,
+            self.lbl_hp,
+            self.lbl_ha,
+            self.lbl_ecc,
+            self.lbl_inc,
+            self.lbl_energy,
+        ):
+            label.setText("—")
+
+    def _swap_apsides(self, _checked: bool = False) -> None:
+        """Apply the user's explicit correction and refresh derived state."""
+        hp_text = self.ent_hp.text()
+        ha_text = self.ent_ha.text()
+        self.ent_hp.blockSignals(True)
+        self.ent_ha.blockSignals(True)
+        self.ent_hp.setText(ha_text)
+        self.ent_ha.setText(hp_text)
+        self.ent_hp.blockSignals(False)
+        self.ent_ha.blockSignals(False)
+        self._update_ghost_orbit()
+        self._update_orbit_3d()
+        self.ent_hp.setFocus(QtCore.Qt.OtherFocusReason)
+
+    def validate_inputs(self) -> bool:
+        """Validate desktop-only orbit semantics and focus the first error."""
+        if not self.btn_mode_altitude.isChecked():
+            self._set_altitude_validation(None)
+            return True
+        try:
+            hp = float(self.ent_hp.text().strip())
+            ha_text = self.ent_ha.text().strip()
+            ha = float(ha_text) if ha_text else hp
+        except (TypeError, ValueError):
+            return True
+        message = self._altitude_order_error(hp, ha)
+        self._set_altitude_validation(message)
+        if message:
+            self._set_derived_values_unavailable()
+            self.ent_hp.setFocus(QtCore.Qt.OtherFocusReason)
+            self.ent_hp.selectAll()
+            self._params_scroll.ensureWidgetVisible(self.ent_hp)
+            return False
+        return True
+
     def _update_orbit_3d(self, _=None):
         """Schedule a debounced preview/metric refresh.
 
@@ -1544,10 +1638,10 @@ class OrbitPage(QtWidgets.QWidget):
                 ha_text = self.ent_ha.text().strip()
                 hp = float(hp_text)
                 ha = float(ha_text) if ha_text else hp
+                if self._altitude_order_error(hp, ha):
+                    return None
                 rp = R_MOON + hp
                 ra = R_MOON + ha
-                if rp > ra:
-                    rp, ra = ra, rp
                 a_km = (rp + ra) / 2.0
                 e = (ra - rp) / (ra + rp) if (ra + rp) > 0 else 0.0
             else:

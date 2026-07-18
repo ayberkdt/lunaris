@@ -14,7 +14,12 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from lunaris.ui.components.primitives import FormGrid, InlineNotice, Section
+from lunaris.ui.components.primitives import (
+    FormGrid,
+    InlineNotice,
+    ResponsiveColumns,
+    Section,
+)
 from lunaris.ui.core.ui_commons import (
     THEME,
     NoWheelComboBox,
@@ -72,41 +77,72 @@ class FrozenSearchPage(QtWidgets.QWidget):
         self._update_preview()
 
     def _build_ui(self) -> None:
-        root = QtWidgets.QHBoxLayout(self)
+        root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(DESIGN_TOKENS.spacing.lg)
+        root.setSpacing(DESIGN_TOKENS.spacing.md)
 
-        left_scroll = QtWidgets.QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self._action_strip = self._build_execution_section()
+        self._action_strip.setObjectName("frozenSearchActionStrip")
+        root.addWidget(self._action_strip)
+
         left = QtWidgets.QWidget()
         left_layout = QtWidgets.QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, DESIGN_TOKENS.spacing.sm, 0)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(DESIGN_TOKENS.spacing.md)
         left_layout.addWidget(self._build_run_contract_section())
         left_layout.addWidget(self._build_sampling_section())
         left_layout.addWidget(self._build_screening_section())
         left_layout.addWidget(self._build_validation_section())
         left_layout.addStretch(1)
-        left_scroll.setWidget(left)
-        left_scroll.setMinimumWidth(430)
-        root.addWidget(left_scroll, 6)
+        left.setMinimumWidth(430)
 
-        right_scroll = QtWidgets.QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        right_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        right_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         right = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, DESIGN_TOKENS.spacing.sm, 0)
+        right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(DESIGN_TOKENS.spacing.md)
-        right_layout.addWidget(self._build_execution_section())
+        right_layout.addWidget(self._build_execution_log_section())
         right_layout.addWidget(self._build_command_section())
         right_layout.addStretch(1)
-        right_scroll.setWidget(right)
-        right_scroll.setMinimumWidth(360)
-        root.addWidget(right_scroll, 4)
+        right.setMinimumWidth(360)
+
+        self._workspace_columns = ResponsiveColumns(
+            left,
+            right,
+            spacing=DESIGN_TOKENS.spacing.lg,
+        )
+        self._scroll_body = QtWidgets.QWidget()
+        body_layout = QtWidgets.QVBoxLayout(self._scroll_body)
+        body_layout.setContentsMargins(0, 0, DESIGN_TOKENS.spacing.sm, 0)
+        body_layout.addWidget(self._workspace_columns)
+        body_layout.addStretch(1)
+
+        self._workspace_scroll = QtWidgets.QScrollArea()
+        self._workspace_scroll.setObjectName("frozenSearchScroll")
+        self._workspace_scroll.setWidgetResizable(True)
+        self._workspace_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._workspace_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self._workspace_scroll.setWidget(self._scroll_body)
+        root.addWidget(self._workspace_scroll, 1)
+        QtCore.QTimer.singleShot(0, self._refresh_workspace_width)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        QtCore.QTimer.singleShot(0, self._refresh_workspace_width)
+
+    def _refresh_workspace_width(self) -> None:
+        """Release the old two-column width after a responsive stack."""
+        if not hasattr(self, "_workspace_columns"):
+            return
+        viewport_width = self._workspace_scroll.viewport().width()
+        self._scroll_body.resize(viewport_width, self._scroll_body.height())
+        body_layout = self._scroll_body.layout()
+        if body_layout is not None:
+            body_layout.activate()
+        self._workspace_columns._refresh_direction()
+        if self._workspace_columns.stacked:
+            self._scroll_body.updateGeometry()
+            self._workspace_scroll.viewport().update()
+            self.update()
 
     def _build_run_contract_section(self) -> Section:
         section = Section(
@@ -253,14 +289,6 @@ class FrozenSearchPage(QtWidgets.QWidget):
         self.progress.setTextVisible(False)
         section.content_layout.addWidget(self.progress)
 
-        self.txt_log = QtWidgets.QPlainTextEdit()
-        self.txt_log.setObjectName("logConsole")
-        self.txt_log.setAccessibleName("Frozen search process log")
-        self.txt_log.setReadOnly(True)
-        self.txt_log.setMinimumHeight(180)
-        self.txt_log.setPlaceholderText("Frozen-search output appears here...")
-        section.content_layout.addWidget(self.txt_log)
-
         btn_row = QtWidgets.QHBoxLayout()
         self.btn_run = QtWidgets.QPushButton("  Run Search")
         self.btn_run.setObjectName("primaryBtn")
@@ -282,15 +310,49 @@ class FrozenSearchPage(QtWidgets.QWidget):
         section.content_layout.addLayout(btn_row)
         return section
 
+    def _build_execution_log_section(self) -> Section:
+        section = Section(
+            "Execution Log",
+            "Live output from the active or most recent frozen-search process.",
+            elevated=True,
+        )
+        self.txt_log = QtWidgets.QPlainTextEdit()
+        self.txt_log.setObjectName("logConsole")
+        self.txt_log.setAccessibleName("Frozen search process log")
+        self.txt_log.setReadOnly(True)
+        self.txt_log.setMinimumHeight(220)
+        self.txt_log.setPlaceholderText("Frozen-search output appears here...")
+        section.content_layout.addWidget(self.txt_log)
+        return section
+
     def _build_command_section(self) -> Section:
         section = Section("Command Preview", "The UI launches this command in a background QProcess.", elevated=True)
+        self.btn_command_toggle = QtWidgets.QToolButton()
+        self.btn_command_toggle.setText("Show command preview")
+        self.btn_command_toggle.setCheckable(True)
+        self.btn_command_toggle.setChecked(False)
+        self.btn_command_toggle.setArrowType(QtCore.Qt.RightArrow)
+        self.btn_command_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.btn_command_toggle.setAccessibleName("Show frozen search command preview")
+        section.content_layout.addWidget(self.btn_command_toggle)
         self.txt_command = QtWidgets.QPlainTextEdit()
         self.txt_command.setObjectName("commandPreview")
         self.txt_command.setReadOnly(True)
         self.txt_command.setMinimumHeight(150)
         self.txt_command.setAccessibleName("Frozen search command preview")
+        self.txt_command.hide()
         section.content_layout.addWidget(self.txt_command)
+        self.btn_command_toggle.toggled.connect(self._toggle_command_preview)
         return section
+
+    def _toggle_command_preview(self, expanded: bool) -> None:
+        self.txt_command.setVisible(expanded)
+        self.btn_command_toggle.setArrowType(
+            QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow
+        )
+        self.btn_command_toggle.setText(
+            "Hide command preview" if expanded else "Show command preview"
+        )
 
     def _connect_validation(self) -> None:
         widgets: list[QtCore.QObject] = [
@@ -456,6 +518,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def _update_preview(self) -> None:
+        self._sync_path_metadata()
         state = self.get_state()
         ok, errors = self.validate_state(state)
         self.btn_run.setEnabled(ok and not self._is_running())
@@ -474,6 +537,15 @@ class FrozenSearchPage(QtWidgets.QWidget):
             self.txt_command.setToolTip(f"Interpreter used at launch: {command[0]}")
         except Exception as exc:
             self.txt_command.setPlainText(f"# PREVIEW ERROR\n{exc}")
+
+    def _sync_path_metadata(self) -> None:
+        for field, label in (
+            (self.ent_out_dir, "Full output directory"),
+            (self.ent_gravity_file, "Full gravity coefficient path"),
+        ):
+            value = field.text().strip()
+            field.setToolTip(value)
+            field.setAccessibleDescription(f"{label}: {value}" if value else label)
 
     @QtCore.Slot()
     def _run_search(self) -> None:

@@ -54,6 +54,7 @@ try:
     from lunaris.ui.components.primitives import (
         DataTable,
         InlineNotice,
+        ResponsiveColumns,
         Section,
         cap_input_width,
     )
@@ -330,19 +331,18 @@ class BatchPropagationPage(QtWidgets.QWidget):
         root.addWidget(self.tabs, 1)
 
         run_tab = QtWidgets.QWidget()
-        run_root = QtWidgets.QHBoxLayout(run_tab)
+        run_root = QtWidgets.QVBoxLayout(run_tab)
         run_root.setContentsMargins(0, 0, 0, 0)
-        run_root.setSpacing(16)
+        run_root.setSpacing(DESIGN_TOKENS.spacing.md)
 
-        # ----- Left: scrollable configuration --------------------------------
-        left_scroll = QtWidgets.QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self._run_action_strip = self._card_run_controls()
+        self._run_action_strip.setObjectName("batchActionStrip")
+        run_root.addWidget(self._run_action_strip)
 
+        # ----- Configure ------------------------------------------------------
         left_container = QtWidgets.QWidget()
         left_layout = QtWidgets.QVBoxLayout(left_container)
-        left_layout.setContentsMargins(0, 0, 8, 0)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
         left_layout.addWidget(self._card_ensemble())
@@ -352,44 +352,53 @@ class BatchPropagationPage(QtWidgets.QWidget):
         left_layout.addWidget(self._card_integration())
         left_layout.addWidget(self._card_output())
         left_layout.addWidget(self._card_impact())
+        left_layout.addWidget(self._card_backend_comparison())
         left_layout.addStretch(1)
 
-        left_scroll.setWidget(left_container)
         # Minimum column widths keep the two-column run tab from collapsing into
         # an unusable, overlapping layout at the window's minimum width (1000 px):
         # without these the right control card was crushed and its contents
         # visually collided. Both stay above their minimums at every supported
         # window size, so no horizontal page scrollbar is introduced.
-        left_scroll.setMinimumWidth(320)
-        run_root.addWidget(left_scroll, 6)
+        left_container.setMinimumWidth(320)
 
-        # ----- Right: run controls + metrics (scrollable) --------------------
+        # ----- Inspect --------------------------------------------------------
         # The right column must scroll independently like the left one. Without
         # its own scroll area the run-controls + 12-row results stack overflowed
         # short windows, squeezing widgets below their minimum size — which is
         # what made the text overlap and clipped the Run / Open Folder buttons.
-        right_scroll = QtWidgets.QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        right_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        right_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-
         right_widget = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 8, 0)
+        right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(12)
 
-        right_layout.addWidget(self._card_run_controls())
+        right_layout.addWidget(self._card_progress_console())
         right_layout.addWidget(self._card_metrics())
         right_layout.addStretch(1)
 
-        right_scroll.setWidget(right_widget)
-        right_scroll.setMinimumWidth(340)
-        run_root.addWidget(right_scroll, 4)
+        right_widget.setMinimumWidth(340)
 
         # Backend comparison card lives below the existing run cards so users
         # discover it after configuring a baseline run.  The widget is
         # preview-only — building a command just writes it to the clipboard.
-        left_layout.addWidget(self._card_backend_comparison())
+        self._run_columns = ResponsiveColumns(
+            left_container,
+            right_widget,
+            spacing=DESIGN_TOKENS.spacing.lg,
+        )
+        self._run_body = QtWidgets.QWidget()
+        body_layout = QtWidgets.QVBoxLayout(self._run_body)
+        body_layout.setContentsMargins(0, 0, DESIGN_TOKENS.spacing.sm, 0)
+        body_layout.addWidget(self._run_columns)
+        body_layout.addStretch(1)
+
+        self._run_scroll = QtWidgets.QScrollArea()
+        self._run_scroll.setObjectName("batchSetupScroll")
+        self._run_scroll.setWidgetResizable(True)
+        self._run_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._run_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self._run_scroll.setWidget(self._run_body)
+        run_root.addWidget(self._run_scroll, 1)
 
         self.analysis_panel = EnsembleAnalysisPanel(parent=self)
 
@@ -1282,18 +1291,9 @@ class BatchPropagationPage(QtWidgets.QWidget):
         layout.addWidget(self.lbl_progress_meta)
 
         # Live log (last few lines) — reuses the global console surface style.
-        self.txt_progress = QtWidgets.QPlainTextEdit()
-        self.txt_progress.setObjectName("logConsole")
-        self.txt_progress.setAccessibleName("Batch engine output log")
-        self.txt_progress.setReadOnly(True)
         # Minimum (not fixed) height so the mini-log never clips its text under
         # larger fonts, HiDPI scaling, or localized strings; capped to keep the
         # control card compact.
-        self.txt_progress.setMinimumHeight(80)
-        self.txt_progress.setMaximumHeight(120)
-        self.txt_progress.setPlaceholderText("Batch engine output appears here...")
-        layout.addWidget(self.txt_progress)
-
         # Buttons row
         btn_row = QtWidgets.QHBoxLayout()
 
@@ -1317,6 +1317,20 @@ class BatchPropagationPage(QtWidgets.QWidget):
         btn_row.addWidget(self.btn_open_folder)
         layout.addLayout(btn_row)
 
+        return gb
+
+    def _card_progress_console(self) -> QtWidgets.QGroupBox:
+        gb = _card("Execution Console")
+        layout = gb.content_layout
+        layout.setSpacing(DESIGN_TOKENS.spacing.md)
+
+        self.txt_progress = QtWidgets.QPlainTextEdit()
+        self.txt_progress.setObjectName("logConsole")
+        self.txt_progress.setAccessibleName("Batch engine output log")
+        self.txt_progress.setReadOnly(True)
+        self.txt_progress.setMinimumHeight(160)
+        self.txt_progress.setPlaceholderText("Batch engine output appears here...")
+        layout.addWidget(self.txt_progress)
         return gb
 
     def _on_run_clicked(self) -> None:

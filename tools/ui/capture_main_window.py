@@ -28,6 +28,10 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 REPO_ROOT = Path(os.path.abspath(__file__)).parents[2]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    # The workspace must win over a stale editable install from another clone.
+    sys.path.insert(0, str(SRC_ROOT))
 DEFAULT_OUT = REPO_ROOT / "outputs" / "ui" / "main_window_lunar_graphite.png"
 DEFAULT_CAPTURE_DATA_DIR = REPO_ROOT / "outputs" / "ui" / "capture_runtime"
 os.environ.setdefault("LUNARIS_APP_DATA_DIR", str(DEFAULT_CAPTURE_DATA_DIR))
@@ -66,7 +70,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--state",
-        choices=("idle", "validating", "running"),
+        choices=("idle", "validating", "running", "invalid-orbit"),
         default="idle",
         help="Visible lifecycle state to render (default: idle).",
     )
@@ -110,6 +114,15 @@ def _set_visual_state(window, target: str, state: str) -> None:
             header.set_elapsed("00:04:18")
             header._elapsed.setVisible(True)
             header.set_remaining("00:11:42")
+        return
+
+    if state == "invalid-orbit":
+        page = getattr(window, "page_orbit", None)
+        if page is not None:
+            page.ent_hp.setText("200")
+            page.ent_ha.setText("100")
+            page._update_ghost_orbit()
+            page._apply_orbit_update()
         return
 
     if state == "validating":
@@ -179,6 +192,11 @@ def capture(
     # draw) fire and the theme fully paints before we grab the frame.
     QtCore.QTimer.singleShot(int(max(0.0, delay) * 1000), app.quit)
     app.exec()
+    app.processEvents()
+    # Offscreen backing stores can retain the pre-relayout frame even after Qt
+    # has updated widget geometry. Force one synchronous paint so responsive
+    # snapshots reflect the final layout, not the first shown frame.
+    capture_widget.repaint()
     app.processEvents()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

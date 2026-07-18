@@ -65,6 +65,7 @@ from .qt_common import (
     QColor,
     QDesktopServices,
     QDoubleSpinBox,
+    QEvent,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -199,6 +200,7 @@ import contextlib
 
 from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import (
     CompactSearchField,
+    InlineNotice,
     KeyValueList,
 )
 
@@ -708,6 +710,90 @@ def _find_resumable_run() -> tuple[str, str] | None:
             pass
     return None
 
+class _ResponsiveLaunchStrip(QFrame):
+    """Keep the launch controls readable while preserving their live state."""
+
+    def __init__(
+        self,
+        workflow: QWidget,
+        output_mode: QWidget,
+        badge: QWidget,
+        enqueue: QPushButton,
+        start: QPushButton,
+        notice: QWidget,
+    ) -> None:
+        super().__init__()
+        self.setObjectName("setupLaunchStrip")
+        _style_surface(self, object_name="setupLaunchStrip")
+        self._workflow = workflow
+        self._output_mode = output_mode
+        self._badge = badge
+        self._enqueue = enqueue
+        self._start = start
+        self._notice = notice
+        self._context = QWidget()
+        context_layout = QHBoxLayout(self._context)
+        context_layout.setContentsMargins(0, 0, 0, 0)
+        context_layout.setSpacing(16)
+        context_layout.addWidget(workflow)
+        context_layout.addWidget(output_mode)
+        context_layout.addWidget(badge)
+        context_layout.addStretch(1)
+        self._actions = QWidget()
+        actions_layout = QHBoxLayout(self._actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(16)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(enqueue)
+        actions_layout.addWidget(start)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(16, 12, 16, 12)
+        self._grid.setSpacing(16)
+        self._compact: bool | None = None
+        self._relayout(False)
+        QTimer.singleShot(0, self._refresh_layout)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._refresh_layout()
+
+    def event(self, event) -> bool:  # noqa: A003
+        handled = super().event(event)
+        if event.type() in (
+            QEvent.Type.LayoutRequest,
+            QEvent.Type.PolishRequest,
+            QEvent.Type.Show,
+        ):
+            QTimer.singleShot(0, self._refresh_layout)
+        return handled
+
+    def _refresh_layout(self) -> None:
+        required = (
+            self._context.minimumSizeHint().width()
+            + self._actions.minimumSizeHint().width()
+            + self._grid.horizontalSpacing()
+        )
+        self._relayout(self.width() < required)
+
+    def _relayout(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        while self._grid.count():
+            self._grid.takeAt(0)
+        for column in range(2):
+            self._grid.setColumnStretch(column, 0)
+        if compact:
+            self._grid.addWidget(self._context, 0, 0, 1, 2)
+            self._grid.addWidget(self._actions, 1, 0, 1, 2)
+            self._grid.addWidget(self._notice, 2, 0, 1, 2)
+        else:
+            self._grid.setColumnStretch(0, 1)
+            self._grid.addWidget(self._context, 0, 0)
+            self._grid.addWidget(self._actions, 0, 1)
+            self._grid.addWidget(self._notice, 1, 0, 1, 2)
+
+
 class STLRPSTrainTab(QWidget):
     navigate_monitor_requested = pyqtSignal()
     evaluate_requested = pyqtSignal(str)
@@ -749,6 +835,13 @@ class STLRPSTrainTab(QWidget):
         self.workflow_mode.addItem("Train then evaluate",     "train_then_eval")
         self.workflow_mode.addItem("Queue training runs",     "queue")
         self.workflow_mode.setCurrentIndex(2)  # default: Train then evaluate
+        longest_workflow = max(
+            self.workflow_mode.fontMetrics().horizontalAdvance(
+                self.workflow_mode.itemText(index)
+            )
+            for index in range(self.workflow_mode.count())
+        )
+        self.workflow_mode.setMinimumWidth(longest_workflow + 48)
         self.workflow_mode.setToolTip(
             f"Train only:         Runs python -m {TRAIN_CLI_MODULE}.\n"
             f"Evaluate only:      Runs python -m {EVAL_CLI_MODULE} (existing model folder required).\n"
@@ -770,13 +863,13 @@ class STLRPSTrainTab(QWidget):
         self._checklist_label.setObjectName("insetHint")
         self._checklist_label.setVisible(False)
         self._launch_badge = StudioStatusBadge("Checking", "info")
-        self._launch_summary = QLabel("Readiness checks will appear here.")
+        self._launch_notice = InlineNotice(
+            "Readiness checks will appear here.", "info"
+        )
+        self._launch_summary = self._launch_notice.label
         self._launch_summary.setAccessibleName("Launch readiness details")
-        self._launch_summary.setWordWrap(True)
         self._launch_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._launch_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._launch_summary.setObjectName("fieldHint")
-        self._launch_summary.setProperty("kind", "soft")
 
         # =====================================================================
         # GROUP 1: Data & I/O
@@ -971,7 +1064,6 @@ class STLRPSTrainTab(QWidget):
 
         resumable = _find_resumable_run()
 
-        from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import InlineNotice
         self.resume_notice = InlineNotice(
             f"Resumable run found: {resumable[0]}" if resumable else "",
             kind="info"
@@ -1935,14 +2027,9 @@ class STLRPSTrainTab(QWidget):
         grp_data.setTitle("Dataset and Output")
 
         # ── 3. Horizontal Launch Plan Strip (Phase 1) ──
-        launch_strip = QFrame()
-        launch_strip.setObjectName("setupLaunchStrip")
-        _style_surface(launch_strip, object_name="setupLaunchStrip")
-        launch_l = QHBoxLayout()
-        launch_l.setContentsMargins(16, 12, 16, 12)
-        launch_l.setSpacing(16)
-
-        launch_l.addLayout(workflow_bar)
+        workflow_widget = QWidget()
+        workflow_widget.setLayout(workflow_bar)
+        workflow_widget.setMinimumWidth(workflow_widget.minimumSizeHint().width())
 
         output_mode_box = QHBoxLayout()
         output_mode_box.setSpacing(6)
@@ -1953,13 +2040,29 @@ class STLRPSTrainTab(QWidget):
         output_mode_box.addWidget(out_mode_lbl)
         output_mode_box.addWidget(self._output_mode_short)
 
-        launch_l.addLayout(output_mode_box)
-        launch_l.addWidget(self._launch_badge)
-        launch_l.addWidget(self._launch_summary, 1)
-        launch_l.addStretch(1)
-        launch_l.addWidget(self.btn_enqueue_setup)
-        launch_l.addWidget(self.btn_start_setup)
-        launch_strip.setLayout(launch_l)
+        output_mode_widget = QWidget()
+        output_mode_widget.setLayout(output_mode_box)
+        output_mode_widget.setMinimumWidth(output_mode_widget.minimumSizeHint().width())
+        for button in (self.btn_enqueue_setup, self.btn_start_setup):
+            text_width = button.fontMetrics().horizontalAdvance(button.text())
+            button.setMinimumWidth(
+                max(button.sizeHint().width() + 24, text_width + 40)
+            )
+        launch_strip = _ResponsiveLaunchStrip(
+            workflow_widget,
+            output_mode_widget,
+            self._launch_badge,
+            self.btn_enqueue_setup,
+            self.btn_start_setup,
+            self._launch_notice,
+        )
+        self._launch_strip = launch_strip
+
+        def _fit_launch_buttons_after_polish() -> None:
+            for button in (self.btn_enqueue_setup, self.btn_start_setup):
+                button.setMinimumWidth(button.sizeHint().width())
+
+        QTimer.singleShot(0, _fit_launch_buttons_after_polish)
 
         # Resolved values are visible before launch; the panel is fed from the
         # current widgets and the engine's resolver in _refresh_launch_plan().
@@ -1992,17 +2095,18 @@ class STLRPSTrainTab(QWidget):
         # Resume / continue-from-checkpoint sits at the very top of the config
         # so it is the first thing visible (it was previously attached to an
         # unused layout and never displayed at all).
-        workspace_grid.addWidget(self.resume_section, 0, 0)
-        workspace_grid.addWidget(grp_data, 1, 0)
-        workspace_grid.addWidget(grp_arch, 2, 0)
-        workspace_grid.addWidget(grp_optim, 3, 0)
-        workspace_grid.addWidget(self._loss_physics_section, 4, 0)
-        workspace_grid.addWidget(self._fourier_section, 5, 0)
-        workspace_grid.addWidget(self._dir_loss_section, 6, 0)
-        workspace_grid.addWidget(self._field_loss_section, 7, 0)
-        workspace_grid.addWidget(self.advanced_section, 8, 0)
-        workspace_grid.addWidget(self._model_repr_section, 9, 0)
-        workspace_grid.addWidget(self._periodic_eval_section, 10, 0)
+        workspace_grid.addWidget(launch_plan_card, 0, 0)
+        workspace_grid.addWidget(self.resume_section, 1, 0)
+        workspace_grid.addWidget(grp_data, 2, 0)
+        workspace_grid.addWidget(grp_arch, 3, 0)
+        workspace_grid.addWidget(grp_optim, 4, 0)
+        workspace_grid.addWidget(self._loss_physics_section, 5, 0)
+        workspace_grid.addWidget(self._fourier_section, 6, 0)
+        workspace_grid.addWidget(self._dir_loss_section, 7, 0)
+        workspace_grid.addWidget(self._field_loss_section, 8, 0)
+        workspace_grid.addWidget(self.advanced_section, 9, 0)
+        workspace_grid.addWidget(self._model_repr_section, 10, 0)
+        workspace_grid.addWidget(self._periodic_eval_section, 11, 0)
 
         # ── 5. Command & Launch collapsible section ──
         cmd_section = CollapsibleSection("Command Preview & CLI Arguments")
@@ -2037,7 +2141,7 @@ class STLRPSTrainTab(QWidget):
 
         # Command preview stays at the bottom of the grid; Saved Profiles now
         # lives in its own prominent card above the launch strip.
-        workspace_grid.addWidget(cmd_section, 11, 0)
+        workspace_grid.addWidget(cmd_section, 12, 0)
 
         workspace_inner = QWidget()
         workspace_inner.setLayout(workspace_grid)
@@ -2056,7 +2160,6 @@ class STLRPSTrainTab(QWidget):
         ))
         setup_l.addWidget(saved_profiles_card)
         setup_l.addWidget(launch_strip)
-        setup_l.addWidget(launch_plan_card)
         self._setup_search = CompactSearchField("Search setup fields")
         self._setup_search.setToolTip("Filter configuration groups by name or field label. Press Escape to clear.")
         self._setup_search.textChanged.connect(self._filter_setup_sections)
@@ -2778,6 +2881,8 @@ class STLRPSTrainTab(QWidget):
             else:
                 summary = "Ready to review parameters."
             self._launch_summary.setText(summary)
+            notice_kind = "error" if blocking_items else "warning" if warning_items else "success"
+            self._launch_notice.set_notice(summary, notice_kind)
             tooltip_lines = []
             for heading, values in (
                 ("Blocking", blocking_items),

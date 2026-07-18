@@ -64,6 +64,46 @@ def test_invalid_intermediate_input_preserves_last_valid_state() -> None:
         p.deleteLater()
 
 
+def test_inverted_altitudes_are_not_silently_reinterpreted() -> None:
+    p = _page()
+    try:
+        p.ent_hp.setText("200")
+        p.ent_ha.setText("100")
+        p._update_ghost_orbit()
+        p._apply_orbit_update()
+
+        assert not p.validate_inputs()
+        assert p._compute_orbit_state() is None
+        assert p.ent_hp.text() == "200"
+        assert p.ent_ha.text() == "100"
+        assert p.ent_a.text() == "—"
+        assert p.ent_e.text() == "—"
+        assert p.orbit_validation_notice.isVisibleTo(p)
+        assert p.preview_validation_notice.isVisibleTo(p)
+        assert all(
+            label.text() == "—"
+            for label in (
+                p.lbl_period,
+                p.lbl_hp,
+                p.lbl_ha,
+                p.lbl_ecc,
+                p.lbl_inc,
+                p.lbl_energy,
+            )
+        )
+
+        p.btn_swap_apsides.click()
+        assert p.validate_inputs()
+        assert p.ent_hp.text() == "100"
+        assert p.ent_ha.text() == "200"
+        assert p.ent_a.text() != "—"
+        assert p.ent_e.text() != "—"
+        assert p.orbit_validation_notice.isHidden()
+        assert p.preview_validation_notice.isHidden()
+    finally:
+        p.deleteLater()
+
+
 def test_metric_strip_and_preview_use_same_validated_state() -> None:
     p = _page()
     try:

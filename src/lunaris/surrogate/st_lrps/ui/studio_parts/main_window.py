@@ -52,6 +52,7 @@ from lunaris.common.paths import project_root_from_file
 
 from .data_pages import CloudAnalysisTab, CloudGenTab, DataPage, TrainingReadinessPage
 from .evaluation_pages import EvaluationPage, STLRPSEvalTab
+from .local_primitives import assign_accessible_names
 from .orbit_benchmark_pages import (
     OrbitBenchmarkPage,
     OrbitBenchmarkPlotsPage,
@@ -297,6 +298,7 @@ class MainWindow(QMainWindow):
         root_lo.addWidget(content_area, 1)
         root.setLayout(root_lo)
         self.setCentralWidget(root)
+        assign_accessible_names(self)
         self._update_responsive_chrome(self.width())
         self._install_shortcuts()
 

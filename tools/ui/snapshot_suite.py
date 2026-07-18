@@ -64,6 +64,12 @@ PAGES: tuple[tuple[str, bool], ...] = (
     ("FrozenSearch", False),
 )
 
+ST_LRPS_PAGES: tuple[tuple[str, str], ...] = (
+    ("Data", "idle"),
+    ("Training Setup", "idle"),
+    ("Training Monitor", "running"),
+)
+
 # A page counts as "changed" when more than this fraction of pixels differ.
 # Offscreen 2D rendering is deterministic on a fixed machine, so the intended
 # gate is effectively 0; the small floor absorbs any single-pixel antialias
@@ -78,6 +84,29 @@ class PageDiff:
     changed: int
     total: int
     note: str = ""
+
+
+@dataclass(frozen=True)
+class SnapshotSpec:
+    target: str
+    page: str
+    state: str = "idle"
+    is_gl: bool = False
+
+    @property
+    def key(self) -> str:
+        return f"{self.target}/{self.page}"
+
+    @property
+    def relative_path(self) -> Path:
+        directory = "mission" if self.target == "mission" else "st_lrps"
+        return Path(directory) / f"{self.page}.png"
+
+
+SNAPSHOTS: tuple[SnapshotSpec, ...] = (
+    *(SnapshotSpec("mission", page, is_gl=is_gl) for page, is_gl in PAGES),
+    *(SnapshotSpec("st-lrps", page, state=state) for page, state in ST_LRPS_PAGES),
+)
 
 
 def _qimage_to_array(path: Path):
@@ -148,18 +177,18 @@ def _capture_set(dest: Path, *, delay: float, width: int, height: int) -> list[P
 
     dest.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for page, _is_gl in PAGES:
-        out = dest / f"{page}.png"
+    for spec in SNAPSHOTS:
+        out = dest / spec.relative_path
         capture(
             out, delay=delay, width=width, height=height,
-            target="mission", page=page, state="idle", dialog="none",
+            target=spec.target, page=spec.page, state=spec.state, dialog="none",
         )
         written.append(out)
     return written
 
 
 def _gate_pages(include_gl: bool) -> set[str]:
-    return {name for name, is_gl in PAGES if include_gl or not is_gl}
+    return {spec.key for spec in SNAPSHOTS if include_gl or not spec.is_gl}
 
 
 def run_baseline(delay: float, width: int, height: int) -> int:
@@ -188,18 +217,22 @@ def run_compare(
     failures = 0
     print(f"[snapshot] comparing (threshold {threshold:.3%}, "
           f"{'incl' if include_gl else 'excl'} GL pages)")
-    for page, is_gl in PAGES:
-        base_png = baseline_dir / f"{page}.png"
-        cur_png = current_dir / f"{page}.png"
+    for spec in SNAPSHOTS:
+        base_png = baseline_dir / spec.relative_path
+        cur_png = current_dir / spec.relative_path
         if not base_png.exists():
-            print(f"  MISSING baseline  {page}")
+            print(f"  MISSING baseline  {spec.key}")
             failures += 1
             continue
-        result = _diff_pages(base_png, cur_png, diff_dir / f"{page}_diff.png")
-        gated = page in gate
+        result = _diff_pages(
+            base_png,
+            cur_png,
+            diff_dir / spec.relative_path.with_name(f"{spec.page}_diff.png"),
+        )
+        gated = spec.key in gate
         flag = "gl-skip" if not gated else ("FAIL" if result.ratio > threshold else "ok")
         detail = result.note or f"{result.changed}/{result.total} px"
-        print(f"  {flag:>7}  {page:<16} {result.ratio:8.4%}  {detail}")
+        print(f"  {flag:>7}  {spec.key:<30} {result.ratio:8.4%}  {detail}")
         if gated and result.ratio > threshold:
             failures += 1
     if failures:
@@ -222,16 +255,19 @@ def run_self_test(delay: float, width: int, height: int) -> int:
     worst = 0.0
     nondeterministic = 0
     print("[snapshot] determinism self-test (2 runs, gate pages)")
-    for page, _is_gl in PAGES:
-        if page not in gate:
+    for spec in SNAPSHOTS:
+        if spec.key not in gate:
             continue
-        result = _diff_pages(a_dir / f"{page}.png", b_dir / f"{page}.png",
-                             diff_dir / f"{page}_diff.png")
+        result = _diff_pages(
+            a_dir / spec.relative_path,
+            b_dir / spec.relative_path,
+            diff_dir / spec.relative_path.with_name(f"{spec.page}_diff.png"),
+        )
         worst = max(worst, result.ratio)
         status = "stable" if result.ratio == 0.0 else "DRIFT"
         if result.ratio:
             nondeterministic += 1
-        print(f"  {status:>7}  {page:<16} {result.ratio:8.4%}")
+        print(f"  {status:>7}  {spec.key:<30} {result.ratio:8.4%}")
     if nondeterministic:
         print(f"[snapshot] {nondeterministic} page(s) render non-deterministically "
               f"(worst {worst:.4%}); use a diff threshold >= {worst:.4%} in --compare")
