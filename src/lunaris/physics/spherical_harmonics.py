@@ -639,6 +639,47 @@ def _kahan_sum_step(running_sum: float, error_compensation: float, value: float)
 
 
 @njit(cache=True)
+def _axis_transverse_m1(
+    z_positive: bool,
+    inv_r: float, inv_r_sq: float,
+    r_ref: float, mu: float,
+    c_coeffs: np.ndarray, s_coeffs: np.ndarray,
+    eval_degree: int,
+) -> tuple[float, float]:
+    """
+    Closed-form transverse acceleration on the polar axis (removable m=1 limit).
+
+    On the axis (rho -> 0) the longitude is undefined and both the dV/dphi and
+    dV/dlambda transverse contributions become 0/0 forms whose sum has a finite,
+    longitude-independent limit carried entirely by the m=1 sector:
+
+        a_x = sum_n (mu/r^2) (R/r)^n * lambda_n * sigma_n * C_n1
+        a_y = sum_n (mu/r^2) (R/r)^n * lambda_n * sigma_n * S_n1
+
+    with lambda_n = lim_{theta->0} P_n1(cos theta)/theta
+                  = sqrt(n(n+1)(2n+1)/2)          (4pi geodesy, no C-S phase)
+    and sigma_n = 1 at the north pole, (-1)^(n+1) at the south pole (from the
+    parity P_nm(-x) = (-1)^(n+m) P_nm(x)). The m=0 sector contributes only the
+    axial component and m>=2 sectors vanish as O(rho^(m-1)); both are handled
+    by the calling kernel. Kahan-compensated to match the serial kernel.
+    """
+    ax, ay = 0.0, 0.0
+    kx, ky = 0.0, 0.0
+    r_ratio_base = r_ref * inv_r
+    r_ratio_n = r_ratio_base
+    mu_inv_r_sq = mu * inv_r_sq
+    for n in range(1, eval_degree + 1):
+        lam = math.sqrt(0.5 * n * (n + 1.0) * (2.0 * n + 1.0))
+        k = mu_inv_r_sq * r_ratio_n * lam
+        if (not z_positive) and (n % 2 == 0):
+            k = -k
+        ax, kx = _kahan_sum_step(ax, kx, k * c_coeffs[n, 1])
+        ay, ky = _kahan_sum_step(ay, ky, k * s_coeffs[n, 1])
+        r_ratio_n *= r_ratio_base
+    return ax, ay
+
+
+@njit(cache=True)
 def _prepare_evaluation_tables(
     sin_phi: float, cos_phi: float,
     cos_lon: float, sin_lon: float,
@@ -817,12 +858,24 @@ def _compute_sh_acceleration_serial(
             r_ratio_n *= r_ratio_base
 
     # 4. Final Conversion to Cartesian Acceleration
-    return _convert_spherical_gradients_to_cartesian(
+    ax, ay, az = _convert_spherical_gradients_to_cartesian(
         x, y, r, inv_r, rho_sq,
         dv_dr, dv_dphi, dv_dlambda,
         u_r_x, u_r_y, u_r_z,
         u_phi_x, u_phi_y, u_phi_z
     )
+
+    # 5. Polar-axis limit: inside the pole-safe cutoff the longitudinal term is
+    # bypassed and the lambda=0 fallback contaminates the transverse components,
+    # so replace them with the analytic m=1 limit (the axial component from the
+    # m=0 sector is already correct).
+    if rho_sq < EPS_1E24 and eval_degree >= 1:
+        ax, ay = _axis_transverse_m1(
+            sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
+            c_coeffs, s_coeffs, eval_degree,
+        )
+
+    return ax, ay, az
 
 
 # ------------------------ PARALLEL (race-free reduction) ------------------------
@@ -941,12 +994,21 @@ def _compute_sh_acceleration_parallel(
             dv_dlambda += partial_dl[i]
 
     # 5. Transform to Cartesian
-    return _convert_spherical_gradients_to_cartesian(
+    ax, ay, az = _convert_spherical_gradients_to_cartesian(
         x, y, r, inv_r, rho_sq,
         dv_dr, dv_dphi, dv_dlambda,
         u_r_x, u_r_y, u_r_z,
         u_phi_x, u_phi_y, u_phi_z
     )
+
+    # 6. Polar-axis limit (parity with the serial kernel; see _axis_transverse_m1).
+    if rho_sq < EPS_1E24 and eval_degree >= 1:
+        ax, ay = _axis_transverse_m1(
+            sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
+            c_coeffs, s_coeffs, eval_degree,
+        )
+
+    return ax, ay, az
 
 
 
@@ -1164,6 +1226,19 @@ def _compute_sh_acceleration_dual_numba(
         x, y, r, inv_r, rho_sq, dv_dr_hi, dv_dp_hi, dv_dl_hi,
         u_r_x, u_r_y, u_r_z, u_phi_x, u_phi_y, u_phi_z
     )
+
+    # 5. Polar-axis limit for both truncations (see _axis_transverse_m1).
+    if rho_sq < EPS_1E24:
+        if n_lo >= 1:
+            ax_lo, ay_lo = _axis_transverse_m1(
+                sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
+                c_coeffs, s_coeffs, n_lo,
+            )
+        if n_hi >= 1:
+            ax_hi, ay_hi = _axis_transverse_m1(
+                sin_phi >= 0.0, inv_r, inv_r_sq, r_ref, mu,
+                c_coeffs, s_coeffs, n_hi,
+            )
 
     return ax_lo, ay_lo, az_lo, ax_hi, ay_hi, az_hi
 

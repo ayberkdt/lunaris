@@ -1530,6 +1530,13 @@ entries:
         Geodesy convention: no Condon-Shortley phase, real-harmonic sqrt(2)
         scaling for m>0 (matches GRAIL/EGM/GRACE/ICGEM coefficient definitions).
       - pole-safe per-order truncation via the stable-m limit (see LUNARIS-HEUR-SH-001)
+      - >-
+        analytic polar-axis limit: inside the pole-safe cutoff (rho^2 < 1e-24)
+        the transverse components are replaced by the removable-singularity m=1
+        limit a_x = sum_n (mu/r^2)(R/r)^n sqrt(n(n+1)(2n+1)/2) sigma_n C_n1
+        (a_y with S_n1; sigma_n = 1 north, (-1)^(n+1) south), derived as the
+        theta -> 0 limit of the same truncated expansion; implemented
+        identically in the numba and torch backends (2026-07-18)
     assumptions:
       - IEEE-754 float64 arithmetic
       - coefficients supplied in the same normalization convention
@@ -1550,6 +1557,7 @@ entries:
       - tests/test_independent_sh_validation.py
       - tests/test_sh_convention_lock.py
       - tests/test_sh_high_degree_stability.py
+      - tests/test_sh_pole_axis.py
     see_also:
       - LUNARIS-ALG-SH-002
     notes: >-
@@ -1601,6 +1609,9 @@ entries:
         role: numba_implementation
       - path: src/lunaris/physics/spherical_harmonics.py
         symbol: sh_accel_fixed_numba
+        role: numba_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: _axis_transverse_m1
         role: numba_implementation
       - path: src/lunaris/physics/spherical_harmonics.py
         symbol: GravityModel

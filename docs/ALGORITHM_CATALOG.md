@@ -157,6 +157,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
 - **Lunaris modifications**:
   - Geodesy convention: no Condon-Shortley phase, real-harmonic sqrt(2) scaling for m>0 (matches GRAIL/EGM/GRACE/ICGEM coefficient definitions).
   - pole-safe per-order truncation via the stable-m limit (see LUNARIS-HEUR-SH-001)
+  - analytic polar-axis limit: inside the pole-safe cutoff (rho^2 < 1e-24) the transverse components are replaced by the removable-singularity m=1 limit a_x = sum_n (mu/r^2)(R/r)^n sqrt(n(n+1)(2n+1)/2) sigma_n C_n1 (a_y with S_n1; sigma_n = 1 north, (-1)^(n+1) south), derived as the theta -> 0 limit of the same truncated expansion; implemented identically in the numba and torch backends (2026-07-18)
 - **Assumptions**:
   - IEEE-754 float64 arithmetic
   - coefficients supplied in the same normalization convention
@@ -168,6 +169,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
   - `tests/test_independent_sh_validation.py`
   - `tests/test_sh_convention_lock.py`
   - `tests/test_sh_high_degree_stability.py`
+  - `tests/test_sh_pole_axis.py`
 - **See also**: [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
 - **Notes**: The absence of the Condon-Shortley phase is a convention, not a bug: applying (-1)^m would corrupt tesseral/sectoral terms while leaving zonal (J2) tests unaffected.
 
@@ -189,6 +191,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
 - **Implementing symbols**:
   - `src/lunaris/physics/spherical_harmonics.py` -- `_compute_sh_acceleration_serial` (numba_implementation)
   - `src/lunaris/physics/spherical_harmonics.py` -- `sh_accel_fixed_numba` (numba_implementation)
+  - `src/lunaris/physics/spherical_harmonics.py` -- `_axis_transverse_m1` (numba_implementation)
   - `src/lunaris/physics/spherical_harmonics.py` -- `GravityModel` (api_entry_point)
   - `src/lunaris/physics/torch_spherical_harmonics.py` -- `TorchSHGravityEvaluator.acceleration` (torch_implementation)
   - `src/lunaris/core/batch_propagator.py` -- `_sh_accel_cuda` (cuda_implementation)
