@@ -56,7 +56,12 @@ own training, evaluation, and Studio UI.
 > and gravity-only results are never mixed with full-dynamics results in a
 > single benchmark table.
 
-> **Project status.** Lunaris is **actively developed research software** with
+> **Project status.** Lunaris is **actively developed research software** in a
+> **0.1.x pre-release (release-candidate) line** — no stable 1.0 API promise is
+> made yet; [docs/VERSIONING.md](docs/VERSIONING.md) governs what each release
+> may claim. Maturity differs by subsystem: the classical spherical-harmonic
+> engine carries the validation evidence documented in `docs/`, while ST-LRPS
+> is a research preview (see above). Lunaris ships with
 > versioned on-disk contracts (datasets, checkpoints, runtime, and benchmark
 > artifacts) and a documented validation pipeline. Public APIs may still evolve
 > between releases, so pin a version for reproducible work. Trained artifacts and
