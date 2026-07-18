@@ -91,6 +91,43 @@ Correct phrasing: "recommended degree for this configuration."
 
 Incorrect phrasing: "SH60 is always enough above 1000 km."
 
+## Ephemeris Interpolation Error Budget
+
+The runtime ephemeris (`lunaris.physics.ephemeris`) samples SPICE at a uniform
+`output_dt_s` grid (default 60 s) and interpolates between nodes:
+
+- **Sun/Earth positions**: uniform Catmull-Rom (cubic; C¹ at the nodes, not
+  C²). The interpolation error of a cubic on step `h` is bounded by
+  `~h⁴·max|d⁴r/dt⁴|/384`, with `|d⁴r/dt⁴| ≈ r·ω⁴` for near-circular apparent
+  motion at angular rate ω. With `h = 60 s`:
+  - Earth position in the Moon-centered frame (r ≈ 3.84e8 m,
+    ω ≈ 2.7e-6 rad/s): ≲ 1e-9 m.
+  - Sun position (r ≈ 1.50e11 m, ω ≈ 2.5e-6 rad/s synodic): ≲ 2e-4 m —
+    relative error ~1e-15, at the float64 representation limit.
+
+  Both are far below every force-model uncertainty in this budget; the
+  interpolation scheme contributes no measurable acceleration error at the
+  default cadence.
+- **Moon orientation**: per-interval quaternion SLERP, which is exact for a
+  constant rotation rate about a fixed axis over each 60 s interval and
+  therefore assumes libration is linear within an interval. Physical libration
+  (amplitude ~1e-4–5e-4 rad, period ≥ 27.3 d) gives an angular acceleration
+  ≈ A·ω² ≲ 4e-15 rad/s², i.e. an intra-interval orientation error
+  ≲ 1e-12 rad and a surface-projected position error ≲ 1e-5 m. The default
+  `output_dt_s = 60 s` is ~4e4× shorter than the libration period, so the
+  constant-rate assumption holds with large margin.
+- **Caveat for high-order adaptive integrators**: Catmull-Rom is C¹ but not C²
+  at the table nodes. Integrators whose error estimators sample higher
+  derivatives (e.g. DOP853) can react to the C² discontinuity with extra step
+  rejections near node crossings. This affects step-size efficiency, not
+  accuracy, and only matters when the adaptive step grows beyond the node
+  spacing. A Hermite (position+velocity) table is the planned upgrade path if
+  profiling shows node-limited stepping.
+
+These bounds are analytic order-of-magnitude estimates for the default
+cadence; halving `output_dt_s` scales the position-interpolation terms by
+1/16 (h⁴).
+
 ## MVP Scope
 
 The current implementation covers instantaneous acceleration budgets, SH degree

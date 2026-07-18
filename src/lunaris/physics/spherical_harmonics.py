@@ -10,7 +10,8 @@ Core Philosophy:
 1. Separation of Concerns: Numerical kernels live here; I/O lives in loaders/.
 2. Frame Integrity: All calculations are performed in the BODY-FIXED frame.
 3. Speed: All kernels are JIT-compiled via Numba with high-degree optimizations.
-4. Stability: Implements Kahan summation and pole-safe guards for high-degree models.
+4. Stability: The serial kernel uses Kahan summation; all kernels use pole-safe
+   guards for high-degree models.
 
 Component Overview:
 -------------------
@@ -38,7 +39,12 @@ Data Flow & Design:
 Numerical Specifications:
 -------------------------
 - Normalization: Fully-normalized (4π) Associated Legendre Functions (ALFs).
-- Precision: Compensated (Kahan) summation protects against rounding error in large sums.
+- Precision: The serial kernel (sh_accel_fixed_numba) uses compensated (Kahan)
+  summation against rounding error in large sums. The optional parallel path
+  (_compute_sh_acceleration_parallel) uses plain block sums compiled with
+  ``fastmath`` and can differ from the serial path at floating-point roundoff;
+  it is reachable only through the sh_accel_fixed dispatcher, which no
+  production RHS uses (propagation calls the serial kernel directly).
 - Singularity Protection: Pole-safe Cartesian mapping prevents divergence at latitudes ±90°.
 
 Unit System (SI):
@@ -51,7 +57,8 @@ Unit System (SI):
 Dependencies:
 -------------
 - NumPy: Array operations and data storage.
-- Numba: Just-In-Time compilation (nopython=True, parallel=True).
+- Numba: Just-In-Time compilation (nopython=True; ``parallel=True`` only in the
+  optional test-only parallel kernel).
 """
 
 
@@ -989,9 +996,13 @@ def sh_accel_fixed(
     ``degree`` is safely bounded by the supplied coefficient arrays.
 
     The default serial path uses compensated summation. The optional parallel
-    path uses a deterministic block reduction with ``fastmath`` and is selected
-    only above ``parallel_threshold``; it can differ at floating-point roundoff
-    level, not in the represented gravity model.
+    path uses a deterministic block reduction with ``fastmath`` (plain sums, no
+    Kahan compensation) and is selected only above ``parallel_threshold``; it
+    can differ at floating-point roundoff level, not in the represented gravity
+    model. Production RHS paths call the serial kernel
+    (``sh_accel_fixed_numba``) directly — the parallel path is not reachable
+    from propagation, so recorded ``rhs_path`` provenance always reflects the
+    serial, Kahan-compensated kernel.
     """
     # 1. Determine safe evaluation degree
     max_safe_n = _determine_effective_degree(c_coeffs, s_coeffs)
