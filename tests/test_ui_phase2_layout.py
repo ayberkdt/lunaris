@@ -5,9 +5,6 @@ from __future__ import annotations
 import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets, wait_until
 
-torch = pytest.importorskip('torch')
-
-
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 
