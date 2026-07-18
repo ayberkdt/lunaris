@@ -1,8 +1,11 @@
 # UI Theme - Lunar Graphite
 
 Lunar Graphite is the shared desktop theme for Lunaris Mission Studio and the
-ST-LRPS Studio. It favors calm graphite surfaces, strong text hierarchy, one
-orbital-blue accent, and semantic colors used only for state.
+ST-LRPS Studio. Its Material Minimalism direction uses opaque Conservative
+Graphite surfaces for scientific workflows, strong text hierarchy, one
+orbital-blue accent, and semantic colors used only for state. Expressive Lunar
+Material is restricted to the launcher, empty states, lightweight loading
+feedback, and optional delight surfaces; dense data never sits on glass.
 
 ## Ownership
 
@@ -37,18 +40,18 @@ table.
 
 | Token | Value | Role |
 | --- | --- | --- |
-| `bg_space` | `#090C12` | application canvas |
-| `bg_shell` | `#0F141C` | top bar, navigation, console strip |
-| `bg_card` | `#171E29` | sections and primary surfaces |
-| `bg_card_alt` | `#212B38` | elevated surfaces |
-| `bg_inset` | `#0C1016` | read-only and disabled surfaces |
-| `bg_entry` | `#0E131B` | input controls |
+| `bg_space` | `#070A0F` | application canvas |
+| `bg_shell` | `#0D131C` | top bar, navigation, console strip |
+| `bg_card` | `#151E2A` | sections and primary surfaces |
+| `bg_card_alt` | `#202C3B` | elevated surfaces |
+| `bg_inset` | `#0A0F16` | read-only and disabled surfaces |
+| `bg_entry` | `#0D141E` | input controls |
 | `bg_log` | `#06090E` | console canvas |
-| `bg_hover` | `#28333F` | hover fill on flat surfaces |
-| `fg_main` | `#EEF2F8` | primary text |
-| `fg_soft` | `#BCC7D6` | secondary text |
-| `fg_muted` | `#8C99AA` | metadata and hints |
-| `fg_disabled` | `#79848F` | inactive control text |
+| `bg_hover` | `#293747` | hover fill on flat surfaces |
+| `fg_main` | `#F2F5FA` | primary text |
+| `fg_soft` | `#C4CEDB` | secondary text |
+| `fg_muted` | `#95A3B5` | metadata and hints |
+| `fg_disabled` | `#7D8896` | inactive control text |
 | `fg_inverse` | `#04070C` | dark text on accent/semantic fills |
 | `fg_link` | `#6FA8FF` | hyperlinks |
 | `accent` | `#6AA9FF` | selection, focus, primary action |
@@ -65,11 +68,12 @@ table.
 | `info` | `#4A9DFF` | informational state |
 | `inactive` | `#6C7787` | idle/neutral state marks |
 | `border` | `#6A7686` | control and standard surface border (WCAG 1.4.11, >=3:1) |
-| `border_soft` | `#1F2833` | separators and quiet surfaces |
+| `border_soft` | `#263240` | separators and quiet surfaces |
 | `border_strong` | `#4A5765` | focus-adjacent and elevated borders |
 
-Decorative gradients are not used. Translucent variants are derived from tokens
-with `with_alpha(...)`.
+Decorative gradients and glassmorphic scientific panels are not used.
+Translucent variants derived with `with_alpha(...)` are limited to semantic
+washes, selection/focus feedback, and transient launcher overlays.
 
 ## Shared Components
 

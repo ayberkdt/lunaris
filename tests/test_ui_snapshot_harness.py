@@ -110,6 +110,8 @@ def test_partial_change_ratio(tmp_path: Path) -> None:
 
 def test_gate_pages_excludes_gl_by_default() -> None:
     gated = suite._gate_pages(include_gl=False)
-    assert "Orbit" not in gated  # GL-preview page excluded from the gate
-    assert "Forces" in gated
-    assert suite._gate_pages(include_gl=True) >= gated
+    assert "mission/Orbit" not in gated  # GL-preview page excluded from the gate
+    assert "mission/Forces" in gated
+    with_gl = suite._gate_pages(include_gl=True)
+    assert "mission/Orbit" in with_gl
+    assert with_gl >= gated

@@ -633,6 +633,23 @@ class EmptyState(QtWidgets.QFrame):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(DESIGN_TOKENS.spacing.sm)
         layout.setAlignment(QtCore.Qt.AlignCenter)
+        self.material_mark = QtWidgets.QFrame()
+        self.material_mark.setObjectName("emptyStateMark")
+        self.material_mark.setFixedSize(30, 30)
+        self.material_mark.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        mark_layout = QtWidgets.QHBoxLayout(self.material_mark)
+        mark_layout.setContentsMargins(0, 0, 0, 0)
+        self.material_node = QtWidgets.QFrame()
+        self.material_node.setObjectName("emptyStateNode")
+        self.material_node.setFixedSize(6, 6)
+        mark_layout.addWidget(
+            self.material_node, 0, QtCore.Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            self.material_mark, 0, QtCore.Qt.AlignmentFlag.AlignHCenter
+        )
         self.title_label = QtWidgets.QLabel(title)
         self.title_label.setObjectName("emptyStateTitle")
         self.title_label.setAlignment(QtCore.Qt.AlignCenter)

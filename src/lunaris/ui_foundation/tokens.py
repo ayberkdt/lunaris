@@ -14,20 +14,23 @@ class ColorTokens:
     directly (via :meth:`as_dict` -> ``THEME``) with no parallel alias surface.
     """
 
-    bg_space: str = "#090C12"
-    bg_shell: str = "#0F141C"
-    bg_card: str = "#171E29"
-    bg_card_alt: str = "#212B38"
-    bg_inset: str = "#0C1016"
-    bg_entry: str = "#0E131B"
+    # Lunar Graphite 2.0 keeps scientific workspaces fully opaque. The wider
+    # value ladder separates shell, content, raised content and inputs without
+    # adding hue, glass or decorative effects.
+    bg_space: str = "#070A0F"
+    bg_shell: str = "#0D131C"
+    bg_card: str = "#151E2A"
+    bg_card_alt: str = "#202C3B"
+    bg_inset: str = "#0A0F16"
+    bg_entry: str = "#0D141E"
     bg_log: str = "#06090E"
-    bg_hover: str = "#28333F"
+    bg_hover: str = "#293747"
     bg_overlay: str = "rgba(7,10,15,0.92)"
 
-    fg_main: str = "#EEF2F8"
-    fg_soft: str = "#BCC7D6"
-    fg_muted: str = "#8C99AA"
-    fg_disabled: str = "#79848F"
+    fg_main: str = "#F2F5FA"
+    fg_soft: str = "#C4CEDB"
+    fg_muted: str = "#95A3B5"
+    fg_disabled: str = "#7D8896"
     fg_inverse: str = "#04070C"
     fg_link: str = "#6FA8FF"
 
@@ -70,10 +73,10 @@ class ColorTokens:
     # frames). Surface fills differ from their containers by only ~1.1:1, so the
     # border alone identifies the control; it must meet WCAG 1.4.11 non-text
     # 3:1. #3A4756 was 1.77:1 on bg_card; #6A7686 is >=3:1 on every surface
-    # (3.63 card / 4.00 shell / 4.03 entry / 3.10 elevated). ``border_soft``
+    # (3.64 card / 4.06 shell / 4.01 entry / 3.06 elevated). ``border_soft``
     # stays intentionally subtle for decorative rules.
     border: str = "#6A7686"
-    border_soft: str = "#1F2833"
+    border_soft: str = "#263240"
     border_strong: str = "#4A5765"
     panel_shadow: str = "rgba(0,0,0,0.45)"
     grid_color: str = "rgba(100,116,139,0.42)"

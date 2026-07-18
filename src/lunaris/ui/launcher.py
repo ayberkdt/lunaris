@@ -11,7 +11,8 @@ user choose one of two workspaces:
 
 Behind the navigation cards sits an optional, offline, interactive 3D Moon
 (:class:`lunaris.ui.components.showcase_embed.ShowcaseEmbedWidget`). The web side is
-a pure visual engine; all navigation lives in the PySide6 glassmorphic overlay.
+a pure visual engine; all navigation lives in the restrained PySide6 material
+panel.
 
 Design rules
 ------------
@@ -86,6 +87,9 @@ class _LaunchCard(QtWidgets.QFrame):
         self._accent = accent
         self.setObjectName("launchCard")
         self.setProperty("accent", accent)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setAccessibleName(f"{title} workspace")
+        self.setAccessibleDescription(description)
         self.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.setMinimumHeight(132)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
@@ -145,13 +149,25 @@ class _LaunchCard(QtWidgets.QFrame):
             return
         super().mouseReleaseEvent(event)
 
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        """Open the workspace with the standard keyboard activation keys."""
+        if event.key() in (
+            QtCore.Qt.Key_Return,
+            QtCore.Qt.Key_Enter,
+            QtCore.Qt.Key_Space,
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
 
 # =============================================================================
 # Launcher window
 # =============================================================================
 
 class LauncherWindow(QtWidgets.QWidget):
-    """Welcome hub: a 3D Moon background with glassmorphic workspace cards."""
+    """Welcome hub: a 3D Moon background with an opaque material panel."""
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -174,11 +190,11 @@ class LauncherWindow(QtWidgets.QWidget):
         self.embed = ShowcaseEmbedWidget(self)
         self.embed.lower()
 
-        # Foreground glassmorphic panel. The navigation lives inside a scroll
-        # area so the content can never collide on a short window: it simply
-        # scrolls instead of overlapping.
+        # Foreground material panel. It stays opaque so the launcher feels like
+        # a professional tool rather than a cinematic glass overlay. Navigation
+        # scrolls instead of colliding on a short window.
         self.panel = QtWidgets.QFrame(self)
-        self.panel.setObjectName("glassPanel")
+        self.panel.setObjectName("materialPanel")
 
         self._scroll = QtWidgets.QScrollArea(self.panel)
         self._scroll.setObjectName("panelScroll")
@@ -352,6 +368,8 @@ class LauncherWindow(QtWidgets.QWidget):
         self.slider_relief.setMaximum(100)
         self.slider_relief.setValue(50)
         self.slider_relief.setFixedWidth(96)
+        relief_lbl.setBuddy(self.slider_relief)
+        self.slider_relief.setAccessibleName("Lunar surface relief")
         self.slider_relief.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.slider_relief.valueChanged.connect(
             lambda v: self.embed.set_relief(v / 100.0)
@@ -370,19 +388,18 @@ class LauncherWindow(QtWidgets.QWidget):
 
     def _apply_theme(self) -> None:
         """Instance-level stylesheet so workspace windows are never restyled."""
-        # The panel reads as a near-solid premium surface over the 3D Moon, not a
-        # faint translucent wash. Borders are derived from border_strong at higher
-        # alpha so they stay visible with the v2 (darker) graphite palette.
-        glass_bg = with_alpha(THEME["bg_shell"], 0.94)
+        # The Moon supplies the launcher's restrained expressive layer;
+        # navigation and workspace choices remain opaque Conservative Graphite.
+        panel_bg = THEME["bg_shell"]
         overlay_bg = with_alpha(THEME["bg_log"], 0.55)
-        opening_bg = with_alpha(THEME["bg_shell"], 0.96)
-        quiet_border = with_alpha(THEME["border_strong"], 0.34)
-        quiet_border_hover = with_alpha(THEME["border_strong"], 0.52)
-        divider_bg = with_alpha(THEME["border_strong"], 0.28)
-        card_bg = with_alpha(THEME["bg_card_alt"], 0.85)
-        card_hover_bg = with_alpha(THEME["bg_hover"], 0.92)
-        scene_bg = with_alpha(THEME["bg_shell"], 0.88)
-        scene_border = with_alpha(THEME["border_strong"], 0.36)
+        opening_bg = THEME["bg_shell"]
+        quiet_border = THEME["border_soft"]
+        quiet_border_hover = THEME["border_strong"]
+        divider_bg = THEME["border_soft"]
+        card_bg = THEME["bg_card"]
+        card_hover_bg = THEME["bg_card_alt"]
+        scene_bg = THEME["bg_shell"]
+        scene_border = THEME["border_soft"]
         self.setStyleSheet(
             f"""
             LauncherWindow {{
@@ -392,10 +409,10 @@ class LauncherWindow(QtWidgets.QWidget):
                 color: {THEME['fg_main']};
                 font-family: "Segoe UI", "Inter", "Noto Sans", sans-serif;
             }}
-            QFrame#glassPanel {{
-                background: {glass_bg};
+            QFrame#materialPanel {{
+                background: {panel_bg};
                 border: 1px solid {quiet_border};
-                border-radius: 16px;
+                border-radius: 10px;
             }}
             QFrame#openingOverlay {{
                 background: {overlay_bg};
@@ -404,7 +421,7 @@ class LauncherWindow(QtWidgets.QWidget):
                 background: {opening_bg};
                 color: {THEME['fg_soft']};
                 border: 1px solid {with_alpha(THEME['accent'], 0.35)};
-                border-radius: 12px;
+                border-radius: 10px;
                 padding: 20px 38px;
                 font-size: 12pt;
                 font-weight: 600;
@@ -441,7 +458,7 @@ class LauncherWindow(QtWidgets.QWidget):
                 background: transparent;
             }}
             QLabel#launchTitle {{
-                font-size: 40pt;
+                font-size: 34pt;
                 font-weight: 800;
                 color: {THEME['fg_main']};
                 letter-spacing: -0.5px;
@@ -460,7 +477,7 @@ class LauncherWindow(QtWidgets.QWidget):
             QFrame#launchCard {{
                 background: {card_bg};
                 border: 1px solid {THEME['border']};
-                border-radius: 12px;
+                border-radius: 10px;
             }}
             QFrame#launchCard:hover {{
                 border: 1px solid {THEME['accent']};
@@ -469,10 +486,14 @@ class LauncherWindow(QtWidgets.QWidget):
             QFrame#launchCard[accent="{THEME['secondary']}"]:hover {{
                 border: 1px solid {THEME['secondary']};
             }}
+            QFrame#launchCard:focus {{
+                border: 2px solid {THEME['accent']};
+                background: {card_hover_bg};
+            }}
             QLabel#cardIconBadge {{
                 background: {with_alpha(THEME['accent'], 0.10)};
                 border: 1px solid {with_alpha(THEME['accent'], 0.22)};
-                border-radius: 10px;
+                border-radius: 8px;
             }}
             QLabel#cardIconBadge[accent="{THEME['secondary']}"] {{
                 background: {with_alpha(THEME['secondary'], 0.10)};
@@ -510,7 +531,7 @@ class LauncherWindow(QtWidgets.QWidget):
             QFrame#sceneControls {{
                 background: {scene_bg};
                 border: 1px solid {scene_border};
-                border-radius: 12px;
+                border-radius: 10px;
             }}
             QFrame#toggleSep {{
                 color: {THEME['border']};
@@ -569,7 +590,7 @@ class LauncherWindow(QtWidgets.QWidget):
     # ------------------------------------------------------------ geometry ---
     def _position_overlay(self) -> None:
         """
-        Keep the embed full-bleed and the glass panel anchored to the LEFT.
+        Keep the embed full-bleed and the material panel anchored to the LEFT.
 
         The 3D Moon is rendered toward the right of the canvas (see
         ``LauncherScene3D``), so a left-anchored panel leaves the Moon clearly
@@ -579,12 +600,23 @@ class LauncherWindow(QtWidgets.QWidget):
         self.embed.setGeometry(self.rect())
 
         margin = 40
+        content_h = self._content.sizeHint().height() + 4
+        avail_h = self.height() - 2 * margin
+        scrollbar_budget = (
+            self.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent)
+            if content_h > avail_h
+            else 0
+        )
+        content_min_w = self._content.minimumSizeHint().width() + scrollbar_budget + 2
         # Panel takes a little under half the width on wide windows; more on
-        # narrow ones so the stacked cards never get cramped.
+        # narrow ones. Its measured content minimum is authoritative: the
+        # horizontal scrollbar is intentionally disabled, so sizing below the
+        # cards would silently clip their labels and footer actions.
         if self.width() >= 1180:
-            panel_w = min(int(self.width() * 0.46), 600)
+            panel_w = max(content_min_w, min(int(self.width() * 0.46), 680))
         else:
-            panel_w = min(max(int(self.width() * 0.62), 420), self.width() - 2 * margin)
+            panel_w = max(content_min_w, int(self.width() * 0.62), 420)
+        panel_w = min(panel_w, self.width() - 2 * margin)
 
         # Height is DYNAMIC: size to the content the panel actually needs (so
         # the header/cards/footer never collide), clamped to the window. If the
@@ -595,8 +627,6 @@ class LauncherWindow(QtWidgets.QWidget):
         # scroll viewport fully contains it, accounting for the panel border) so
         # that, when the window is tall enough, no scrollbar appears. When the
         # window is too short, the panel is clamped and the scroll area engages.
-        content_h = self._content.sizeHint().height() + 4
-        avail_h = self.height() - 2 * margin
         panel_h = max(min(content_h, avail_h), min(avail_h, 360))
 
         x = margin

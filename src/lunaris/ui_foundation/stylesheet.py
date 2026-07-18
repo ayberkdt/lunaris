@@ -2,9 +2,9 @@
 Global application stylesheet builder for the Lunar Graphite theme.
 
 The interface aims for a calm, professional, engineering-oriented dark theme:
-flat surfaces, subtle borders, restrained hover states, and a single primary
-accent (orbital blue).  Gradients are deliberately reserved for the primary
-"Run" action and the progress-bar chunk; every other surface is flat.
+opaque surfaces, subtle borders, restrained hover states, and a single primary
+accent (orbital blue). Decorative gradients, glass panels and broad shadow
+systems are deliberately excluded from scientific workspaces.
 
 All colors are routed through the ``THEME`` / ``LOG_COLORS`` palettes so there
 are no page-local hard-coded values here.
@@ -224,12 +224,12 @@ def build_app_stylesheet(
         QFrame#header {{
             background: {theme['bg_shell']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 12px;
+            border-radius: 10px;
         }}
         QWidget#logPanel {{
             background: {theme['bg_shell']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 12px;
+            border-radius: 10px;
         }}
         QFrame#logHeader {{
             background: {theme['bg_shell']};
@@ -334,7 +334,7 @@ def build_app_stylesheet(
         QLabel#insetHint {{
             color: {theme['fg_muted']};
             font-size: {type_tokens.size_caption_pt:g}pt;
-            background: {with_alpha(theme['bg_inset'], 0.70)};
+            background: {theme['bg_inset']};
             border-radius: 6px;
             padding: 4px 8px;
         }}
@@ -350,8 +350,8 @@ def build_app_stylesheet(
            card tint with a faint accent outline so the run controls read as
            one unit above the log. */
         QFrame#trainRunBar {{
-            background: {with_alpha(theme['bg_card'], 0.88)};
-            border: 1px solid {with_alpha(theme['accent'], 0.22)};
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
             border-radius: 10px;
         }}
         /* Same heading rendered as a tinted separator bar with an accent
@@ -415,9 +415,9 @@ def build_app_stylesheet(
            bars, run-state pill and pipeline chips (benchmark/monitor pages).
            Text always carries the state; color only reinforces it. */
         QFrame#dashCard {{
-            background: {with_alpha(theme['bg_card'], 0.72)};
-            border: 1px solid {with_alpha(theme['border_soft'], 0.90)};
-            border-radius: {DESIGN_TOKENS.radii.section}px;
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: {DESIGN_TOKENS.radii.compact}px;
         }}
         QLabel#dashCaption {{
             color: {theme['fg_muted']};
@@ -430,8 +430,8 @@ def build_app_stylesheet(
             font-weight: {type_tokens.weight_bold};
         }}
         QProgressBar#slimBar {{
-            background: {with_alpha(theme['bg_log'], 0.85)};
-            border: 1px solid {with_alpha(theme['border_strong'], 0.18)};
+            background: {theme['bg_log']};
+            border: 1px solid {theme['border_soft']};
             border-radius: 5px;
         }}
         QProgressBar#slimBar::chunk {{
@@ -602,7 +602,7 @@ def build_app_stylesheet(
             border-radius: 0 6px 6px 0;
         }}
         QFrame#liveLossCard {{
-            background-color: {with_alpha(theme['bg_card'], 0.96)};
+            background-color: {theme['bg_card']};
             border: 1px solid {theme['border']};
             border-radius: {DESIGN_TOKENS.radii.section}px;
         }}
@@ -611,7 +611,7 @@ def build_app_stylesheet(
             font-size: {type_tokens.size_caption_pt:g}pt;
         }}
         QPushButton[plotControl="true"] {{
-            background: {with_alpha(theme['bg_shell'], 0.5)};
+            background: {theme['bg_shell']};
             border: 1px solid {theme['border']};
             border-radius: 4px;
             color: {theme['fg_main']};
@@ -633,9 +633,9 @@ def build_app_stylesheet(
         /* Missing-dependency / empty-content panes. */
         QLabel#placeholderPane {{
             color: {theme['fg_muted']};
-            background-color: {with_alpha(theme['bg_shell'], 0.72)};
-            border: 1px solid {with_alpha(theme['border'], 0.12)};
-            border-radius: 14px;
+            background-color: {theme['bg_inset']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
             padding: 24px;
             font-style: italic;
         }}
@@ -643,9 +643,9 @@ def build_app_stylesheet(
             color: {theme['fg_muted']};
             padding: 36px;
             font-size: {type_tokens.size_caption_pt:g}pt;
-            background: {with_alpha(theme['bg_log'], 0.45)};
-            border: 1px dashed {with_alpha(theme['border_strong'], 0.16)};
-            border-radius: {DESIGN_TOKENS.radii.shell}px;
+            background: {theme['bg_inset']};
+            border: 1px dashed {theme['border_soft']};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
         }}
         /* Result-plot gallery: many narrow tabs with scroll buttons. */
         QTabWidget#galleryTabs QTabBar::tab {{
@@ -667,26 +667,26 @@ def build_app_stylesheet(
         }}
         /* Action-first workspace card (studio Data pages). */
         QFrame#dataActionCard {{
-            background: {with_alpha(theme['bg_card'], 0.84)};
-            border: 1px solid {with_alpha(theme['accent'], 0.18)};
-            border-radius: 14px;
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border']};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
         }}
         /* Selected-path readout: selectable, recessed pill. */
         QLabel#pathPill {{
             color: {theme['fg_muted']};
             font-size: {type_tokens.size_caption_pt:g}pt;
             padding: 8px 10px;
-            background: {with_alpha(theme['bg_shell'], 0.55)};
-            border: 1px solid {with_alpha(theme['border'], 0.12)};
-            border-radius: 9px;
+            background: {theme['bg_inset']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: {DESIGN_TOKENS.radii.control}px;
         }}
         /* Rich-text metadata summary pane. */
         QLabel#metaSummary {{
             color: {theme['fg_main']};
             font-size: {type_tokens.size_caption_pt:g}pt;
             padding: 12px;
-            background: {with_alpha(theme['bg_card'], 0.72)};
-            border: 1px solid {with_alpha(theme['border'], 0.12)};
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
             border-radius: 10px;
         }}
         /* Studio workspace widgets: semantic status badge, inline notice,
@@ -729,7 +729,7 @@ def build_app_stylesheet(
             border-color: {with_alpha(theme['fg_muted'], 0.35)};
         }}
         QFrame#studioNotice {{
-            background: {with_alpha(theme['bg_card'], 0.78)};
+            background: {theme['bg_card']};
             border: 1px solid {with_alpha(theme['info'], 0.30)};
             border-radius: {DESIGN_TOKENS.radii.section}px;
         }}
@@ -763,13 +763,13 @@ def build_app_stylesheet(
             font-size: {type_tokens.size_caption_pt:g}pt;
         }}
         QFrame#studioWorkflowOverview {{
-            background: {with_alpha(theme['bg_card'], 0.74)};
-            border: 1px solid {with_alpha(theme['border_soft'], 0.80)};
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
             border-radius: {DESIGN_TOKENS.radii.section}px;
         }}
         QFrame#studioWorkflowCell {{
-            background: {with_alpha(theme['bg_inset'], 0.40)};
-            border: 1px solid {with_alpha(theme['border_soft'], 0.55)};
+            background: {theme['bg_inset']};
+            border: 1px solid {theme['border_soft']};
             border-radius: {DESIGN_TOKENS.radii.control}px;
         }}
         QLabel#workflowStepNumber {{
@@ -802,8 +802,8 @@ def build_app_stylesheet(
             font-size: {type_tokens.size_caption_pt:g}pt;
         }}
         QFrame#studioReadinessPanel {{
-            background: {with_alpha(theme['bg_card'], 0.82)};
-            border: 1px solid {with_alpha(theme['border_soft'], 0.90)};
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
             border-radius: {DESIGN_TOKENS.radii.section}px;
         }}
         QLabel#readinessTitle {{
@@ -865,7 +865,7 @@ def build_app_stylesheet(
         QListWidget#navDrawer {{
             background: {theme['bg_shell']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 12px;
+            border-radius: 10px;
             padding: 10px;
             outline: none;
             max-width: {layout.nav_width}px;
@@ -890,7 +890,7 @@ def build_app_stylesheet(
         QFrame#navSidebar {{
             background: {theme['bg_shell']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 12px;
+            border-radius: 10px;
         }}
         /* Section labels carry a colored rail so each workspace zone is
            immediately distinguishable and the sidebar feels structured. */
@@ -913,7 +913,7 @@ def build_app_stylesheet(
             color: {sec_analysis}; border-left-color: {sec_analysis};
         }}
         QFrame#navGroup {{
-            background: {with_alpha(theme['bg_card'], 0.35)};
+            background: transparent;
             border: 1px solid {theme['border_soft']};
             border-radius: 10px;
         }}
@@ -1041,7 +1041,7 @@ def build_app_stylesheet(
         QGroupBox {{
             background: {theme['bg_card']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 12px;
+            border-radius: 10px;
             margin-top: 24px;
             font-weight: 600;
         }}
@@ -1252,12 +1252,12 @@ def build_app_stylesheet(
         QFrame[studioSurface="true"] {{
             background: {theme['bg_card']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 10px;
+            border-radius: 8px;
         }}
         QFrame#section {{
             background: {theme['bg_card']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 10px;
+            border-radius: 8px;
         }}
         QFrame#section[elevated="true"] {{
             background: {theme['bg_card_alt']};
@@ -1276,7 +1276,7 @@ def build_app_stylesheet(
         QFrame#metricCard {{
             background: {theme['bg_card_alt']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 8px;
+            border-radius: 6px;
         }}
         QLabel#orbitMetricLabel,
         QLabel#metricCardLabel {{
@@ -1467,8 +1467,18 @@ def build_app_stylesheet(
         }}
         QFrame#emptyState {{
             background: {theme['bg_card']};
-            border: 1px dashed {theme['border']};
-            border-radius: 10px;
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+        }}
+        QFrame#emptyStateMark {{
+            background: {acc_dim};
+            border: 1px solid {acc_35};
+            border-radius: 15px;
+        }}
+        QFrame#emptyStateNode {{
+            background: {theme['accent']};
+            border: none;
+            border-radius: 3px;
         }}
 
         /* ST-LRPS SHARED HEADER */
@@ -1504,7 +1514,7 @@ def build_app_stylesheet(
         QTabWidget::pane {{
             border: 1px solid {theme['border_soft']};
             background: {theme['bg_card']};
-            border-radius: 12px;
+            border-radius: 10px;
             top: -1px;
         }}
         QTabBar::tab {{

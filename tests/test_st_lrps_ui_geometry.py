@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from tests.ui_qt_helpers import QtWidgets
+from tests.ui_qt_helpers import QtCore, QtWidgets
 
 pytest.importorskip("torch")
 
@@ -109,6 +109,36 @@ def test_data_workspace_has_no_form_horizontal_scroll_or_clipped_actions(size) -
         ]
         assert visible_scrolls
         assert all(area.horizontalScrollBar().maximum() == 0 for area in visible_scrolls)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("size", [(1024, 768), (1280, 860)])
+def test_training_monitor_reflows_without_clipped_controls(size) -> None:
+    app, window = _window(*size, page_index=2)
+    try:
+        tab = window._train_tab
+        splitter = tab._monitor_splitter
+        expected = (
+            QtCore.Qt.Orientation.Vertical
+            if size == (1024, 768)
+            else QtCore.Qt.Orientation.Horizontal
+        )
+        assert splitter.orientation() == expected
+        assert splitter.compact is (size == (1024, 768))
+        for button in (
+            tab.runner.btn_start,
+            tab.runner.btn_stop,
+            tab.btn_enqueue_monitor,
+            tab.btn_clear_log_monitor,
+            tab.btn_open_run_monitor,
+            tab.btn_preview_cmd_monitor,
+            tab.btn_copy_cmd_monitor,
+        ):
+            _assert_button_text_fits(button)
+        assert tab._monitor_scroll.horizontalScrollBar().maximum() == 0
     finally:
         window.close()
         window.deleteLater()

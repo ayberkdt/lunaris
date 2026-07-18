@@ -57,7 +57,10 @@ def test_typed_token_groups_are_frozen_dataclasses() -> None:
 
 def test_core_palette_and_layout_contract() -> None:
     colors = DESIGN_TOKENS.colors
-    assert colors.bg_space == "#090C12"
+    assert colors.bg_space == "#070A0F"
+    assert colors.bg_shell == "#0D131C"
+    assert colors.bg_card == "#151E2A"
+    assert colors.bg_card_alt == "#202C3B"
     assert colors.accent == "#6AA9FF"
     assert colors.success == "#3DD17E"
     assert DESIGN_TOKENS.layout.nav_width == 216
@@ -187,6 +190,9 @@ def test_shared_primitives_construct_offscreen() -> None:
         assert shell.header.title_label.text() == "Mission"
         assert shell.scroll_area is not None
         assert all(widget.objectName() for widget in widgets)
+        empty = widgets[6]
+        assert empty.material_mark.objectName() == "emptyStateMark"
+        assert empty.material_node.objectName() == "emptyStateNode"
     finally:
         for widget in widgets:
             widget.deleteLater()

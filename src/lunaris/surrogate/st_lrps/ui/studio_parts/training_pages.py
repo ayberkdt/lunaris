@@ -794,6 +794,74 @@ class _ResponsiveLaunchStrip(QFrame):
             self._grid.addWidget(self._notice, 1, 0, 1, 2)
 
 
+class _ResponsiveMonitorSplitter(QSplitter):
+    """Stack the live monitor and console when their measured minima do not fit.
+
+    The same live widgets stay mounted while the splitter changes orientation,
+    preserving process state, log contents, signals and the user's position.
+    """
+
+    def __init__(
+        self,
+        monitor_scroll: QWidget,
+        console_panel: QWidget,
+        monitor_content: QWidget,
+    ) -> None:
+        super().__init__(Qt.Orientation.Horizontal)
+        self.setObjectName("trainingMonitorSplitter")
+        self._monitor_scroll = monitor_scroll
+        self._console_panel = console_panel
+        self._monitor_content = monitor_content
+        self._compact: bool | None = None
+        self.setChildrenCollapsible(False)
+        self.addWidget(monitor_scroll)
+        self.addWidget(console_panel)
+        self.setStretchFactor(0, 3)
+        self.setStretchFactor(1, 2)
+        self.setSizes([880, 420])
+        QTimer.singleShot(0, self._refresh_orientation)
+
+    @property
+    def compact(self) -> bool:
+        return bool(self._compact)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._refresh_orientation()
+
+    def event(self, event) -> bool:  # noqa: A003
+        handled = super().event(event)
+        if event.type() in (
+            QEvent.Type.LayoutRequest,
+            QEvent.Type.PolishRequest,
+            QEvent.Type.Show,
+        ):
+            QTimer.singleShot(0, self._refresh_orientation)
+        return handled
+
+    def _refresh_orientation(self) -> None:
+        monitor_min = max(
+            self._monitor_content.minimumWidth(),
+            self._monitor_content.minimumSizeHint().width(),
+        )
+        console_min = max(
+            self._console_panel.minimumWidth(),
+            self._console_panel.minimumSizeHint().width(),
+        )
+        compact = self.width() < monitor_min + console_min + self.handleWidth()
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.setOrientation(
+            Qt.Orientation.Vertical if compact else Qt.Orientation.Horizontal
+        )
+        if compact:
+            height = max(1, self.height())
+            self.setSizes([max(300, int(height * 0.58)), max(220, int(height * 0.42))])
+        else:
+            self.setSizes([880, 420])
+
+
 class STLRPSTrainTab(QWidget):
     navigate_monitor_requested = pyqtSignal()
     evaluate_requested = pyqtSignal(str)
@@ -2276,12 +2344,15 @@ class STLRPSTrainTab(QWidget):
         else:
             console_l.addWidget(self.runner, 1)
 
-        monitor_splitter = QSplitter(Qt.Orientation.Horizontal)
-        monitor_splitter.addWidget(_scroll_wrap(monitor_content))
-        monitor_splitter.addWidget(console_panel)
-        monitor_splitter.setStretchFactor(0, 3)
-        monitor_splitter.setStretchFactor(1, 2)
-        monitor_splitter.setSizes([880, 420])
+        self._monitor_scroll = _scroll_wrap(monitor_content)
+        self._monitor_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._monitor_splitter = _ResponsiveMonitorSplitter(
+            self._monitor_scroll,
+            console_panel,
+            monitor_content,
+        )
 
         self.monitor_page = QWidget()
         monitor_shell_l = QVBoxLayout(self.monitor_page)
@@ -2292,7 +2363,7 @@ class STLRPSTrainTab(QWidget):
             "Track lifecycle, loss curves, phase timing, checkpoints, and process output while the experiment runs.",
             "Live Experiment",
         ))
-        monitor_shell_l.addWidget(monitor_splitter, 1)
+        monitor_shell_l.addWidget(self._monitor_splitter, 1)
 
         # ── 9. Final Setup ──
         self._page_tabs = None
