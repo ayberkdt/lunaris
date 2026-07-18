@@ -10,7 +10,7 @@ Human-readable view of the algorithm-traceability registry. The source of truth 
 
 Implementation class: adaptation (10), delegated_library (8), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (9)
 
-Verification status: identifier_verified_content_pending (3), unverifiable (7), verified_primary_source (40), verified_secondary_source (1)
+Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (41), verified_secondary_source (1)
 
 ## Index
 
@@ -49,7 +49,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
 | [`LUNARIS-ALG-UQ-002`](#lunarisalguq002) | Wilson score confidence interval for impact proportion | exact | verified_primary_source |
 | [`LUNARIS-DATA-CST-001`](#lunarisdatacst001) | CODATA 2018 recommended fundamental physical constants | standard_implementation | verified_primary_source |
 | [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001) | JPL DE440 planetary and lunar ephemeris | standard_implementation | verified_primary_source |
-| [`LUNARIS-DATA-GRAV-001`](#lunarisdatagrav001) | GRAIL GL1800F lunar spherical-harmonic gravity field (JGGRX_1800F) | standard_implementation | identifier_verified_content_pending |
+| [`LUNARIS-DATA-GRAV-001`](#lunarisdatagrav001) | GRAIL GL1800F lunar spherical-harmonic gravity field (JGGRX_1800F) | standard_implementation | verified_primary_source |
 | [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001) | In-step event-time localization by bisection with a false-position final correction | heuristic | unverifiable |
 | [`LUNARIS-HEUR-FRZ-001`](#lunarisheurfrz001) | Lunaris thresholded frozen-orbit candidate screening and validation gate | heuristic | unverifiable |
 | [`LUNARIS-HEUR-IMP-001`](#lunarisheurimp001) | Outer-sphere rejection and terrain-height bisection for batched impact localization | heuristic | unverifiable |
@@ -78,7 +78,7 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
 - **Classification**: exact_reformulation
 - **Verification**: identifier_verified_content_pending | **Scientific status**: implemented_and_tested
 - **Primary reference**: `Battin1999Astrodynamics` -- Battin, 1999. "An Introduction to the Mathematics and Methods of Astrodynamics" (edition Revised) [ISBN: 978-1-56347-342-5]
-- **Verification notes**: Book metadata verified: Richard H. Battin, "An Introduction to the Mathematics and Methods of Astrodynamics", Revised Edition, AIAA Education Series, 1999, ISBN 978-1-56347-342-5. The implemented device rewrites F = (1+q)^{3/2} - 1 as q(3+3q+q^2)/(1+(1+q)^{3/2}) to avoid the subtractive cancellation of the direct differential form; this identity is elementary and was checked independently, and the F(q)/Encke device is attributed to Battin by GMAT's MathSpec and multiple modern propagators. PENDING: exact Battin chapter/section/equation number (physical copy needed) before this may be promoted to verified_primary_source.
+- **Verification notes**: Book metadata verified: Richard H. Battin, "An Introduction to the Mathematics and Methods of Astrodynamics", Revised Edition, AIAA Education Series, 1999, ISBN 978-1-56347-342-5. The implemented device rewrites F = (1+q)^{3/2} - 1 as q(3+3q+q^2)/(1+(1+q)^{3/2}) to avoid the subtractive cancellation of the direct differential form; this identity is elementary and was checked independently, and the F(q)/Encke device is attributed to Battin by GMAT's MathSpec and multiple modern propagators. Narrowed 2026-07-18: Gkolias & Colombo (arXiv:2104.01240, ref [25]) cite the Battin-Giorgi/Encke q-device to Battin (1999 rev. ed.) pp. 448-450, 490-494, 529-530, and Vallado (2007) Ch. 8 cites Battin (1987:450) for Encke rectification; no online source exposes the exact F(q) equation number. PENDING: exact Battin chapter/section/equation number (physical copy needed) before this may be promoted to verified_primary_source.
 - **Mathematical contract**:
   - Inputs: Moon-centred spacecraft and third-body position vectors and the third-body gravitational parameter mu (SI units).
   - Outputs: differential (tidal) third-body acceleration in m/s^2
@@ -253,9 +253,9 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
 - **Primary reference**: Lunaris-specific; no external primary reference.
 - **Mathematical contract**:
   - Inputs: position, two evaluation degrees, and a blend altitude band
-  - Outputs: acceleration that transitions C1-continuously between a low and a high evaluation degree across the band
+  - Outputs: acceleration that transitions C0-continuously (piecewise smooth) between a low and a high evaluation degree across the band
   - Exactness: continuous_policy_blend
-  - Preserves: C1 continuity of the blended acceleration across the altitude band
+  - Preserves: C0 continuity of the blended acceleration across the altitude band
 - **Implementing symbols**:
   - `src/lunaris/physics/spherical_harmonics.py` -- `sh_accel_adaptive_blend_numba` (numba_implementation)
   - `src/lunaris/physics/spherical_harmonics.py` -- `_apply_smoothstep` (numba_implementation)
@@ -265,6 +265,9 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
   - the high-degree field is only needed at low altitude
 - **Limitations**:
   - the blended result is a policy, not the exact field at intermediate degrees
+  - not C1 in general: the spatial derivative jumps where the discrete degree ladder switches its blend pair inside the band
+  - non-conservative inside the transition band: the acceleration-level blend omits the (U_hi - U_lo) * grad(w) term of the blended-potential gradient, so the field is not curl-free there and must not back symplectic or energy-conservation studies (the propagator's symplectic guard rejects adaptive-degree gravity)
+  - not routed into the production RHS (reachable only via accel_adaptive)
 - **Validated by**:
   - `tests/test_spherical_harmonics.py`
 - **See also**: [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
@@ -1600,9 +1603,9 @@ Verification status: identifier_verified_content_pending (3), unverifiable (7), 
 - **Slug**: `grail_gl1800f_lunar_gravity_field`
 - **Category**: data_product | **Domain**: DATA | **Status**: active
 - **Classification**: standard_implementation
-- **Verification**: identifier_verified_content_pending | **Scientific status**: implemented_and_tested
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `GrailGL1800FSHADR` -- {JPL GRAIL Level-2 Team}, 2023. "{GRAIL} Lunar Gravity Field {GL1800F} (Spherical Harmonic Coefficients, {JGGRX\_1800F\_SHA})" (section JGGRX_1800F_SHA product) [OFFICIAL URL: https://pds-geosciences.wustl.edu/grail/grail-l-lgrs-5-rdr-v1/grail_1001/shadr/]
-- **Verification notes**: The shipped coefficient set is GL1800F (file jggrx_1800f_sha), read directly from its PDS SHADR label: degree/order 1800, fully normalized, reference radius 1738.0 km, DE440 principal-axis frame, k2=0.024223, k3=0.0163. PENDING: the label attributes the field to R. S. Park, A. Berne, A. S. Konopliv & J. T. Keane, but that specific GL1800 journal citation was not fully resolved; the GRAIL high-resolution field methodology is Konopliv et al. 2014 (DOI 10.1002/2013GL059066 verified).
+- **Verification notes**: The shipped coefficient set is GL1800F (file jggrx_1800f_sha), read directly from its PDS SHADR label: degree/order 1800, fully normalized, reference radius 1738.0 km, DE440 principal-axis frame, k2=0.024223, k3=0.0163. Attribution resolved (2026-07-18): the PDS label (updated 2025-05-16) credits the JPL Level-2 team with model developers R. S. Park, A. Berne, A. S. Konopliv, J. T. Keane, I. Matsuyama, F. Nimmo, M. Rovira-Navarro, M. P. Panning, M. Simons, D. J. Stevenson and R. C. Weber, and cites Park et al., "Thermal asymmetry in the Moon's mantle inferred from monthly tidal response", Nature 641(8065), 1188-1192 (2025), DOI 10.1038/s41586-025-08949-5 (DOI and author list verified; the label's k3=0.0163 matches the paper's k3=0.0163+-0.0007). The GRAIL high-resolution field methodology remains Konopliv et al. 2014 (DOI 10.1002/2013GL059066 verified).
 - **Mathematical contract**:
   - Inputs: SHADR coefficient file path
   - Outputs: fully-normalized C_nm/S_nm blocks, reference radius, and GM for spherical-harmonic evaluation

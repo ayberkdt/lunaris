@@ -784,6 +784,13 @@ def _compute_sh_acceleration_serial(
     Computes the gravitational acceleration vector using a high-degree
     Spherical Harmonics model. Optimized for serial execution with
     Kahan summation for double-precision stability.
+
+    Twin-kernel maintenance contract: ``sh_potential_accel_batch_serial`` in
+    this module re-implements the same ALF recurrence, longitude recurrence,
+    and polar-axis limit for the dataset/potential path. Any convention or
+    correctness fix here (phase, derivative sign, axis limit) must be mirrored
+    there, and vice versa; cross-path agreement is pinned by
+    ``tests/test_st_lrps_generator_phase_parity.py``.
     """
 
     # 1. Preamble: Coordinate transformation and degree validation
@@ -1266,8 +1273,24 @@ def sh_accel_adaptive_blend_numba(
 ) -> tuple[float, float, float]:
     """
     Computes gravity acceleration with a dynamic degree that scales with altitude.
-    Uses 'Dual-Fidelity' evaluation to blend between two discrete degrees for
-    numerical continuity (C1-smoothness).
+    Uses 'Dual-Fidelity' evaluation to blend between two discrete degrees.
+
+    Continuity/physics contract (heuristic, not a field model):
+
+    * The blended acceleration is **C0 continuous, piecewise smooth**. At the
+      band edges the smoothstep derivative vanishes, but wherever the discrete
+      ladder switches its (deg_lo, deg_hi) pair inside the band the spatial
+      derivative jumps — the result is *not* C1 in general.
+    * Blending two conservative accelerations with a position-dependent weight
+      ``a = (1-w(r)) a_lo + w(r) a_hi`` is **non-conservative**: it omits the
+      ``(U_hi - U_lo) * grad(w)`` term of the blended-potential gradient, so
+      the field is not curl-free inside the transition band and carries no
+      energy-conservation guarantee. Do not use it for symplectic/energy-drift
+      studies (the propagator's symplectic guard rejects adaptive-degree
+      gravity for exactly this class of reason).
+    * This kernel is not routed into the production RHS; the propagator's
+      adaptive-degree path uses discrete switching (see
+      ``core/dynamics/adaptive_degree.py`` and ``docs/ARCHITECTURE.md``).
     """
 
     # 1. Degree Limits & Step Validation
@@ -1466,6 +1489,14 @@ def sh_potential_accel_batch_serial(
     tesseral fields. Positions within the kernel's near-origin guard return zero
     rather than a singular field. This serial Numba kernel performs no shape
     validation; callers must provide recurrence tables through ``degree_max``.
+
+    Twin-kernel maintenance contract: this is a deliberate second
+    implementation of the ALF/longitude recurrences and polar-axis limit used
+    by ``_compute_sh_acceleration_serial`` (the propagation hot path); it
+    additionally returns the potential and allocates per-sample work arrays
+    instead of using ``SHWorkspace``. Any convention or correctness fix in
+    either kernel must be mirrored in the other; cross-path agreement is
+    pinned by ``tests/test_st_lrps_generator_phase_parity.py``.
     """
     M = xyz_m.shape[0]
     N = degree_max
