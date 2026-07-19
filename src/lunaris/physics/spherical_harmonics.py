@@ -1705,6 +1705,32 @@ def sh_potential_accel_fixed(
 
 Workspace: TypeAlias = "SHWorkspace"
 
+
+@dataclass(frozen=True, slots=True)
+class GravityModelMetadata:
+    """Physical and reproducibility contract attached to a gravity field."""
+
+    model_id: str
+    source_sha256: str
+    normalization: str
+    coefficient_frame: str
+    tide_system: str
+    source_gm_m3s2: float
+    source_radius_m: float
+
+    def __post_init__(self) -> None:
+        for field_name in ("model_id", "normalization", "coefficient_frame", "tide_system"):
+            if not str(getattr(self, field_name)).strip():
+                raise ValueError(f"GravityModelMetadata.{field_name} cannot be empty.")
+        digest = str(self.source_sha256).strip().lower()
+        if digest and (len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest)):
+            raise ValueError("GravityModelMetadata.source_sha256 must be empty or a SHA-256 hex digest.")
+        if not math.isfinite(self.source_gm_m3s2) or self.source_gm_m3s2 <= 0.0:
+            raise ValueError("GravityModelMetadata.source_gm_m3s2 must be finite and > 0.")
+        if not math.isfinite(self.source_radius_m) or self.source_radius_m <= 0.0:
+            raise ValueError("GravityModelMetadata.source_radius_m must be finite and > 0.")
+
+
 @dataclass(frozen=True, slots=True)
 class GravityModel:
     """
@@ -1729,6 +1755,7 @@ class GravityModel:
 
     # Default workspace for single-threaded usage
     workspace: Workspace
+    metadata: GravityModelMetadata
 
     @property
     def degree_max(self) -> int:
@@ -1802,16 +1829,28 @@ class GravityModel:
         Separation of concerns: parsing is handled by loaders.io_gravity.
         """
         from lunaris.loaders.io_gravity import load_gravity_model as _load_file
+        from lunaris.loaders.io_gravity import read_gravity_model_metadata
 
         # Load raw data via the external IO utility
         n_file, r_val, mu_val, c_raw, s_raw = _load_file(path, degree_max=requested_degree)
+        metadata_values = read_gravity_model_metadata(path)
+        metadata = GravityModelMetadata(
+            model_id=str(metadata_values["model_id"]),
+            source_sha256=str(metadata_values["source_sha256"]),
+            normalization=str(metadata_values["normalization"]),
+            coefficient_frame=str(metadata_values["coefficient_frame"]),
+            tide_system=str(metadata_values["tide_system"]),
+            source_gm_m3s2=float(metadata_values["source_gm_m3s2"]),
+            source_radius_m=float(metadata_values["source_radius_m"]),
+        )
 
         return cls.from_arrays(
             degree_max=requested_degree if requested_degree is not None else n_file,
             r_ref=r_val,
             mu=mu_val,
             c_coeffs_full=c_raw,
-            s_coeffs_full=s_raw
+            s_coeffs_full=s_raw,
+            metadata=metadata,
         )
 
     @classmethod
@@ -1822,6 +1861,8 @@ class GravityModel:
         mu: float,
         c_coeffs_full: np.ndarray,
         s_coeffs_full: np.ndarray,
+        *,
+        metadata: GravityModelMetadata | None = None,
     ) -> GravityModel:
         """
         Factory: Build a model from in-memory arrays and precompute tables.
@@ -1843,6 +1884,21 @@ class GravityModel:
 
         # 3. Allocation
         ws = make_sh_workspace(final_degree)
+        model_metadata = metadata or GravityModelMetadata(
+            model_id="in_memory",
+            source_sha256="",
+            normalization="fully_normalized_4pi",
+            coefficient_frame="unspecified",
+            tide_system="unspecified",
+            source_gm_m3s2=float(mu),
+            source_radius_m=float(r_ref),
+        )
+        if not math.isclose(model_metadata.source_gm_m3s2, float(mu), rel_tol=1.0e-15):
+            raise ValueError("GravityModel metadata source GM does not match the model GM.")
+        if not math.isclose(model_metadata.source_radius_m, float(r_ref), rel_tol=1.0e-15):
+            raise ValueError(
+                "GravityModel metadata source radius does not match the model reference radius."
+            )
 
         return cls(
             max_degree=final_degree,
@@ -1855,7 +1911,8 @@ class GravityModel:
             a_coeffs=a,
             b_coeffs=b,
             scale_m_table=scale_m,
-            workspace=ws
+            workspace=ws,
+            metadata=model_metadata,
         )
 
     # --------------------------- Workspace Management ---------------------------

@@ -45,7 +45,9 @@ from lunaris.common.lunar_data import (
     R_MOON_SI,
     is_lunar_body_signature,
     looks_like_lunar_run_config,
+    looks_lunar_like,
     resolve_lunar_gravity_path,
+    validate_lunar_contract,
 )
 from lunaris.loaders.io_gravity import load_gravity_model
 
@@ -186,6 +188,8 @@ __all__ = [
     "resolve_lunar_gravity_path",
     "load_icgem_gfc",
     "is_lunar_body_signature",
+    "looks_lunar_like",
     "looks_like_lunar_run_config",
+    "validate_lunar_contract",
     "load_run_config",
 ]

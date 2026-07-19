@@ -9,7 +9,12 @@ import pytest
 
 from lunaris.cli.batch_runner import _resolve_initial_state_mu
 from lunaris.common.constants import MU_MOON
-from lunaris.loaders.io_gravity import load_shadr_ascii, read_gravity_model_header
+from lunaris.loaders.io_gravity import (
+    load_shadr_ascii,
+    read_gravity_model_header,
+    read_gravity_model_metadata,
+)
+from lunaris.physics.spherical_harmonics import GravityModel
 
 
 def _write_shadr(path: Path, *, radius_km: float = 1738.0, gm_km3s2: float = 4902.8) -> Path:
@@ -81,3 +86,29 @@ def test_strict_shadr_rejects_nonfinite_coefficients(
 
     with pytest.raises(ValueError, match="Non-finite coefficient"):
         load_shadr_ascii(str(path), strict=True)
+
+
+def test_gravity_metadata_reads_companion_pds_physical_contract(tmp_path: Path) -> None:
+    path = _write_shadr(tmp_path / "model.tab.txt", gm_km3s2=4902.8003063302)
+    (tmp_path / "model.lbl.txt").write_text(
+        'ORIGINAL_PRODUCT_ID = "GL_TEST"\n'
+        'DESCRIPTION = "Coefficients are fully normalized. The DE440 lunar body-fixed '
+        'principal axes (PA) coordinate system is used. Degree coefficients do not \n'
+        'include the permanent tide."\n',
+        encoding="utf-8",
+    )
+
+    metadata = read_gravity_model_metadata(str(path))
+
+    assert metadata["model_id"] == "GL_TEST"
+    assert metadata["normalization"] == "fully_normalized_4pi"
+    assert metadata["coefficient_frame"] == "MOON_PA"
+    assert metadata["tide_system"] == "tide_free"
+    assert metadata["source_gm_m3s2"] == pytest.approx(4.9028003063302e12)
+    assert metadata["source_radius_m"] == pytest.approx(1_738_000.0)
+    assert len(str(metadata["source_sha256"])) == 64
+
+    model = GravityModel.from_file(str(path))
+    assert model.metadata.model_id == "GL_TEST"
+    assert model.metadata.coefficient_frame == "MOON_PA"
+    assert model.metadata.tide_system == "tide_free"

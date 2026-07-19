@@ -51,7 +51,10 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
   external-body Schwarzschild/de Sitter terms when Sun/Earth ephemerides are available.
 - `ephemeris.py` — SPICE kernel wrapper; ephemerides are pre-tabulated at startup.
 - Classical `GravityModel` exposes the engine-facing gravity-provider contract
-  directly (`degree_max`, `R_ref_m`, `GM_m3s2`, coefficient arrays, workspace);
+  directly (`degree_max`, `R_ref_m`, `GM_m3s2`, coefficient arrays, workspace)
+  plus immutable source/frame/normalization/tide-system metadata. Companion PDS
+  labels supply the coefficient frame and tide system; strict runs require the
+  complete metadata and dynamics rejects known frame or solid-tide mismatches;
   no legacy gravity-name adapter sits between `physics` and `core`.
 
 Physics models never import from `core/` or `surrogate/`.

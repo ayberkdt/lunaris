@@ -119,6 +119,13 @@ single run directory self-describing without re-reading the original HDF5 file.
 
 ## Runtime Checks
 
+Classical gravity files attach an immutable `GravityModelMetadata` contract to
+the loaded field: model ID, coefficient-file SHA-256, normalization, coefficient
+frame, tide system, and the source GM/reference radius. When an ephemeris frame
+is available, a known coefficient-frame mismatch fails before propagation. A
+known non-tide-free static field cannot be combined with additive solid tides;
+strict runs also reject unknown/incomplete gravity metadata.
+
 Canonical ephemeris archives use schema version 2 and store matched SPICE
 position and velocity tables in SI units. Loading a position-only legacy NPZ
 fails closed so a resumed run cannot silently switch from cubic Hermite to a

@@ -36,6 +36,11 @@ from typing import TYPE_CHECKING, Any, Final
 _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     # Gravity / Spherical Harmonics (compute-only)
     "GravityModel": (".spherical_harmonics", "GravityModel", "High-level SH gravity wrapper."),
+    "GravityModelMetadata": (
+        ".spherical_harmonics",
+        "GravityModelMetadata",
+        "Gravity field frame, tide-system, and source contract.",
+    ),
     "SHWorkspace": (".spherical_harmonics", "SHWorkspace", "Reusable scratch buffers for SH kernels."),
     "compute_point_mass_acceleration": (".spherical_harmonics", "compute_point_mass_acceleration", "Baseline point-mass gravity."),
     "build_legendre_coeffs": (".spherical_harmonics", "build_legendre_coeffs", "Legendre recurrence constants."),
@@ -216,6 +221,7 @@ if TYPE_CHECKING:
     )
     from .spherical_harmonics import (  # noqa: F401
         GravityModel,
+        GravityModelMetadata,
         SHWorkspace,
         build_legendre_coeffs,
         compute_point_mass_acceleration,

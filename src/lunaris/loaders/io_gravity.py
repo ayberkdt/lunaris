@@ -25,11 +25,13 @@ constants (R_ref, GM) consistently converted to SI units (meters).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import os
 import re
 import struct
+from pathlib import Path
 
 import numpy as np
 
@@ -621,6 +623,78 @@ def read_gravity_model_header(file_path: str) -> tuple[int, float, float, int]:
         )
 
     return int(degree), float(radius_m), float(gm_m3s2), int(normalization)
+
+
+def _companion_pds_label(model_path: Path) -> Path | None:
+    """Return the first conventional companion PDS label that exists."""
+    name_lower = model_path.name.lower()
+    candidates: list[Path] = []
+    for suffix in (".tab.txt", ".sha.txt", ".tab", ".sha", ".txt"):
+        if name_lower.endswith(suffix):
+            base = model_path.name[: -len(suffix)]
+            candidates.extend(
+                (model_path.with_name(base + ".lbl.txt"), model_path.with_name(base + ".lbl"))
+            )
+            break
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _pds_quoted_value(label_text: str, key: str) -> str | None:
+    match = re.search(rf'(?im)^\s*{re.escape(key)}\s*=\s*"([^"]+)"', label_text)
+    return match.group(1).strip() if match else None
+
+
+def read_gravity_model_metadata(file_path: str) -> dict[str, str | float]:
+    """Build reproducibility and physical-contract metadata for a model file."""
+    model_path = Path(file_path).resolve()
+    _degree, radius_m, gm_m3s2, normalization_state = read_gravity_model_header(
+        str(model_path)
+    )
+
+    digest = hashlib.sha256()
+    with model_path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+
+    label_path = _companion_pds_label(model_path)
+    label_text = label_path.read_text(encoding="utf-8-sig") if label_path else ""
+    label_lower = label_text.lower()
+    label_words = " ".join(label_lower.split())
+    model_id = (
+        _pds_quoted_value(label_text, "ORIGINAL_PRODUCT_ID")
+        or _pds_quoted_value(label_text, "PRODUCT_ID")
+        or model_path.stem
+    )
+    normalization = (
+        "fully_normalized_4pi"
+        if "fully normalized" in label_lower
+        else "normalized" if normalization_state == 1 else "unspecified"
+    )
+    coefficient_frame = (
+        "MOON_PA"
+        if "moon_pa" in label_lower or "principal axes (pa)" in label_lower
+        else "unspecified"
+    )
+    tide_system = (
+        "tide_free"
+        if "do not include the permanent tide" in label_words
+        or "does not include the permanent tide" in label_words
+        or "tide-free" in label_words
+        else "unspecified"
+    )
+
+    return {
+        "model_id": model_id,
+        "source_sha256": digest.hexdigest(),
+        "normalization": normalization,
+        "coefficient_frame": coefficient_frame,
+        "tide_system": tide_system,
+        "source_gm_m3s2": gm_m3s2,
+        "source_radius_m": radius_m,
+    }
 
 
 def _slice_square(a: np.ndarray, n_use: int) -> np.ndarray:

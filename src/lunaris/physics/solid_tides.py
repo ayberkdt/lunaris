@@ -17,9 +17,10 @@ the static C_20 (and higher) must NOT already contain the mean/permanent tidal
 deformation, or the permanent part would be double-counted. GRAIL GRGM/jggrx
 products are distributed as tide-free fields, which is the intended pairing; if
 a *zero-tide* or *mean-tide* coefficient set is ever substituted, its permanent
-tidal term must be converted to tide-free first. Lunaris does not auto-detect
-the tide system of a coefficient file — this is a documented modelling
-assumption, verified per gravity product, not enforced in code.
+tidal term must be converted to tide-free first. Gravity models loaded with a
+companion PDS label carry this tide-system metadata into ``GravityModel``;
+``DynamicsEngine`` rejects a known non-tide-free pairing, and strict runs reject
+missing tide-system metadata.
 
 Deliberate omissions and their impact (deferred, not oversights):
 

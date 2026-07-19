@@ -244,6 +244,7 @@ class DynamicsEngine:
             flags=self.flags,
             solid_tides=self.solid_tides,
             earth_j2=self.earth_j2,
+            strict_gravity_contract=self.strict_fixed_degree,
         )
 
     # -------------------------------------------------------------------------

@@ -126,9 +126,9 @@ perturbation on the static SH field. It assumes the loaded gravity coefficients
 are a **tide-free** field, so the permanent tidal deformation is not double
 counted. GRAIL GRGM / jggrx products are tide-free, which is the intended
 pairing. A *zero-tide* or *mean-tide* coefficient set would need its permanent
-tidal term converted to tide-free before use. Lunaris does not auto-detect a
-file's tide system — this is a per-product modelling assumption, documented here
-and in the module, not enforced in code.
+tidal term converted to tide-free before use. A companion PDS label carries the
+tide-system contract into `GravityModel`; known incompatible pairings fail
+closed, and strict runs require the metadata instead of assuming it.
 
 Deliberately deferred (not oversights): tidal time lag / dissipation
 (imaginary Love number, k2/Q — only matters for multi-month arcs), and
