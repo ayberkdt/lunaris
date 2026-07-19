@@ -28,9 +28,9 @@
     -4680.358130872604,
     -1669080.4317397848,
     -694991.0838500737,
-    37.47733676740253,
-    -632.9277086668202,
-    1519.7775488464836
+    322.78493612546913,
+    -621.4936770512351,
+    1490.3963659184917
   ],
   "kernel_files": [
     "data/ephemeris_models/naif0012.tls",
@@ -71,16 +71,16 @@
   "coverage_acceptance": {
     "altitude_min_m": 10000.0,
     "altitude_max_m": 200000.0,
-    "latitude_abs_max_deg_min": 80.0,
-    "latitude_abs_max_deg_max": 90.1,
-    "longitude_10deg_bins_min": 10
+    "latitude_abs_max_deg_min": 70.0,
+    "latitude_abs_max_deg_max": 85.0,
+    "longitude_10deg_bins_min": 30
   },
   "initial_state_construction": {
     "basis": "instantaneous MOON_PA axes",
     "vector_transform": "same SPICE 3x3 MOON_PA-to-J2000 rotation applied to position and inertial velocity components",
     "semi_major_axis_m": 1808000.0,
     "eccentricity": 0.0,
-    "inclination_deg": 90.0,
+    "inclination_deg": 80.0,
     "raan_deg": 75.0,
     "argument_of_periapsis_deg": 0.0,
     "true_anomaly_deg": 0.0
