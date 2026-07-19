@@ -82,13 +82,13 @@ SCENARIOS = (
         "degree": 360,
         "periapsis_altitude_m": 70000.0,
         "apoapsis_altitude_m": 70000.0,
-        "inclination_deg": 90.0,
+        "inclination_deg": 80.0,
         "raan_deg": 75.0,
         "argument_of_periapsis_deg": 0.0,
         "true_anomaly_deg": 0.0,
         "position_cap_m": 0.02,
         "velocity_cap_m_s": 2.0e-5,
-        "coverage": (10000.0, 200000.0, 80.0, 90.1, 10),
+        "coverage": (10000.0, 200000.0, 70.0, 85.0, 30),
     },
 )
 

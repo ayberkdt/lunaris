@@ -59,7 +59,7 @@ def test_diverse_scenarios_are_predeclared_and_physically_consistent() -> None:
         "scenario_equatorial_retrograde_5day.json": (5, 120, 180.0),
         "scenario_eccentric_low_periapsis_5day.json": (5, 120, 90.0),
         "scenario_high_altitude_retrograde_5day.json": (5, 120, 120.0),
-        "scenario_degree360_high_inclination_1day.json": (1, 360, 90.0),
+        "scenario_degree360_high_inclination_1day.json": (1, 360, 80.0),
     }
     for filename, (days, degree, inclination_deg) in expected.items():
         raw = (RUNNER / filename).read_text(encoding="utf-8")
