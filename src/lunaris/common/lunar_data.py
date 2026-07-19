@@ -82,16 +82,18 @@ def validate_lunar_contract(
     *,
     mu_si: float | None = None,
     r_ref_m: float | None = None,
-    gm_rel_tol: float = 1.0e-6,
-    radius_rel_tol: float = 1.0e-6,
+    gm_rel_tol: float = 5.0e-4,
+    radius_rel_tol: float = 6.0e-4,
 ) -> bool:
     """Validate the numeric core of a strict lunar artifact contract.
 
-    The tolerances admit the small, source-specific GM differences among
-    high-resolution lunar gravity products while rejecting the legacy 20%
-    discovery envelope. Model identity, source hash, coefficient frame,
-    normalization, and tide system remain separate required metadata fields at
-    the gravity/artifact contract boundary.
+    This body-identity check admits established source conventions and their
+    common rounded forms (4,902 vs 4,902.8 km^3/s^2; 1,737.0/1,737.4 vs
+    1,738.0 km), while rejecting a 0.1% mismatch and the legacy 20% discovery
+    envelope. Artifact-to-dataset compatibility remains a separate, near-exact
+    comparison (1 SI unit in the ST-LRPS contract). Model identity, source hash,
+    coefficient frame, normalization, and tide system are also separate
+    required metadata fields at the gravity/artifact boundary.
     """
 
     checks: list[bool] = []

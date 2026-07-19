@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from lunaris.common.constants import MU_MOON
+
 torch = pytest.importorskip("torch")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -65,7 +67,7 @@ def _make_min_run(run_dir: Path):
         a=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=1.0e-3),
     )
     dataset_meta = {
-        "mu_si": 4.9e12, "r_ref_m": 1.738e6, "degree_min": 20, "degree_max": 100,
+        "mu_si": float(MU_MOON), "r_ref_m": 1.738e6, "degree_min": 20, "degree_max": 100,
         "target_mode": "residual", "unit_system": "si", "central_body": "moon",
     }
     resolved = build_resolved_config(cfg, dataset_meta, model, scaler, sig)

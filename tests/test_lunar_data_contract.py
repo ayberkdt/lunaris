@@ -24,3 +24,11 @@ def test_strict_lunar_contract_rejects_discovery_scale_mismatch() -> None:
 
 def test_strict_lunar_contract_accepts_source_specific_gravity_gm() -> None:
     assert validate_lunar_contract(mu_si=4.9028003063302e12, r_ref_m=1_738_000.0)
+
+
+def test_strict_lunar_contract_accepts_established_mean_radius_convention() -> None:
+    assert validate_lunar_contract(mu_si=float(MU_MOON), r_ref_m=1_737_400.0)
+
+
+def test_strict_lunar_contract_accepts_common_rounded_lunar_constants() -> None:
+    assert validate_lunar_contract(mu_si=4.902e12, r_ref_m=1_737_000.0)
