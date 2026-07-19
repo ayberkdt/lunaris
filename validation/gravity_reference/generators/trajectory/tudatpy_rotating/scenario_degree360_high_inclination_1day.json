@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "name": "lunaris_tudat_jggrx360_moon_pa_polar_1day",
+  "name": "lunaris_tudat_jggrx360_moon_pa_high_inclination_1day",
   "description": "Independent rotating-Moon gravity-only trajectory validation with predeclared diverse geometry",
   "start_epoch_text": "2028-02-01 00:00:00 TDB",
   "start_epoch_tdb_j2000_s": 886248000.0,
