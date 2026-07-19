@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "name": "lunaris_tudat_jggrx120_moon_pa_1day",
+  "description": "Independent rotating-Moon gravity-only trajectory validation",
+  "start_epoch_text": "2025-01-01 00:00:00 TDB",
+  "start_epoch_tdb_j2000_s": 788961600.0,
+  "duration_s": 86400.0,
+  "long_arc_options_s": [86400.0, 432000.0, 2592000.0],
+  "output_step_s": 60.0,
+  "gravity_degree": 120,
+  "gravity_order": 120,
+  "gravity_file": "data/gravity_models/jggrx_1800f_sha.tab.txt",
+  "gravity_label": "data/gravity_models/jggrx_1800f_sha.lbl.txt",
+  "expected_gravity_sha256": "d2a552067a78bf1d2755807ae14ee1d6843a8f6a4228e01ce59a665516738fec",
+  "gravity_model_id": "GL1800F",
+  "gravity_normalization": "fully_normalized_4pi",
+  "gravity_tide_system": "tide_free",
+  "gravity_fixed_frame": "MOON_PA",
+  "integration_frame": "J2000",
+  "central_body": "Moon",
+  "gravitational_parameter_m3_s2": 4902800306330.2,
+  "reference_radius_m": 1738000.0,
+  "initial_state_j2000_m_m_s": [
+    691989.3606389797,
+    1344184.1025221802,
+    1013080.9777456496,
+    -1217.181128509246,
+    -195.4441748174787,
+    1095.8166261516435
+  ],
+  "kernel_files": [
+    "data/ephemeris_models/naif0012.tls",
+    "data/ephemeris_models/pck00011.tpc",
+    "data/ephemeris_models/gm_de440.tpc",
+    "data/ephemeris_models/de440s.bsp",
+    "data/ephemeris_models/moon_de440_250416.tf",
+    "data/ephemeris_models/moon_pa_de440_200625.bpc"
+  ],
+  "tudat": {
+    "integrator": "fixed_step_classical_rk4",
+    "baseline_step_s": 5.0,
+    "tight_step_s": 2.5
+  },
+  "lunaris": {
+    "integrator": "DOP853",
+    "baseline_rtol": 1e-11,
+    "baseline_atol": 1e-12,
+    "baseline_max_step_s": 60.0,
+    "baseline_ephemeris_step_s": 30.0,
+    "tight_rtol": 1e-12,
+    "tight_atol": 1e-13,
+    "tight_max_step_s": 30.0,
+    "tight_ephemeris_step_s": 5.0
+  },
+  "acceptance": {
+    "rotation_matrix_frobenius_max": 1e-12,
+    "point_mass_acceleration_relative_max": 5e-13,
+    "spherical_harmonic_acceleration_relative_max": 5e-10,
+    "point_mass_position_cross_max_m": 0.05,
+    "point_mass_velocity_cross_max_m_s": 5e-5,
+    "trajectory_noise_multiplier": 5.0,
+    "trajectory_position_floor_m": 0.01,
+    "trajectory_velocity_floor_m_s": 1e-5
+  }
+}

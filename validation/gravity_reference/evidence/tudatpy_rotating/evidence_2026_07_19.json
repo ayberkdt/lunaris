@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "evidence_id": "tudatpy_rotating_moon_pa_2026_07_19",
+  "status": "PASS",
+  "generated_utc_date": "2026-07-19",
+  "lunaris_git_commit": "ae439f238abc5a987464bcd21b3104f52767c3c1",
+  "lunaris_git_dirty": false,
+  "scope": "gravity-only J2000 propagation with DE440 MOON_PA rotation and tide-free GL1800F degree/order 120/120",
+  "excluded_forces": [
+    "third_body_gravity",
+    "solid_tides",
+    "solar_radiation_pressure",
+    "eclipses",
+    "relativity",
+    "non_gravitational_forces"
+  ],
+  "environment": {
+    "tudatpy": "1.0.0",
+    "tudat_python": "3.12.13",
+    "tudat_numpy": "1.26.4",
+    "lunaris_python": "3.10.20",
+    "lunaris_numpy": "2.2.6",
+    "lunaris_scipy": "1.15.3",
+    "dtype": "float64",
+    "backend": "cpu"
+  },
+  "source_hashes": {
+    "gravity_sha256": "d2a552067a78bf1d2755807ae14ee1d6843a8f6a4228e01ce59a665516738fec",
+    "evidence_tudat_runner_sha256": "1e012801a8a6d3180853407b337b1cbb4dab27d821277facce62493b1524cf3d",
+    "evidence_lunaris_runner_sha256": "6047755ace1ea7d94cd3cf062258980d8c093ffd558664aff4891a4320dc64d4",
+    "note": "Committed runners are path-portable derivatives; the evidence runner hashes identify the exact executed source bytes."
+  },
+  "artifact_hash_contract": "SHA-256 of UTF-8 lines '<filename>:<file-sha256>' for every regular result file, sorted by filename and joined with LF",
+  "runs": [
+    {
+      "scenario": "lunaris_tudat_jggrx120_moon_pa_1day",
+      "duration_days": 1,
+      "status": "PASS",
+      "samples": 1441,
+      "evidence_scenario_sha256": "91ad06f36e682141477a2d7d4401d6d834a0e65c3178806f5124ae22fd3f540a",
+      "comparison_summary_sha256": "ab3b1adb061e2165309063007480613e35b9d4498f42ba5fa2a9ee92cc6abc69",
+      "tudat_provenance_sha256": "98b57f343c54a229cbb58ab64b725e6b6b62ef9b0da7a3e3b77a3b3f4911262b",
+      "lunaris_provenance_sha256": "fc649985a58a76ef2a9c6e2f5b97401513c553d616b6c25893edcdc6c2f897f8",
+      "result_directory_aggregate_sha256": "e64cf4dabc8673c784f45d77c14ad5be7d8fde99fc78c5b6a2b773e04e9ca078",
+      "sh_position_max_m": 0.00010411989576676785,
+      "sh_velocity_max_m_s": 9.100827089696315e-08,
+      "sh_acceleration_relative_max": 1.3345206379031383e-14,
+      "tudat_sh_step_convergence_position_max_m": 0.0017612179058877147,
+      "lunaris_sh_tolerance_convergence_position_max_m": 8.895437607804354e-06,
+      "tudat_rk4_position_refinement_ratio": 17.881051865443684
+    },
+    {
+      "scenario": "lunaris_tudat_jggrx120_moon_pa_5day",
+      "duration_days": 5,
+      "status": "PASS",
+      "samples": 7201,
+      "evidence_scenario_sha256": "8adfd9634ee46e77916d59fbb5c909d837ff4ecc75c65518c0fcd3ab8359e0c6",
+      "comparison_summary_sha256": "f324a42f7d0c62711c47331499d734d1571493c0a2df132ea6a4155fa9a7640c",
+      "tudat_provenance_sha256": "d59fca4b0ff1e0f1d5613e0db830e94b67638a479c778e870949c93978c49835",
+      "lunaris_provenance_sha256": "7a79dbcd0e7ab0cfee21550f0e1c1746f7e8e3dde52534d699c8d62347f661b3",
+      "result_directory_aggregate_sha256": "899145ed0b6c6b07bad1089fd930f1225f142524414e8546f3c9c7066b15eeba",
+      "sh_position_max_m": 0.0005629494967419046,
+      "sh_velocity_max_m_s": 4.975022027843354e-07,
+      "sh_acceleration_relative_max": 1.4979117777875488e-14,
+      "tudat_sh_step_convergence_position_max_m": 0.016466948171768754,
+      "lunaris_sh_tolerance_convergence_position_max_m": 0.00018787564503075873,
+      "tudat_rk4_position_refinement_ratio": 30.250232831714154
+    },
+    {
+      "scenario": "lunaris_tudat_jggrx120_moon_pa_30day",
+      "duration_days": 30,
+      "status": "PASS",
+      "samples": 43201,
+      "evidence_scenario_sha256": "b873842f6ea6f576e10c9191f033d61b56dab270c216eb0290e0897195b1402e",
+      "comparison_summary_sha256": "e9844a654e37ad194fd608654a155d57130348cda7bf34650ecf6470bc66b803",
+      "tudat_provenance_sha256": "439dd8c5cc62b34a9ef775f62679c7ac05ef4da68adde3f36cc270ec8c18fbae",
+      "lunaris_provenance_sha256": "6757a4ad746f05f4a20cb1eca8728e7e317cf637fe41c0c2f61e695515020a0a",
+      "result_directory_aggregate_sha256": "1355bfc019eda0252ac6012e5ffc86ab163dbd8c53680bb690c7ab5e3e06286b",
+      "sh_position_max_m": 0.0123192445726822,
+      "sh_velocity_max_m_s": 1.120370637829929e-05,
+      "sh_acceleration_relative_max": 1.6595778851602528e-14,
+      "tudat_sh_step_convergence_position_max_m": 0.39203483459909616,
+      "lunaris_sh_tolerance_convergence_position_max_m": 0.001646738015407769,
+      "tudat_rk4_position_refinement_ratio": 32.8229154861338
+    }
+  ]
+}

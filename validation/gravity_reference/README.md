@@ -37,8 +37,14 @@ recurrences are numerically unstable above degree ~80.
   field regression; it is not an independent-integrator or physical rotating
   `MOON_PA` validation. Agreement is ~5e-8 m over ~2 orbits. Rotating
   body-fixed fields fail closed.
+- `generators/trajectory/tudatpy_rotating/`: independent TudatPy 1.0.0
+  rotating-field generator with portable one-, five-, and thirty-day contracts.
+  All three gravity-only GL1800F 120/120 runs passed on 2026-07-19; compact
+  metrics and hashes are in
+  `evidence/tudatpy_rotating/evidence_2026_07_19.json`. This evidence does not
+  add third bodies, tides, radiation, relativity, or mission-orbit truth.
 
-Regenerate (needs pyshtools; not run in normal CI):
+Regenerate the committed pyshtools references (not run in normal CI):
 
 ```bash
 python validation/gravity_reference/generators/field/generate_grail_degree120_pyshtools.py

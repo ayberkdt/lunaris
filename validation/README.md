@@ -57,14 +57,13 @@ source, contracts, harness documentation, and small reference files.
 
 - `validation/gravity_reference/`
   contains immutable field and trajectory reference contracts for the lunar
-  spherical-harmonic gravity engine. The committed trajectory benchmark is a
-  non-rotating frozen-field regression using an independent pyshtools force
-  reference and separately configured SciPy `DOP853`; it is not a physical
-  rotating `MOON_PA` trajectory validation and not an independent-integrator
-  claim. The required SPICE lunar frame/time kernels are now manifest-backed,
-  including `naif0012.tls` and `moon_de440_250416.tf`; rotating body-fixed
-  manifests still fail closed until an external rotating trajectory reference is
-  supplied.
+  spherical-harmonic gravity engine. The normal committed state-history
+  benchmark is a non-rotating pyshtools/DOP853 regression. A separate TudatPy
+  1.0.0 harness and checksummed evidence validate the physical DE440-rotated
+  `MOON_PA` gravity-only path at degree/order 120 for one, five, and thirty
+  days with an independent fixed-step RK4 integrator. Large generated histories
+  remain external; source, portable contracts, and compact evidence are kept in
+  the repository.
 
 ## Gravity Benchmark Layout
 

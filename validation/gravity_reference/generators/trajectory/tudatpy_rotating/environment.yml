@@ -1,0 +1,14 @@
+name: lunaris-tudat-validation
+channels:
+  - tudat-team
+  - conda-forge
+dependencies:
+  - python=3.12.13
+  - tudatpy=1.0.0=py312hb360651_3
+  - numpy=1.26.4
+  - scipy=1.17.1
+  - pandas=3.0.3
+  - pyyaml
+
+# The completed local environment was solved with micromamba 2.8.1 and strict
+# channel priority. Runtime/package provenance is also captured under results/.
