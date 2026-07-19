@@ -13,8 +13,9 @@ tests, and known assumptions/limitations. This tool:
 * ``generate [--check]`` -- render the human-readable ``docs/ALGORITHM_CATALOG.md``
   deterministically from the registry. ``--check`` fails if the on-disk catalogue
   is stale instead of rewriting it (used by CI / the test suite).
-* ``audit`` -- authoring aid (not run in CI): grep ``src/lunaris`` for
-  algorithm-ish keywords and list hits that no registry entry covers.
+* ``audit`` -- scan ``src/lunaris`` for algorithm-ish keywords and list hits
+  that no registry entry covers. CI runs it with ``--strict``, which fails the
+  build on any uncovered hit.
 
 Design constraint: this tool must NOT import :mod:`lunaris`. It depends only on
 the standard library plus ``pyyaml`` and ``jsonschema`` (the ``dev`` extra), so it
@@ -645,7 +646,7 @@ def run_generate(check: bool) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Coverage audit (authoring aid; not run in CI)
+# Coverage audit (CI-gated via --strict; also an authoring aid)
 # ---------------------------------------------------------------------------
 _AUDIT_KEYWORDS: tuple[str, ...] = (
     "kahan",
@@ -746,7 +747,10 @@ def run_audit(repo_root: Path = REPO_ROOT) -> list[str]:
         if resolved in whole_file_covered:
             continue
         try:
-            source = py.read_text(encoding="utf-8", errors="ignore")
+            # utf-8-sig: some repo files carry a UTF-8 BOM, which makes
+            # ast.parse fail (U+FEFF) and silently demoted those files to the
+            # text-scan fallback, flagging keyword mentions in strings/comments.
+            source = py.read_text(encoding="utf-8-sig", errors="ignore")
         except OSError:
             continue
         try:
