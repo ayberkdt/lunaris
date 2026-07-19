@@ -49,14 +49,14 @@ def resolve_lunar_gravity_path(path: str | Path | None = None) -> Path:
     return candidate
 
 
-def is_lunar_body_signature(
+def looks_lunar_like(
     *,
     mu_si: float | None = None,
     r_ref_m: float | None = None,
     rel_tol: float = 0.20,
 ) -> bool:
     """
-    Return ``True`` when a body signature looks consistent with the Moon.
+    Return ``True`` when a body signature looks broadly consistent with the Moon.
 
     The tolerance is intentionally loose because some legacy artifacts store
     rounded constants, but it is still tight enough to reject Earth-scale runs.
@@ -76,6 +76,52 @@ def is_lunar_body_signature(
     if r_ref_m is not None:
         checks.append(_close(r_ref_m, R_MOON_SI))
     return bool(checks) and all(checks)
+
+
+def validate_lunar_contract(
+    *,
+    mu_si: float | None = None,
+    r_ref_m: float | None = None,
+    gm_rel_tol: float = 5.0e-4,
+    radius_rel_tol: float = 6.0e-4,
+) -> bool:
+    """Validate the numeric core of a strict lunar artifact contract.
+
+    This body-identity check admits established source conventions and their
+    common rounded forms (4,902 vs 4,902.8 km^3/s^2; 1,737.0/1,737.4 vs
+    1,738.0 km), while rejecting a 0.1% mismatch and the legacy 20% discovery
+    envelope. Artifact-to-dataset compatibility remains a separate, near-exact
+    comparison (1 SI unit in the ST-LRPS contract). Model identity, source hash,
+    coefficient frame, normalization, and tide system are also separate
+    required metadata fields at the gravity/artifact boundary.
+    """
+
+    checks: list[bool] = []
+    for value, reference, tolerance in (
+        (mu_si, MU_MOON_SI, gm_rel_tol),
+        (r_ref_m, R_MOON_SI, radius_rel_tol),
+    ):
+        if value is None:
+            continue
+        try:
+            numeric = float(value)
+            tol = max(float(tolerance), 0.0)
+        except (TypeError, ValueError):
+            checks.append(False)
+            continue
+        checks.append(abs(numeric - reference) / max(abs(reference), 1.0) <= tol)
+    return bool(checks) and all(checks)
+
+
+def is_lunar_body_signature(
+    *,
+    mu_si: float | None = None,
+    r_ref_m: float | None = None,
+    rel_tol: float = 0.20,
+) -> bool:
+    """Compatibility alias for the legacy lunar-discovery heuristic."""
+
+    return looks_lunar_like(mu_si=mu_si, r_ref_m=r_ref_m, rel_tol=rel_tol)
 
 
 def _safe_float(mapping: Mapping[str, Any], key: str) -> float | None:
@@ -118,8 +164,8 @@ def looks_like_lunar_run_config(config: Mapping[str, Any]) -> bool:
     mu_values = [float(mu) for mu in mu_candidates if mu is not None]
     r_values = [float(r_ref) for r_ref in r_candidates if r_ref is not None]
 
-    mu_checks = [is_lunar_body_signature(mu_si=mu) for mu in mu_values]
-    r_checks = [is_lunar_body_signature(r_ref_m=r_ref) for r_ref in r_values]
+    mu_checks = [looks_lunar_like(mu_si=mu) for mu in mu_values]
+    r_checks = [looks_lunar_like(r_ref_m=r_ref) for r_ref in r_values]
 
     has_numeric_evidence = bool(mu_checks or r_checks) and all(mu_checks) and all(r_checks)
 
@@ -142,6 +188,8 @@ __all__ = [
     "R_MOON_SI",
     "DEFAULT_LUNAR_GRAVITY_PATH",
     "resolve_lunar_gravity_path",
+    "looks_lunar_like",
     "is_lunar_body_signature",
+    "validate_lunar_contract",
     "looks_like_lunar_run_config",
 ]

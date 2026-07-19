@@ -17,7 +17,7 @@ from typing import Any
 from lunaris.common.lunar_data import (
     MU_MOON_SI,
     R_MOON_SI,
-    is_lunar_body_signature,
+    validate_lunar_contract,
 )
 
 REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
@@ -112,7 +112,7 @@ class TargetContract:
                 raise ValueError("Residual SH contracts require base_degree >= 0.")
         if self.a_sign not in (-1.0, 1.0):
             raise ValueError(f"a_sign must be +1.0 or -1.0, got {self.a_sign!r}.")
-        if not is_lunar_body_signature(mu_si=self.mu_si, r_ref_m=self.r_ref_m):
+        if not validate_lunar_contract(mu_si=self.mu_si, r_ref_m=self.r_ref_m):
             raise ValueError(
                 "TargetContract body constants do not look lunar: "
                 f"mu_si={self.mu_si!r}, r_ref_m={self.r_ref_m!r}."
@@ -476,7 +476,7 @@ class ArtifactContract:
             errors.append("full-field contracts require target_degree >= 0")
         if self.a_sign not in (-1.0, 1.0):
             errors.append("a_sign must be +1.0 or -1.0")
-        if not is_lunar_body_signature(mu_si=self.mu_si, r_ref_m=self.r_ref_m):
+        if not validate_lunar_contract(mu_si=self.mu_si, r_ref_m=self.r_ref_m):
             errors.append(
                 f"mu_si/r_ref_m do not look lunar: mu_si={self.mu_si!r}, r_ref_m={self.r_ref_m!r}"
             )

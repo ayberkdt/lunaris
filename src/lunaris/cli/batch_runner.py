@@ -63,7 +63,24 @@ from lunaris.common.batch_defs import (  # noqa: E402
 )
 from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON  # noqa: E402
 from lunaris.common.type_defs import GravityBackend  # noqa: E402
-from lunaris.core.config import load_default_config, replace_sim_config  # noqa: E402
+from lunaris.core.config import SimConfig, load_default_config, replace_sim_config  # noqa: E402
+
+
+def _resolve_initial_state_mu(cfg: SimConfig) -> float:
+    """Return the GM that must govern a CLI-derived Keplerian initial state."""
+    flags = cfg.flags
+    gravity = cfg.gravity
+    if bool(getattr(flags, "enable_sh", False)) and not bool(
+        getattr(gravity, "uses_st_lrps", False)
+    ):
+        from lunaris.loaders.io_gravity import read_gravity_model_header
+
+        _degree, _radius_m, gm_m3s2, _normalization = read_gravity_model_header(
+            str(gravity.file_path)
+        )
+        return float(gm_m3s2)
+    return float(MU_MOON)
+
 
 # =============================================================================
 # 1.                            ARGUMENT PARSER
@@ -449,7 +466,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             # Canonical SSOT conversion (no silent fallback): a failure here is fatal.
             from lunaris.core.state import create_state_from_keplerian
-            mu = float(MU_MOON)
+
+            mu = _resolve_initial_state_mu(cfg)
             y0 = create_state_from_keplerian(
                 semi_major_axis=a_m, eccentricity=e,
                 inclination=inc, raan=raan, argp=argp,

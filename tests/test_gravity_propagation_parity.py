@@ -144,11 +144,12 @@ def test_j2_conserves_z_angular_momentum_and_energy_cpu():
 def test_golden_short_orbit_regression_cpu():
     grav = _gravity_model()
     Y = _run(grav, Y0=_inclined_circular_state())
-    # Pinned float64 CPU final state for the fixed fixture/orbit/step above.
+    # Pinned float64 CPU final state for the fixed fixture/orbit/step above,
+    # using the canonical DE440 lunar GM from common.constants.
     # Any change in the SH kernel or RK4 integrator numerics will shift this.
     golden = np.array(
-        [-1883082.1621276576, 90243.7790067893, 89163.8128236016,
-         -108.36705418477092, -1137.502016875728, -1137.5627293605785],
+        [-1882999.4603113171, 91107.70022991888, 90027.78037585827,
+         -109.38766210795312, -1137.2117862944763, -1137.2730587735496],
         dtype=np.float64,
     )
     np.testing.assert_allclose(Y[-1, 0], golden, rtol=2e-6, atol=1e-3)

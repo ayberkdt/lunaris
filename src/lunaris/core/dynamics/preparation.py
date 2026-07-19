@@ -24,6 +24,7 @@ import numpy as np
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
+    EPS_1E15,
     MU_EARTH,
     MU_MOON,
     MU_SUN,
@@ -33,6 +34,7 @@ from lunaris.common.constants import (
     SOLAR_FLUX_1AU,
 )
 from lunaris.common.force_requirements import force_requirements
+from lunaris.common.lunar_data import validate_lunar_contract
 from lunaris.common.math_utils import sample_grid_bilinear
 from lunaris.common.type_defs import SpacecraftProps
 from lunaris.core.dynamics.adaptive_degree import _sample_albedo_dn_scaled
@@ -75,6 +77,95 @@ def provider_has(provider: Any, key: str) -> bool:
     if isinstance(provider, dict):
         return key in provider
     return hasattr(provider, key)
+
+
+def _canonical_lunar_frame(value: Any) -> str:
+    frame = str(value or "").strip().upper()
+    if frame.startswith("MOON_PA"):
+        return "MOON_PA"
+    if frame.startswith("MOON_ME"):
+        return "MOON_ME"
+    return frame
+
+
+def _ephemeris_fixed_frame(ephem_manager: Any) -> str:
+    tables = getattr(ephem_manager, "tables", None)
+    for owner in (tables, ephem_manager):
+        frame = getattr(owner, "fixed_frame", None) if owner is not None else None
+        if frame:
+            return _canonical_lunar_frame(frame)
+    return ""
+
+
+def _validate_gravity_metadata_contract(
+    *,
+    req: DynamicsRequirements,
+    gravity_model: Any,
+    ephem_manager: Any,
+    strict: bool,
+) -> None:
+    """Enforce gravity frame/tide provenance before force-pack construction."""
+    if not req.use_sh or gravity_model is None or _is_surrogate_gravity_provider(gravity_model):
+        return
+
+    metadata = getattr(gravity_model, "metadata", None)
+    if metadata is None:
+        if strict:
+            raise ValueError("Strict gravity runs require GravityModel.metadata.")
+        return
+
+    coefficient_frame = _canonical_lunar_frame(getattr(metadata, "coefficient_frame", ""))
+    tide_system = str(getattr(metadata, "tide_system", "")).strip().lower()
+    normalization = str(getattr(metadata, "normalization", "")).strip().lower()
+    source_sha256 = str(getattr(metadata, "source_sha256", "")).strip().lower()
+    source_gm_m3s2 = getattr(metadata, "source_gm_m3s2", None)
+    source_radius_m = getattr(metadata, "source_radius_m", None)
+    unknown = {"", "unknown", "unspecified"}
+
+    ephemeris_frame = _ephemeris_fixed_frame(ephem_manager)
+    if coefficient_frame.lower() not in unknown and ephemeris_frame:
+        if coefficient_frame != ephemeris_frame:
+            raise ValueError(
+                "Gravity coefficient frame does not match the ephemeris fixed frame: "
+                f"gravity={coefficient_frame!r}, ephemeris={ephemeris_frame!r}."
+            )
+
+    if req.use_tides and tide_system not in unknown and tide_system != "tide_free":
+        raise ValueError(
+            "Solid tides require a tide-free static gravity field; "
+            f"gravity metadata declares tide_system={tide_system!r}."
+        )
+
+    if strict:
+        missing: list[str] = []
+        if coefficient_frame.lower() in unknown:
+            missing.append("coefficient_frame")
+        if tide_system in unknown:
+            missing.append("tide_system")
+        if normalization in unknown:
+            missing.append("normalization")
+        if len(source_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in source_sha256
+        ):
+            missing.append("source_sha256")
+        if missing:
+            raise ValueError(
+                "Strict gravity runs require complete model metadata; missing/unknown: "
+                + ", ".join(missing)
+            )
+        if not validate_lunar_contract(
+            mu_si=source_gm_m3s2,
+            r_ref_m=source_radius_m,
+        ):
+            raise ValueError(
+                "Strict gravity runs require lunar-compatible source GM and reference radius; "
+                f"source_gm_m3s2={source_gm_m3s2!r}, source_radius_m={source_radius_m!r}."
+            )
+        if normalization != "fully_normalized_4pi":
+            raise ValueError(
+                "Strict gravity runs require fully normalized 4-pi coefficients; "
+                f"gravity metadata declares normalization={normalization!r}."
+            )
 
 
 # =============================================================================
@@ -133,6 +224,7 @@ def validate_dependencies(
     flags: Any,
     solid_tides: Any,
     earth_j2: Any,
+    strict_gravity_contract: bool = False,
 ) -> None:
     """Fail fast when an enabled perturbation is missing a provider/config."""
     if req.use_sh and gravity_model is None:
@@ -197,6 +289,13 @@ def validate_dependencies(
 
     if bool(getattr(flags, "enable_earth_j2", False)) and (earth_j2 is None):
         raise ValueError("enable_earth_j2=True but earth_j2 params are None.")
+
+    _validate_gravity_metadata_contract(
+        req=req,
+        gravity_model=gravity_model,
+        ephem_manager=ephem_manager,
+        strict=bool(strict_gravity_contract),
+    )
 
 
 # =============================================================================
@@ -733,8 +832,22 @@ def prepare_earth_j2(req: DynamicsRequirements, earth_j2: Any) -> _EarthJ2Pack:
 
     j2 = float(earth_j2.j2_coeff)
     r_ref = float(earth_j2.r_eq_m)
-    kx, ky, kz = earth_j2.spin_axis_i
-    return _EarthJ2Pack(j2=j2, r_ref_m=r_ref, ax=float(kx), ay=float(ky), az=float(kz))
+    axis = np.asarray(earth_j2.spin_axis_i, dtype=np.float64)
+    if axis.shape != (3,):
+        raise ValueError(f"EarthJ2 spin_axis_i must have shape (3,), got {axis.shape}.")
+    if not np.all(np.isfinite(axis)):
+        raise ValueError("EarthJ2 spin_axis_i must contain only finite values.")
+    norm = float(np.linalg.norm(axis))
+    if norm <= EPS_1E15:
+        raise ValueError("EarthJ2 spin_axis_i is degenerate (norm ~ 0).")
+    axis /= norm
+    return _EarthJ2Pack(
+        j2=j2,
+        r_ref_m=r_ref,
+        ax=float(axis[0]),
+        ay=float(axis[1]),
+        az=float(axis[2]),
+    )
 
 
 def prepare_solid_tides(req: DynamicsRequirements, solid_tides: Any) -> _TidePack:

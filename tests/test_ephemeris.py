@@ -490,6 +490,15 @@ def test_tables_reject_non_finite_quaternions():
         EphemerisTables(**kwargs)
 
 
+def test_tables_reject_non_unit_quaternions():
+    kwargs = _valid_table_kwargs()
+    q = kwargs["q_i2f_tab"].copy()
+    q[1] *= 1.01
+    kwargs["q_i2f_tab"] = q
+    with pytest.raises(ValueError, match="unit quaternions"):
+        EphemerisTables(**kwargs)
+
+
 @pytest.mark.parametrize("field", ["r_earth_tab_m", "r_sun_tab_m"])
 def test_tables_reject_non_finite_position_tables(field):
     kwargs = _valid_table_kwargs()

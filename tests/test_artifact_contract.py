@@ -114,7 +114,9 @@ def test_incompatible_target_degree_detected():
 
 
 def test_incompatible_mu_and_r_ref_detected():
-    report = _contract().compatibility_report(_contract(mu_si=MU_MOON_SI + 100.0, r_ref_m=R_MOON_SI + 10.0))
+    report = _contract().compatibility_report(
+        _contract(mu_si=MU_MOON_SI + 100.0, r_ref_m=R_MOON_SI + 1.5)
+    )
     assert any("mu_si mismatch" in e for e in report["errors"])
     assert any("r_ref_m mismatch" in e for e in report["errors"])
 

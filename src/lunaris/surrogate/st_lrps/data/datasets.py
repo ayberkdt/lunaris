@@ -25,7 +25,8 @@ from lunaris.surrogate.st_lrps.data.dataset_contract import (
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
     R_MOON_SI,
-    is_lunar_body_signature,
+    looks_lunar_like,
+    validate_lunar_contract,
 )
 
 logger = logging.getLogger(__name__)
@@ -369,7 +370,7 @@ def resolve_lunar_dataset_contract(meta: DatasetMeta, *, data_path: Path) -> tup
     """
 
     body_name = _normalized_dataset_body_name(meta)
-    has_lunar_signature = is_lunar_body_signature(mu_si=meta.mu_si, r_ref_m=meta.r_ref_m)
+    has_lunar_signature = validate_lunar_contract(mu_si=meta.mu_si, r_ref_m=meta.r_ref_m)
 
     if body_name is not None and body_name not in _LUNAR_ALIASES:
         raise ValueError(
@@ -877,7 +878,7 @@ def find_latest_dataset(start_dir: Path) -> Path | None:
                     return None
             meta = DatasetMeta.from_h5(path)
             body_name = _normalized_dataset_body_name(meta)
-            has_signature = is_lunar_body_signature(mu_si=meta.mu_si, r_ref_m=meta.r_ref_m)
+            has_signature = looks_lunar_like(mu_si=meta.mu_si, r_ref_m=meta.r_ref_m)
             if body_name in _LUNAR_ALIASES and has_signature:
                 return (3, path.stat().st_mtime)
             if body_name in _LUNAR_ALIASES:

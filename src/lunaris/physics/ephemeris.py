@@ -296,6 +296,12 @@ class EphemerisTables:
         q_norms = np.linalg.norm(np.asarray(self.q_i2f_tab, dtype=np.float64), axis=1)
         if float(np.min(q_norms)) <= 0.0:
             raise ValueError("q_i2f_tab rows must be nonzero quaternions.")
+        max_norm_error = float(np.max(np.abs(q_norms - 1.0)))
+        if max_norm_error > 1.0e-12:
+            raise ValueError(
+                "q_i2f_tab rows must be unit quaternions "
+                f"(max norm error {max_norm_error:.6g} exceeds 1e-12)."
+            )
 
         if self.r_earth_tab_m.shape not in ((n, 3), (1, 3)):
             raise ValueError(

@@ -76,7 +76,7 @@ Usage
 
     >>> r_vec = np.array([1737.4e3 + 100e3, 0.0, 0.0])
     >>> v_vec = np.array([0.0, 1600.0, 0.0])
-    >>> mu = 4.9048695e12
+    >>> mu = 4.902800118e12
     >>> a, e, inc, raan, argp, nu = rv_to_coe_select(r_vec, v_vec, mu, mode="coe6")
 """
 

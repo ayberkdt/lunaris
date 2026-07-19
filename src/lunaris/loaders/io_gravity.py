@@ -25,10 +25,13 @@ constants (R_ref, GM) consistently converted to SI units (meters).
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 import os
 import re
 import struct
+from pathlib import Path
 
 import numpy as np
 
@@ -80,6 +83,10 @@ def load_shbdr(
 
         if int(norm_state) != 1:
             raise ValueError(f"SHBDR norm_state must be 1 (Normalized). Got {norm_state}.")
+        if not math.isfinite(R_ref) or R_ref <= 0.0:
+            raise ValueError(f"SHBDR reference radius must be finite and > 0. Got {R_ref!r}.")
+        if not math.isfinite(GM) or GM <= 0.0:
+            raise ValueError(f"SHBDR GM must be finite and > 0. Got {GM!r}.")
 
         n_max = int(n_max)
         m_max = int(m_max)
@@ -111,6 +118,8 @@ def load_shbdr(
             raise OSError("Failed to read coefficients value table.")
 
         vals = np.frombuffer(coeff_raw, dtype="<f8", count=num_params)
+        if not np.all(np.isfinite(vals)):
+            raise ValueError("SHBDR coefficient table contains NaN or Inf values.")
 
     Cnm = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
     Snm = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
@@ -294,6 +303,12 @@ def load_shadr_ascii(
         else:
             n, m = raw1, raw2
 
+        if not math.isfinite(val_C) or not math.isfinite(val_S):
+            _maybe_fail(
+                f"Non-finite coefficient at line {line_no}: C={val_C!r}, S={val_S!r}."
+            )
+            return n
+
         # Truncation: ignore degrees beyond n_use (this is expected when degree_max is set)
         if n > n_use:
             skipped_due_to_degree += 1
@@ -364,6 +379,12 @@ def load_shadr_ascii(
 
                 R_ref_m = R_ref_km * 1000.0
                 GM_m3s2 = GM_km3s2 * 1.0e9
+                if not math.isfinite(R_ref_m) or R_ref_m <= 0.0:
+                    raise ValueError(
+                        f"SHADR reference radius must be finite and > 0. Got {R_ref_m!r}."
+                    )
+                if not math.isfinite(GM_m3s2) or GM_m3s2 <= 0.0:
+                    raise ValueError(f"SHADR GM must be finite and > 0. Got {GM_m3s2!r}.")
 
                 n_cap = max(int(file_n_max), int(file_m_max))
                 n_use = n_cap if degree_max is None else min(int(degree_max), n_cap)
@@ -550,6 +571,130 @@ def _looks_like_ascii_model(file_path: str) -> bool:
     """Return True if *file_path* looks like a SHADR/PDS ASCII gravity table."""
     name = os.path.basename(str(file_path)).lower()
     return any(name.endswith(sfx) for sfx in _ASCII_ENDINGS)
+
+
+def read_gravity_model_header(file_path: str) -> tuple[int, float, float, int]:
+    """Read only the physical header of a gravity model.
+
+    Returns ``(degree_max, reference_radius_m, gm_m3s2, normalization_state)``
+    without allocating coefficient arrays. This is the lightweight path used
+    when an orbit state must be constructed with the selected model's GM before
+    the propagation engine loads the complete field.
+    """
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Gravity model file not found: {file_path}")
+
+    if _looks_like_ascii_model(file_path):
+        with open(file_path, encoding="utf-8", errors="strict") as stream:
+            header_nums: list[float] = []
+            for line in stream:
+                if line.strip():
+                    header_nums = _parse_nums(line)
+                    break
+        if len(header_nums) < 8:
+            raise ValueError(
+                "Invalid SHADR header. Expected at least 8 fields: "
+                "R_ref, GM, omega, degree, order, normalization, "
+                "reference longitude, reference latitude."
+            )
+        radius_m = float(header_nums[0]) * 1000.0
+        gm_m3s2 = float(header_nums[1]) * 1.0e9
+        degree = max(int(header_nums[3]), int(header_nums[4]))
+        normalization = int(header_nums[5])
+    else:
+        with open(file_path, "rb") as stream:
+            header_data = stream.read(56)
+        if len(header_data) < 56:
+            raise OSError("File too short (missing gravity-model header).")
+        radius_m, gm_m3s2, _sigma, degree, order, normalization, _count, _lon, _lat = (
+            struct.unpack("<3d4i2d", header_data)
+        )
+        degree = max(int(degree), int(order))
+
+    if not math.isfinite(radius_m) or radius_m <= 0.0:
+        raise ValueError(f"Gravity-model reference radius must be finite and > 0; got {radius_m!r}.")
+    if not math.isfinite(gm_m3s2) or gm_m3s2 <= 0.0:
+        raise ValueError(f"Gravity-model GM must be finite and > 0; got {gm_m3s2!r}.")
+    if degree < 0:
+        raise ValueError(f"Gravity-model degree must be >= 0; got {degree}.")
+    if normalization != 1:
+        raise ValueError(
+            f"Gravity-model normalization state must be 1 (normalized); got {normalization}."
+        )
+
+    return int(degree), float(radius_m), float(gm_m3s2), int(normalization)
+
+
+def _companion_pds_label(model_path: Path) -> Path | None:
+    """Return the first conventional companion PDS label that exists."""
+    name_lower = model_path.name.lower()
+    candidates: list[Path] = []
+    for suffix in (".tab.txt", ".sha.txt", ".tab", ".sha", ".txt"):
+        if name_lower.endswith(suffix):
+            base = model_path.name[: -len(suffix)]
+            candidates.extend(
+                (model_path.with_name(base + ".lbl.txt"), model_path.with_name(base + ".lbl"))
+            )
+            break
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _pds_quoted_value(label_text: str, key: str) -> str | None:
+    match = re.search(rf'(?im)^\s*{re.escape(key)}\s*=\s*"([^"]+)"', label_text)
+    return match.group(1).strip() if match else None
+
+
+def read_gravity_model_metadata(file_path: str) -> dict[str, str | float]:
+    """Build reproducibility and physical-contract metadata for a model file."""
+    model_path = Path(file_path).resolve()
+    _degree, radius_m, gm_m3s2, normalization_state = read_gravity_model_header(
+        str(model_path)
+    )
+
+    digest = hashlib.sha256()
+    with model_path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+
+    label_path = _companion_pds_label(model_path)
+    label_text = label_path.read_text(encoding="utf-8-sig") if label_path else ""
+    label_lower = label_text.lower()
+    label_words = " ".join(label_lower.split())
+    model_id = (
+        _pds_quoted_value(label_text, "ORIGINAL_PRODUCT_ID")
+        or _pds_quoted_value(label_text, "PRODUCT_ID")
+        or model_path.stem
+    )
+    normalization = (
+        "fully_normalized_4pi"
+        if "fully normalized" in label_lower
+        else "normalized" if normalization_state == 1 else "unspecified"
+    )
+    coefficient_frame = (
+        "MOON_PA"
+        if "moon_pa" in label_lower or "principal axes (pa)" in label_lower
+        else "unspecified"
+    )
+    tide_system = (
+        "tide_free"
+        if "do not include the permanent tide" in label_words
+        or "does not include the permanent tide" in label_words
+        or "tide-free" in label_words
+        else "unspecified"
+    )
+
+    return {
+        "model_id": model_id,
+        "source_sha256": digest.hexdigest(),
+        "normalization": normalization,
+        "coefficient_frame": coefficient_frame,
+        "tide_system": tide_system,
+        "source_gm_m3s2": gm_m3s2,
+        "source_radius_m": radius_m,
+    }
 
 
 def _slice_square(a: np.ndarray, n_use: int) -> np.ndarray:

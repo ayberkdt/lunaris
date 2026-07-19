@@ -65,7 +65,7 @@ import numpy.typing as npt
 from numba import njit
 from numpy.typing import ArrayLike
 
-from lunaris.common.constants import MU_EARTH, MU_SUN, R_EARTH_EQUATORIAL, R_MOON_MEAN
+from lunaris.common.constants import MU_EARTH, MU_SUN, R_EARTH_EQUATORIAL, R_MOON
 from lunaris.common.type_defs import Vec3
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 
@@ -565,7 +565,7 @@ class ThirdBodyModel:
     -----
     - Inputs are Moon-centered inertial (or any consistent CB-centered frame).
     - This class intentionally does not import anything in __post_init__.
-      All constants (MU_EARTH, MU_SUN, R_MOON_MEAN) must be module-level SSOT.
+      All constants (MU_EARTH, MU_SUN, R_MOON) must be module-level SSOT.
     - `calc_3rd_body_accel(...)` returns a freshly allocated (3,) array.
       This is convenient but not the lowest-allocation option for tight RHS loops.
     """
@@ -577,8 +577,8 @@ class ThirdBodyModel:
     # Love numbers + toggles controlling whether Earth/Sun solid-tide terms are applied.
     love: LoveParams = field(default_factory=lambda: LoveParams())
 
-    # Reference radius used by the solid-tide model (Moon mean radius by default).
-    R_ref: float = float(R_MOON_MEAN)
+    # Reference radius used by the solid-tide model (gravity-product convention).
+    R_ref: float = float(R_MOON)
 
     def __post_init__(self) -> None:
         # ---------------------------------------------------------------------

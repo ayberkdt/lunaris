@@ -68,8 +68,8 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
     R_MOON_SI,
     canonical_scales,
-    is_lunar_body_signature,
     load_icgem_gfc,
+    validate_lunar_contract,
 )
 
 # ---- Cloud-parameter SSOT ----
@@ -405,7 +405,7 @@ def load_coeffs_from_ssot(*, degree_max: int, gfc_path: str | None) -> tuple[np.
     central_body = str(gmeta.get("central_body", "") or "").strip().lower() or "unknown"
     loaded_degree = int(gmeta.get("degree", degree_max))
 
-    if central_body != "moon" or not is_lunar_body_signature(mu_si=mu_si, r_ref_m=r_ref_m):
+    if central_body != "moon" or not validate_lunar_contract(mu_si=mu_si, r_ref_m=r_ref_m):
         raise ValueError(
             "Loaded gravity model is not lunar-compatible. "
             f"central_body={central_body!r}, mu_si={mu_si!r}, r_ref_m={r_ref_m!r}"

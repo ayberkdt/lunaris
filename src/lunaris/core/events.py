@@ -96,7 +96,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from lunaris.common.constants import EPS_1E12, EPS_1E30
+from lunaris.common.constants import EPS_1E12, EPS_1E30, MU_MOON, R_MOON_MEAN
 from lunaris.common.type_defs import F64
 from lunaris.core.state import as_vec3
 
@@ -1035,8 +1035,8 @@ if __name__ == "__main__":
     # -----------------------------
     # Constants (approx, deterministic)
     # -----------------------------
-    MU = 4.9048695e12     # [m^3/s^2] Moon GM
-    R_M = 1_737_400.0     # [m] Moon mean radius
+    MU = float(MU_MOON)
+    R_M = float(R_MOON_MEAN)
 
     # -----------------------------
     # Simple 2-body RHS (Moon-centered inertial)

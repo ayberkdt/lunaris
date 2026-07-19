@@ -654,6 +654,33 @@ def test_gravity_model_from_arrays_rejects_nonfinite_params(sh, constants):
         sh.GravityModel.from_arrays(2, R_ref, math.nan, C, S)
 
 
+@pytest.mark.parametrize("bad_scalar", [0.0, -1.0])
+def test_gravity_model_from_arrays_rejects_nonpositive_physical_scalars(
+    sh, constants, bad_scalar
+):
+    R_ref, GM = constants
+    C = np.zeros((3, 3))
+    S = np.zeros_like(C)
+    with pytest.raises(ValueError, match="finite and > 0"):
+        sh.GravityModel.from_arrays(2, bad_scalar, GM, C, S)
+    with pytest.raises(ValueError, match="finite and > 0"):
+        sh.GravityModel.from_arrays(2, R_ref, bad_scalar, C, S)
+
+
+@pytest.mark.parametrize("coefficient_name", ["C", "S"])
+def test_gravity_model_from_arrays_rejects_nonfinite_coefficients(
+    sh, constants, coefficient_name
+):
+    R_ref, GM = constants
+    C = np.zeros((3, 3))
+    S = np.zeros_like(C)
+    target = C if coefficient_name == "C" else S
+    target[2, 1] = np.nan
+
+    with pytest.raises(ValueError, match="finite values"):
+        sh.GravityModel.from_arrays(2, R_ref, GM, C, S)
+
+
 def test_gravity_model_accel_fixed_matches_point_mass_for_zero_coeffs(sh, constants):
     R_ref, GM = constants
     model = _make_model(sh, 2, constants)  # all coeffs zero -> point mass

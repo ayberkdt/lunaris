@@ -297,7 +297,7 @@ from lunaris.surrogate.runtime import find_latest_st_lrps_model_dir
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
     R_MOON_SI,
-    is_lunar_body_signature,
+    validate_lunar_contract,
 )
 
 
@@ -1974,14 +1974,14 @@ def evaluate(
     ds_mu = _as_optional_float(ds_meta.get("mu_si"))
     ds_r_ref = _as_optional_float(ds_meta.get("r_ref_m"))
 
-    if not is_lunar_body_signature(mu_si=model_mu, r_ref_m=model_r_ref):
+    if not validate_lunar_contract(mu_si=model_mu, r_ref_m=model_r_ref):
         raise ValueError(
             f"Model lunar body signature is inconsistent (mu_si={model_mu!r}, r_ref_m={model_r_ref!r})."
         )
     if ds_body is None and ds_mu is None and ds_r_ref is None:
         raise ValueError("Evaluation dataset is missing lunar body metadata (central_body, mu_si, r_ref_m).")
     if ds_mu is not None or ds_r_ref is not None:
-        if not is_lunar_body_signature(mu_si=ds_mu, r_ref_m=ds_r_ref):
+        if not validate_lunar_contract(mu_si=ds_mu, r_ref_m=ds_r_ref):
             raise ValueError(
                 f"Evaluation dataset lunar body signature is inconsistent (mu_si={ds_mu!r}, r_ref_m={ds_r_ref!r})."
             )

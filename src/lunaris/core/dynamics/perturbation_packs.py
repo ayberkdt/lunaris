@@ -168,11 +168,17 @@ class _EarthJ2Pack:
     az: float
 
     def __post_init__(self) -> None:
-        if self.r_ref_m <= 0.0:
-            raise ValueError(f"EarthJ2 r_ref_m must be > 0, got {self.r_ref_m}")
+        if not np.isfinite(self.j2) or self.j2 < 0.0:
+            raise ValueError(f"EarthJ2 j2 must be finite and >= 0, got {self.j2}")
+        if not np.isfinite(self.r_ref_m) or self.r_ref_m <= 0.0:
+            raise ValueError(f"EarthJ2 r_ref_m must be finite and > 0, got {self.r_ref_m}")
+        if not np.all(np.isfinite((self.ax, self.ay, self.az))):
+            raise ValueError("EarthJ2 axis vector must contain only finite values.")
         n = (self.ax * self.ax + self.ay * self.ay + self.az * self.az) ** 0.5
         if n <= EPS_1E15:
             raise ValueError("EarthJ2 axis vector is degenerate (norm ~ 0).")
+        if abs(n - 1.0) > 1.0e-12:
+            raise ValueError(f"EarthJ2 axis vector must be unit length, got norm={n!r}.")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

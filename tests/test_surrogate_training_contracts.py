@@ -137,7 +137,7 @@ def test_load_coeffs_from_ssot_uses_loaded_gfc_constants(monkeypatch: pytest.Mon
         c = np.zeros((max_degree + 1, max_degree + 1), dtype=np.float64)
         s = np.zeros_like(c)
         meta = {
-            "mu_si": float(MU_MOON) * 1.001,
+            "mu_si": 4.9028003063302e12,
             "r_ref_m": float(R_MOON) + 10.0,
             "degree": int(max_degree),
             "central_body": "moon",
@@ -151,7 +151,7 @@ def test_load_coeffs_from_ssot_uses_loaded_gfc_constants(monkeypatch: pytest.Mon
 
     assert C.shape == (9, 9)
     assert S.shape == (9, 9)
-    assert float(meta["mu_si"]) == pytest.approx(float(MU_MOON) * 1.001)
+    assert float(meta["mu_si"]) == pytest.approx(4.9028003063302e12)
     assert float(meta["r_ref_m"]) == pytest.approx(float(R_MOON) + 10.0)
 
 

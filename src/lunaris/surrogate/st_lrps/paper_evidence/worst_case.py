@@ -20,12 +20,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-# Lunar GM for the orbital-period estimate (SI). Imported lazily-safe.
-try:
-    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
-except Exception:  # pragma: no cover - defensive
-    MU_MOON_SI = 4.902800066e12
-    R_MOON_SI = 1737400.0
+from lunaris.common.constants import MU_MOON as MU_MOON_SI
+from lunaris.common.constants import R_MOON as R_MOON_SI
 
 # Rankings: logical name -> scenario_results.csv column (lower is better).
 WORST_BY = {
