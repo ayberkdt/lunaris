@@ -1783,10 +1783,10 @@ class GravityModel:
     # --------------------------- Internal Helpers ---------------------------
 
     @staticmethod
-    def _ensure_finite(name: str, value: float) -> float:
+    def _ensure_positive_finite(name: str, value: float) -> float:
         val = float(value)
-        if not math.isfinite(val):
-            raise ValueError(f"Parameter '{name}' must be finite. Got {value}.")
+        if not math.isfinite(val) or val <= 0.0:
+            raise ValueError(f"Parameter '{name}' must be finite and > 0. Got {value}.")
         return val
 
     # --------------------------- Factories ---------------------------
@@ -1828,6 +1828,10 @@ class GravityModel:
         """
         c_full = np.asarray(c_coeffs_full, dtype=np.float64)
         s_full = np.asarray(s_coeffs_full, dtype=np.float64)
+        if not np.all(np.isfinite(c_full)):
+            raise ValueError("c_coeffs_full must contain only finite values.")
+        if not np.all(np.isfinite(s_full)):
+            raise ValueError("s_coeffs_full must contain only finite values.")
 
         # 1. Determine safe bounds
         n_supported = _determine_effective_degree(c_full, s_full)
@@ -1842,8 +1846,8 @@ class GravityModel:
 
         return cls(
             max_degree=final_degree,
-            r_ref=cls._ensure_finite("r_ref", r_ref),
-            mu=cls._ensure_finite("mu", mu),
+            r_ref=cls._ensure_positive_finite("r_ref", r_ref),
+            mu=cls._ensure_positive_finite("mu", mu),
             c_coeffs=c_sliced,
             s_coeffs=s_sliced,
             diag_coeffs=diag,

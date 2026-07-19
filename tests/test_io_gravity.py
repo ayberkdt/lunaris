@@ -9,7 +9,7 @@ import pytest
 
 from lunaris.cli.batch_runner import _resolve_initial_state_mu
 from lunaris.common.constants import MU_MOON
-from lunaris.loaders.io_gravity import read_gravity_model_header
+from lunaris.loaders.io_gravity import load_shadr_ascii, read_gravity_model_header
 
 
 def _write_shadr(path: Path, *, radius_km: float = 1738.0, gm_km3s2: float = 4902.8) -> Path:
@@ -52,3 +52,32 @@ def test_batch_point_mass_initialization_uses_canonical_moon_gm() -> None:
     )
 
     assert _resolve_initial_state_mu(cfg) == float(MU_MOON)
+
+
+@pytest.mark.parametrize(
+    ("radius_km", "gm_km3s2"),
+    [(0.0, 4902.8), (-1.0, 4902.8), (1738.0, 0.0), (1738.0, -1.0)],
+)
+def test_shadr_rejects_nonpositive_physical_header_values(
+    tmp_path: Path, radius_km: float, gm_km3s2: float
+) -> None:
+    path = _write_shadr(tmp_path / "bad_header.tab", radius_km=radius_km, gm_km3s2=gm_km3s2)
+
+    with pytest.raises(ValueError, match="finite and > 0"):
+        load_shadr_ascii(str(path), strict=True)
+
+
+@pytest.mark.parametrize("coefficient", ["nan", "inf", "-inf"])
+def test_strict_shadr_rejects_nonfinite_coefficients(
+    tmp_path: Path, coefficient: str
+) -> None:
+    path = tmp_path / "bad_coefficient.tab"
+    path.write_text(
+        "1738, 4902.8, 0, 1, 1, 1, 0, 0\n"
+        f"1, 0, {coefficient}, 0\n"
+        "1, 1, 0, 0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Non-finite coefficient"):
+        load_shadr_ascii(str(path), strict=True)

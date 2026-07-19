@@ -81,6 +81,10 @@ def load_shbdr(
 
         if int(norm_state) != 1:
             raise ValueError(f"SHBDR norm_state must be 1 (Normalized). Got {norm_state}.")
+        if not math.isfinite(R_ref) or R_ref <= 0.0:
+            raise ValueError(f"SHBDR reference radius must be finite and > 0. Got {R_ref!r}.")
+        if not math.isfinite(GM) or GM <= 0.0:
+            raise ValueError(f"SHBDR GM must be finite and > 0. Got {GM!r}.")
 
         n_max = int(n_max)
         m_max = int(m_max)
@@ -112,6 +116,8 @@ def load_shbdr(
             raise OSError("Failed to read coefficients value table.")
 
         vals = np.frombuffer(coeff_raw, dtype="<f8", count=num_params)
+        if not np.all(np.isfinite(vals)):
+            raise ValueError("SHBDR coefficient table contains NaN or Inf values.")
 
     Cnm = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
     Snm = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
@@ -295,6 +301,12 @@ def load_shadr_ascii(
         else:
             n, m = raw1, raw2
 
+        if not math.isfinite(val_C) or not math.isfinite(val_S):
+            _maybe_fail(
+                f"Non-finite coefficient at line {line_no}: C={val_C!r}, S={val_S!r}."
+            )
+            return n
+
         # Truncation: ignore degrees beyond n_use (this is expected when degree_max is set)
         if n > n_use:
             skipped_due_to_degree += 1
@@ -365,6 +377,12 @@ def load_shadr_ascii(
 
                 R_ref_m = R_ref_km * 1000.0
                 GM_m3s2 = GM_km3s2 * 1.0e9
+                if not math.isfinite(R_ref_m) or R_ref_m <= 0.0:
+                    raise ValueError(
+                        f"SHADR reference radius must be finite and > 0. Got {R_ref_m!r}."
+                    )
+                if not math.isfinite(GM_m3s2) or GM_m3s2 <= 0.0:
+                    raise ValueError(f"SHADR GM must be finite and > 0. Got {GM_m3s2!r}.")
 
                 n_cap = max(int(file_n_max), int(file_m_max))
                 n_use = n_cap if degree_max is None else min(int(degree_max), n_cap)

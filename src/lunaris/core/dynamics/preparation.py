@@ -24,6 +24,7 @@ import numpy as np
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
+    EPS_1E15,
     MU_EARTH,
     MU_MOON,
     MU_SUN,
@@ -733,8 +734,22 @@ def prepare_earth_j2(req: DynamicsRequirements, earth_j2: Any) -> _EarthJ2Pack:
 
     j2 = float(earth_j2.j2_coeff)
     r_ref = float(earth_j2.r_eq_m)
-    kx, ky, kz = earth_j2.spin_axis_i
-    return _EarthJ2Pack(j2=j2, r_ref_m=r_ref, ax=float(kx), ay=float(ky), az=float(kz))
+    axis = np.asarray(earth_j2.spin_axis_i, dtype=np.float64)
+    if axis.shape != (3,):
+        raise ValueError(f"EarthJ2 spin_axis_i must have shape (3,), got {axis.shape}.")
+    if not np.all(np.isfinite(axis)):
+        raise ValueError("EarthJ2 spin_axis_i must contain only finite values.")
+    norm = float(np.linalg.norm(axis))
+    if norm <= EPS_1E15:
+        raise ValueError("EarthJ2 spin_axis_i is degenerate (norm ~ 0).")
+    axis /= norm
+    return _EarthJ2Pack(
+        j2=j2,
+        r_ref_m=r_ref,
+        ax=float(axis[0]),
+        ay=float(axis[1]),
+        az=float(axis[2]),
+    )
 
 
 def prepare_solid_tides(req: DynamicsRequirements, solid_tides: Any) -> _TidePack:

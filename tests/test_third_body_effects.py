@@ -254,3 +254,9 @@ def test_manager_matches_manual_composition(tbe, constants):
 
     # Allow tiny last-bit differences (fastmath / evaluation order)
     assert np.allclose(a_model, a_manual, rtol=1e-7, atol=1e-11)
+
+
+def test_third_body_model_default_tide_radius_matches_production_ssot(tbe):
+    from lunaris.common.type_defs import SolidTideConfig
+
+    assert tbe.ThirdBodyModel().R_ref == SolidTideConfig().r_ref_m
