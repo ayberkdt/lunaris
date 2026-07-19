@@ -52,11 +52,26 @@ independent-integrator cross-check. On the committed ~2-orbit arc Lunaris reprod
 An additional external TudatPy 1.0.0 harness validates the physical rotating
 gravity-only path with independent C++ spherical-harmonic dynamics and
 fixed-step RK4. It uses J2000 integration, DE440 `MOON_PA` orientation, and the
-real GL1800F model at degree/order 120. One-, five-, and thirty-day runs all
-passed; maximum Lunaris-Tudat position differences were 0.104 mm, 0.563 mm,
-and 12.319 mm respectively. The thirty-day maximum was smaller than both the
-0.392 m Tudat step-convergence difference and the derived acceptance band.
-Source, portable scenarios, and checksummed evidence live under
+real GL1800F model. The original degree/order-120 one-, five-, and thirty-day
+runs all passed; maximum Lunaris-Tudat position differences were 0.104 mm,
+0.563 mm, and 12.319 mm respectively. The thirty-day maximum was below the raw
+0.392 m Tudat step-convergence difference.
+
+A second predeclared matrix added four diverse degree/order-120 five-day arcs
+and one low-altitude degree/order-360 one-day arc. It covers equatorial,
+retrograde, polar/high-inclination, circular/eccentric, and 44--552 km actual
+altitudes. All five accepted runs passed every hard-cap, raw numerical-band,
+three-level RK4-order, frame/acceleration, and measured-coverage check. Maximum
+SH trajectory differences were 0.125--0.831 mm for the four five-day arcs and
+0.112 mm for the degree-360 arc; observed RK4 orders were 4.276--4.737. The
+degree-360 identical-state acceleration relative maximum was `3.74e-14`.
+
+The first exactly-polar degree-360 design is deliberately recorded as failed
+and excluded: it passed every gravity/numerical check but covered only 7/36
+longitude bins against a predeclared minimum of 10. Its replacement 80-degree
+scenario and 30-bin coverage minimum were committed before execution; it
+covered 36/36 bins. Source, portable scenarios, and checksummed evidence live
+under
 `validation/gravity_reference/generators/trajectory/tudatpy_rotating/` and
 `validation/gravity_reference/evidence/tudatpy_rotating/`.
 
@@ -143,7 +158,7 @@ Reference tiers, by independence from Lunaris:
 |---|---|---|
 | `independent_field_oracle` (in-repo, numpy) | Different algorithm, shares language | **Verified** (~1e-12, low degree) |
 | **pyshtools** (`validation/independent/pyshtools_reference.py`) | Separate SH library, C/Fortran core | **Verified** — matches Lunaris to ~1.9e-13 m/s^2 at GRAIL degree 120 |
-| **TudatPy rotating trajectory** (`validation/gravity_reference/generators/trajectory/tudatpy_rotating/`) | Separate toolkit, C++ core, different fixed-step integrator | **Verified** — 1/5/30-day degree/order 120 `MOON_PA` runs passed |
+| **TudatPy rotating trajectory** (`validation/gravity_reference/generators/trajectory/tudatpy_rotating/`) | Separate toolkit, C++ core, different fixed-step integrator | **Verified** — 1/5/30-day degree/order 120 plus five diverse degree-120/360 `MOON_PA` runs passed |
 | **tudatpy** (`validation/independent/tudatpy_reference.py`) | Separate toolkit, C++ core, different team | **Scaffold** — gated `requires_tudatpy`; install (`conda install -c tudat-team tudatpy`) and confirm the point-gradient API on first run |
 | Orekit / GMAT | Separate ecosystems (Java / C++) | Not yet wired; natural further references |
 | Energy / angular-momentum invariants | Model-free physics | **Verified** (~1e-15 relative over the committed arc) |
@@ -191,9 +206,11 @@ DOP853 integration". The frames are named `NONROTATING_FROZEN_BODY_FIXED` to mak
 explicit that this is a well-posed frozen-field regression test, not a physical
 rotating `MOON_PA` propagation. The separate TudatPy evidence closes that
 specific physical rotating-frame and independent-integrator gap for the pinned
-gravity-only 1/5/30-day scenarios.
+gravity-only 1/5/30-day and diverse degree-120/360 scenarios.
 
-**What is still missing (and why).** The large Tudat CSV histories are retained
+**What is still missing (and why).** These results are cross-validation over
+declared scenarios, not a proof for every coefficient degree, epoch, state, or
+force combination. The large Tudat CSV histories are retained
 in external scratch rather than committed, so normal CI verifies the portable
 scenario/evidence contract but does not replay the 30-day propagation. The
 main `lunaris-validate gravity-trajectory` manifest path also has not yet been

@@ -38,11 +38,17 @@ recurrences are numerically unstable above degree ~80.
   `MOON_PA` validation. Agreement is ~5e-8 m over ~2 orbits. Rotating
   body-fixed fields fail closed.
 - `generators/trajectory/tudatpy_rotating/`: independent TudatPy 1.0.0
-  rotating-field generator with portable one-, five-, and thirty-day contracts.
-  All three gravity-only GL1800F 120/120 runs passed on 2026-07-19; compact
-  metrics and hashes are in
-  `evidence/tudatpy_rotating/evidence_2026_07_19.json`. This evidence does not
-  add third bodies, tides, radiation, relativity, or mission-orbit truth.
+  rotating-field generator with portable one-, five-, and thirty-day contracts
+  plus a five-scenario diversity matrix. The original three GL1800F 120/120
+  runs and all five matrix runs passed on 2026-07-19. The matrix spans polar,
+  equatorial retrograde, eccentric 44--506 km, high-altitude retrograde, and a
+  62--79 km degree/order-360 high-inclination case. Compact metrics and complete
+  external-result-directory hashes are in
+  `evidence/tudatpy_rotating/evidence_2026_07_19.json` and
+  `evidence/tudatpy_rotating/evidence_matrix_2026_07_19.json`. One failed
+  exactly-polar coverage design is retained and excluded from the pass count.
+  This evidence does not add third bodies, tides, radiation, relativity, or
+  mission-orbit truth.
 
 Regenerate the committed pyshtools references (not run in normal CI):
 

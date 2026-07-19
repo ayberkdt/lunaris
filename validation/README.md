@@ -60,10 +60,13 @@ source, contracts, harness documentation, and small reference files.
   spherical-harmonic gravity engine. The normal committed state-history
   benchmark is a non-rotating pyshtools/DOP853 regression. A separate TudatPy
   1.0.0 harness and checksummed evidence validate the physical DE440-rotated
-  `MOON_PA` gravity-only path at degree/order 120 for one, five, and thirty
-  days with an independent fixed-step RK4 integrator. Large generated histories
-  remain external; source, portable contracts, and compact evidence are kept in
-  the repository.
+  `MOON_PA` gravity-only path with an independent fixed-step RK4 integrator.
+  Evidence includes degree/order 120 one-, five-, and thirty-day arcs, four
+  additional five-day geometries, and a low-altitude degree/order-360 arc.
+  Three-level RK4 convergence, hard predeclared caps, within-tool numerical
+  bands, and measured altitude/latitude/longitude coverage are enforced. Large
+  generated histories remain external; source, portable contracts, compact
+  evidence, and whole-directory hashes are kept in the repository.
 
 ## Gravity Benchmark Layout
 
