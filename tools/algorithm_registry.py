@@ -13,8 +13,9 @@ tests, and known assumptions/limitations. This tool:
 * ``generate [--check]`` -- render the human-readable ``docs/ALGORITHM_CATALOG.md``
   deterministically from the registry. ``--check`` fails if the on-disk catalogue
   is stale instead of rewriting it (used by CI / the test suite).
-* ``audit`` -- authoring aid (not run in CI): grep ``src/lunaris`` for
-  algorithm-ish keywords and list hits that no registry entry covers.
+* ``audit`` -- scan ``src/lunaris`` for algorithm-ish keywords and list hits
+  that no registry entry covers. CI runs it with ``--strict``, which fails the
+  build on any uncovered hit.
 
 Design constraint: this tool must NOT import :mod:`lunaris`. It depends only on
 the standard library plus ``pyyaml`` and ``jsonschema`` (the ``dev`` extra), so it
