@@ -17,6 +17,12 @@ different method, rather than silently returning wrong numbers. The accompanying
 test is gated behind the ``requires_tudatpy`` marker and skips cleanly when the
 library is absent.
 
+This status applies only to this legacy point-gradient adapter. The separately
+pinned rotating-trajectory harness under
+``validation/gravity_reference/generators/trajectory/tudatpy_rotating`` was
+executed with TudatPy 1.0.0 for one-, five-, and thirty-day arcs; do not conflate
+that verified trajectory evidence with this still-unverified convenience API.
+
 Install (conda-forge):  ``conda install -c tudat-team tudatpy``
 
 Convention
