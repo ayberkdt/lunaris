@@ -401,7 +401,11 @@ entries:
         (h^2/6)(k1+2 k2) and velocity update v + (h/6)(k1+4 k2+k4), reusing k2=k3.
         Book ISBN verified; PENDING confirmation that these coefficients match
         the specific classical RKN4 tableau in the cited section (physical copy
-        needed) rather than a different 4th-order RKN pair.
+        needed) rather than a different 4th-order RKN pair. Access attempt
+        2026-07-19: SpringerLink full text is subscription-locked, the Google
+        Books records for both editions expose no page preview or
+        search-inside, and the Internet Archive was temporarily offline, so
+        the Chapter II tableau could not be inspected remotely.
     symbols:
       - path: src/lunaris/core/propagation/integrators/rk.py
         symbol: _rkn4_step
@@ -1926,9 +1930,23 @@ entries:
         cite the Battin-Giorgi/Encke q-device to Battin (1999 rev. ed.)
         pp. 448-450, 490-494, 529-530, and Vallado (2007) Ch. 8 cites Battin
         (1987:450) for Encke rectification; no online source exposes the exact
-        F(q) equation number. PENDING: exact Battin chapter/section/equation
-        number (physical copy needed) before this may be promoted to
-        verified_primary_source.
+        F(q) equation number. Narrowed 2026-07-19 from Battin-adjacent primary
+        material: (a) Battin's own MIT OCW 16.346 (Fall 2008) Lecture 29 notes,
+        which tag lecture topics with his book's section numbers, place "The
+        Disturbing Function & Legendre Polynomials" at book section 8.4 and
+        "Laplace's Sphere of Influence" at 8.5, and cite book Eq. (8.72) for
+        the third-body disturbing-acceleration Legendre expansion (the F(q)
+        device itself does not appear in the OCW notes); (b) Google Books
+        search-inside of the AIAA Revised Edition ebook shows the book's own
+        index entry "Encke's method, 448, 567, 760" and an Encke's-method
+        summary ending where section 9.5 "Linearization and the State
+        Transition Matrix" begins on p. 450, so the Encke presentation sits at
+        the end of the pre-9.5 section of Chapter 9 (pp. ~446-450). Page images
+        for pp. 446-494 are excluded from every accessible viewer checked
+        2026-07-19 (Google Books preview, Internet Archive temporarily
+        offline, HathiTrust). PENDING: exact Battin chapter/section/equation
+        number for F(q) (requires a physical or lendable copy) before this may
+        be promoted to verified_primary_source.
     symbols:
       - path: src/lunaris/physics/third_body_effects.py
         symbol: accel_third_body_numba
