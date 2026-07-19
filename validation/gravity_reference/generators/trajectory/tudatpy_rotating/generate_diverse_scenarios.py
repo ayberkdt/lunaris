@@ -75,8 +75,8 @@ SCENARIOS = (
         "coverage": (350000.0, 650000.0, 45.0, 75.0, 30),
     },
     {
-        "filename": "scenario_degree360_polar_1day.json",
-        "name": "lunaris_tudat_jggrx360_moon_pa_polar_1day",
+        "filename": "scenario_degree360_high_inclination_1day.json",
+        "name": "lunaris_tudat_jggrx360_moon_pa_high_inclination_1day",
         "epoch": "2028-02-01 00:00:00 TDB",
         "duration_s": 86400.0,
         "degree": 360,
