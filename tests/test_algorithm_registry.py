@@ -188,10 +188,24 @@ def test_audit_ignores_keyword_mentions_in_strings() -> None:
     assert all("dop853" not in i for i in idents)
 
 
-def test_audit_reports_unregistered_sibling_implementation() -> None:
-    """End-to-end: the real tree flags a genuine unpinned schwarzschild variant."""
-    hits = TOOL.run_audit()
+def test_audit_reports_unregistered_sibling_implementation(tmp_path) -> None:
+    """End-to-end: an unregistered implementation in a scanned tree is flagged.
+
+    Uses a synthetic tree because the real tree is kept at zero hits by the
+    strict CI gate; registry symbol paths resolve against ``repo_root``, so
+    none of the real registrations cover the planted file.
+    """
+    mod = tmp_path / "src" / "lunaris" / "fake_relativity.py"
+    mod.parent.mkdir(parents=True)
+    mod.write_text(
+        "def calc_schwarzschild_accel_variant(r, v):\n    return r\n",
+        encoding="utf-8",
+    )
+    hits = TOOL.run_audit(repo_root=tmp_path)
     joined = "\n".join(hits)
-    # calc_schwarzschild_accel_out is a real implementation not pinned to a symbol;
-    # the old file-level audit masked it because sibling symbols were registered.
-    assert "relativity_effects.py" in joined
+    assert "fake_relativity.py" in joined and "schwarzschild" in joined
+
+
+def test_audit_real_tree_is_clean() -> None:
+    """The strict CI gate contract: the live tree has zero uncovered hits."""
+    assert TOOL.run_audit() == []

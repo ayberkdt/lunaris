@@ -104,10 +104,11 @@ Fail closed: if you cannot confirm the defining section/equation, do **not** use
    referential-integrity errors, unresolved symbols, missing test paths, or a
    stale catalogue.
 
-`python tools/algorithm_registry.py audit` is an authoring aid: it lists
-`src/lunaris` files with algorithm-ish keywords that no entry covers. CI runs
-it as an advisory step (it prints its findings but never fails the build); it
-is not a strict gate.
+`python tools/algorithm_registry.py audit` lists `src/lunaris` files with
+algorithm-ish keywords that no entry covers. CI runs it with `--strict`, so
+any uncovered hit fails the build: new algorithm code must register its
+symbols (implementation, wrapper, or config surface) before it merges. The
+hit list was triaged to zero on 2026-07-19.
 
 ## Naming bugs vs numerical bugs
 

@@ -141,6 +141,15 @@ entries:
       - path: src/lunaris/physics/ephemeris.py
         symbol: interp_quat_safe
         role: cpu_implementation
+      - path: src/lunaris/common/math_utils.py
+        symbol: quat_slerp_np
+        role: api_entry_point
+      - path: src/lunaris/batch/requirements.py
+        symbol: _impact_positions_fixed
+        role: delegation_wrapper
+      - path: src/lunaris/core/propagation/events.py
+        symbol: r_i_to_bf
+        role: delegation_wrapper
     mathematical_contract:
       inputs: two unit quaternions and a parameter t in [0,1]
       outputs: interpolated unit quaternion
@@ -275,6 +284,9 @@ entries:
       - path: src/lunaris/common/integrator_methods.py
         symbol: null
         role: config_surface
+      - path: src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/modes.py
+        symbol: run_random_scenario_mode
+        role: delegation_wrapper
     mathematical_contract:
       inputs: >-
         Right-hand-side callable f(t, y), initial state, integration span and
@@ -649,6 +661,12 @@ entries:
       - path: src/lunaris/core/propagation/integrators/symplectic.py
         symbol: _pefrl_step
         role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/symplectic.py
+        symbol: null
+        role: cpu_implementation
+      - path: src/lunaris/core/propagation/integrators/fixed_step.py
+        symbol: _accel_stepper
+        role: delegation_wrapper
     mathematical_contract:
       inputs: acceleration a(t, y), packed state, step h
       outputs: symplectically advanced state
@@ -892,6 +910,15 @@ entries:
       - path: src/lunaris/core/torch_third_body.py
         symbol: interp_vec3_catmull_torch
         role: torch_implementation
+      - path: src/lunaris/physics/ephemeris.py
+        symbol: interp_vec3_safe
+        role: delegation_wrapper
+      - path: src/lunaris/core/torch_third_body.py
+        symbol: earth_position
+        role: delegation_wrapper
+      - path: src/lunaris/core/torch_third_body.py
+        symbol: sun_position
+        role: delegation_wrapper
     mathematical_contract:
       inputs: time, uniform step dt, and an (N,3) table
       outputs: C1-continuous interpolated 3-vector
@@ -1032,6 +1059,18 @@ entries:
       - path: src/lunaris/surrogate/runtime/networks.py
         symbol: SirenMLP
         role: reference_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: SirenResBlock
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: siren_init_first_
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: build_model_from_config
+        role: api_entry_point
+      - path: src/lunaris/surrogate/runtime/networks.py
+        symbol: _build_model_from_config
+        role: api_entry_point
     mathematical_contract:
       inputs: coordinate input tensor (scaled spacecraft position)
       outputs: implicit-field output (gravity potential or acceleration)
@@ -1091,6 +1130,21 @@ entries:
       - path: src/lunaris/surrogate/runtime/networks.py
         symbol: FourierInputEmbedding
         role: reference_implementation
+      - path: src/lunaris/surrogate/runtime/networks.py
+        symbol: PhysicsNet
+        role: delegation_wrapper
+      - path: src/lunaris/surrogate/st_lrps/training/config.py
+        symbol: TrainConfig
+        role: config_surface
+      - path: src/lunaris/surrogate/st_lrps/training/config.py
+        symbol: parse_args
+        role: config_surface
+      - path: src/lunaris/surrogate/st_lrps/training/engine.py
+        symbol: _log_training_curriculum
+        role: config_surface
+      - path: src/lunaris/surrogate/st_lrps/ui/studio_parts/training_pages.py
+        symbol: STLRPSTrainTab
+        role: config_surface
     mathematical_contract:
       inputs: low-dimensional coordinate input and a fixed random matrix B
       outputs: high-dimensional sinusoidal feature embedding
@@ -1461,6 +1515,27 @@ entries:
       - path: src/lunaris/analysis/frozen/search.py
         symbol: sobol_element_samples
         role: delegation_wrapper
+      - path: src/lunaris/analysis/frozen/search.py
+        symbol: stage0_samples
+        role: delegation_wrapper
+      - path: src/lunaris/batch/engine.py
+        symbol: run
+        role: delegation_wrapper
+      - path: src/lunaris/batch/sampling.py
+        symbol: _sobol_size_note
+        role: config_surface
+      - path: src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/compute.py
+        symbol: generate_unit_samples
+        role: delegation_wrapper
+      - path: src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/compute.py
+        symbol: _sobol_note
+        role: config_surface
+      - path: src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/results_io.py
+        symbol: _sampling_metadata
+        role: config_surface
+      - path: src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/results_io.py
+        symbol: prepare_scenarios
+        role: config_surface
     mathematical_contract:
       inputs: number of samples, dimension, seed, scramble flag
       outputs: low-discrepancy design in the unit hypercube (then mapped to ranges)
@@ -1591,6 +1666,24 @@ entries:
       - path: src/lunaris/physics/spherical_harmonics.py
         symbol: _apply_legendre_normalization
         role: numba_implementation
+      - path: src/lunaris/validation/gravity_reference/independent_field_oracle.py
+        symbol: _associated_legendre_all
+        role: reference_implementation
+      - path: src/lunaris/validation/gravity_reference/independent_field_oracle.py
+        symbol: normalized_alf
+        role: reference_implementation
+      - path: src/lunaris/surrogate/st_lrps/data/spatial_cloud_generator.py
+        symbol: run_generation
+        role: delegation_wrapper
+      - path: src/lunaris/surrogate/st_lrps/data/spatial_cloud_generator.py
+        symbol: run_suite_generation
+        role: delegation_wrapper
+      - path: src/lunaris/surrogate/st_lrps/data/spatial_cloud_generator.py
+        symbol: _run_active_refinement
+        role: delegation_wrapper
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _build_grav_pack
+        role: delegation_wrapper
     mathematical_contract:
       inputs: maximum degree, sin/cos of geocentric latitude
       outputs: >-
@@ -1697,6 +1790,9 @@ entries:
       - path: src/lunaris/core/batch_propagator.py
         symbol: _sh_accel_cuda
         role: cuda_implementation
+      - path: src/lunaris/physics/spherical_harmonics.py
+        symbol: null
+        role: numba_implementation
     mathematical_contract:
       inputs: >-
         body-fixed position (m), reference radius, mu, and fully-normalized
@@ -3014,6 +3110,21 @@ entries:
       - path: src/lunaris/physics/relativity_effects.py
         symbol: RelativityModel
         role: api_entry_point
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: null
+        role: numba_implementation
+      - path: src/lunaris/core/dynamics/engine.py
+        symbol: rhs
+        role: delegation_wrapper
+      - path: src/lunaris/core/dynamics/engine.py
+        symbol: _rhs_kernel_numba
+        role: delegation_wrapper
+      - path: src/lunaris/core/dynamics/engine.py
+        symbol: get_acceleration_vector_breakdown
+        role: delegation_wrapper
+      - path: src/lunaris/analysis/perturbation_budget/acceleration_budget.py
+        symbol: non_gravity_vectors
+        role: delegation_wrapper
     mathematical_contract:
       inputs: position (m), velocity (m/s), central-body mu (m^3/s^2)
       outputs: 1PN Schwarzschild acceleration correction (m/s^2)
@@ -3070,6 +3181,9 @@ entries:
       - path: src/lunaris/physics/relativity_effects.py
         symbol: de_sitter_components
         role: numba_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _de_sitter_cuda
+        role: cuda_implementation
     mathematical_contract:
       inputs: spacecraft velocity and the Moon->body position/velocity
       outputs: geodesic-precession acceleration (m/s^2)
@@ -3135,6 +3249,12 @@ entries:
       - path: src/lunaris/physics/relativity_effects.py
         symbol: calc_external_1pn_accel
         role: api_entry_point
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _external_schwarzschild_diff_cuda
+        role: cuda_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _external_1pn_cuda
+        role: cuda_implementation
     mathematical_contract:
       inputs: spacecraft state and the external body Moon-centred state and mu
       outputs: differential external-body 1PN acceleration (m/s^2)
@@ -3199,6 +3319,21 @@ entries:
       - path: src/lunaris/physics/solid_tides.py
         symbol: calc_solid_tide_accel
         role: api_entry_point
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: legendre_p2
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: legendre_p2_derivative
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: legendre_p3
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: legendre_p3_derivative
+        role: numba_implementation
+      - path: src/lunaris/physics/solid_tides.py
+        symbol: solid_tide_accel_degree_numba
+        role: numba_implementation
     mathematical_contract:
       inputs: >-
         Moon-fixed spacecraft and tide-raising-body vectors, body mu, lunar

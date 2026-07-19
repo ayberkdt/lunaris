@@ -645,7 +645,7 @@ def run_generate(check: bool) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Coverage audit (authoring aid; not run in CI)
+# Coverage audit (CI-gated via --strict; also an authoring aid)
 # ---------------------------------------------------------------------------
 _AUDIT_KEYWORDS: tuple[str, ...] = (
     "kahan",
@@ -746,7 +746,10 @@ def run_audit(repo_root: Path = REPO_ROOT) -> list[str]:
         if resolved in whole_file_covered:
             continue
         try:
-            source = py.read_text(encoding="utf-8", errors="ignore")
+            # utf-8-sig: some repo files carry a UTF-8 BOM, which makes
+            # ast.parse fail (U+FEFF) and silently demoted those files to the
+            # text-scan fallback, flagging keyword mentions in strings/comments.
+            source = py.read_text(encoding="utf-8-sig", errors="ignore")
         except OSError:
             continue
         try:

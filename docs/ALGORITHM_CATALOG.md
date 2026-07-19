@@ -156,6 +156,12 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/physics/spherical_harmonics.py` -- `build_legendre_coeffs` (reference_implementation)
   - `src/lunaris/physics/spherical_harmonics.py` -- `_compute_legendre_polynomials_inplace` (numba_implementation)
   - `src/lunaris/physics/spherical_harmonics.py` -- `_apply_legendre_normalization` (numba_implementation)
+  - `src/lunaris/validation/gravity_reference/independent_field_oracle.py` -- `_associated_legendre_all` (reference_implementation)
+  - `src/lunaris/validation/gravity_reference/independent_field_oracle.py` -- `normalized_alf` (reference_implementation)
+  - `src/lunaris/surrogate/st_lrps/data/spatial_cloud_generator.py` -- `run_generation` (delegation_wrapper)
+  - `src/lunaris/surrogate/st_lrps/data/spatial_cloud_generator.py` -- `run_suite_generation` (delegation_wrapper)
+  - `src/lunaris/surrogate/st_lrps/data/spatial_cloud_generator.py` -- `_run_active_refinement` (delegation_wrapper)
+  - `src/lunaris/core/batch_propagator.py` -- `_build_grav_pack` (delegation_wrapper)
 - **Lunaris modifications**:
   - Geodesy convention: no Condon-Shortley phase, real-harmonic sqrt(2) scaling for m>0 (matches GRAIL/EGM/GRACE/ICGEM coefficient definitions).
   - pole-safe per-order truncation via the stable-m limit (see LUNARIS-HEUR-SH-001)
@@ -197,6 +203,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/physics/spherical_harmonics.py` -- `GravityModel` (api_entry_point)
   - `src/lunaris/physics/torch_spherical_harmonics.py` -- `TorchSHGravityEvaluator.acceleration` (torch_implementation)
   - `src/lunaris/core/batch_propagator.py` -- `_sh_accel_cuda` (cuda_implementation)
+  - `src/lunaris/physics/spherical_harmonics.py` -- `(module)` (numba_implementation)
 - **Lunaris modifications**:
   - Kahan-compensated accumulation in the serial kernel (see LUNARIS-ALG-SUM-001)
   - optional parallel fastmath kernel above a degree threshold
@@ -394,6 +401,11 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/physics/solid_tides.py` -- `solid_tide_potential_degree_numba` (numba_implementation)
   - `src/lunaris/physics/solid_tides.py` -- `accel_solid_tides_numba` (numba_implementation)
   - `src/lunaris/physics/solid_tides.py` -- `calc_solid_tide_accel` (api_entry_point)
+  - `src/lunaris/physics/solid_tides.py` -- `legendre_p2` (numba_implementation)
+  - `src/lunaris/physics/solid_tides.py` -- `legendre_p2_derivative` (numba_implementation)
+  - `src/lunaris/physics/solid_tides.py` -- `legendre_p3` (numba_implementation)
+  - `src/lunaris/physics/solid_tides.py` -- `legendre_p3_derivative` (numba_implementation)
+  - `src/lunaris/physics/solid_tides.py` -- `solid_tide_accel_degree_numba` (numba_implementation)
 - **Lunaris modifications**:
   - terrestrial IERS Love-tide formalism applied to lunar parameters
   - dimensionless radius ratios to avoid large intermediate powers
@@ -426,6 +438,11 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/physics/relativity_effects.py` -- `schwarzschild_components` (numba_implementation)
   - `src/lunaris/physics/relativity_effects.py` -- `calc_schwarzschild_accel` (api_entry_point)
   - `src/lunaris/physics/relativity_effects.py` -- `RelativityModel` (api_entry_point)
+  - `src/lunaris/physics/relativity_effects.py` -- `(module)` (numba_implementation)
+  - `src/lunaris/core/dynamics/engine.py` -- `rhs` (delegation_wrapper)
+  - `src/lunaris/core/dynamics/engine.py` -- `_rhs_kernel_numba` (delegation_wrapper)
+  - `src/lunaris/core/dynamics/engine.py` -- `get_acceleration_vector_breakdown` (delegation_wrapper)
+  - `src/lunaris/analysis/perturbation_budget/acceleration_budget.py` -- `non_gravity_vectors` (delegation_wrapper)
 - **Lunaris modifications**:
   - PPN parameters fixed to general relativity (beta = gamma = 1)
 - **Assumptions**:
@@ -453,6 +470,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - Preserves: prograde precession of the orbit plane at |Omega_dS|
 - **Implementing symbols**:
   - `src/lunaris/physics/relativity_effects.py` -- `de_sitter_components` (numba_implementation)
+  - `src/lunaris/core/batch_propagator.py` -- `_de_sitter_cuda` (cuda_implementation)
 - **Lunaris modifications**:
   - Coriolis-like +2 Omega x v application in the Moon-centred frame
 - **Assumptions**:
@@ -483,6 +501,8 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/physics/relativity_effects.py` -- `external_schwarzschild_diff_components` (numba_implementation)
   - `src/lunaris/physics/relativity_effects.py` -- `external_1pn_components` (numba_implementation)
   - `src/lunaris/physics/relativity_effects.py` -- `calc_external_1pn_accel` (api_entry_point)
+  - `src/lunaris/core/batch_propagator.py` -- `_external_schwarzschild_diff_cuda` (cuda_implementation)
+  - `src/lunaris/core/batch_propagator.py` -- `_external_1pn_cuda` (cuda_implementation)
 - **Lunaris modifications**:
   - differential Moon-centred composition of the IERS single-body terms
 - **Assumptions**:
@@ -669,6 +689,9 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/common/math_utils.py` -- `_quat_slerp` (numba_implementation)
   - `src/lunaris/common/math_utils.py` -- `interp_quat_slerp` (cpu_implementation)
   - `src/lunaris/physics/ephemeris.py` -- `interp_quat_safe` (cpu_implementation)
+  - `src/lunaris/common/math_utils.py` -- `quat_slerp_np` (api_entry_point)
+  - `src/lunaris/batch/requirements.py` -- `_impact_positions_fixed` (delegation_wrapper)
+  - `src/lunaris/core/propagation/events.py` -- `r_i_to_bf` (delegation_wrapper)
 - **Lunaris modifications**:
   - shortest-arc sign flip when the dot product is negative
   - lerp+normalize fallback below a near-parallel threshold
@@ -762,6 +785,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/core/propagation/integrators/scipy.py` -- `_resolve_scipy_method` (delegation_wrapper)
   - `src/lunaris/core/propagation/scipy_runner.py` -- `run_scipy_propagation` (cpu_implementation)
   - `src/lunaris/common/integrator_methods.py` -- `(module)` (config_surface)
+  - `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/modes.py` -- `run_random_scenario_mode` (delegation_wrapper)
 - **Lunaris modifications**:
   - Lunaris only selects and configures the SciPy method (token resolution, tolerance policy, chunked output grid); the stepper itself is unmodified.
 - **Assumptions**:
@@ -929,6 +953,8 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - Preserves: drift fractions telescope to 1 and velocity kicks sum to 1
 - **Implementing symbols**:
   - `src/lunaris/core/propagation/integrators/symplectic.py` -- `_pefrl_step` (cpu_implementation)
+  - `src/lunaris/core/propagation/integrators/symplectic.py` -- `(module)` (cpu_implementation)
+  - `src/lunaris/core/propagation/integrators/fixed_step.py` -- `_accel_stepper` (delegation_wrapper)
 - **Assumptions**:
   - separable Hamiltonian with velocity-independent force
 - **Limitations**:
@@ -1074,6 +1100,9 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Implementing symbols**:
   - `src/lunaris/common/math_utils.py` -- `interp_vec3_catmull` (cpu_implementation)
   - `src/lunaris/core/torch_third_body.py` -- `interp_vec3_catmull_torch` (torch_implementation)
+  - `src/lunaris/physics/ephemeris.py` -- `interp_vec3_safe` (delegation_wrapper)
+  - `src/lunaris/core/torch_third_body.py` -- `earth_position` (delegation_wrapper)
+  - `src/lunaris/core/torch_third_body.py` -- `sun_position` (delegation_wrapper)
 - **Lunaris modifications**:
   - endpoint index clamping (clamped Catmull-Rom variant)
   - endpoint/degenerate-table fallbacks
@@ -1206,6 +1235,13 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/batch/sampling.py` -- `generate_standard_normal_design` (delegation_wrapper)
   - `src/lunaris/batch/sampling.py` -- `sample_initial_states` (api_entry_point)
   - `src/lunaris/analysis/frozen/search.py` -- `sobol_element_samples` (delegation_wrapper)
+  - `src/lunaris/analysis/frozen/search.py` -- `stage0_samples` (delegation_wrapper)
+  - `src/lunaris/batch/engine.py` -- `run` (delegation_wrapper)
+  - `src/lunaris/batch/sampling.py` -- `_sobol_size_note` (config_surface)
+  - `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/compute.py` -- `generate_unit_samples` (delegation_wrapper)
+  - `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/compute.py` -- `_sobol_note` (config_surface)
+  - `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/results_io.py` -- `_sampling_metadata` (config_surface)
+  - `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/results_io.py` -- `prepare_scenarios` (config_surface)
 - **Lunaris modifications**:
   - Deterministic (unscrambled) Sobol discards the pathological all-zero first point; scrambled Sobol retains it (Lunaris policy documented in the sampler).
 - **Assumptions**:
@@ -1443,6 +1479,10 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `siren_init_hidden_` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `SirenMLP` (torch_implementation)
   - `src/lunaris/surrogate/runtime/networks.py` -- `SirenMLP` (reference_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `SirenResBlock` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `siren_init_first_` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `build_model_from_config` (api_entry_point)
+  - `src/lunaris/surrogate/runtime/networks.py` -- `_build_model_from_config` (api_entry_point)
 - **Lunaris modifications**:
   - applied to lunar gravity-field regression (default w0 = 30)
 - **Assumptions**:
@@ -1472,6 +1512,11 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Implementing symbols**:
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `FourierInputEmbedding` (torch_implementation)
   - `src/lunaris/surrogate/runtime/networks.py` -- `FourierInputEmbedding` (reference_implementation)
+  - `src/lunaris/surrogate/runtime/networks.py` -- `PhysicsNet` (delegation_wrapper)
+  - `src/lunaris/surrogate/st_lrps/training/config.py` -- `TrainConfig` (config_surface)
+  - `src/lunaris/surrogate/st_lrps/training/config.py` -- `parse_args` (config_surface)
+  - `src/lunaris/surrogate/st_lrps/training/engine.py` -- `_log_training_curriculum` (config_surface)
+  - `src/lunaris/surrogate/st_lrps/ui/studio_parts/training_pages.py` -- `STLRPSTrainTab` (config_surface)
 - **Lunaris modifications**:
   - optional raw-input append; seed/sigma recorded in the artifact config
 - **Assumptions**:
