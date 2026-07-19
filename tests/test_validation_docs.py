@@ -106,7 +106,7 @@ def test_gravity_reference_validation_scope_is_not_overclaimed():
         external_content = f.read()
     external_flat = " ".join(external_content.split())
     assert "That particular benchmark is not an independent-integrator cross-check" in external_flat
-    assert "One-, five-, and thirty-day runs all passed" in external_flat
+    assert "one-, five-, and thirty-day runs all passed" in external_flat
     assert "does not replay the 30-day propagation" in external_flat
 
     with open(gravity_ref_readme, encoding="utf-8") as f:

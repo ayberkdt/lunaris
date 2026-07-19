@@ -223,6 +223,15 @@ def main() -> None:
                 scenario,
                 bodies,
                 force_model=force_model,
+                step_s=float(scenario["tudat"]["coarse_step_s"]),
+                output_name=f"tudat_{force_model}_coarse.csv",
+            )
+        )
+        cases.append(
+            run_case(
+                scenario,
+                bodies,
+                force_model=force_model,
                 step_s=float(scenario["tudat"]["baseline_step_s"]),
                 output_name=f"tudat_{force_model}_baseline.csv",
             )
