@@ -163,6 +163,54 @@ def write_force_probes(scenario: dict, engine: DynamicsEngine, force_model: str)
     )
 
 
+def write_trajectory_coverage(scenario: dict, tables: object) -> None:
+    trajectory = read_trajectory_csv(RESULTS / "lunaris_spherical_harmonic_tight.csv")
+    epochs = trajectory["epoch_rel_s"]
+    states = trajectory["state"]
+    table_dt = float(tables.dt_s)
+    indices = np.rint(epochs / table_dt).astype(np.int64)
+    if not np.allclose(indices * table_dt, epochs, rtol=0.0, atol=1.0e-9):
+        raise ValueError("coverage epochs do not align with the tight rotation table")
+    matrices = np.stack([quaternion_to_matrix(tables.q_i2f_tab[index]) for index in indices])
+    fixed_positions = np.einsum("nij,nj->ni", matrices, states[:, :3])
+    radii = np.linalg.norm(states[:, :3], axis=1)
+    fixed_radii = np.linalg.norm(fixed_positions, axis=1)
+    latitudes = np.degrees(np.arcsin(fixed_positions[:, 2] / fixed_radii))
+    longitudes = np.mod(np.degrees(np.arctan2(fixed_positions[:, 1], fixed_positions[:, 0])), 360.0)
+    angular_momentum = np.cross(states[:, :3], states[:, 3:])
+    inclinations = np.degrees(
+        np.arccos(
+            np.clip(
+                angular_momentum[:, 2] / np.linalg.norm(angular_momentum, axis=1),
+                -1.0,
+                1.0,
+            )
+        )
+    )
+    longitude_counts, _ = np.histogram(longitudes, bins=np.arange(0.0, 361.0, 10.0))
+    write_json(
+        RESULTS / "lunaris_trajectory_coverage.json",
+        {
+            "samples": int(epochs.size),
+            "altitude_m": {
+                "min": float(np.min(radii) - float(scenario["reference_radius_m"])),
+                "max": float(np.max(radii) - float(scenario["reference_radius_m"])),
+            },
+            "body_fixed_latitude_deg": {
+                "min": float(np.min(latitudes)),
+                "max": float(np.max(latitudes)),
+                "max_abs": float(np.max(np.abs(latitudes))),
+            },
+            "body_fixed_longitude_10deg_bins": {
+                "covered": int(np.count_nonzero(longitude_counts)),
+                "total": int(longitude_counts.size),
+            },
+            "j2000_inclination_deg": {
+                "min": float(np.min(inclinations)),
+                "max": float(np.max(inclinations)),
+            },
+        },
+    )
 def main() -> None:
     scenario = load_scenario()
     RESULTS.mkdir(parents=True, exist_ok=True)
@@ -217,6 +265,7 @@ def main() -> None:
 
     if tight_tables is None:
         raise RuntimeError("missing spherical-harmonic ephemeris table")
+    write_trajectory_coverage(scenario, tight_tables)
     rotation_probes = []
     for offset in (0.0, float(scenario["duration_s"]) / 2.0, float(scenario["duration_s"])):
         index = int(round(offset / float(tight_tables.dt_s)))

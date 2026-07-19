@@ -1,11 +1,15 @@
 {
-  "schema_version": 1,
-  "name": "lunaris_tudat_jggrx120_moon_pa_1day",
-  "description": "Independent rotating-Moon gravity-only trajectory validation",
-  "start_epoch_text": "2025-01-01 00:00:00 TDB",
-  "start_epoch_tdb_j2000_s": 788961600.0,
-  "duration_s": 86400.0,
-  "long_arc_options_s": [86400.0, 432000.0, 2592000.0],
+  "schema_version": 2,
+  "name": "lunaris_tudat_jggrx120_moon_pa_equatorial_retrograde_5day",
+  "description": "Independent rotating-Moon gravity-only trajectory validation with predeclared diverse geometry",
+  "start_epoch_text": "2026-01-15 00:00:00 TDB",
+  "start_epoch_tdb_j2000_s": 821707200.0,
+  "duration_s": 432000.0,
+  "long_arc_options_s": [
+    86400.0,
+    432000.0,
+    2592000.0
+  ],
   "output_step_s": 60.0,
   "gravity_degree": 120,
   "gravity_order": 120,
@@ -21,12 +25,12 @@
   "gravitational_parameter_m3_s2": 4902800306330.2,
   "reference_radius_m": 1738000.0,
   "initial_state_j2000_m_m_s": [
-    691989.3606389797,
-    1344184.1025221802,
-    1013080.9777456496,
-    -1217.181128509246,
-    -195.4441748174787,
-    1095.8166261516435
+    -837378.5612338627,
+    1515075.294632696,
+    617728.0929175521,
+    1453.8155649389007,
+    695.1994486777562,
+    265.6742965321102
   ],
   "kernel_files": [
     "data/ephemeris_models/naif0012.tls",
@@ -57,18 +61,28 @@
     "rotation_matrix_frobenius_max": 1e-12,
     "point_mass_acceleration_relative_max": 5e-13,
     "spherical_harmonic_acceleration_relative_max": 5e-10,
-    "spherical_harmonic_position_cross_max_m": 0.005,
-    "spherical_harmonic_velocity_cross_max_m_s": 5e-6,
+    "spherical_harmonic_position_cross_max_m": 0.05,
+    "spherical_harmonic_velocity_cross_max_m_s": 5e-05,
     "point_mass_position_cross_max_m": 0.05,
-    "point_mass_velocity_cross_max_m_s": 5e-5,
+    "point_mass_velocity_cross_max_m_s": 5e-05,
     "rk4_observed_order_min": 3.2,
     "rk4_observed_order_max": 4.8
   },
   "coverage_acceptance": {
-    "altitude_min_m": 40000.0,
-    "altitude_max_m": 180000.0,
-    "latitude_abs_max_deg_min": 35.0,
-    "latitude_abs_max_deg_max": 60.0,
-    "longitude_10deg_bins_min": 2
+    "altitude_min_m": 10000.0,
+    "altitude_max_m": 250000.0,
+    "latitude_abs_max_deg_min": 0.0,
+    "latitude_abs_max_deg_max": 15.0,
+    "longitude_10deg_bins_min": 30
+  },
+  "initial_state_construction": {
+    "basis": "instantaneous MOON_PA axes",
+    "vector_transform": "same SPICE 3x3 MOON_PA-to-J2000 rotation applied to position and inertial velocity components",
+    "semi_major_axis_m": 1838000.0,
+    "eccentricity": 0.0,
+    "inclination_deg": 180.0,
+    "raan_deg": 45.0,
+    "argument_of_periapsis_deg": 0.0,
+    "true_anomaly_deg": 0.0
   }
 }
