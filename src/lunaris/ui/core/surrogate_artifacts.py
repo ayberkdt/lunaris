@@ -32,6 +32,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from lunaris.common.lunar_data import looks_like_lunar_run_config
+
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -259,33 +261,4 @@ def looks_like_lunar_surrogate_run(path: str | Path) -> bool:
     except Exception:
         return False
 
-    body_name = str(cfg.get("central_body", "") or "").strip().lower()
-    if body_name in {"moon", "lunar", "selene"}:
-        return True
-
-    dataset_meta = cfg.get("dataset_meta") or {}
-    if not isinstance(dataset_meta, dict):
-        dataset_meta = {}
-
-    def _close(val: object, ref: float, tol: float = 0.05) -> bool:
-        try:
-            v = float(val)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return False
-        return abs(v - ref) / max(abs(ref), 1.0) <= tol
-
-    # Moon μ ≈ 4.905e12 m³/s², R ≈ 1.738e6 m
-    for candidate in (cfg.get("resolved_mu_si"), dataset_meta.get("mu_si")):
-        if _close(candidate, 4_904_869_500_000.0):
-            return True
-
-    for candidate in (
-        cfg.get("resolved_r_ref_m"),
-        cfg.get("r_ref_m"),
-        dataset_meta.get("r_ref_m"),
-        dataset_meta.get("r_ref_m_fallback"),
-    ):
-        if _close(candidate, 1_738_000.0):
-            return True
-
-    return False
+    return looks_like_lunar_run_config(cfg)

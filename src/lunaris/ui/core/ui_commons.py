@@ -34,6 +34,8 @@ from typing import ClassVar
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from lunaris.common.constants import MU_MOON as _MU_MOON_SI
+from lunaris.common.constants import R_MOON_MEAN as _R_MOON_MEAN_M
 from lunaris.ui_foundation import (
     DESIGN_TOKENS,
 )
@@ -47,17 +49,9 @@ from lunaris.ui_foundation import (
     THEME as FOUNDATION_THEME,
 )
 
-# Derive lunar constants from the backend SSOT (common.constants).
-# UI code works in km, so we convert here once and export aliases.
-# Fallback literals keep the UI loadable without the backend on PYTHONPATH.
-try:
-    from lunaris.common.constants import MU_MOON as _MU_MOON_SI
-    from lunaris.common.constants import R_MOON_MEAN as _R_MOON_MEAN_M
-    R_MOON_KM: float = _R_MOON_MEAN_M / 1000.0       # 1737.4 km
-    MU_MOON_KM3_S2: float = _MU_MOON_SI / 1e9         # ~4902.87 km³/s²
-except ImportError:
-    R_MOON_KM = 1737.4
-    MU_MOON_KM3_S2 = 4902.8695
+# UI code works in km, so derive these aliases from the backend SSOT once.
+R_MOON_KM: float = _R_MOON_MEAN_M / 1000.0
+MU_MOON_KM3_S2: float = _MU_MOON_SI / 1e9
 
 # Modern Icon Library
 try:

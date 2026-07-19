@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import FancyBboxPatch
 
-from lunaris.common.constants import DAY_S
+from lunaris.common.constants import DAY_S, MU_MOON, R_MOON_MEAN
 
 try:
     from scipy.interpolate import CubicHermiteSpline, CubicSpline  # type: ignore
@@ -116,8 +116,8 @@ THEME = Theme(
     star=_pick_dark_safe_color(_COLORS.get("star"), "#D6E2FF"),
 )
 
-R_MOON_KM_DEFAULT = 1737.4
-MU_MOON_DEFAULT = 4.902800066e12  # m^3/s^2
+R_MOON_KM_DEFAULT = float(R_MOON_MEAN) / 1000.0
+MU_MOON_DEFAULT = float(MU_MOON)
 
 
 # ==========================

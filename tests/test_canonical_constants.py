@@ -14,6 +14,12 @@ import pytest
 from lunaris.common.hashing import canonical_json_sha256
 
 
+def test_moon_gm_matches_jpl_de440() -> None:
+    from lunaris.common.constants import MU_MOON
+
+    assert MU_MOON == pytest.approx(4.902800118e12, rel=1.0e-12)
+
+
 def test_frame_and_convention_constants_are_single_sourced():
     from lunaris.surrogate.st_lrps.data import dataset_contract as dc
     from lunaris.surrogate.st_lrps.shared import contracts as sc

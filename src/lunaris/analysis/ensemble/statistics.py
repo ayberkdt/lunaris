@@ -37,7 +37,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.batch_defs import BatchPropagationResult
-from lunaris.common.constants import R_MOON
+from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.type_defs import F64Array
 from lunaris.core.state import cartesian_to_keplerian
 
@@ -424,7 +424,7 @@ def compute_impact_statistics(
 
 def compute_oe_dispersion(
     result: BatchPropagationResult,
-    mu: float = 4.9048695e12,  # μ_Moon [m³/s²]
+    mu: float = float(MU_MOON),
     *,
     max_samples: int = 500,  # cap for Keplerian conversion (expensive)
 ) -> OEDispersion:
@@ -519,7 +519,7 @@ def _impact_detection_was_enabled(result: BatchPropagationResult) -> bool | None
 def compute_ensemble_report(
     result: BatchPropagationResult,
     *,
-    mu: float = 4.9048695e12,
+    mu: float = float(MU_MOON),
     r_ref_m: float = R_MOON,
     compute_oe: bool = True,
     use_survived_only: bool = False,

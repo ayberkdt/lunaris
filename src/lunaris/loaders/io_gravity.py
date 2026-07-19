@@ -26,6 +26,7 @@ constants (R_ref, GM) consistently converted to SI units (meters).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import struct
@@ -550,6 +551,58 @@ def _looks_like_ascii_model(file_path: str) -> bool:
     """Return True if *file_path* looks like a SHADR/PDS ASCII gravity table."""
     name = os.path.basename(str(file_path)).lower()
     return any(name.endswith(sfx) for sfx in _ASCII_ENDINGS)
+
+
+def read_gravity_model_header(file_path: str) -> tuple[int, float, float, int]:
+    """Read only the physical header of a gravity model.
+
+    Returns ``(degree_max, reference_radius_m, gm_m3s2, normalization_state)``
+    without allocating coefficient arrays. This is the lightweight path used
+    when an orbit state must be constructed with the selected model's GM before
+    the propagation engine loads the complete field.
+    """
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Gravity model file not found: {file_path}")
+
+    if _looks_like_ascii_model(file_path):
+        with open(file_path, encoding="utf-8", errors="strict") as stream:
+            header_nums: list[float] = []
+            for line in stream:
+                if line.strip():
+                    header_nums = _parse_nums(line)
+                    break
+        if len(header_nums) < 8:
+            raise ValueError(
+                "Invalid SHADR header. Expected at least 8 fields: "
+                "R_ref, GM, omega, degree, order, normalization, "
+                "reference longitude, reference latitude."
+            )
+        radius_m = float(header_nums[0]) * 1000.0
+        gm_m3s2 = float(header_nums[1]) * 1.0e9
+        degree = max(int(header_nums[3]), int(header_nums[4]))
+        normalization = int(header_nums[5])
+    else:
+        with open(file_path, "rb") as stream:
+            header_data = stream.read(56)
+        if len(header_data) < 56:
+            raise OSError("File too short (missing gravity-model header).")
+        radius_m, gm_m3s2, _sigma, degree, order, normalization, _count, _lon, _lat = (
+            struct.unpack("<3d4i2d", header_data)
+        )
+        degree = max(int(degree), int(order))
+
+    if not math.isfinite(radius_m) or radius_m <= 0.0:
+        raise ValueError(f"Gravity-model reference radius must be finite and > 0; got {radius_m!r}.")
+    if not math.isfinite(gm_m3s2) or gm_m3s2 <= 0.0:
+        raise ValueError(f"Gravity-model GM must be finite and > 0; got {gm_m3s2!r}.")
+    if degree < 0:
+        raise ValueError(f"Gravity-model degree must be >= 0; got {degree}.")
+    if normalization != 1:
+        raise ValueError(
+            f"Gravity-model normalization state must be 1 (normalized); got {normalization}."
+        )
+
+    return int(degree), float(radius_m), float(gm_m3s2), int(normalization)
 
 
 def _slice_square(a: np.ndarray, n_use: int) -> np.ndarray:

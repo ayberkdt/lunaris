@@ -91,6 +91,7 @@ from typing import Any
 import matplotlib
 import numpy as np
 
+from lunaris.common.constants import MU_MOON
 from lunaris.loaders.io_helpers import find_lunar_map_path
 
 _INTERACTIVE = os.environ.get("STLRPS_INTERACTIVE", "0").strip().lower() in {"1", "true", "yes", "y"}
@@ -559,7 +560,7 @@ def figure_run_config_page(
     rtol = meta2.get("rtol", "1e-12")
     atol = meta2.get("atol", "1e-12")
     sh_degree = meta2.get("degree", 0)
-    mu = float(meta2.get("mu_m3s2", 4.9048695e12))
+    mu = float(meta2.get("mu_m3s2", MU_MOON))
     out_dt_s = meta2.get("output_dt_s")
     if out_dt_s is None:
         out_dt_s = meta2.get("dt_out_s")
@@ -1009,7 +1010,7 @@ def _smoke_test() -> None:
     history = {
         "t_s": t_s,
         "y": y,
-        "mu_m3s2": 4.9048695e12,
+        "mu_m3s2": float(MU_MOON),
         "R_body_m": 1.7374e6,
     }
 

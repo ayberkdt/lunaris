@@ -82,8 +82,8 @@ MJD_J2000_TT: float = 51_544.5
 # 3.                            MOON PARAMETERS
 # =============================================================================
 
-# Lunar gravitational parameter mu = GM [m^3/s^2]
-MU_MOON: float = 4_904_869_500_000.0
+# Lunar gravitational parameter mu = GM [m^3/s^2] (JPL DE440)
+MU_MOON: float = 4_902_800_118_000.0
 
 # Reference radius used in many lunar gravity/topography products [m]
 R_MOON: float = 1_738_000.0
