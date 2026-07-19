@@ -13,11 +13,25 @@ from validation_common import (
 )
 
 
-def load_pair(prefix: str, force_model: str) -> tuple[dict, dict]:
+def load_tudat_triplet(force_model: str) -> tuple[dict, dict, dict]:
     return (
-        read_trajectory_csv(RESULTS / f"{prefix}_{force_model}_baseline.csv"),
-        read_trajectory_csv(RESULTS / f"{prefix}_{force_model}_tight.csv"),
+        read_trajectory_csv(RESULTS / f"tudat_{force_model}_coarse.csv"),
+        read_trajectory_csv(RESULTS / f"tudat_{force_model}_baseline.csv"),
+        read_trajectory_csv(RESULTS / f"tudat_{force_model}_tight.csv"),
     )
+
+
+def load_lunaris_pair(force_model: str) -> tuple[dict, dict]:
+    return (
+        read_trajectory_csv(RESULTS / f"lunaris_{force_model}_baseline.csv"),
+        read_trajectory_csv(RESULTS / f"lunaris_{force_model}_tight.csv"),
+    )
+
+
+def observed_order(coarse_error: float, fine_error: float) -> float:
+    if coarse_error <= 0.0 or fine_error <= 0.0:
+        raise ValueError("convergence errors must be positive")
+    return float(np.log2(coarse_error / fine_error))
 
 
 def relative_acceleration_metrics(reference: np.ndarray, candidate: np.ndarray) -> dict[str, float]:
@@ -80,17 +94,29 @@ def point_mass_invariant_metrics(state: np.ndarray, mu: float) -> dict[str, floa
 def main() -> None:
     scenario = load_scenario()
     acceptance = scenario["acceptance"]
-    all_data = {}
-    metrics = {"rotation": rotation_metrics(), "force_models": {}}
+    metrics = {
+        "rotation": rotation_metrics(),
+        "coverage": json.loads(
+            (RESULTS / "lunaris_trajectory_coverage.json").read_text(encoding="utf-8")
+        ),
+        "force_models": {},
+    }
     for force_model in ("point_mass", "spherical_harmonic"):
-        tudat_baseline, tudat_tight = load_pair("tudat", force_model)
-        lunaris_baseline, lunaris_tight = load_pair("lunaris", force_model)
+        tudat_coarse, tudat_baseline, tudat_tight = load_tudat_triplet(force_model)
+        lunaris_baseline, lunaris_tight = load_lunaris_pair(force_model)
         lunaris_probe = read_trajectory_csv(RESULTS / f"lunaris_{force_model}_at_tudat_states.csv")
         assert_same_grid(
-            tudat_baseline, tudat_tight, lunaris_baseline, lunaris_tight, lunaris_probe
+            tudat_coarse,
+            tudat_baseline,
+            tudat_tight,
+            lunaris_baseline,
+            lunaris_tight,
+            lunaris_probe,
         )
-        all_data[force_model] = (tudat_baseline, tudat_tight, lunaris_baseline, lunaris_tight)
         metrics["force_models"][force_model] = {
+            "tudat_coarse_to_baseline_convergence": state_error_metrics(
+                tudat_baseline["state"], tudat_coarse["state"]
+            ),
             "tudat_step_convergence": state_error_metrics(
                 tudat_tight["state"], tudat_baseline["state"]
             ),
@@ -117,6 +143,30 @@ def main() -> None:
 
     for force_model in ("point_mass", "spherical_harmonic"):
         force_metrics = metrics["force_models"][force_model]
+        coarse_to_baseline = force_metrics["tudat_coarse_to_baseline_convergence"]
+        baseline_to_tight = force_metrics["tudat_step_convergence"]
+        position_order = observed_order(
+            coarse_to_baseline["position_m"]["max"],
+            baseline_to_tight["position_m"]["max"],
+        )
+        velocity_order = observed_order(
+            coarse_to_baseline["velocity_m_s"]["max"],
+            baseline_to_tight["velocity_m_s"]["max"],
+        )
+        force_metrics["tudat_rk4_observed_order"] = {
+            "position_max": position_order,
+            "velocity_max": velocity_order,
+            "step_triplet_s": [
+                float(scenario["tudat"]["coarse_step_s"]),
+                float(scenario["tudat"]["baseline_step_s"]),
+                float(scenario["tudat"]["tight_step_s"]),
+            ],
+        }
+        force_metrics["tudat_richardson_tight_error_estimate"] = {
+            "position_max_m": baseline_to_tight["position_m"]["max"] / (2.0**position_order - 1.0),
+            "velocity_max_m_s": baseline_to_tight["velocity_m_s"]["max"]
+            / (2.0**velocity_order - 1.0),
+        }
         baseline_error = force_metrics["cross_implementation_baseline_vs_lunaris_tight"]
         tight_error = force_metrics["cross_implementation_tight"]
         force_metrics["tudat_rk4_refinement_ratio"] = {
@@ -136,19 +186,21 @@ def main() -> None:
         spherical["tudat_step_convergence"]["velocity_m_s"]["max"]
         + spherical["lunaris_tolerance_convergence"]["velocity_m_s"]["max"]
     )
-    position_limit = max(
-        float(acceptance["trajectory_position_floor_m"]),
-        float(acceptance["trajectory_noise_multiplier"]) * noise_position,
-    )
-    velocity_limit = max(
-        float(acceptance["trajectory_velocity_floor_m_s"]),
-        float(acceptance["trajectory_noise_multiplier"]) * noise_velocity,
-    )
+    position_limit = float(acceptance["spherical_harmonic_position_cross_max_m"])
+    velocity_limit = float(acceptance["spherical_harmonic_velocity_cross_max_m_s"])
     derived_limits = {
-        "spherical_harmonic_position_max_m": position_limit,
-        "spherical_harmonic_velocity_max_m_s": velocity_limit,
-        "derivation": "max(floor, multiplier * (Tudat self-convergence + Lunaris self-convergence))",
+        "spherical_harmonic_position_hard_max_m": position_limit,
+        "spherical_harmonic_velocity_hard_max_m_s": velocity_limit,
+        "spherical_harmonic_position_numerical_band_m": noise_position,
+        "spherical_harmonic_velocity_numerical_band_m_s": noise_velocity,
+        "derivation": "predeclared hard cap plus independent requirement that cross error stay below raw within-tool convergence sum",
     }
+
+    coverage = metrics["coverage"]
+    coverage_acceptance = scenario["coverage_acceptance"]
+    rk4_min = float(acceptance["rk4_observed_order_min"])
+    rk4_max = float(acceptance["rk4_observed_order_max"])
+    sh_order = spherical["tudat_rk4_observed_order"]
 
     checks = {
         "rotation_matrix_parity": metrics["rotation"]["matrix_frobenius_max"]
@@ -173,6 +225,25 @@ def main() -> None:
             "velocity_m_s"
         ]["max"]
         <= velocity_limit,
+        "spherical_harmonic_position_within_numerical_band": spherical[
+            "cross_implementation_tight"
+        ]["position_m"]["max"]
+        <= noise_position,
+        "spherical_harmonic_velocity_within_numerical_band": spherical[
+            "cross_implementation_tight"
+        ]["velocity_m_s"]["max"]
+        <= noise_velocity,
+        "tudat_rk4_position_order": rk4_min <= sh_order["position_max"] <= rk4_max,
+        "tudat_rk4_velocity_order": rk4_min <= sh_order["velocity_max"] <= rk4_max,
+        "coverage_altitude_floor": coverage["altitude_m"]["min"]
+        >= float(coverage_acceptance["altitude_min_m"]),
+        "coverage_altitude_ceiling": coverage["altitude_m"]["max"]
+        <= float(coverage_acceptance["altitude_max_m"]),
+        "coverage_latitude": float(coverage_acceptance["latitude_abs_max_deg_min"])
+        <= coverage["body_fixed_latitude_deg"]["max_abs"]
+        <= float(coverage_acceptance["latitude_abs_max_deg_max"]),
+        "coverage_longitude": coverage["body_fixed_longitude_10deg_bins"]["covered"]
+        >= int(coverage_acceptance["longitude_10deg_bins_min"]),
     }
     status = "PASS" if all(checks.values()) else "FAIL"
     summary = {
@@ -205,6 +276,8 @@ def main() -> None:
         f"- Rotating-SH trajectory final position difference: {spherical['cross_implementation_tight']['position_m']['final']:.6e} m\n",
         f"- Rotating-SH trajectory max velocity difference: {spherical['cross_implementation_tight']['velocity_m_s']['max']:.6e} m/s\n",
         f"- Rotating-SH Tudat RK4 position refinement ratio: {spherical['tudat_rk4_refinement_ratio']['position_max']:.3f}\n",
+        f"- Rotating-SH Tudat observed RK4 position/velocity order: {sh_order['position_max']:.4f} / {sh_order['velocity_max']:.4f}\n",
+        f"- Coverage: altitude {coverage['altitude_m']['min'] / 1000.0:.3f}..{coverage['altitude_m']['max'] / 1000.0:.3f} km, body-fixed max |latitude| {coverage['body_fixed_latitude_deg']['max_abs']:.3f} deg, longitude bins {coverage['body_fixed_longitude_10deg_bins']['covered']}/{coverage['body_fixed_longitude_10deg_bins']['total']}\n",
         f"- Rotating-SH final R/I/C: {json.dumps(spherical['cross_implementation_tight']['ric_final_m'])}\n",
         f"- Point-mass Tudat tight relative energy drift: {point['invariants']['tudat_tight']['specific_energy_m2_s2']['relative_final_drift']:.6e}\n",
         f"- Point-mass Lunaris tight relative energy drift: {point['invariants']['lunaris_tight']['specific_energy_m2_s2']['relative_final_drift']:.6e}\n",
