@@ -240,6 +240,10 @@ lunaris-frozen-search
   -> stage1_screening.npz
        (default summary_only contract: per-sample screening metrics + top-K
         histories; explicit full mode retains the legacy (T,N,6) tensor)
+  -> stage1_checkpoint/  (transient, removed when stage 1 completes)
+       (per-block summary partials + lunaris.core.batch_checkpoint integrator
+        state, so a killed screening resumes from its last snapshot boundary
+        instead of restarting; --screening-checkpoint-minutes, 0 disables)
   -> lunaris.analysis.frozen.family_report (versioned JSON schema)
   -> lunaris.analysis.frozen.plots (figure set from stage files)
 ```

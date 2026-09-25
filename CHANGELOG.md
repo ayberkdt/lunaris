@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Added: resumable batch propagation (`lunaris.core.batch_checkpoint`) and
+  stage-1 resumability for `lunaris-frozen-search`.** A long ensemble
+  screening run is a single `run_batched_fixed_step` call; when the process
+  died (a crash, a reboot, or an unrelated `taskkill /IM python.exe`) every
+  hour of it was lost, because nothing was written until the call returned.
+  The shared batched fixed-step loop now accepts an optional
+  `BatchCheckpointSpec` and persists, per device chunk, its integrator state
+  at snapshot boundaries plus the snapshots produced since the previous save;
+  a resumed call restores the tensors in their exact device dtype and
+  continues the same RK4 arithmetic, so trajectories, impact bookkeeping and
+  the output grid are identical to an uninterrupted run (tested bitwise,
+  chunked and unchunked, with impacts). Checkpoints carry a contract (sample
+  count, grid, effective dt, dtype, a hash of the initial states, impact
+  settings); a mismatched directory is moved aside rather than reused.
+  `lunaris-frozen-search` wires this into stage 1 and additionally persists
+  every finished screening block, so `--resume` replays finished blocks and
+  continues the interrupted one. New flag
+  `--screening-checkpoint-minutes` (default 20, `0` disables); the work
+  directory `stage1_checkpoint/` is deleted once `stage1_screening.npz` is
+  written, and `manifest.json` records how many blocks were restored.
+
 - **Changed: release/version hygiene.** 0.1.0rc2 is now tagged (`v0.1.0rc2`)
   and main carries `0.1.0rc3.dev0`, so a wheel built from main no longer
   advertises itself as the released rc2 while containing post-rc2 changes.
