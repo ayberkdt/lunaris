@@ -188,3 +188,19 @@ def test_duration_factory_derives_rate_thresholds_from_mission_span():
         cfg.quasi_abs_dh_peri_dt_max_m_per_s,
         10_000.0 / cfg.mission_duration_s,
     )
+
+
+def test_duration_factory_scales_inclination_rate_like_other_rates():
+    cfg = FrozenClassificationConfig.for_mission_duration(60.0 * 86_400.0)
+
+    assert np.isclose(
+        cfg.quasi_abs_dinclination_dt_max_rad_per_s,
+        cfg.quasi_inclination_range_max_rad / cfg.mission_duration_s,
+    )
+    assert np.isclose(
+        cfg.strict_abs_dinclination_dt_max_rad_per_s,
+        cfg.strict_inclination_range_max_rad / cfg.mission_duration_s,
+    )
+    # 2 deg over 60 days is about 12.2 deg/yr, not the earlier fixed 1e-9 rad/s (1.8 deg/yr)
+    deg_per_yr = np.rad2deg(cfg.quasi_abs_dinclination_dt_max_rad_per_s) * 86_400.0 * 365.25
+    assert np.isclose(deg_per_yr, 12.175, atol=1e-3)

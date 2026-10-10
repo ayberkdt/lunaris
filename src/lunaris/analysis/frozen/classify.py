@@ -79,6 +79,8 @@ class FrozenClassificationConfig:
         quasi_e_range_max: float = 2.0e-2,
         strict_h_peri_range_max_m: float = 5_000.0,
         quasi_h_peri_range_max_m: float = 30_000.0,
+        strict_inclination_range_max_rad: float = np.deg2rad(0.25),
+        quasi_inclination_range_max_rad: float = np.deg2rad(2.0),
         strict_omega_span_max_rad: float = np.deg2rad(20.0),
         quasi_omega_span_max_rad: float = np.deg2rad(120.0),
     ) -> FrozenClassificationConfig:
@@ -98,6 +100,12 @@ class FrozenClassificationConfig:
             strict_abs_dh_peri_dt_max_m_per_s=float(strict_h_peri_range_max_m)
             / duration,
             quasi_abs_dh_peri_dt_max_m_per_s=float(quasi_h_peri_range_max_m)
+            / duration,
+            strict_inclination_range_max_rad=float(strict_inclination_range_max_rad),
+            quasi_inclination_range_max_rad=float(quasi_inclination_range_max_rad),
+            strict_abs_dinclination_dt_max_rad_per_s=float(strict_inclination_range_max_rad)
+            / duration,
+            quasi_abs_dinclination_dt_max_rad_per_s=float(quasi_inclination_range_max_rad)
             / duration,
             strict_omega_span_max_rad=float(strict_omega_span_max_rad),
             quasi_omega_span_max_rad=float(quasi_omega_span_max_rad),
