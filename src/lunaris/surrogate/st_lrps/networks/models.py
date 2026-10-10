@@ -881,17 +881,56 @@ class RealSHBasisEncoding(nn.Module):
 # ---------------------------------------------------------------------------
 
 class PhysicsNet(nn.Module):
-    """Optional FourierEmbedding → backbone. ``embedding=None`` is a no-op pass-through."""
+    """Optional embedding → backbone → optional radial-decay output envelope.
 
-    def __init__(self, backbone: nn.Module, embedding: nn.Module | None = None):
+    With ``envelope_power = p > 0`` the backbone output is multiplied by
+    ``rho**p`` where ``rho = r_ref_m / (||x_scaled|| * x_scale_m)``.  The
+    residual potential of spherical-harmonic degrees ``>= p - 1`` decays at
+    least as fast as ``rho**p``, so the backbone only has to learn an O(1)
+    coefficient field and its absolute noise floor shrinks with altitude
+    together with the signal instead of staying constant.  ``p = 0`` (default)
+    reproduces the plain pass-through behaviour of earlier artifacts.
+    """
+
+    def __init__(
+        self,
+        backbone: nn.Module,
+        embedding: nn.Module | None = None,
+        *,
+        envelope_power: float = 0.0,
+        x_scale_m: float = 1.0,
+        r_ref_m: float = 1.0,
+        eps: float = 1e-9,
+    ):
         super().__init__()
         self.embedding = embedding
         self.backbone = backbone
+        self.envelope_power = float(envelope_power)
+        if self.envelope_power < 0.0:
+            raise ValueError(f"envelope_power must be >= 0, got {self.envelope_power}")
+        if self.envelope_power > 0.0 and (float(x_scale_m) <= 0.0 or float(r_ref_m) <= 0.0):
+            raise ValueError(
+                "PhysicsNet output envelope needs positive x_scale_m and r_ref_m, got "
+                f"x_scale_m={x_scale_m!r}, r_ref_m={r_ref_m!r}"
+            )
+        # rho = envelope_rho_scale / ||x_scaled||
+        self.envelope_rho_scale = float(r_ref_m) / float(x_scale_m)
+        self.envelope_eps = float(eps)
+
+    def envelope(self, x_scaled: torch.Tensor) -> torch.Tensor:
+        """``rho**p`` for network-scaled positions, shape ``(N, 1)``."""
+        r = torch.linalg.norm(x_scaled, dim=-1, keepdim=True).clamp_min(self.envelope_eps)
+        rho = self.envelope_rho_scale / r
+        return rho.pow(self.envelope_power)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
+        x_in = x_scaled
         if self.embedding is not None:
             x_scaled = self.embedding(x_scaled)
-        return self.backbone(x_scaled)
+        out = self.backbone(x_scaled)
+        if self.envelope_power > 0.0:
+            out = out * self.envelope(x_in)
+        return out
 
     @torch.no_grad()
     def band_diagnostics(self, x_scaled: torch.Tensor) -> tuple[str, torch.Tensor] | None:
@@ -1208,7 +1247,17 @@ def build_model_from_config(
             output_dim=output_dim,
         )
 
-    model = PhysicsNet(backbone=backbone, embedding=embedding)
+    envelope_power = float(_cfg_value(cfg, "output_envelope_power", 0.0) or 0.0)
+    if envelope_power > 0.0:
+        model = PhysicsNet(
+            backbone=backbone,
+            embedding=embedding,
+            envelope_power=envelope_power,
+            x_scale_m=float(_cfg_value(cfg, "x_scale_m", 0.0) or 0.0),
+            r_ref_m=float(_cfg_value(cfg, "resolved_r_ref_m", 0.0) or 0.0),
+        )
+    else:
+        model = PhysicsNet(backbone=backbone, embedding=embedding)
     if device is not None or dtype is not None:
         model = model.to(device=device, dtype=dtype)
 
@@ -1233,6 +1282,7 @@ def build_model_from_config(
     model.model_builder_version: str = MODEL_BUILDER_VERSION  # type: ignore[assignment]
     model.output_dim: int = int(output_dim)  # type: ignore[assignment]
     model.runtime_model_kind: str = runtime_model_kind  # type: ignore[assignment]
+    model.output_envelope_power: float = envelope_power  # type: ignore[assignment]
     # Resolved per-band SIREN frequencies (None for single-scale / non-SIREN).
     # The engine persists this so evaluation reconstructs the exact spectrum.
     model.w0_bands = resolved_w0_bands  # type: ignore[assignment]
@@ -1266,7 +1316,12 @@ ARCH_SIGNATURE_FIELDS = (
     "use_fourier", "fourier_n_features", "fourier_sigma", "fourier_seed",
     "fourier_append_raw",
     "input_feature_dim", "embedding_type", "model_builder_version",
+    "output_envelope_power",
 )
+
+# Signature fields that only enter the fingerprint when they are active, so the
+# hashes of artifacts created before the field existed stay byte-identical.
+_OPTIONAL_SIGNATURE_FIELDS = ("output_envelope_power",)
 
 
 def _normalize_signature_value(key: str, value: Any) -> Any:
@@ -1286,7 +1341,7 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
             return int(value)
         except (TypeError, ValueError):
             return value
-    if key in ("dropout", "fourier_sigma", "x_scale_m", "resolved_r_ref_m"):
+    if key in ("dropout", "fourier_sigma", "x_scale_m", "resolved_r_ref_m", "output_envelope_power"):
         try:
             return round(float(value), 6)
         except (TypeError, ValueError):
@@ -1303,10 +1358,14 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
 
 def architecture_fingerprint(cfg: Any) -> dict[str, Any]:
     """Return the normalized architecture-critical fields for ``cfg``."""
-    return {
+    payload = {
         key: _normalize_signature_value(key, _cfg_value(cfg, key, None))
         for key in ARCH_SIGNATURE_FIELDS
     }
+    for key in _OPTIONAL_SIGNATURE_FIELDS:
+        if not payload.get(key):
+            payload.pop(key, None)
+    return payload
 
 
 def compute_architecture_signature(cfg: Any) -> str:
