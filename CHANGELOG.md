@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Fixed: strict SH helpers no longer inherit `fastmath`.** Numba compiles a
+  helper with the flags of whichever caller compiles it first and caches that
+  build on disk. The helpers shared by the strict serial SH kernel and the
+  fastmath kernels (`_compute_sh_acceleration_parallel`,
+  `sh_potential_accel_batch_serial`), including `_kahan_sum_step` and
+  `common.math_utils.clamp`, now set `fastmath=False` explicitly. Measured on a
+  degree-200 field: before, the serial acceleration moved by up to 11 ulp
+  (1.1e-15 relative) when a fastmath kernel compiled first, and the drift
+  persisted through the cache; after, it is bit-identical in every compile
+  order. Results compiled in the strict order are unchanged. Tests are in
+  `tests/test_sh_fastmath_isolation.py`.
 - **Fixed: SRP eclipse geometry.** The conical shadow factor is now the
   visible solar-disk fraction (lens area of the apparent solar and occulter
   disks, Montenbruck & Gill 2000, sec. 3.4) instead of a smoothstep across the
