@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Fixed: SRP eclipse geometry.** The conical shadow factor is now the
+  visible solar-disk fraction (lens area of the apparent solar and occulter
+  disks, Montenbruck & Gill 2000, sec. 3.4) instead of a smoothstep across the
+  penumbra cones. Against an exact spherical-cap integral it is within 3e-4 in
+  `nu` (the smoothstep was up to 0.046 off near the Moon and returned ~0 in the
+  annular region beyond the umbra apex). Full-sun and umbra limits stay exactly
+  1 and 0. `SRPConfig.enable_earth_eclipse` now defaults to `True`, so SRP is
+  dimmed during lunar eclipses like albedo and thermal IR; a zero Earth vector
+  (no ephemeris) is ignored. Default SRP, albedo-eclipse and thermal-IR-eclipse
+  results change inside penumbrae and Earth shadows. Tests are in
+  `tests/test_srp_eclipse.py`.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.

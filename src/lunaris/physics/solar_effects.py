@@ -14,10 +14,11 @@ What it contains
 
 2) Eclipse / illumination factor (Moon and optionally Earth)
    - Conical umbra/penumbra model using a finite apparent solar radius.
-   - Returns a smooth illumination factor ``nu`` in ``[0, 1]``:
+   - Returns the visible solar-disk fraction ``nu`` in ``[0, 1]``:
        * ``nu = 0`` : full umbra (total eclipse)
        * ``nu = 1`` : full sunlight
-       * ``0 < nu < 1`` : penumbra (smoothstep blend)
+       * ``0 < nu < 1`` : penumbra, or annular beyond the umbra apex
+         (apparent-disk overlap area, Montenbruck & Gill 2000, sec. 3.4)
 
 Coordinate and sign conventions
 -------------------------------
@@ -27,8 +28,8 @@ Coordinate and sign conventions
 - The Sun→spacecraft direction is ``d_vec = r_sc - r_sun``.
   The SRP acceleration points along ``d_vec`` (i.e., away from the Sun).
 
-Earth eclipse (optional)
-------------------------
+Earth eclipse (on by default in ``SRPConfig``)
+----------------------------------------------
 - Earth-shadow helpers (``earth_shadow_factor_conical`` / ``in_earth_umbra_conical``)
   expect Earth-centered vectors.
 - If your ephemeris is Moon-centered, convert via:
@@ -44,10 +45,11 @@ Performance and API layering
 
 Notes
 -----
-- The penumbra transition uses a smoothstep blend for continuity and stability;
-  it is not an exact solar-disk overlap area model.
-- The conical shadow model is an engineering approximation. For high-fidelity eclipse
-  timing, use extended-body occultation with precise ephemerides.
+- The penumbra is the overlap area of the apparent solar and occulter disks seen
+  from the spacecraft (uniform solar disk, spherical occulter, geometric light
+  paths). Against an exact spherical-cap integral the planar overlap is within
+  3e-4 in ``nu`` for lunar and Earth shadows near 1 AU. Not modelled: solar limb
+  darkening, occulter oblateness, atmospheric refraction and light time.
 """
 
 
@@ -67,7 +69,6 @@ from numba import njit
 from lunaris.common.constants import (
     AU,
     EPS_1E6,
-    EPS_1E12,
     EPS_1E24,
     P_SUN_1AU,
     R_EARTH_MEAN,
@@ -83,14 +84,15 @@ from lunaris.common.type_defs import SpacecraftProps
 # -------------------------------------------------------------------------
 # Conical eclipse model (finite Sun size) — shared implementation
 #
-# Returns nu in [0, 1]:
+# Returns nu in [0, 1], the fraction of the solar disk visible from the
+# spacecraft past one spherical occulter:
 #   nu = 1.0  -> full sunlight
 #   nu = 0.0  -> full shadow (umbra)
-#   0<nu<1    -> partial shadow (penumbra)
+#   0<nu<1    -> partial shadow (penumbra, or annular beyond the umbra apex)
 #
 # Notes:
-# - Penumbra transition uses a smoothstep blend for numerical stability and
-#   continuity. It is not an exact solar-disk overlap area model.
+# - Apparent-radius overlap of two uniform disks seen from the spacecraft
+#   (Montenbruck & Gill 2000, sec. 3.4); no solar limb darkening.
 # -------------------------------------------------------------------------
 
 
@@ -106,71 +108,78 @@ def _shadow_factor_conical(
     Inputs MUST be centered on the occulting body:
       r_sc = (rx, ry, rz)  : spacecraft position w.r.t. occulting body center
       r_sun = (sx, sy, sz) : sun position w.r.t. occulting body center
+
+    With ``a`` the apparent solar radius, ``b`` the apparent occulter radius
+    and ``c`` their angular separation (all seen from the spacecraft), the
+    occulted part of the solar disk is the planar lens area of two circles of
+    radii ``a`` and ``b`` at centre distance ``c``; ``nu = 1 - area / (pi a^2)``
+    (Montenbruck & Gill 2000, sec. 3.4). ``c >= a + b`` is full
+    sunlight (exactly 1), ``c <= b - a`` full umbra (exactly 0) and
+    ``c <= a - b`` the annular case beyond the umbra apex (``1 - b^2/a^2``).
+    Angles use ``atan2`` so the near-collinear geometry keeps full precision.
     """
-    # 1) Sun direction (occulting body -> Sun)
-    dist_sun_sq = sx * sx + sy * sy + sz * sz
-    if dist_sun_sq <= EPS_1E24:
-        return 1.0  # degenerate Sun vector -> assume sunlight
-
-    dist_sun = math.sqrt(dist_sun_sq)
-    inv_dist_sun = 1.0 / dist_sun
-    u_sx = sx * inv_dist_sun
-    u_sy = sy * inv_dist_sun
-    u_sz = sz * inv_dist_sun
-
-    # 2) Project spacecraft position onto the Sun axis:
-    # proj >= 0 => day-side (between occulting body and Sun) => no eclipse
-    proj = rx * u_sx + ry * u_sy + rz * u_sz
-    if proj >= 0.0:
-        return 1.0
-
-    # x = distance behind the occulting body along the shadow axis (x >= 0)
-    x = -proj
-
-    # 3) Perpendicular distance from shadow axis:
-    # rho^2 = |r|^2 - proj^2
+    # 1) Spacecraft -> Sun vector d = r_sun - r_sc and the spacecraft radius
+    dx = sx - rx
+    dy = sy - ry
+    dz = sz - rz
+    d_sq = dx * dx + dy * dy + dz * dz
     r_sq = rx * rx + ry * ry + rz * rz
-    rho2 = r_sq - proj * proj
-    if rho2 < 0.0:
-        rho2 = 0.0  # clamp roundoff
-
-    # 4) Cone geometry (similar triangles)
-    denom_u = R_SUN_MEAN - R_occult
-    if denom_u <= EPS_1E12:
+    if d_sq <= EPS_1E24 or r_sq <= EPS_1E24 or R_occult <= 0.0:
         return 1.0  # degenerate geometry -> assume sunlight
 
-    common_factor = R_occult * dist_sun
-    L_u = common_factor / denom_u
+    sin_a = R_SUN_MEAN / math.sqrt(d_sq)
+    if sin_a >= 1.0:
+        return 1.0  # inside the solar sphere: no meaningful occultation
 
-    denom_p = R_SUN_MEAN + R_occult
-    if denom_p <= EPS_1E12:
+    # 2) Cheap exit on the sunlit side. dot = (-r_sc) . d = |r| |d| cos(c).
+    # For c >= 90 deg an overlap needs b > 90 deg - a, i.e.
+    # (R/|r|)^2 > 1 - sin(a)^2. Otherwise the whole disk is visible.
+    dot = -(rx * dx + ry * dy + rz * dz)
+    R_sq = R_occult * R_occult
+    if dot <= 0.0 and r_sq * (1.0 - sin_a * sin_a) >= R_sq:
         return 1.0
-    L_p = common_factor / denom_p
 
-    # 5) Umbra and penumbra radii at distance x
-    if x >= L_u:
-        r_u = 0.0
+    # 3) Apparent radii and separation [rad]
+    a = math.asin(sin_a)
+    if r_sq <= R_sq:
+        b = 0.5 * math.pi  # on/inside the occulter surface: horizon half-space
     else:
-        r_u = R_occult * (1.0 - x / L_u)
+        b = math.asin(R_occult / math.sqrt(r_sq))
+    # |(-r_sc) x d| = |r_sc x d|
+    cx = ry * dz - rz * dy
+    cy = rz * dx - rx * dz
+    cz = rx * dy - ry * dx
+    c = math.atan2(math.sqrt(cx * cx + cy * cy + cz * cz), dot)
 
-    r_p = R_occult * (1.0 + x / L_p)
+    # 4) Region classification
+    if c >= a + b:
+        return 1.0  # disks apart: full sunlight
+    if c <= b - a:
+        return 0.0  # solar disk entirely behind the occulter: umbra
+    if c <= a - b:
+        return 1.0 - (b * b) / (a * a)  # occulter inside the solar disk: annular
 
-    # 6) Region classification using rho^2 to avoid sqrt when possible
-    r_u2 = r_u * r_u
-    r_p2 = r_p * r_p
-    if rho2 <= r_u2:
+    # 5) Partial overlap: lens area of circles (a, b) at centre distance c
+    x = (c * c + a * a - b * b) / (2.0 * c)
+    y_sq = a * a - x * x
+    y = math.sqrt(y_sq) if y_sq > 0.0 else 0.0
+    ca = x / a
+    if ca > 1.0:
+        ca = 1.0
+    elif ca < -1.0:
+        ca = -1.0
+    cb = (c - x) / b
+    if cb > 1.0:
+        cb = 1.0
+    elif cb < -1.0:
+        cb = -1.0
+    area = a * a * math.acos(ca) + b * b * math.acos(cb) - c * y
+    nu = 1.0 - area / (math.pi * a * a)
+    if nu < 0.0:
         return 0.0
-    if rho2 >= r_p2:
+    if nu > 1.0:
         return 1.0
-
-    # 7) Penumbra transition (smoothstep)
-    rho = math.sqrt(rho2)
-    width = r_p - r_u
-    if width <= EPS_1E12:
-        return 0.0
-
-    u = (rho - r_u) / width  # in (0,1)
-    return u * u * (3.0 - 2.0 * u)
+    return nu
 
 
 @njit(cache=True, nogil=True, inline="always")
@@ -245,7 +254,8 @@ class SRPConfig:
 
     # Shadowing controls
     enable_moon_eclipse: bool = True
-    enable_earth_eclipse: bool = False  # turn on if you want Earth shadow too
+    # Earth's shadow (lunar eclipses) dims SRP like it dims albedo and thermal IR.
+    enable_earth_eclipse: bool = True
 
     shadow_model: str = "conical"       # reserved for future expansion
     R_moon_m: float = R_MOON_MEAN
@@ -273,7 +283,9 @@ def _min_shadow_factor(
         if shadow <= EPS_1E6:
             return 0.0
 
-    if enable_earth_eclipse:
+    # A zero/collapsed Earth vector (no ephemeris table) must not place the
+    # Earth at the Moon's centre; the dynamics engine applies the same gate.
+    if enable_earth_eclipse and (ex * ex + ey * ey + ez * ez) > 1.0e12:
         # Convert Moon-centered vectors to Earth-centered vectors
         rsc_ex = rx - ex
         rsc_ey = ry - ey
