@@ -22,7 +22,7 @@
     "name": "lunaris_independent_direct_formula_oracle",
     "precision_digits": 16,
     "script_path": "validation/gravity_reference/generators/field/generate_synthetic_degree4.py",
-    "script_sha256": "364bfd48590890cfcf4e9196545c21a9027f2cc6e6b935cacf305692f7841504",
+    "script_sha256": "00f89573f4fd00a3d422a984778f0b1732b34c129ade48bd11964c0920568aa0",
     "version": "v1"
   },
   "gravity": {

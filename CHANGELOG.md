@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: gravity-reference hash pins on Windows checkouts.** `.gitattributes` now pins `validation/gravity_reference/generators/**/*.py` to LF, so the rotating-validation runner hashes match the evidence matrix on a CRLF checkout. The `synthetic_degree4` and `grail_degree32` manifests carried stale `generator.script_sha256` values. Rerunning both generators reproduced their data and coefficient files byte-for-byte, so their regenerated manifests are committed. The only change is the script hash. `tests/test_gravity_reference_generator_hashes.py` gates every manifest.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.
