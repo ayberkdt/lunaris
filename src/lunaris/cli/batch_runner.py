@@ -21,7 +21,7 @@ Exit codes
 ----------
     0 — success
     1 — configuration / validation error
-    2 — runtime error
+    2 — runtime error (also: every sample failed, or metrics could not be built)
     3 — requested UQ report generation failed
 """
 
@@ -596,11 +596,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     wall_time = time.perf_counter() - t0
 
     # ---- Emit metrics line (consumed by UI) ---------------------------------
+    # No valid sample, or metrics that cannot be built, means the run produced
+    # no usable result: a runtime failure (exit 2), not a cosmetic warning.
+    if int(result.n_valid) == 0:
+        print("[BATCH][FATAL] every batch sample failed; no valid result to report.", flush=True)
+        return 2
     try:
         metrics = _build_metrics(result, wall_time, batch_cfg)
         print(f"[BATCH_METRICS] {json.dumps(metrics)}", flush=True)
     except Exception as exc:
-        print(f"[BATCH][WARN] Could not build metrics: {exc}", flush=True)
+        print(f"[BATCH][FATAL] Could not build metrics: {exc}", flush=True)
+        return 2
 
     # ---- Optional UQ report (explicitly requested => fail loudly) -----------
     if args.uq_report_dir:
