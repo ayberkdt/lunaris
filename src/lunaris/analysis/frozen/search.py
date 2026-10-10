@@ -14,6 +14,17 @@ sample count, and backend provenance are recorded in ``manifest.json``.
 Stage 1 defaults to a summary-only artifact: per-sample metrics plus top-K full
 histories, not the full ``(T, N, 6)`` ensemble tensor.
 
+Stage 1 is also resumable *within itself* (``screening_checkpoint_interval_s``),
+because a 60-day screening of thousands of orbits is hours-to-days of compute
+that used to be lost whole when a process died. Two nested levels, both under
+``stage1_checkpoint/``: each finished screening block writes a summary partial
+(``block_<lo>_<hi>_summary.npz``), and inside a block the shared batched loop
+periodically checkpoints its integrator state
+(:mod:`lunaris.core.batch_checkpoint`). A resumed run replays finished blocks,
+continues the interrupted one from its last snapshot boundary, and produces a
+stage-1 artifact identical to an uninterrupted run. The directory is deleted
+once ``stage1_screening.npz`` exists.
+
 Backend policy: propagation is injected via two small protocols so the same
 pipeline runs on the batch GPU/CPU screening backends and on the classical
 CPU SH reference path. Enforcement rules (not conventions):
@@ -28,10 +39,12 @@ CPU SH reference path. Enforcement rules (not conventions):
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
 import os
+import shutil
 import subprocess
 import time
 import uuid
@@ -78,6 +91,10 @@ STAGE2_CANDIDATES = "stage2_candidates.json"
 STAGE3_VALIDATION = "stage3_validation.json"
 STAGE4_FAMILIES = "stage4_families.json"
 MANIFEST = "manifest.json"
+# Stage-1 resumable work directory: per-block summary partials plus the shared
+# batched loop integrator checkpoints (lunaris.core.batch_checkpoint). Removed
+# once stage1_screening.npz is written.
+STAGE1_CHECKPOINT_DIR = "stage1_checkpoint"
 
 STAGE1_SCREENING_SCHEMA_VERSION = 2
 STAGE1_OUTPUT_FULL = "full"
@@ -94,6 +111,27 @@ _SCREENING_SUMMARY_FIELDS = (
     "trend_e_per_day",
     "trend_h_peri_km_per_day",
     "omega_behavior",
+)
+
+# Extra per-sample metrics written by the "frozen" screening score (optional keys).
+_OPTIONAL_SUMMARY_FIELDS = (
+    "de_dt_per_s",
+    "dh_peri_dt_m_per_s",
+    "inclination_range_rad",
+    "dinclination_dt_rad_per_s",
+    "omega_span_rad",
+    "domega_dt_rad_per_s",
+    "hk_loop_drift",
+)
+SCREENING_SCORE_V1 = "v1"
+SCREENING_SCORE_FROZEN = "frozen"
+SCREENING_SCORES = (SCREENING_SCORE_V1, SCREENING_SCORE_FROZEN)
+FROZEN_SCREENING_SCORE_DEFINITION = (
+    "screening v2: frozen_score(compute_frozen_metrics(history), "
+    "FrozenClassificationConfig.for_mission_duration(screening_duration)) = sum of "
+    "quasi-threshold ratios of e_range, |de/dt|, h_peri range, |dh_peri/dt|, omega span, "
+    "|domega/dt|, h-k loop drift; +inf for impact / domain exit / escape / unsafe perilune / "
+    "e above bound; lower is better"
 )
 
 
@@ -136,11 +174,18 @@ def sobol_element_samples(
     *,
     seed: int,
     method: str = "sobol_scrambled",
+    hp_km: tuple[float, float] | None = None,
+    argp_choices: tuple[float, ...] | None = None,
+    r_ref_km: float = 1_737.4,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Draw ``(N, 6)`` element samples in the box, with full provenance.
 
     ``method`` is ``"sobol"``, ``"sobol_scrambled"``, or ``"lhs"``. Sobol draws
     a base-2 design and keeps the first ``n_samples`` (recorded in provenance).
+    With ``hp_km`` the first Sobol dimension samples the perilune altitude and
+    ``a = (R + h_p) / (1 - e)`` is derived (``bounds.a_km`` is ignored for the
+    draw); with ``argp_choices`` the argp dimension is mapped onto that discrete
+    set with equal measure.
     """
     if int(n_samples) < 1:
         raise ValueError("n_samples must be >= 1")
@@ -161,13 +206,24 @@ def sobol_element_samples(
 
     box = bounds.as_array()
     elements = box[:, 0][None, :] + unit * (box[:, 1] - box[:, 0])[None, :]
-    provenance = {
+    provenance: dict[str, Any] = {
         "sampling_method": method,
         "sobol_seed": int(seed),
         "sample_count": int(n_samples),
         "bounds": bounds.to_dict(),
         "note": base2_note,
     }
+    if hp_km is not None:
+        hp_lo, hp_hi = float(hp_km[0]), float(hp_km[1])
+        hp = hp_lo + unit[:, 0] * (hp_hi - hp_lo)
+        elements[:, 0] = (float(r_ref_km) + hp) / (1.0 - elements[:, 1])
+        provenance["hp_km"] = [hp_lo, hp_hi]
+        provenance["a_km_derived_range"] = [float(elements[:, 0].min()), float(elements[:, 0].max())]
+    if argp_choices is not None:
+        choices = np.asarray(argp_choices, dtype=np.float64)
+        idx = np.minimum((unit[:, 4] * choices.size).astype(int), choices.size - 1)
+        elements[:, 4] = choices[idx]
+        provenance["argp_choices_deg"] = [float(c) for c in choices]
     return np.ascontiguousarray(elements, dtype=np.float64), provenance
 
 
@@ -239,12 +295,24 @@ class FrozenSearchConfig:
     n_samples: int
     seed: int = 0
     sampling_method: str = "sobol_scrambled"
+    # Optional perilune-altitude sampling (km): ``a`` is derived as (R + h_p)/(1 - e)
+    # after ``e`` is drawn; ``bounds.a_km`` then only documents the derived range.
+    hp_km: tuple[float, float] | None = None
+    # Optional discrete argument-of-perilune set (deg) mapped onto the Sobol dimension.
+    argp_choices: tuple[float, ...] | None = None
+    # Stage-1 ranking: "v1" (e/h_peri envelope score) or "frozen" (classification score).
+    screening_score: str = SCREENING_SCORE_V1
 
     screening_duration_s: float = 7.0 * 86_400.0
     screening_output_dt_s: float = 3_600.0
     screening_output_mode: str = STAGE1_OUTPUT_SUMMARY_ONLY
     screening_summary_batch_size: int = 4_096
     stage1_history_top_k: int | None = None
+    # Stage-1 resumability: the shared batched loop checkpoints its integrator
+    # state at least this often (wall-clock seconds) and every finished
+    # screening block is persisted; ``0`` disables both. A killed run then
+    # resumes from the last boundary with bitwise-identical results.
+    screening_checkpoint_interval_s: float = 1_200.0
 
     top_k: int = 10
 
@@ -288,20 +356,45 @@ class FrozenSearchConfig:
             raise ValueError("screening_summary_batch_size must be >= 1")
         if self.stage1_history_top_k is not None and int(self.stage1_history_top_k) < 1:
             raise ValueError("stage1_history_top_k must be >= 1 when set")
+        if float(self.screening_checkpoint_interval_s) < 0.0:
+            raise ValueError("screening_checkpoint_interval_s must be >= 0")
         for name in ("screening_duration_s", "validation_duration_s"):
             if float(getattr(self, name)) <= 0.0:
                 raise ValueError(f"{name} must be > 0")
         if int(self.refine_top_n) > 0 and self.refinement is None:
             raise ValueError("refine_top_n > 0 requires a RefinementConfig")
+        if self.screening_score not in SCREENING_SCORES:
+            raise ValueError(f"screening_score must be one of {SCREENING_SCORES}, got {self.screening_score!r}")
+        if self.hp_km is not None:
+            lo, hi = float(self.hp_km[0]), float(self.hp_km[1])
+            if not (np.isfinite(lo) and np.isfinite(hi)) or lo > hi:
+                raise ValueError(f"hp_km must satisfy lo <= hi, got {self.hp_km}")
+        if self.argp_choices is not None and len(self.argp_choices) == 0:
+            raise ValueError("argp_choices must be non-empty when given")
 
     @property
     def strict_frame_required(self) -> bool:
         """True when identity/unresolved rotation frames must be rejected."""
         return bool(self.paper_safe) or bool(self.strict_frame)
 
+    def score_definition(self) -> str:
+        if self.screening_score == SCREENING_SCORE_FROZEN:
+            return FROZEN_SCREENING_SCORE_DEFINITION
+        from lunaris.batch.summary import SCORE_DEFINITION
+
+        return str(SCORE_DEFINITION)
+
     def classification_config(self) -> FrozenClassificationConfig:
         return FrozenClassificationConfig.for_mission_duration(
             float(self.validation_duration_s),
+            perilune_safety_min_m=float(self.perilune_safety_min_m),
+            eccentricity_upper_bound=float(self.eccentricity_upper_bound),
+        )
+
+    def screening_classification_config(self) -> FrozenClassificationConfig:
+        """Classification thresholds scaled to the (shorter) screening duration."""
+        return FrozenClassificationConfig.for_mission_duration(
+            float(self.screening_duration_s),
             perilune_safety_min_m=float(self.perilune_safety_min_m),
             eccentricity_upper_bound=float(self.eccentricity_upper_bound),
         )
@@ -461,6 +554,67 @@ def _element_history(t: np.ndarray, y: np.ndarray, mu: float, r_ref: float) -> d
     }
 
 
+def frozen_screening_scores(
+    t_out: np.ndarray,
+    Y_out: np.ndarray,
+    impact_flags: np.ndarray,
+    t_impact: np.ndarray,
+    guard_result: DomainGuardResult,
+    *,
+    mu: float,
+    r_ref: float,
+    cls_config: FrozenClassificationConfig,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Per-sample :func:`frozen_score` of a ``(T, N, 6)`` screening block.
+
+    Same metric set and thresholds as stage-3 classification (scaled to the
+    screening duration), so stage-1 ranks by the objective stage 3 judges.
+    Returns the raw scores (``+inf`` for impact / domain exit / escape /
+    unsafe perilune) and the extra per-sample metrics to persist.
+    """
+    from lunaris.common.math_utils import screening_orbital_elements_vec
+
+    t = np.asarray(t_out, dtype=np.float64)
+    Y = np.asarray(Y_out, dtype=np.float64)
+    n = int(Y.shape[1])
+    a_m, e, inc, argp = screening_orbital_elements_vec(Y[:, :, :3], Y[:, :, 3:], float(mu))
+    h_peri = a_m * (1.0 - e) - float(r_ref)
+    impacts = np.asarray(impact_flags, dtype=np.float64) > 0.5
+    t_imp = np.asarray(t_impact, dtype=np.float64)
+    scores = np.full(n, np.inf, dtype=np.float64)
+    extra = {key: np.full(n, np.nan, dtype=np.float64) for key in _OPTIONAL_SUMMARY_FIELDS}
+    for j in range(n):
+        exit_t = (
+            float(guard_result.t_domain_exit_s[j])
+            if bool(guard_result.domain_exit_flag[j])
+            else None
+        )
+        impact_t = float(t_imp[j]) if bool(impacts[j]) and np.isfinite(t_imp[j]) else None
+        valid = np.isfinite(e[:, j]) & np.isfinite(h_peri[:, j]) & np.isfinite(inc[:, j]) & np.isfinite(argp[:, j])
+        if impact_t is not None:
+            valid &= t <= impact_t
+        if int(np.count_nonzero(valid)) < int(cls_config.min_valid_samples):
+            continue
+        try:
+            metrics = compute_frozen_metrics(
+                t,
+                eccentricity=e[:, j],
+                inclination_rad=inc[:, j],
+                omega_rad=argp[:, j],
+                h_peri_m=h_peri[:, j],
+                impact_time_s=impact_t,
+                domain_exit_time_s=exit_t,
+                escape=bool(guard_result.escape_flag[j]),
+                valid_mask=valid,
+            )
+        except ValueError:
+            continue
+        scores[j] = float(frozen_score(metrics, cls_config))
+        for key in _OPTIONAL_SUMMARY_FIELDS:
+            extra[key][j] = float(getattr(metrics, key))
+    return scores, extra
+
+
 def _scalar_string(arrays: dict[str, np.ndarray], key: str, default: str = "") -> str:
     if key not in arrays:
         return default
@@ -502,6 +656,9 @@ def _summary_arrays(
             arrays[f"summary__{key}"] = _string_array(value)
         else:
             arrays[f"summary__{key}"] = np.asarray(value, dtype=np.float64)
+    for key in _OPTIONAL_SUMMARY_FIELDS:
+        if key in fields:
+            arrays[f"summary__{key}"] = np.asarray(fields[key], dtype=np.float64)
     arrays.update(
         {
             "summary__impact_flag": np.asarray(fields["impact_flag"], dtype=np.float64),
@@ -547,10 +704,14 @@ def _guard_from_stage1_summary(screening: dict[str, np.ndarray]) -> DomainGuardR
 
 
 def _summary_fields_from_stage1(screening: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    return {
+    fields = {
         key: np.asarray(screening[f"summary__{key}"])
         for key in _SCREENING_SUMMARY_FIELDS
     }
+    for key in _OPTIONAL_SUMMARY_FIELDS:
+        if f"summary__{key}" in screening:
+            fields[key] = np.asarray(screening[f"summary__{key}"])
+    return fields
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +721,9 @@ def _summary_fields_from_stage1(screening: dict[str, np.ndarray]) -> dict[str, n
 
 class FrozenSearchPipeline:
     """Staged, resumable surrogate-assisted frozen-orbit search (R04)."""
+
+    def _score_definition(self) -> str:
+        return self.config.score_definition()
 
     def __init__(
         self,
@@ -638,6 +802,9 @@ class FrozenSearchPipeline:
             self.config.n_samples,
             seed=self.config.seed,
             method=self.config.sampling_method,
+            hp_km=self.config.hp_km,
+            argp_choices=self.config.argp_choices,
+            r_ref_km=float(self.config.reference_radius_m) / 1_000.0,
         )
         np.savez_compressed(path, elements=elements)
         manifest["sampling_provenance"] = _json_safe(provenance)
@@ -655,8 +822,11 @@ class FrozenSearchPipeline:
                 return {key: np.asarray(data[key]) for key in data.files}
 
         if str(self.config.screening_output_mode) == STAGE1_OUTPUT_SUMMARY_ONLY:
-            arrays = self._stage1_screening_summary_only(elements)
+            arrays, checkpoint_info = self._stage1_screening_summary_only(
+                elements, resume=resume
+            )
             np.savez_compressed(path, **arrays)
+            self._discard_stage1_checkpoints()
             self._mark_stage(
                 manifest,
                 "stage1",
@@ -667,15 +837,15 @@ class FrozenSearchPipeline:
                 n_snapshots=int(arrays["t_out"].shape[0]),
                 n_histories=int(arrays["topk_sample_indices"].shape[0]),
                 batch_size=int(self.config.screening_summary_batch_size),
+                checkpoint=checkpoint_info,
             )
             return arrays
 
         Y0 = elements_to_states(elements, self.config.mu_m3s2)
-        t_out, Y_out, impact_flags, t_impact = self.screening.propagate(
-            Y0,
-            float(self.config.screening_duration_s),
-            float(self.config.screening_output_dt_s),
+        t_out, Y_out, impact_flags, t_impact = self._propagate_screening_block(
+            Y0, 0, int(Y0.shape[0])
         )
+        self._discard_stage1_checkpoints()
         arrays = {
             "schema_version": np.asarray(STAGE1_SCREENING_SCHEMA_VERSION, dtype=np.int64),
             "output_mode": np.asarray(STAGE1_OUTPUT_FULL),
@@ -693,8 +863,60 @@ class FrozenSearchPipeline:
             output_mode=STAGE1_OUTPUT_FULL,
             full_trajectory_stored=True,
             n_snapshots=int(arrays["t_out"].shape[0]),
+            checkpoint={
+                "interval_s": float(self.config.screening_checkpoint_interval_s),
+                "loop_checkpoint_supported": self._screening_supports_checkpoint(),
+            },
         )
         return arrays
+
+    # -- stage 1 resumability --------------------------------------------------
+
+    def _stage1_checkpoint_dir(self) -> Path:
+        return self.out_dir / STAGE1_CHECKPOINT_DIR
+
+    def _screening_supports_checkpoint(self) -> bool:
+        """True when the injected screening backend accepts ``checkpoint=``."""
+        try:
+            params = inspect.signature(self.screening.propagate).parameters
+        except (TypeError, ValueError):
+            return False
+        return "checkpoint" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+
+    def _propagate_screening_block(
+        self, Y0: np.ndarray, start: int, end: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Propagate samples ``[start, end)`` with loop checkpoints when enabled."""
+        interval_s = float(self.config.screening_checkpoint_interval_s)
+        if interval_s > 0.0 and self._screening_supports_checkpoint():
+            from lunaris.core.batch_checkpoint import BatchCheckpointSpec
+
+            spec = BatchCheckpointSpec(
+                directory=self._stage1_checkpoint_dir() / f"block_{start:07d}_{end:07d}",
+                interval_s=interval_s,
+            )
+            return self.screening.propagate(  # type: ignore[call-arg]
+                Y0,
+                float(self.config.screening_duration_s),
+                float(self.config.screening_output_dt_s),
+                checkpoint=spec,
+            )
+        return self.screening.propagate(
+            Y0,
+            float(self.config.screening_duration_s),
+            float(self.config.screening_output_dt_s),
+        )
+
+    def _stage1_block_partial_path(self, start: int, end: int) -> Path:
+        return self._stage1_checkpoint_dir() / f"block_{start:07d}_{end:07d}_summary.npz"
+
+    def _discard_stage1_checkpoints(self) -> None:
+        """Remove the stage-1 work directory once stage1_screening.npz exists."""
+        cdir = self._stage1_checkpoint_dir()
+        if cdir.exists():
+            shutil.rmtree(cdir, ignore_errors=True)
 
     def _stage1_history_top_k(self) -> int:
         configured = self.config.stage1_history_top_k
@@ -730,34 +952,46 @@ class FrozenSearchPipeline:
             impact_flags=impact_flags,
             t_impact_s=t_impact,
         )
-        raw_scores = np.asarray(summary["fields"]["score"], dtype=np.float64)
+        if self.config.screening_score == SCREENING_SCORE_FROZEN:
+            raw_scores, extra = frozen_screening_scores(
+                t_out,
+                Y_out,
+                impact_flags,
+                t_impact,
+                guard_result,
+                mu=float(self.config.mu_m3s2),
+                r_ref=float(self.config.reference_radius_m),
+                cls_config=self.config.screening_classification_config(),
+            )
+            summary["fields"].update(extra)
+            summary["fields"]["score"] = raw_scores
+            summary["score_definition"] = FROZEN_SCREENING_SCORE_DEFINITION
+        else:
+            raw_scores = np.asarray(summary["fields"]["score"], dtype=np.float64)
         scores = apply_domain_guard_to_scores(raw_scores, guard_result, self.config.guard)
         h_peri_min_km = np.asarray(summary["fields"]["h_peri_min_km"], dtype=np.float64)
         below_floor = h_peri_min_km < float(self.config.perilune_safety_min_m) / 1_000.0
         scores = np.where(below_floor, np.inf, scores)
         return summary, guard_result, raw_scores, scores
 
-    def _stage1_screening_summary_only(self, elements: np.ndarray) -> dict[str, np.ndarray]:
+    def _stage1_screening_summary_only(
+        self, elements: np.ndarray, *, resume: bool = True
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         from lunaris.batch.summary import TopKTrajectoryBuffer
 
         Y0 = elements_to_states(elements, self.config.mu_m3s2)
         n_samples = int(Y0.shape[0])
         batch_size = int(self.config.screening_summary_batch_size)
-        topk = TopKTrajectoryBuffer(self._stage1_history_top_k())
+        history_k = self._stage1_history_top_k()
+        topk = TopKTrajectoryBuffer(history_k)
         summary_parts: list[dict[str, np.ndarray]] = []
         t_ref: np.ndarray | None = None
+        persist_blocks = float(self.config.screening_checkpoint_interval_s) > 0.0
+        blocks_total = 0
+        blocks_restored = 0
 
-        for start in range(0, n_samples, batch_size):
-            end = min(start + batch_size, n_samples)
-            t_out, Y_out, impact_flags, t_impact = self.screening.propagate(
-                Y0[start:end],
-                float(self.config.screening_duration_s),
-                float(self.config.screening_output_dt_s),
-            )
-            t_arr = np.asarray(t_out, dtype=np.float64)
-            Y_arr = np.asarray(Y_out, dtype=np.float64)
-            impacts = np.asarray(impact_flags, dtype=np.float64)
-            t_imp = np.asarray(t_impact, dtype=np.float64)
+        def _check_grid(t_arr: np.ndarray) -> None:
+            nonlocal t_ref
             if t_ref is None:
                 t_ref = t_arr
             elif t_arr.shape != t_ref.shape or not np.allclose(t_arr, t_ref, rtol=0.0, atol=1e-9):
@@ -766,20 +1000,84 @@ class FrozenSearchPipeline:
                     "summary batches"
                 )
 
+        for start in range(0, n_samples, batch_size):
+            end = min(start + batch_size, n_samples)
+            blocks_total += 1
+            partial_path = self._stage1_block_partial_path(start, end)
+            if persist_blocks and resume and partial_path.exists():
+                # Finished block from an interrupted run: replay its summary
+                # rows and its block-local top-K histories, skip propagation.
+                with np.load(partial_path, allow_pickle=False) as data:
+                    part = {key: np.asarray(data[key]) for key in data.files}
+                _check_grid(np.asarray(part.pop("t_out"), dtype=np.float64))
+                idx = np.asarray(part.pop("topk_sample_indices"), dtype=np.int64)
+                sc = np.asarray(part.pop("topk_scores"), dtype=np.float64)
+                traj = np.asarray(part.pop("topk_Y_out"), dtype=np.float64)
+                fl = np.asarray(part.pop("topk_impact_flags"), dtype=np.float64)
+                ti = np.asarray(part.pop("topk_t_impact_s"), dtype=np.float64)
+                for j in range(int(idx.shape[0])):
+                    topk.offer_batch(
+                        global_start=int(idx[j]),
+                        scores=sc[j : j + 1],
+                        Y_batch=traj[:, j : j + 1, :],
+                        impact_flags=fl[j : j + 1],
+                        t_impact=ti[j : j + 1],
+                    )
+                summary_parts.append(part)
+                blocks_restored += 1
+                logger.info(
+                    "[FROZEN-SEARCH] stage 1: block [%d, %d) restored from %s",
+                    start, end, partial_path.name,
+                )
+                continue
+
+            t_out, Y_out, impact_flags, t_impact = self._propagate_screening_block(
+                Y0[start:end], start, end
+            )
+            t_arr = np.asarray(t_out, dtype=np.float64)
+            Y_arr = np.asarray(Y_out, dtype=np.float64)
+            impacts = np.asarray(impact_flags, dtype=np.float64)
+            t_imp = np.asarray(t_impact, dtype=np.float64)
+            _check_grid(t_arr)
+
             summary, guard_result, raw_scores, scores = self._screening_scores_for_block(
                 t_arr,
                 Y_arr,
                 impacts,
                 t_imp,
             )
-            summary_parts.append(
-                _summary_arrays(
-                    summary=summary,
-                    guard_result=guard_result,
-                    scores=scores,
-                    raw_scores=raw_scores,
-                )
+            part = _summary_arrays(
+                summary=summary,
+                guard_result=guard_result,
+                scores=scores,
+                raw_scores=raw_scores,
             )
+            summary_parts.append(part)
+            if persist_blocks:
+                # Block-local top-K (same K as the global buffer) is sufficient
+                # to rebuild the global top-K on resume.
+                local = TopKTrajectoryBuffer(history_k)
+                local.offer_batch(
+                    global_start=start,
+                    scores=scores,
+                    Y_batch=Y_arr,
+                    impact_flags=impacts,
+                    t_impact=t_imp,
+                )
+                local_arrays = local.entry_arrays()
+                partial_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = partial_path.with_name(partial_path.name + ".tmp.npz")
+                np.savez(
+                    tmp_path,
+                    t_out=t_arr,
+                    topk_sample_indices=local_arrays["sample_indices"],
+                    topk_scores=local_arrays["scores"],
+                    topk_Y_out=local.stacked_trajectories(int(t_arr.shape[0])),
+                    topk_impact_flags=local_arrays["impact_flags"],
+                    topk_t_impact_s=local_arrays["t_impact_s"],
+                    **part,
+                )
+                os.replace(tmp_path, partial_path)
             topk.offer_batch(
                 global_start=start,
                 scores=scores,
@@ -790,6 +1088,12 @@ class FrozenSearchPipeline:
 
         if t_ref is None:
             raise RuntimeError("stage-1 screening produced no batches")
+        checkpoint_info = {
+            "interval_s": float(self.config.screening_checkpoint_interval_s),
+            "loop_checkpoint_supported": self._screening_supports_checkpoint(),
+            "blocks_total": int(blocks_total),
+            "blocks_restored": int(blocks_restored),
+        }
 
         topk_arrays = topk.entry_arrays()
         arrays: dict[str, np.ndarray] = {
@@ -803,7 +1107,7 @@ class FrozenSearchPipeline:
             "topk_impact_flags": topk_arrays["impact_flags"],
             "topk_t_impact_s": topk_arrays["t_impact_s"],
         }
-        return arrays
+        return arrays, checkpoint_info
 
     # -- stage 2: guard + score + top-K ---------------------------------------
 
@@ -819,7 +1123,6 @@ class FrozenSearchPipeline:
         if resume and path.exists():
             return json.loads(path.read_text(encoding="utf-8"))["candidates"]
 
-        from lunaris.batch.summary import SCORE_DEFINITION
 
         if _stage1_is_summary_only(screening):
             fields = _summary_fields_from_stage1(screening)
@@ -866,6 +1169,9 @@ class FrozenSearchPipeline:
                 "domain_guard": guard_result.sample_metadata(j),
                 "validation_stage": "screened",
             }
+            for key in _OPTIONAL_SUMMARY_FIELDS:
+                if key in fields:
+                    record["summary"][key] = float(fields[key][j])
             candidates.append(record)
 
         # Strict-frame belt: screened candidates from an identity/unresolved
@@ -877,7 +1183,7 @@ class FrozenSearchPipeline:
         )
         payload = {
             "run_id": manifest["run_id"],
-            "score_definition": SCORE_DEFINITION,
+            "score_definition": self._score_definition(),
             "domain_guard": self.config.guard.to_dict(),
             "domain_exit_count": guard_result.n_exits,
             "candidates": _json_safe(candidates),
@@ -1027,7 +1333,6 @@ class FrozenSearchPipeline:
         if resume and path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
 
-        from lunaris.batch.summary import SCORE_DEFINITION
 
         refinements: list[dict[str, Any]] = []
         if int(self.config.refine_top_n) > 0 and self.config.refinement is not None:
@@ -1063,7 +1368,7 @@ class FrozenSearchPipeline:
         )
         report = build_family_report(
             run_id=manifest["run_id"],
-            score_definition=SCORE_DEFINITION,
+            score_definition=self._score_definition(),
             families=_json_safe(families),
         )
         report["refinements"] = _json_safe(refinements)

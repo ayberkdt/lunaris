@@ -65,6 +65,7 @@ from lunaris.common.frame_policy import (
 logger = logging.getLogger(__name__)
 import contextlib
 
+from lunaris.core.batch_checkpoint import BatchCheckpointSpec
 from lunaris.core.batched_fixed_step import (
     query_device_memory,
     resolve_vram_aware_chunk_size,
@@ -441,9 +442,14 @@ class TorchBatchPropagator:
         duration_s: float,
         output_dt_s: float,
         callback: Callable[[float], None] | None = None,
+        *,
+        checkpoint: BatchCheckpointSpec | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Propagate N samples simultaneously on CUDA.
+
+        ``checkpoint`` (optional) makes the shared loop persist/resume its
+        integrator state (see :mod:`lunaris.core.batch_checkpoint`).
 
         Returns
         -------
@@ -574,6 +580,7 @@ class TorchBatchPropagator:
             chunk_size=getattr(self, "_chunk_size", None),
             callback=callback,
             callback_granularity="snapshot",
+            checkpoint=checkpoint,
         )
 
         t_prop = float(result.metrics["propagation_elapsed_s"])

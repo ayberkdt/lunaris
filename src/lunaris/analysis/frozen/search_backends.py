@@ -228,7 +228,12 @@ class TorchSHScreeningPropagator:
         }
 
     def propagate(
-        self, Y0: np.ndarray, duration_s: float, output_dt_s: float
+        self,
+        Y0: np.ndarray,
+        duration_s: float,
+        output_dt_s: float,
+        *,
+        checkpoint: Any = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         n = int(np.asarray(Y0).shape[0])
         ones = np.ones(n, dtype=np.float64)
@@ -240,6 +245,7 @@ class TorchSHScreeningPropagator:
             ones * 1.3,
             float(duration_s),
             float(output_dt_s),
+            checkpoint=checkpoint,
         )
         return t_out, Y_out, impact_flags, t_impact
 
@@ -340,7 +346,12 @@ class STLRPSScreeningPropagator:
         }
 
     def propagate(
-        self, Y0: np.ndarray, duration_s: float, output_dt_s: float
+        self,
+        Y0: np.ndarray,
+        duration_s: float,
+        output_dt_s: float,
+        *,
+        checkpoint: Any = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         n = int(np.asarray(Y0).shape[0])
         ones = np.ones(n, dtype=np.float64)
@@ -352,6 +363,7 @@ class STLRPSScreeningPropagator:
             ones * 1.3,
             float(duration_s),
             float(output_dt_s),
+            checkpoint=checkpoint,
         )
         return t_out, Y_out, impact_flags, t_impact
 

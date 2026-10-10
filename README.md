@@ -327,6 +327,19 @@ lunaris-perturbation-budget --altitudes-km 50,100,300,1000 --sh-degrees 20,60,20
   --gravity-model path/to/lunar_gravity_model.tab --out-dir outputs/perturbation_budget/default
 ```
 
+`lunaris-frozen-search` runs a staged frozen-orbit campaign: element samples,
+a batched screening pass (ST-LRPS or torch SH, optionally with Sun/Earth
+third-body terms), a scored shortlist, classical-SH validation of that
+shortlist, and a family report. Each stage writes its own artifact
+(`stage0_samples.npz` … `stage4_families.json`). Screening saves a checkpoint
+every `--screening-checkpoint-minutes` (default 20), and `--resume` continues
+an interrupted run from the last checkpoint with bitwise-identical
+trajectories. Classification thresholds come from
+`FrozenClassificationConfig.for_mission_duration`. Every rate limit, including
+the inclination rate, is its envelope limit divided by the arc length. The
+labels describe one simulated arc. They are not a universal definition of a
+frozen orbit.
+
 Post-processing, reporting, and ensemble statistics/plotting live under
 `lunaris.analysis.*`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

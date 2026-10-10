@@ -33,6 +33,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid, build_fixed_step_grid_metadata
+from lunaris.core.batch_checkpoint import (
+    BatchCheckpointSpec,
+    BatchStepCheckpointer,
+    y0_digest,
+)
 from lunaris.core.torch_frame import (
     line_sphere_intersection,
     terrain_segment_intersection,
@@ -208,6 +213,7 @@ def run_batched_fixed_step(
     output_buffer: np.ndarray | None = None,
     callback: Callable[[float], None] | None = None,
     callback_granularity: str = "chunk",
+    checkpoint: BatchCheckpointSpec | None = None,
 ) -> BatchedFixedStepResult:
     """Propagate ``N`` samples with fixed-step RK4 + shared impact handling.
 
@@ -234,6 +240,13 @@ def run_batched_fixed_step(
         completed-sample fraction (classic-SH behavior); ``"snapshot"``
         invokes it after every snapshot with the completed-snapshot fraction
         (ST-LRPS behavior).
+    checkpoint :
+        Optional :class:`BatchCheckpointSpec`. When set, every chunk's
+        integrator state and the snapshots written so far are persisted to
+        ``checkpoint.directory`` at least every ``interval_s`` seconds and at
+        chunk completion; a later call with the same contract (same ``Y0``,
+        grid, dtype, impact settings) resumes from the saved boundary with
+        bitwise-identical results. Metrics carry ``checkpoint_*`` provenance.
     """
     torch = torch_mod
     N = int(Y0.shape[0])
@@ -271,6 +284,28 @@ def run_batched_fixed_step(
     chunk = int(chunk_size) if chunk_size and int(chunk_size) > 0 else N
     chunk = max(1, chunk)
     chunk_requested = chunk
+
+    ckpt: BatchStepCheckpointer | None = None
+    if checkpoint is not None:
+        ckpt = BatchStepCheckpointer(
+            checkpoint,
+            contract={
+                "n_samples": N,
+                "n_snapshots": int(n_snaps),
+                "steps_per_snapshot": int(steps_per_snap),
+                "effective_dt_s": float(dt_eff),
+                "duration_s": float(duration_s),
+                "dtype": str(dtype),
+                "y0_sha256": y0_digest(Y0),
+                "impact_r_m": float(impact_r_m),
+                "detect_impact": bool(detect_impact),
+                "terrain_impact": topo is not None,
+                "impact_alt_m": float(impact_alt_m),
+            },
+            torch_mod=torch,
+            device=device,
+            dtype=dtype,
+        )
 
     total_raw_state_steps = 0
     total_active_state_steps = 0
@@ -310,6 +345,7 @@ def run_batched_fixed_step(
                 callback=callback if callback_granularity == "snapshot" else None,
                 snap_fraction_base=float(a) / float(max(N, 1)),
                 snap_fraction_span=float(chunk_n) / float(max(N, 1)),
+                ckpt=ckpt,
             )
         except Exception as exc:
             if not _is_cuda_oom(torch, exc) or chunk <= 1:
@@ -362,6 +398,8 @@ def run_batched_fixed_step(
         "chunk_size_effective": int(chunk),
         "output_buffer_reused": bool(output_buffer_reused),
         "oom_recoveries": oom_recoveries,
+        "checkpoint_enabled": ckpt is not None,
+        **(ckpt.metrics if ckpt is not None else {}),
     }
     return BatchedFixedStepResult(
         t_out=t_out,
@@ -397,6 +435,7 @@ def _propagate_chunk(
     callback: Callable[[float], None] | None,
     snap_fraction_base: float,
     snap_fraction_span: float,
+    ckpt: BatchStepCheckpointer | None = None,
 ) -> int:
     """Propagate one chunk of samples through the shared RK4/impact loop.
 
@@ -444,6 +483,46 @@ def _propagate_chunk(
 
     t_curr = 0.0
     global_step = 0
+    snap_start = 0
+
+    # Resume: restore the integrator state saved at a snapshot boundary. The
+    # tensors round-trip through host arrays in their exact device dtype and
+    # ``t_curr`` is the saved float, so the continued RK4 arithmetic is
+    # identical to an uninterrupted run. A chunk saved as complete is filled
+    # from disk and skipped entirely.
+    if ckpt is not None:
+        record = ckpt.load_chunk(a, b)
+        if record is not None:
+            state = ckpt.to_device(record.state, dtype=dtype)
+            alive = ckpt.to_device(record.alive, dtype=torch.bool)
+            impact_step = ckpt.to_device(record.impact_step, dtype=torch.int64)
+            impact_time = ckpt.to_device(record.impact_time, dtype=dtype)
+            impact_pos = ckpt.to_device(record.impact_pos, dtype=dtype)
+            t_curr = float(record.t_curr)
+            global_step = int(record.global_step)
+            snap_start = int(record.snap_done)
+            active_steps_acc = torch.as_tensor(
+                int(record.active_steps), dtype=torch.int64, device=device
+            )
+            Y_out[: snap_start + 1, a:b, :] = record.snapshots
+            if record.complete or snap_start >= n_snaps:
+                _resolve_chunk_impacts(
+                    a, impact_step, impact_time, impact_pos,
+                    impact_flags, t_impact, impact_positions,
+                )
+                if callback is not None:
+                    callback(snap_fraction_base + snap_fraction_span)
+                return int(active_steps_acc.item())
+
+    def _save(snap_done: int, *, complete: bool) -> None:
+        assert ckpt is not None
+        ckpt.save_chunk(
+            a, b,
+            state=state, alive=alive, impact_step=impact_step,
+            impact_time=impact_time, impact_pos=impact_pos,
+            t_curr=t_curr, global_step=global_step, snap_done=snap_done,
+            active_steps=int(active_steps_acc.item()), Y_out=Y_out, complete=complete,
+        )
     # R08 — alive-sample compaction. The alive set is compacted once per
     # snapshot interval (one bounded host sync per snapshot for the gather
     # size); inside the interval the loop advances ONLY the compacted subset
@@ -452,7 +531,7 @@ def _propagate_chunk(
     # every provider are row-independent, so subsetting the sample axis is
     # bitwise-neutral; impacted samples stay frozen/terminal in the output.
     with torch.no_grad():
-        for snap_idx in range(n_snaps):
+        for snap_idx in range(snap_start, n_snaps):
             alive_idx = torch.nonzero(alive, as_tuple=False).squeeze(1)
             m = int(alive_idx.numel())
             full = m == n
@@ -540,10 +619,32 @@ def _propagate_chunk(
                     snap_fraction_base
                     + snap_fraction_span * (float(snap_idx + 1) / float(max(n_snaps, 1)))
                 )
+            if ckpt is not None and snap_idx + 1 < n_snaps and ckpt.due():
+                _save(snap_idx + 1, complete=False)
+
+    if ckpt is not None:
+        _save(n_snaps, complete=True)
 
     # Single host sync per chunk: resolve impact bookkeeping. The crossing
     # time/position were interpolated on device, so they resolve the exact
     # sub-step crossing instead of the coarse fixed-step endpoint.
+    _resolve_chunk_impacts(
+        a, impact_step, impact_time, impact_pos, impact_flags, t_impact, impact_positions
+    )
+
+    return int(active_steps_acc.item())
+
+
+def _resolve_chunk_impacts(
+    a: int,
+    impact_step: Tensor,
+    impact_time: Tensor,
+    impact_pos: Tensor,
+    impact_flags: np.ndarray,
+    t_impact: np.ndarray,
+    impact_positions: np.ndarray,
+) -> None:
+    """Copy the device impact bookkeeping of chunk ``[a, ...)`` into host arrays."""
     impact_step_host = impact_step.detach().cpu().numpy()
     impact_time_host = impact_time.detach().cpu().numpy().astype(np.float64)
     impact_pos_host = impact_pos.detach().cpu().numpy().astype(np.float64)
@@ -553,8 +654,6 @@ def _propagate_chunk(
             impact_flags[gi] = 1.0
             t_impact[gi] = float(impact_time_host[li])
             impact_positions[gi] = impact_pos_host[li]
-
-    return int(active_steps_acc.item())
 
 
 __all__ = [

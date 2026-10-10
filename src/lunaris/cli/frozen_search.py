@@ -66,6 +66,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="ST-LRPS screening tensor dtype",
     )
     parser.add_argument(
+        "--hp-km",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("LO", "HI"),
+        help="sample perilune altitude [km] instead of --a-km; a = (R + h_p)/(1 - e) is derived",
+    )
+    parser.add_argument(
+        "--argp-deg",
+        type=float,
+        nargs=2,
+        default=(0.0, 360.0),
+        metavar=("LO", "HI"),
+        help="argument-of-perilune bounds [deg] (default 0 360)",
+    )
+    parser.add_argument(
+        "--argp-choices",
+        type=str,
+        default=None,
+        help="comma-separated discrete argp values [deg], e.g. 90,270 (overrides --argp-deg)",
+    )
+    parser.add_argument(
+        "--screening-score",
+        choices=("v1", "frozen"),
+        default="v1",
+        help=(
+            "stage-1 ranking: v1 = e/h_peri envelope score; frozen = the stage-3 "
+            "classification score (omega span/rate, inclination drift, h-k loop drift "
+            "included) scaled to the screening duration"
+        ),
+    )
+    parser.add_argument(
+        "--st-lrps-allow-extrapolation",
+        action="store_true",
+        default=False,
+        help=(
+            "let the ST-LRPS screening propagator extrapolate outside its trained "
+            "altitude envelope instead of aborting the whole batch; samples that leave "
+            "the --domain-alt-min/max window are still invalidated by the domain guard"
+        ),
+    )
+    parser.add_argument(
         "--screening-chunk-size",
         type=int,
         default=None,
@@ -132,6 +174,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="stage-4 Nelder-Mead refinement for the top N candidates (0 = off)")
     parser.add_argument("--refine-max-iterations", type=int, default=60)
     parser.add_argument("--no-figures", action="store_true")
+    parser.add_argument(
+        "--screening-checkpoint-minutes",
+        type=float,
+        default=20.0,
+        help=(
+            "stage-1 resumability: checkpoint the batched integrator state at least "
+            "this often and persist every finished screening block, so --resume "
+            "continues a killed run from the last boundary (0 = off)"
+        ),
+    )
     parser.add_argument("--resume", action="store_true", default=True)
     parser.add_argument("--no-resume", dest="resume", action="store_false")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -191,10 +243,29 @@ def main(argv: list[str] | None = None) -> int:
         print("[FATAL] ST-LRPS screening requires a CUDA device", file=sys.stderr)
         return 2
 
+    argp_choices: tuple[float, ...] | None = None
+    if args.argp_choices:
+        argp_choices = tuple(float(v) for v in str(args.argp_choices).split(",") if v.strip())
+        if not argp_choices:
+            print("[FATAL] --argp-choices needs at least one value", file=sys.stderr)
+            return 2
+    argp_bounds = (
+        (min(argp_choices), max(argp_choices)) if argp_choices else tuple(args.argp_deg)
+    )
+    hp_km: tuple[float, float] | None = tuple(args.hp_km) if args.hp_km is not None else None
+    if hp_km is not None:
+        r_ref_km = 1_737.4
+        a_bounds = (
+            (r_ref_km + hp_km[0]) / (1.0 - float(args.e[0])),
+            (r_ref_km + hp_km[1]) / (1.0 - float(args.e[1])),
+        )
+    else:
+        a_bounds = tuple(args.a_km)
     bounds = ElementBounds(
-        a_km=tuple(args.a_km),
+        a_km=a_bounds,
         e=tuple(args.e),
         i_deg=tuple(args.i_deg),
+        argp_deg=argp_bounds,
     )
     guard = FrozenSearchDomainGuard(
         altitude_min_km=float(args.domain_alt_min_km),
@@ -219,11 +290,15 @@ def main(argv: list[str] | None = None) -> int:
         n_samples=int(args.n_samples),
         seed=int(args.seed),
         sampling_method=str(args.sampling_method),
+        hp_km=hp_km,
+        argp_choices=argp_choices,
+        screening_score=str(args.screening_score),
         screening_duration_s=float(args.screening_days) * 86_400.0,
         screening_output_dt_s=float(args.screening_output_dt_s),
         screening_output_mode=str(args.screening_output_mode),
         screening_summary_batch_size=int(args.screening_summary_batch_size),
         stage1_history_top_k=args.stage1_history_top_k,
+        screening_checkpoint_interval_s=float(args.screening_checkpoint_minutes) * 60.0,
         top_k=int(args.top_k),
         validation_duration_s=float(args.validation_days) * 86_400.0,
         validation_output_dt_s=float(args.validation_output_dt_s),
@@ -280,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                 ephem_manager=ephem_manager,
                 frame_mode=FRAME_MODE_MOON_FIXED_EPHEMERIS,
                 third_body=screening_third_body,
-                strict_domain=True,
+                strict_domain=not bool(args.st_lrps_allow_extrapolation),
             )
         else:
             screening = TorchSHScreeningPropagator(

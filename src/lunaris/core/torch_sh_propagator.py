@@ -61,6 +61,7 @@ from lunaris.common.frame_policy import (
 
 logger = logging.getLogger(__name__)
 from lunaris.core.backend_capabilities import unsupported_force_models
+from lunaris.core.batch_checkpoint import BatchCheckpointSpec
 from lunaris.core.batched_fixed_step import (
     query_device_memory,
     resolve_vram_aware_chunk_size,
@@ -439,11 +440,15 @@ class TorchSHBatchPropagator:
         duration_s: float,
         output_dt_s: float,
         callback: Callable[[float], None] | None = None,
+        *,
+        checkpoint: BatchCheckpointSpec | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Propagate ``N`` samples with fixed-step RK4 + per-stage SH gravity.
 
         Returns ``(t_out, Y_out, impact_flags, t_impact)`` with ``Y_out`` shaped
-        ``(n_snaps + 1, N, 6)`` (the initial state is snapshot 0).
+        ``(n_snaps + 1, N, 6)`` (the initial state is snapshot 0). ``checkpoint``
+        (optional) makes the shared loop persist/resume its integrator state
+        (see :mod:`lunaris.core.batch_checkpoint`).
         """
         N = int(Y0.shape[0])
         dt = float(self._dt)
@@ -491,6 +496,7 @@ class TorchSHBatchPropagator:
             chunk_size=chunk,
             callback=callback,
             callback_granularity="chunk",
+            checkpoint=checkpoint,
         )
         t_out = result.t_out
         Y_out = result.Y_out
