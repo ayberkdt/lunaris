@@ -46,6 +46,17 @@ def test_statistics_exclude_invalid_samples_before_impact_filtering() -> None:
     np.testing.assert_allclose(impacts.lon_deg, [90.0])
 
 
+def test_survived_only_statistics_do_not_mutate_the_result_valid_mask() -> None:
+    result = _result()
+    result.impact_mask[:] = [0.0, 0.0, 1.0]
+    result.valid_mask[:] = [True, True, True]
+    before = result.valid_mask.copy()
+
+    compute_ensemble_statistics(result, use_survived_only=True)
+
+    np.testing.assert_array_equal(result.valid_mask, before)
+
+
 def test_statistics_fail_with_fewer_than_two_valid_samples() -> None:
     result = _result()
     result.valid_mask[:] = [1.0, 0.0, 0.0]

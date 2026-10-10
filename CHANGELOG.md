@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: `compute_ensemble_statistics(use_survived_only=True)` no longer overwrites `result.valid_mask`.** It used `&=` on the array that `valid_sample_mask()` returns, which is the stored mask itself. Impacted samples then stayed marked invalid for every later analysis of the same result.
 - **Fixed: gravity-reference hash pins on Windows checkouts.** `.gitattributes` now pins `validation/gravity_reference/generators/**/*.py` to LF, so the rotating-validation runner hashes match the evidence matrix on a CRLF checkout. The `synthetic_degree4` and `grail_degree32` manifests carried stale `generator.script_sha256` values. Rerunning both generators reproduced their data and coefficient files byte-for-byte, so their regenerated manifests are committed. The only change is the script hash. `tests/test_gravity_reference_generator_hashes.py` gates every manifest.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
