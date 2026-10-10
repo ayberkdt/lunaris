@@ -287,17 +287,22 @@ def _get_legendre_tables(
 LOG_UNDERFLOW_LIMIT = -690.7755278982137  # ln(1e-300)
 
 
-@njit(cache=True)
+# Helpers shared by the strict serial kernels and the fastmath kernels
+# (_compute_sh_acceleration_parallel, sh_potential_accel_batch_serial) set
+# fastmath=False explicitly: Numba otherwise inherits the flags of whichever
+# caller compiles a helper first (and caches that build on disk), which made
+# the serial RHS drift by up to 11 ulp and could cancel the Kahan compensation.
+@njit(cache=True, fastmath=False)
 def _imin(a: int, b: int) -> int:
     return a if a < b else b
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _imax(a: int, b: int) -> int:
     return a if a > b else b
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _compute_stable_m_limit(cos_phi: float, max_degree: int) -> int:
     """
     Computes the maximum order 'm' where cos(phi)^m stays above float64 floor.
@@ -327,7 +332,7 @@ def _compute_stable_m_limit(cos_phi: float, max_degree: int) -> int:
     return int(clamp(m_suggested, 0, max_degree))
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _fill_longitude_trig_tables(
     cos_lon: float,
     sin_lon: float,
@@ -361,7 +366,7 @@ def _fill_longitude_trig_tables(
         sin_m_lon[m] = sin_prev * cos_lon + cos_prev * sin_lon
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _apply_legendre_normalization(
     p_matrix: np.ndarray,
     dp_matrix: np.ndarray,
@@ -395,7 +400,7 @@ def _apply_legendre_normalization(
             dp_row[m] *= scale_m_table[m]
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _compute_legendre_polynomials_inplace(
     sin_phi: float,
     cos_phi: float,
@@ -490,7 +495,7 @@ def _compute_legendre_polynomials_inplace(
 # 3.               ACCELERATION FUNCTIONS (SERIAL / PARALLEL)
 # =============================================================================
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _determine_effective_degree(c_coeffs: np.ndarray, s_coeffs: np.ndarray) -> int:
     """
     Determines the maximum safe degree (N) based on the coefficient array dimensions.
@@ -510,7 +515,7 @@ def _determine_effective_degree(c_coeffs: np.ndarray, s_coeffs: np.ndarray) -> i
     return _imax(0, max_safe_degree)
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _transform_cartesian_to_spherical_basis(x: float, y: float, z: float):
     """
     Transforms Cartesian (x, y, z) to Spherical components and calculates
@@ -567,7 +572,7 @@ def _transform_cartesian_to_spherical_basis(x: float, y: float, z: float):
             u_phi_x, u_phi_y, u_phi_z)
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _compute_pole_safe_inv_rho_sq(rho_sq: float, _r: float) -> float:
     """
     Computes 1/rho^2 safely near the planetary poles.
@@ -585,7 +590,7 @@ def _compute_pole_safe_inv_rho_sq(rho_sq: float, _r: float) -> float:
     return 1.0 / (rho_sq + EPS_1E24)
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _convert_spherical_gradients_to_cartesian(
     x: float, y: float,
     r: float, inv_r: float, rho_sq: float,
@@ -614,7 +619,7 @@ def _convert_spherical_gradients_to_cartesian(
     return ax, ay, az
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _kahan_sum_step(running_sum: float, error_compensation: float, value: float):
     """
     Performs one step of Kahan Summation to minimize floating-point errors.
@@ -638,7 +643,7 @@ def _kahan_sum_step(running_sum: float, error_compensation: float, value: float)
     return new_sum, new_error
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _axis_transverse_m1(
     z_positive: bool,
     inv_r: float, inv_r_sq: float,
@@ -685,7 +690,7 @@ def _axis_transverse_m1(
     return ax, ay
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _prepare_evaluation_tables(
     sin_phi: float, cos_phi: float,
     cos_lon: float, sin_lon: float,
@@ -727,7 +732,7 @@ def _prepare_evaluation_tables(
     return stable_m_limit
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _prepare_simulation_preamble(
     x: float, y: float, z: float,
     requested_degree: int,
@@ -893,7 +898,7 @@ def _compute_sh_acceleration_serial(
 
 # ------------------------ PARALLEL (race-free reduction) ------------------------
 
-@njit(cache=True)
+@njit(cache=True, fastmath=False)
 def _get_optimal_block_size(max_degree: int) -> int:
     """Heuristic to determine how many degrees each thread should process."""
     return 16 if max_degree > 256 else 8

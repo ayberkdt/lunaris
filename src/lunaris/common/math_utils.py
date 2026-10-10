@@ -107,8 +107,9 @@ def norm3(ax: float, ay: float, az: float) -> float:
     return math.sqrt(ax*ax + ay*ay + az*az)
 
 
-# Used by: math_utils, surface_effects, dynamics
-@njit(cache=True)
+# Used by: math_utils, surface_effects, dynamics. fastmath=False is explicit so
+# a fastmath caller compiling it first cannot hand its flags to strict callers.
+@njit(cache=True, fastmath=False)
 def clamp(x: float, lo: float, hi: float) -> float:
     """
     Clamp a scalar to a closed interval.
