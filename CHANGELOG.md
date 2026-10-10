@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Fixed: the frozen-orbit inclination-rate limits now scale with the arc
+  length.** `FrozenClassificationConfig.for_mission_duration` derived every
+  rate limit as envelope / duration except the inclination rate, which stayed
+  fixed at `1e-10` / `1e-9` rad/s (strict / quasi). For a 60-day arc the fixed
+  quasi limit was 1.8 deg/yr, against 12.2 deg/yr from the 2 deg envelope.
+  The factory now also accepts `strict_inclination_range_max_rad` /
+  `quasi_inclination_range_max_rad`. The screening score does not use this
+  limit, so shortlists and scores are unchanged and only labels move. A
+  full-force 4096-sample rerun reproduced an earlier campaign's shortlist,
+  scores and validation metrics exactly and labelled 7 of 16 orbits
+  quasi-frozen (previously 0).
+
 - **Added: resumable batch propagation (`lunaris.core.batch_checkpoint`) and
   stage-1 resumability for `lunaris-frozen-search`.** A long ensemble
   screening run is a single `run_batched_fixed_step` call; when the process
