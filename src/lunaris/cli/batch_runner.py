@@ -82,6 +82,36 @@ def _resolve_initial_state_mu(cfg: SimConfig) -> float:
     return float(MU_MOON)
 
 
+def _resolve_batch_output_dt(cfg: SimConfig) -> SimConfig:
+    """Turn an unset ``output_dt_s`` (``--samples-per-period``) into a spacing.
+
+    The batch engine does not derive a spacing from ``samples_per_period``, so
+    the runner applies the single run's rule (``resolve_time_grid_plan``): one
+    osculating period of the nominal state over ``samples_per_period``, with the
+    GM of the gravity source.
+    """
+    if cfg.time.output_dt_s is not None:
+        return cfg
+    from dataclasses import replace
+
+    from lunaris.common.state_vector import normalize_cartesian_state
+
+    y0 = normalize_cartesian_state(cfg.initial_state, allow_mass=True, name="Initial state")
+    mu = _resolve_initial_state_mu(cfg)
+    r0 = float(math.sqrt(float(y0[0] ** 2 + y0[1] ** 2 + y0[2] ** 2)))
+    v0 = float(math.sqrt(float(y0[3] ** 2 + y0[4] ** 2 + y0[5] ** 2)))
+    denom = (2.0 / r0) - (v0 * v0 / mu) if r0 > 0.0 and mu > 0.0 else math.nan
+    if not (math.isfinite(denom) and denom > 0.0):
+        raise ValueError(
+            "--samples-per-period needs a bound nominal orbit to take the period "
+            "from; set --output-dt-s instead."
+        )
+    a = 1.0 / denom
+    period_s = 2.0 * math.pi * math.sqrt((a * a * a) / mu)
+    output_dt_s = float(period_s) / float(max(1, int(cfg.time.samples_per_period)))
+    return replace_sim_config(cfg, time=replace(cfg.time, output_dt_s=output_dt_s))
+
+
 # =============================================================================
 # 1.                            ARGUMENT PARSER
 # =============================================================================
@@ -103,8 +133,11 @@ def _build_parser() -> argparse.ArgumentParser:
     dur = g.add_mutually_exclusive_group()
     dur.add_argument("--days",  type=float, help="Simulation duration [days]")
     dur.add_argument("--hours", type=float, help="Simulation duration [hours]")
-    g.add_argument("--output-dt-s",        type=float, help="Output spacing [s]")
-    g.add_argument("--samples-per-period", type=int)
+    out_grid = g.add_mutually_exclusive_group()
+    out_grid.add_argument("--output-dt-s",        type=float, help="Output spacing [s]")
+    out_grid.add_argument("--samples-per-period", type=int,
+                          help="Output samples per osculating period of the nominal orbit "
+                               "(not with --output-dt-s)")
 
     # ---- Orbit init ---------------------------------------------------------
     g = p.add_argument_group("Orbit Init (choose one)")
@@ -479,6 +512,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as exc:
             print(f"[BATCH][FATAL] Orbit init failed: {exc}", flush=True)
             return 1
+
+    try:
+        cfg = _resolve_batch_output_dt(cfg)
+    except Exception as exc:
+        print(f"[BATCH][FATAL] Output grid resolution failed: {exc}", flush=True)
+        return 1
 
     # ---- Build BatchPropagationConfig ---------------------------------------------
     try:
