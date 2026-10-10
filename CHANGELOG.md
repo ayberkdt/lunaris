@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Added: ST-LRPS direction-accuracy training options.** The changes are:
+  - A relative acceleration loss.
+  - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.
+  - A worse-than-zero validation metric.
+  - An optional radial output envelope `rho^(N_base+1)`, recorded in the architecture fingerprint.
+  - Checkpoint-selection plumbing for the new terms.
+
+  Tests are in `tests/test_st_lrps_direction_fixes.py`.
+- **Fixed: batch archive metadata merge.** The ST-LRPS artifact block and the backend plan share keys such as `runtime_model_kind`. Splatting both into `write_metadata(**...)` raised `TypeError` after a completed surrogate propagation. `merge_archive_metadata` now merges the blocks, the later block wins, and differing duplicates are logged. Tests are in `tests/test_batch_archive_metadata_merge.py`.
+- **Added: `formal/`.** A Lean 4 + Mathlib project that states and proves ST-LRPS design properties. The local Mathlib build cache is git-ignored.
+
 - **Fixed: the frozen-orbit inclination-rate limits now scale with the arc
   length.** `FrozenClassificationConfig.for_mission_duration` derived every
   rate limit as envelope / duration except the inclination rate, which stayed

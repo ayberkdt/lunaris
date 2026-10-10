@@ -790,6 +790,25 @@ def _build_eval_warnings(sm_res: dict[str, Any], recon_report: dict[str, Any]) -
     return warnings
 
 
+def vector_cosine_and_angle_deg(
+    a_pred: np.ndarray, a_true: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Cosine similarity and angle (deg) between residual acceleration vectors.
+
+    Scale-free: norms are taken in float64 and the denominator is floored only
+    at the float64 tiny value. An absolute floor such as 1e-18 on the product
+    of norms inflates the angle for any residual below ~1e-9 m/s^2, which is
+    exactly the regime a well-behaved surrogate must be judged in.
+    """
+    p = np.asarray(a_pred, dtype=np.float64)
+    t = np.asarray(a_true, dtype=np.float64)
+    dot = np.sum(p * t, axis=1)
+    denom = np.linalg.norm(p, axis=1) * np.linalg.norm(t, axis=1)
+    cossim = np.where(denom > 0.0, dot / np.maximum(denom, np.finfo(np.float64).tiny), 1.0)
+    cossim = np.clip(cossim, -1.0, 1.0)
+    return cossim, np.degrees(np.arccos(cossim))
+
+
 def altitude_km(x: np.ndarray, r_ref_m: float) -> np.ndarray:
     r = np.linalg.norm(x, axis=1)
     return (r - float(r_ref_m)) / 1000.0
@@ -1417,6 +1436,27 @@ def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec
     except Exception as _ang_csv_err:
         print(f"[warn] angular_error_by_altitude.csv failed: {_ang_csv_err}")
 
+    # --- worse_than_zero_by_altitude.csv ---
+    # Fraction of points where norm(a_pred - a_true) > norm(a_true): the
+    # prediction is worse than predicting no residual. rel_* are unfloored
+    # ratios norm(err)/norm(a_true), so they explode exactly where WTZ does.
+    try:
+        _wtz_rows = ["alt_km_lo,alt_km_hi,n,wtz_frac,rel_mean,rel_p50,rel_p90,mean_a_true_norm,rmse_err"]
+        _err_flat = a_vec_err_norm_np.reshape(-1)
+        _true_flat = a_true_norms.reshape(-1)
+        _wtz_flat = _err_flat > _true_flat
+        _rel_flat = _err_flat / np.maximum(_true_flat, 1e-30)
+        for _w0, _w1, _wmask, _n_w in _iter_altitude_bins(alt_km_all.reshape(-1), float(alt_bin_km)):
+            _wtz_rows.append(
+                f"{_w0},{_w1},{_n_w},{float(np.mean(_wtz_flat[_wmask]))},"
+                f"{float(np.mean(_rel_flat[_wmask]))},{float(np.percentile(_rel_flat[_wmask], 50))},"
+                f"{float(np.percentile(_rel_flat[_wmask], 90))},{float(np.mean(_true_flat[_wmask]))},"
+                f"{float(np.sqrt(np.mean(_err_flat[_wmask] ** 2)))}"
+            )
+        (out_dir / "worse_than_zero_by_altitude.csv").write_text("\n".join(_wtz_rows), encoding="utf-8")
+    except Exception as _wtz_csv_err:
+        print(f"[warn] worse_than_zero_by_altitude.csv failed: {_wtz_csv_err}")
+
     # --- angular_error_by_accel_norm.csv ---
     try:
         _norm_csv_rows = ["bin_label,norm_lo,norm_hi,N,mean_deg,median_deg,p90_deg,p99_deg"]
@@ -1725,6 +1765,7 @@ def _finalize_evaluation_report(
             f"u_rmse={metrics.get('U', {}).get('rmse')}",
             f"a_vec_rmse={metrics.get('residual_vector_metrics', {}).get('rmse')}",
             f"ang_mean_deg={metrics.get('residual_angular_metrics', {}).get('mean_deg')}",
+            f"worse_than_zero_frac={metrics.get('residual_vector_metrics', {}).get('worse_than_zero_frac')}",
         ],
     )
     write_eval_manifest(
@@ -2155,14 +2196,8 @@ def evaluate(
         a_true_mag = np.linalg.norm(a_true, axis=1, keepdims=True)
         a_pred_mag = np.linalg.norm(a_pred, axis=1, keepdims=True)
 
-        # ---- NEW: vectorial angular error ----
-        eps = 1e-18
-        dot = np.sum(a_pred * a_true, axis=1)
-        na_p = np.linalg.norm(a_pred, axis=1)
-        na_t = np.linalg.norm(a_true, axis=1)
-        denom = np.maximum(na_p * na_t, eps)
-        cossim = np.clip(dot / denom, -1.0, 1.0)
-        ang_deg = np.degrees(np.arccos(cossim))  # [0, 180]
+        # ---- vectorial angular error (scale-free) ----
+        cossim, ang_deg = vector_cosine_and_angle_deg(a_pred, a_true)
 
         ang_sum_deg += float(np.sum(ang_deg))
         ang_max_deg = max(ang_max_deg, float(np.max(ang_deg)) if ang_deg.size else 0.0)
@@ -2637,6 +2672,10 @@ def evaluate(
     _mean_ang_full = float(ang_sum_deg / max(1, ang_count))
     _a_true_norm_clip = np.maximum(np.linalg.norm(a_true_vec_np, axis=1), 1e-30)
     _rel_a_err = a_vec_err_norm_np / _a_true_norm_clip
+    # Worse-than-zero: the prediction is further from the truth than predicting
+    # no residual at all. A wrongly-directed residual is worse than none.
+    _wtz_mask = a_vec_err_norm_np > a_true_norms
+    _wtz_frac = float(np.mean(_wtz_mask))
     _a_err_percentiles = {
         "p50": float(np.percentile(a_vec_err_norm_np, 50)),
         "p90": float(np.percentile(a_vec_err_norm_np, 90)),
@@ -2661,7 +2700,10 @@ def evaluate(
             "rel_mean_pct": 100.0 * float(np.mean(_rel_a_err)),
             "rel_median": float(np.median(_rel_a_err)),
             "percentiles": _a_err_percentiles,
-            "description": "norm(a_pred - a_true): captures magnitude AND direction.",
+            "worse_than_zero_frac": _wtz_frac,
+            "worse_than_zero_n": int(np.sum(_wtz_mask)),
+            "description": "norm(a_pred - a_true): captures magnitude AND direction. "
+                           "worse_than_zero_frac = fraction with norm(a_pred - a_true) > norm(a_true).",
         },
         "residual_magnitude_metrics": {
             "mae": _mag_mae,
@@ -2964,6 +3006,7 @@ def _summary_row_from_report(split: str, report_path: Path, alt_bin_km: float) -
         "max_a_error": pct.get("max", avec.get("linf")),
         "mean_relative_a_error": (float(rel_mean) / 100.0 if rel_mean is not None else None),
         "median_relative_a_error": rel_median,
+        "worse_than_zero_frac": avec.get("worse_than_zero_frac"),
         "angular_mean_deg": angular_all.get("mean_deg", _safe_get(metrics, "residual_angular_metrics", "mean_deg")),
         "angular_p90_deg": angular_all.get("p90_deg"),
         "angular_p95_deg": angular_all.get("p95_deg"),

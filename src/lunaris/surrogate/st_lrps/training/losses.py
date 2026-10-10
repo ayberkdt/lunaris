@@ -633,6 +633,8 @@ class SobolevLoss(nn.Module):
         use_radial_cross_loss: bool = False,
         radial_lambda: float = 0.0,
         cross_lambda: float = 0.0,
+        relative_lambda: float = 0.0,
+        relative_floor_abs: float = 1e-8,
         apply_laplacian: bool = False,
         laplacian_lambda: float = 0.0,
         laplacian_subset_size: int = 512,
@@ -689,6 +691,30 @@ class SobolevLoss(nn.Module):
             altitude_max_km=altitude_max_km,
         )
 
+        # Relative acceleration error: supervises scale AND direction on every
+        # sample, including the tiny residuals that are invisible to the
+        # absolute mse_a. rel_sq > 1 means the prediction is worse than
+        # predicting no residual at all; wtz_frac counts exactly those samples.
+        accel_err_phys_all = delta_a_pred_phys - delta_a_true
+        relative_lambda = float(max(0.0, relative_lambda))
+        rel_sq, rel_err_sample, wtz_sample = relative_accel_error_terms(
+            accel_err_phys_all, delta_a_true, relative_floor_abs
+        )
+        loss_rel_t = self._maybe_balance(
+            rel_sq,
+            x_phys,
+            enabled=bool(use_altitude_balanced_loss),
+            altitude_bin_width_km=altitude_bin_width_km,
+            altitude_min_km=altitude_min_km,
+            altitude_max_km=altitude_max_km,
+        )
+        _rel_diag = torch.stack(
+            [loss_rel_t.detach(), rel_err_sample.mean(), wtz_sample.float().mean()]
+        ).cpu().tolist()
+        loss_rel_val = float(_rel_diag[0])
+        rel_a_mean_val = float(_rel_diag[1])
+        wtz_frac_val = float(_rel_diag[2])
+
         if is_train and allow_dynamic_weight_update and weights.needs_grad_compute():
             shared_params = _gradnorm_shared_params(model, weights._effective_mode())
             w_u, w_a = weights.compute_gradnorm_weights(mse_u, mse_a, shared_params)
@@ -742,7 +768,11 @@ class SobolevLoss(nn.Module):
         loss_cross_val = 0.0
         radial_cross_equal_weight_fastpath = False
         if use_radial_cross_loss and (radial_lambda > 0.0 or cross_lambda > 0.0):
-            accel_err_phys = delta_a_pred_phys - delta_a_true
+            # Scaled units (divide by a_scale) so these terms live on the same
+            # scale as mse_a. In physical m/s^2 they were ~1e-11 of mse_a and
+            # contributed nothing despite being switched on. The radial/cross
+            # split only needs the direction of x_phys, which is scale-free.
+            accel_err_phys = accel_err_phys_all / self.a_scale
             if math.isclose(radial_lambda, cross_lambda, rel_tol=0.0, abs_tol=1e-15):
                 # With equal weights, radial² + cross² is exactly ||error||².
                 # Keep the objective on the one-pass combined path; retain
@@ -834,6 +864,9 @@ class SobolevLoss(nn.Module):
         if use_radial_cross_loss and (radial_lambda > 0.0 or cross_lambda > 0.0):
             loss_ref = loss_ref + (radial_lambda * loss_radial_t) + (cross_lambda * loss_cross_t)
             loss_opt = loss_opt + (radial_lambda * loss_radial_t) + (cross_lambda * loss_cross_t)
+        if relative_lambda > 0.0:
+            loss_ref = loss_ref + (relative_lambda * loss_rel_t)
+            loss_opt = loss_opt + (relative_lambda * accel_factor * loss_rel_t)
         # ONLY the trainable Laplacian enters the objective; diagnostic is logged only.
         if laplacian_applied and _lap_mode == "train":
             loss_opt = loss_opt + (float(laplacian_lambda) * loss_lap_t)
@@ -862,6 +895,9 @@ class SobolevLoss(nn.Module):
             "loss_radial": loss_radial_val,
             "loss_cross": loss_cross_val,
             "radial_cross_equal_weight_fastpath": bool(radial_cross_equal_weight_fastpath),
+            "loss_rel": loss_rel_val,
+            "rel_a_mean": rel_a_mean_val,
+            "wtz_frac": wtz_frac_val,
             # Laplacian metrics are mean((∇²U_phys)²) in PHYSICAL units [s⁻⁴]
             # (∇²U_phys in s⁻²), consistent with collocation_laplacian_loss (R25).
             "loss_laplacian": loss_lap_val,
@@ -876,6 +912,29 @@ class SobolevLoss(nn.Module):
             "target_degree": int(self.target_contract.target_degree),
         }
         return loss_opt, stats
+
+def relative_accel_error_terms(
+    err_vec: torch.Tensor, a_true: torch.Tensor, floor_abs: float
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Per-sample relative acceleration error terms.
+
+    Returns ``(rel_sq, rel_err, worse_than_zero)`` with
+    ``rel_sq = ||err||² / (||a_true||² + floor²)`` (differentiable loss term),
+    ``rel_err = ||err|| / max(||a_true||, floor)`` (reported ratio, detached) and
+    ``worse_than_zero = ||err|| > ||a_true||`` (detached), which flags a
+    prediction that is worse than predicting no residual at all.
+    """
+    floor = float(max(float(floor_abs), 0.0))
+    err_sq = torch.sum(err_vec ** 2, dim=-1)
+    true_sq = torch.sum(a_true ** 2, dim=-1)
+    rel_sq = err_sq / (true_sq + floor * floor)
+    with torch.no_grad():
+        err_norm = err_sq.sqrt()
+        true_norm = true_sq.sqrt()
+        rel_err = err_norm / true_norm.clamp_min(floor if floor > 0.0 else 1e-30)
+        worse_than_zero = err_norm > true_norm
+    return rel_sq, rel_err, worse_than_zero
+
 
 def _get_last_hidden_params(model: nn.Module) -> list[torch.Tensor]:
     """

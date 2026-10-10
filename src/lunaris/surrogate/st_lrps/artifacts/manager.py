@@ -92,6 +92,7 @@ CRITICAL_CONFIG_FIELDS: tuple[str, ...] = (
     "artifact_contract",
     "dataset_contract",
     "training_config_hash",
+    "output_envelope_power",
 )
 
 
@@ -1163,6 +1164,9 @@ _LOSS_CONFIG_KEYS: tuple[str, ...] = (
     "gradnorm_w_a_min",
     "gradnorm_w_a_max",
     "direction_loss_weight",
+    "direction_loss_floor_abs",
+    "relative_loss_weight",
+    "relative_loss_floor_abs",
     "radial_loss_weight",
     "cross_loss_weight",
     "use_laplacian_regularization",

@@ -627,6 +627,9 @@ class _EpochState:
     total_cross: float = 0.0
     total_lap: float = 0.0
     total_mask_frac: float = 0.0
+    total_rel: float = 0.0
+    total_rel_a_mean: float = 0.0
+    total_wtz_frac: float = 0.0
     total_a_norm_mean: float = 0.0
     total_angular_mean_deg: float = 0.0
     total_col_lap_diag: float = 0.0
@@ -990,6 +993,8 @@ class STLRPSTrainer:
                 use_radial_cross_loss=bool(self.cfg.use_radial_cross_loss),
                 radial_lambda=float(self.cfg.radial_loss_weight),
                 cross_lambda=float(self.cfg.cross_loss_weight),
+                relative_lambda=float(getattr(self.cfg, "relative_loss_weight", 0.0)),
+                relative_floor_abs=float(getattr(self.cfg, "relative_loss_floor_abs", 1e-8)),
                 apply_laplacian=bool(apply_lap),
                 laplacian_lambda=float(self.cfg.laplacian_weight),
                 laplacian_subset_size=int(self.cfg.laplacian_subset_size),
@@ -1221,6 +1226,9 @@ class STLRPSTrainer:
         state.total_radial += float(stats.get("loss_radial", 0.0))
         state.total_cross += float(stats.get("loss_cross", 0.0))
         state.total_lap += float(stats.get("loss_laplacian", 0.0))
+        state.total_rel += float(stats.get("loss_rel", 0.0))
+        state.total_rel_a_mean += float(stats.get("rel_a_mean", 0.0))
+        state.total_wtz_frac += float(stats.get("wtz_frac", 0.0))
         a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
         state.total_a_norm_mean += a_norm_b
         state.a_norm_max = max(state.a_norm_max, a_norm_b)
@@ -1301,6 +1309,10 @@ class STLRPSTrainer:
             )
         if bool(self.cfg.use_laplacian_regularization):
             extra_summary += f" lap={state.total_lap/n_safe:.3e}"
+        extra_summary += (
+            f" rel={state.total_rel/n_safe:.3e} rel_a={state.total_rel_a_mean/n_safe:.3f}"
+            f" wtz={state.total_wtz_frac/n_safe:.4f}"
+        )
         if bool(self.cfg.use_altitude_balanced_loss):
             extra_summary += " alt-balance=on"
         # loss_ref is always the full reference (val uses full weight; train uses accel_factor)
@@ -1335,7 +1347,7 @@ class STLRPSTrainer:
         col_lap_weight_eff = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
         physics_loss = (
             state.total_dir + state.total_radial + state.total_cross
-            + state.total_lap
+            + state.total_lap + state.total_rel
         ) / n_safe
         physics_loss += col_lap_train_avg
         return {
@@ -1352,6 +1364,9 @@ class STLRPSTrainer:
             "loss_radial": state.total_radial / n_safe,
             "loss_cross": state.total_cross / n_safe,
             "loss_laplacian": state.total_lap / n_safe,
+            "loss_rel": state.total_rel / n_safe,
+            "rel_a_mean": state.total_rel_a_mean / n_safe,
+            "wtz_frac": state.total_wtz_frac / n_safe,
             "loss_laplacian_diag": col_lap_diag_avg,
             "loss_laplacian_train": col_lap_train_avg,
             "lambda_laplacian_eff": col_lap_weight_eff,
@@ -2251,6 +2266,10 @@ def _build_dataloaders(
         val_sampler = TensorBatchSampler(
             len(val_ds), cfg.batch_size, seed=cfg.seed + 200, shuffle=False, drop_last=False
         )
+        # The batch sampler yields whole index batches, so DataLoader must be
+        # constructed with batch_size=None; leaving cfg.batch_size in _dl_kw
+        # collides with that explicit argument.
+        _dl_kw.pop("batch_size", None)
         _dl_kw.pop("collate_fn", None)
         _dl_kw.pop("worker_init_fn", None)
         train_loader = DataLoader(
@@ -2552,6 +2571,18 @@ def _build_model_and_optim(
     cfg.degree_max = int(degree_max_val)
     cfg.resolved_r_ref_m = float(resolved_r_ref_m)
     cfg.x_scale_m = float(scaler.x.scale)
+    if bool(getattr(cfg, "output_envelope_auto", False)):
+        if int(cfg.degree_min) < 0:
+            raise ValueError(
+                "--output-envelope-auto needs degree_min from the dataset metadata, "
+                f"but resolved degree_min={cfg.degree_min}. Pass --output-envelope-power explicitly."
+            )
+        cfg.output_envelope_power = float(int(cfg.degree_min) + 1)
+    if float(getattr(cfg, "output_envelope_power", 0.0) or 0.0) > 0.0:
+        logger.info(
+            "Output envelope: dU_scaled = rho^%g * NN(x), rho = r_ref/r (r_ref=%.1f m)",
+            float(cfg.output_envelope_power), float(cfg.resolved_r_ref_m),
+        )
     if cfg.activation.lower() == "sine" and int(getattr(cfg, "n_bands", 1)) > 1:
         if cfg.degree_max <= 0:
             raise ValueError(

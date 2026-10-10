@@ -205,6 +205,18 @@ class TrainConfig:
     direction_loss_ramp_epochs: int = 50
     direction_loss_floor_abs: float = 3e-6   # mask threshold on ||a_true||
 
+    # Relative acceleration loss -> mean(||a_pred - a_true||² / (||a_true||² + floor²))
+    # on EVERY sample, so tiny residuals are supervised in scale and direction.
+    # A term > 1 means the prediction is worse than predicting zero residual.
+    relative_loss_weight: float = 0.0
+    relative_loss_floor_abs: float = 1e-8   # m/s², noise floor of the ratio
+
+    # Output radial-decay envelope: ΔU_scaled = rho**p · NN(x), rho = r_ref / r.
+    # 0 = off (plain output, as in earlier artifacts). output_envelope_auto
+    # resolves p = degree_min + 1 from the dataset once degree_min is known.
+    output_envelope_power: float = 0.0
+    output_envelope_auto: bool = False
+
     # Best-checkpoint selection burn-in.
     # -1 (default) = auto: if direction_loss_weight > 0, delays to
     # direction_loss_start_epoch + direction_loss_ramp_epochs + checkpoint_settle_epochs.
@@ -219,8 +231,10 @@ class TrainConfig:
     # "val_total_loss": validation reference loss only ("total_loss" is accepted as an old alias).
     # "val_base_loss": validation U + acceleration MSE only.
     # "direction_loss": val direction loss only (experimental, not recommended alone).
+    # "hybrid_rel": hybrid + hybrid_relative_beta * val_loss_rel (relative acceleration loss).
     best_metric: str = "hybrid"
     hybrid_direction_alpha: float = 0.30
+    hybrid_relative_beta: float = 0.30
     save_epoch_snapshots: bool = False
     epoch_snapshot_every: int = 1
 
@@ -826,6 +840,20 @@ def parse_args() -> TrainConfig:
                            help="Epochs over which direction loss ramps from 0 to full weight.")
     group_dir.add_argument("--direction-loss-floor-abs", type=float, default=_TC_DEFAULTS['direction_loss_floor_abs'],
                            help="||a_true|| threshold below which direction loss is masked out.")
+    group_dir.add_argument("--relative-loss-weight", type=float, default=_TC_DEFAULTS["relative_loss_weight"],
+                           help="Weight of the relative acceleration loss "
+                                "mean(||a_pred-a_true||^2 / (||a_true||^2 + floor^2)) applied to every "
+                                "sample (0 = off). Values > 1 per sample mean 'worse than predicting zero'.")
+    group_dir.add_argument("--relative-loss-floor-abs", type=float, default=_TC_DEFAULTS["relative_loss_floor_abs"],
+                           help="Noise floor (m/s^2) added in quadrature to ||a_true|| in the relative loss.")
+    group_dir.add_argument("--hybrid-relative-beta", type=float, default=_TC_DEFAULTS["hybrid_relative_beta"],
+                           help="Weight of val_loss_rel in the 'hybrid_rel' best-checkpoint metric.")
+    group_dir.add_argument("--output-envelope-power", type=float, default=_TC_DEFAULTS["output_envelope_power"],
+                           help="Multiply the network output by rho**p, rho = r_ref/r, so the residual "
+                                "potential decays with altitude like the leading residual degree (0 = off).")
+    group_dir.add_argument("--output-envelope-auto", action="store_true", dest="output_envelope_auto",
+                           default=_TC_DEFAULTS["output_envelope_auto"],
+                           help="Set the output envelope power to degree_min + 1 resolved from the dataset.")
     group_dir.add_argument("--best-ckpt-start-epoch", type=int, default=_TC_DEFAULTS["best_ckpt_start_epoch"],
                            help="Epoch from which best-checkpoint tracking and patience counting begin. "
                                 "-1 = auto (delays to direction_loss_start_epoch + "
@@ -833,7 +861,7 @@ def parse_args() -> TrainConfig:
     group_dir.add_argument("--checkpoint-settle-epochs", type=int, default=_TC_DEFAULTS["checkpoint_settle_epochs"],
                            help="Additional settled epochs after the direction-loss ramp before auto best-checkpoint tracking starts.")
     group_dir.add_argument("--best-metric",
-                           choices=["val_total_loss", "val_base_loss", "total_loss", "direction_loss", "hybrid"],
+                           choices=["val_total_loss", "val_base_loss", "total_loss", "direction_loss", "hybrid", "hybrid_rel"],
                            default=_TC_DEFAULTS['best_metric'],
                            help="Metric used for best-checkpoint selection. "
                                 "'hybrid': val_base_loss + alpha * val_loss_dir (default). "
@@ -1535,6 +1563,10 @@ def parse_args() -> TrainConfig:
         direction_loss_start_epoch=max(0, int(a.direction_loss_start_epoch)),
         direction_loss_ramp_epochs=max(1, int(a.direction_loss_ramp_epochs)),
         direction_loss_floor_abs=float(a.direction_loss_floor_abs),
+        relative_loss_weight=float(max(0.0, a.relative_loss_weight)),
+        relative_loss_floor_abs=float(max(0.0, a.relative_loss_floor_abs)),
+        output_envelope_power=float(max(0.0, a.output_envelope_power)),
+        output_envelope_auto=bool(a.output_envelope_auto),
         best_ckpt_start_epoch=int(a.best_ckpt_start_epoch),
         checkpoint_settle_epochs=max(0, int(a.checkpoint_settle_epochs)),
         use_altitude_balanced_loss=bool(a.use_altitude_balanced_loss),
@@ -1572,6 +1604,7 @@ def parse_args() -> TrainConfig:
         grad_accumulation_steps=max(1, int(a.grad_accumulation_steps)),
         best_metric=str(a.best_metric),
         hybrid_direction_alpha=float(a.hybrid_direction_alpha),
+        hybrid_relative_beta=float(a.hybrid_relative_beta),
         save_epoch_snapshots=bool(a.save_epoch_snapshots),
         epoch_snapshot_every=max(1, int(a.epoch_snapshot_every)),
         u_scale_mode=str(a.u_scale_mode),

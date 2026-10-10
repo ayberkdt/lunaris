@@ -14,7 +14,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_BEST_METRICS = ("val_total_loss", "val_base_loss", "hybrid", "direction_loss")
+SUPPORTED_BEST_METRICS = ("val_total_loss", "val_base_loss", "hybrid", "direction_loss", "hybrid_rel")
 LOWER_IS_BETTER = True
 
 _WARNED_ALIASES: set[str] = set()
@@ -115,6 +115,10 @@ def _val_loss_dir(stats: Mapping[str, Any]) -> float:
     return _metric(stats, "val_loss_dir", fallback_keys=("loss_dir",), fallback_value=0.0) or 0.0
 
 
+def _val_loss_rel(stats: Mapping[str, Any]) -> float:
+    return _metric(stats, "val_loss_rel", fallback_keys=("loss_rel",), fallback_value=0.0) or 0.0
+
+
 def _val_physics_loss(stats: Mapping[str, Any], *, base: float, total: float) -> float:
     value = _metric(stats, "val_physics_loss", fallback_keys=("loss_physics",))
     if value is not None:
@@ -136,6 +140,9 @@ def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:
         return "val_base_loss"
     if metric == "direction_loss":
         return "val_loss_dir"
+    if metric == "hybrid_rel":
+        beta = float(_cfg_get(cfg, "hybrid_relative_beta", 0.30))
+        return f"val_base_loss + {alpha:.2f} * val_loss_dir + {beta:.2f} * val_loss_rel"
     return f"val_base_loss + {alpha:.2f} * val_loss_dir"
 
 
@@ -155,6 +162,7 @@ def checkpoint_selection_block(
         "start_epoch": (int(start_epoch) if start_epoch is not None else None),
         "start_epoch_display": (int(start_epoch) + 1 if start_epoch is not None else None),
         "hybrid_direction_alpha": alpha,
+        "hybrid_relative_beta": float(_cfg_get(cfg, "hybrid_relative_beta", 0.30)),
     }
     if reason:
         block["reason"] = str(reason)
@@ -177,6 +185,8 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
     base = _val_base_loss(val_stats)
     physics = _val_physics_loss(val_stats, base=base, total=total)
     loss_dir = _val_loss_dir(val_stats)
+    loss_rel = _val_loss_rel(val_stats)
+    beta = float(_cfg_get(cfg, "hybrid_relative_beta", 0.30))
 
     if metric == "val_total_loss":
         score = total
@@ -186,6 +196,8 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
         score = loss_dir
     elif metric == "hybrid":
         score = base + alpha * loss_dir
+    elif metric == "hybrid_rel":
+        score = base + alpha * loss_dir + beta * loss_rel
     else:  # pragma: no cover - normalize_best_metric guards this.
         raise ValueError(metric)
 
@@ -199,7 +211,9 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
         "val_loss_u": float(loss_u),
         "val_loss_a": float(loss_a),
         "val_loss_dir": float(loss_dir),
+        "val_loss_rel": float(loss_rel),
         "hybrid_direction_alpha": float(alpha),
+        "hybrid_relative_beta": float(beta),
         "eligible_for_best": bool(val_stats.get("eligible_for_best", True)),
         "lower_is_better": LOWER_IS_BETTER,
     }
@@ -262,6 +276,10 @@ def flatten_epoch_metrics(
         "train_cross_loss": _optional_float(train_stats, "loss_cross", "train_cross_loss", "train_loss_cross", default=0.0),
         "train_laplacian_diag": _optional_float(train_stats, "loss_laplacian_diag", "train_laplacian_diag", default=0.0),
         "train_laplacian_train": _optional_float(train_stats, "loss_laplacian_train", "train_laplacian_train", default=0.0),
+        "train_loss_rel": _optional_float(train_stats, "loss_rel", "train_loss_rel", default=0.0),
+        "train_rel_a_mean": _optional_float(train_stats, "rel_a_mean", "train_rel_a_mean", default=None),
+        "train_wtz_frac": _optional_float(train_stats, "wtz_frac", "train_wtz_frac", default=None),
+        "train_mask_frac": _optional_float(train_stats, "mask_frac", "train_mask_frac", default=None),
         "val_loss_total": val_total,
         "val_loss_base": val_base,
         "val_loss_physics": _optional_float(val_stats, "val_physics_loss", "val_loss_physics", default=0.0),
@@ -274,6 +292,10 @@ def flatten_epoch_metrics(
         "val_cross_loss": _optional_float(val_stats, "loss_cross", "val_cross_loss", "val_loss_cross", default=0.0),
         "val_laplacian_diag": _optional_float(val_stats, "loss_laplacian_diag", "val_laplacian_diag", default=0.0),
         "val_laplacian_train": _optional_float(val_stats, "loss_laplacian_train", "val_laplacian_train", default=0.0),
+        "val_loss_rel": _optional_float(val_stats, "loss_rel", "val_loss_rel", default=0.0),
+        "val_rel_a_mean": _optional_float(val_stats, "rel_a_mean", "val_rel_a_mean", default=None),
+        "val_wtz_frac": _optional_float(val_stats, "wtz_frac", "val_wtz_frac", default=None),
+        "val_mask_frac": _optional_float(val_stats, "mask_frac", "val_mask_frac", default=None),
         "checkpoint_score": _optional_float(checkpoint_report, "score", default=None),
         "checkpoint_formula": checkpoint_report.get("formula"),
         "best_metric": checkpoint_report.get("best_metric") or normalize_best_metric(_cfg_get(cfg, "best_metric", "hybrid")),
@@ -394,6 +416,10 @@ HISTORY_FIELDNAMES = [
     "train_cross_loss",
     "train_laplacian_diag",
     "train_laplacian_train",
+    "train_loss_rel",
+    "train_rel_a_mean",
+    "train_wtz_frac",
+    "train_mask_frac",
     "val_loss_total",
     "val_loss_base",
     "val_loss_physics",
@@ -406,6 +432,10 @@ HISTORY_FIELDNAMES = [
     "val_cross_loss",
     "val_laplacian_diag",
     "val_laplacian_train",
+    "val_loss_rel",
+    "val_rel_a_mean",
+    "val_wtz_frac",
+    "val_mask_frac",
     "checkpoint_score",
     "checkpoint_formula",
     "best_metric",
