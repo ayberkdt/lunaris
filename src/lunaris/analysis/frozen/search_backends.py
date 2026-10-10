@@ -178,6 +178,7 @@ class TorchSHScreeningPropagator:
         # is why paper-safe frozen search must wire an ephemeris even for the
         # classic-SH screening backend.
         model = _load_gravity_model(gravity_file, degree)
+        self.ephem_manager = ephem_manager  # source of q_i2f(t=0) for the element frame
         frame_policy = resolve_frame_policy(
             ephem_manager=ephem_manager,
             allow_identity_rotation=allow_identity_rotation,
@@ -282,6 +283,7 @@ class STLRPSScreeningPropagator:
             )
 
         valid_dir = validate_st_lrps_model_dir(model_dir)
+        self.ephem_manager = ephem_manager  # source of q_i2f(t=0) for the element frame
         frame_policy = resolve_frame_policy(
             ephem_manager=ephem_manager,
             allow_identity_rotation=allow_identity_rotation,
@@ -394,6 +396,7 @@ class ClassicalSHValidationPropagator:
                 "third-body validation requires an ephemeris-wired configuration "
                 "(Sun/Earth position tables plus Moon-fixed rotation)."
             )
+        self.ephem_manager = ephem_manager  # source of q_i2f(t=0) for the element frame
         legacy_allow_identity = (
             ephem_manager is None
             if allow_identity_rotation is None and frame_mode is None
@@ -422,6 +425,10 @@ class ClassicalSHValidationPropagator:
         self._rtol = float(rtol)
         self._atol = float(atol)
         self._method = str(method)
+        # GM of the field the validation integrates; element <-> state
+        # conversions must use the same value (the file header's GM).
+        mu = getattr(model, "mu", None)
+        self.gravity_mu_m3s2 = float(mu) if mu is not None else None
         suffix = "" if not bodies else "_3b_" + "_".join(bodies)
         self.backend_label = f"classical_sh_deg{int(degree)}{suffix}"
         self.provenance = {

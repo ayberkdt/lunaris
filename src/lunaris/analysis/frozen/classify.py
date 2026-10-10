@@ -335,23 +335,44 @@ def frozen_score(
     )
 
 
+def _covers_mission(duration_s: float, mission_duration_s: float) -> bool:
+    # Relative slack absorbs output-grid round-off only; a history that stopped
+    # early (impact, integrator failure) falls short by far more than this.
+    return float(duration_s) >= float(mission_duration_s) * (1.0 - 1e-9)
+
+
 def _validation_ok(
     validation_backend: str | None,
     long_horizon_validation_passed: bool,
+    *,
+    duration_s: float,
+    mission_duration_s: float,
 ) -> bool:
-    return bool(long_horizon_validation_passed) and is_classical_validation_backend(
-        validation_backend
+    return (
+        bool(long_horizon_validation_passed)
+        and is_classical_validation_backend(validation_backend)
+        and _covers_mission(duration_s, mission_duration_s)
     )
 
 
 def _candidate_reason(
     validation_backend: str | None,
     long_horizon_validation_passed: bool,
+    *,
+    duration_s: float,
+    mission_duration_s: float,
 ) -> str:
     if not is_classical_validation_backend(validation_backend):
         return "classical SH long-horizon validation required for frozen status"
     if not long_horizon_validation_passed:
         return "long-horizon validation has not passed"
+    if not _covers_mission(duration_s, mission_duration_s):
+        return (
+            f"observed history duration ({float(duration_s):.0f} s) is shorter than "
+            f"the configured mission duration ({float(mission_duration_s):.0f} s): "
+            "classification is scoped to the observed window, not validated for the "
+            "full mission"
+        )
     return "classical SH long-horizon validation passed"
 
 
@@ -401,8 +422,18 @@ def classify_candidate(
         )
 
     strict_failures = _strict_failures(metrics, config)
-    validation_ok = _validation_ok(validation_backend, long_horizon_validation_passed)
-    validation_reason = _candidate_reason(validation_backend, long_horizon_validation_passed)
+    validation_ok = _validation_ok(
+        validation_backend,
+        long_horizon_validation_passed,
+        duration_s=metrics.duration_s,
+        mission_duration_s=config.mission_duration_s,
+    )
+    validation_reason = _candidate_reason(
+        validation_backend,
+        long_horizon_validation_passed,
+        duration_s=metrics.duration_s,
+        mission_duration_s=config.mission_duration_s,
+    )
 
     if not strict_failures:
         status = STRICT_FROZEN if validation_ok else CANDIDATE_FROZEN_ORBIT

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Fixed: frozen-search orbital elements are measured against the lunar equator.**
+  - **The defect.** With a rotating Moon-fixed field (ST-LRPS screening, `--strict-frame`, `--paper-safe`, third-body validation), `elements_to_states` and the element histories used the J2000 integration frame. Inclination, node and argument of perilune, the `--i-deg` / `--argp-choices` sampling and every inclination/ω criterion were therefore measured from the Earth's equator, which is tilted about 23.5 deg from the lunar one.
+  - **The fix.** Elements now live in the lunar equator of epoch, `R = q_i2f(t=0)` from the run's ephemeris. Stored states stay inertial. Identity-frame runs are bit-identical. The manifest records `element_frame`, its source and the matrix. Resuming a run written in another element frame is refused. Figures rotate the same way.
+  - **Verification.** On DE440 the resulting lunar pole is RA 271.23 deg, Dec 67.98 deg at 2026-01-01, within 0.03 deg of the IAU 2015 model including its 18.6-year terms.
+  - **Impact on existing runs.** Campaigns run before this fix (`v2_*`, `v3_*`, `v4_*`) report J2000 elements. For example, the v4 shortlist's J2000 inclinations of 42–136 deg are 52–64 deg and 113–124 deg against the lunar equator.
+  - **Related fixes.**
+    - ST-LRPS candidates are now always validated in the Moon-fixed frame.
+    - The element <-> state GM comes from the validation gravity file header instead of a hard-coded constant.
+    - `ElementBounds` rejects e >= 1.
+    - A `strict_frozen`/`quasi_frozen` label now requires the validation history to cover the configured mission duration.
+
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.

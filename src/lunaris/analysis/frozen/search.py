@@ -158,6 +158,10 @@ class ElementBounds:
                 raise ValueError(f"bounds for {name} must satisfy lo <= hi, got ({lo}, {hi})")
         if float(self.e[0]) < 0.0:
             raise ValueError("eccentricity lower bound must be >= 0")
+        if float(self.e[1]) >= 1.0:
+            # e >= 1 is not a bound orbit; it would fail later in the element
+            # conversion as a degenerate conic.
+            raise ValueError("eccentricity upper bound must be < 1 (elliptic orbits)")
         if float(self.a_km[0]) <= 0.0:
             raise ValueError("semi-major axis lower bound must be > 0 km")
 
@@ -227,8 +231,15 @@ def sobol_element_samples(
     return np.ascontiguousarray(elements, dtype=np.float64), provenance
 
 
-def elements_to_states(elements: np.ndarray, mu_m3s2: float) -> np.ndarray:
-    """Convert ``(N, 6)`` element rows (km/deg) to Cartesian states ``(N, 6)`` (SI)."""
+def elements_to_states(
+    elements: np.ndarray, mu_m3s2: float, *, frame_rotation: Any = None
+) -> np.ndarray:
+    """Convert ``(N, 6)`` element rows (km/deg) to Cartesian states ``(N, 6)`` (SI).
+
+    The elements are measured in the element frame; ``frame_rotation`` is the
+    inertial -> element-frame matrix (see :func:`rotate_states_element_frame`)
+    and the returned states are in the inertial integration frame.
+    """
     from lunaris.common.math_utils import coe_to_rv
 
     el = np.asarray(elements, dtype=np.float64)
@@ -248,7 +259,112 @@ def elements_to_states(elements: np.ndarray, mu_m3s2: float) -> np.ndarray:
         )
         out[j, :3] = r
         out[j, 3:] = v
-    return out
+    return rotate_states_element_frame(out, frame_rotation, to_inertial=True)
+
+
+# ---------------------------------------------------------------------------
+# Element frame (lunar equator of epoch vs. the integration frame)
+# ---------------------------------------------------------------------------
+
+#: Elements are measured in the integration (inertial J2000) frame. Correct only
+#: when the gravity field is fixed in that frame (identity diagnostic frame).
+ELEMENT_FRAME_INERTIAL_IDENTITY = "inertial_identity"
+#: Elements are measured against the Moon's equator at the run's t = 0. When the
+#: field rotates with the Moon-fixed frame, inclination and argument of
+#: perilune only mean "against the lunar equator" in this frame; the J2000
+#: equator is tilted about 23.5 deg from it.
+ELEMENT_FRAME_LUNAR_EQUATOR = "lunar_equator_of_epoch"
+
+
+def _as_rotation_matrix(rotation: Any) -> np.ndarray | None:
+    """Validate a ``(3, 3)`` rotation; ``None`` for the exact identity (no-op)."""
+    if rotation is None:
+        return None
+    mat = np.asarray(rotation, dtype=np.float64)
+    if mat.shape != (3, 3) or not np.all(np.isfinite(mat)):
+        raise ValueError(f"element-frame rotation must be a finite (3, 3) matrix, got {mat.shape}")
+    if not np.allclose(mat @ mat.T, np.eye(3), rtol=0.0, atol=1e-9) or np.linalg.det(mat) < 0.0:
+        raise ValueError("element-frame rotation must be a proper rotation matrix")
+    if np.array_equal(mat, np.eye(3)):
+        return None
+    return mat
+
+
+def rotate_states_element_frame(
+    states: np.ndarray, rotation: Any, *, to_inertial: bool = False
+) -> np.ndarray:
+    """Rotate ``(..., 6)`` states between the integration and element frames.
+
+    ``rotation`` is the constant inertial -> element-frame matrix ``R``. By
+    default ``r' = R r`` and ``v' = R v``; ``to_inertial=True`` applies ``R^T``.
+    A ``None`` or exactly-identity ``rotation`` returns *states* unchanged, so
+    identity-frame numbers stay bit-identical.
+    """
+    mat = _as_rotation_matrix(rotation)
+    if mat is None:
+        return states
+    states = np.asarray(states, dtype=np.float64)
+    op = mat if to_inertial else mat.T  # row-vector form: x @ R.T == (R x)
+    return np.concatenate([states[..., :3] @ op, states[..., 3:] @ op], axis=-1)
+
+
+def quaternion_i2f_to_matrix(q_i2f: Any) -> np.ndarray:
+    """Matrix ``R`` with ``r_fixed = R r_inertial`` for a scalar-first ``q_i2f``.
+
+    Built column by column with :func:`lunaris.common.math_utils.quat_rotate_np`,
+    the same rotation the propagators apply, so no second quaternion convention
+    is introduced here.
+    """
+    from lunaris.common.math_utils import quat_rotate_np
+
+    q = np.asarray(q_i2f, dtype=np.float64).reshape(4)
+    return np.column_stack([quat_rotate_np(q, axis) for axis in np.eye(3)])
+
+
+def resolve_element_frame(
+    *backends: tuple[str, Any], explicit_rotation: Any = None
+) -> tuple[np.ndarray | None, dict[str, str]]:
+    """Pick the element frame from ``(role, backend)`` pairs; the first rotating one wins.
+
+    A backend whose provenance reports ``uses_frame_rotation`` flies a gravity
+    field tied to the Moon-fixed frame; its ``ephem_manager`` supplies the
+    inertial -> Moon-fixed quaternion at ``t = 0`` (the epoch every backend
+    propagates from), which defines the lunar equator of epoch. Backends that
+    report no rotation keep the integration frame. Returns the matrix (``None``
+    for identity) and a ``{"frame", "rotation_source"}`` record.
+    """
+    if explicit_rotation is not None:
+        mat = _as_rotation_matrix(explicit_rotation)
+        if mat is not None:
+            return mat, {
+                "frame": ELEMENT_FRAME_LUNAR_EQUATOR,
+                "rotation_source": "explicit rotation matrix",
+            }
+        return None, {
+            "frame": ELEMENT_FRAME_INERTIAL_IDENTITY,
+            "rotation_source": "explicit identity rotation",
+        }
+    for role, backend in backends:
+        prov = getattr(backend, "provenance", None)
+        if not (isinstance(prov, Mapping) and prov.get("uses_frame_rotation") is True):
+            continue
+        ephem = getattr(backend, "ephem_manager", None)
+        if ephem is None:
+            raise RuntimeError(
+                f"{role} backend reports a rotating Moon-fixed frame but exposes no "
+                "ephem_manager, so the lunar equator of epoch cannot be resolved."
+            )
+        mat = _as_rotation_matrix(
+            quaternion_i2f_to_matrix(ephem.get_inertial_to_fixed_rotation(0.0))
+        )
+        return mat, {
+            "frame": ELEMENT_FRAME_LUNAR_EQUATOR,
+            "rotation_source": f"{role} backend ephemeris q_i2f at t=0",
+        }
+    return None, {
+        "frame": ELEMENT_FRAME_INERTIAL_IDENTITY,
+        "rotation_source": "no backend reports a rotating Moon-fixed frame",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -537,10 +653,13 @@ def _git_commit() -> str:
         return "unknown"
 
 
-def _element_history(t: np.ndarray, y: np.ndarray, mu: float, r_ref: float) -> dict[str, np.ndarray]:
-    """Osculating element histories for one ``(T, 6)`` trajectory."""
+def _element_history(
+    t: np.ndarray, y: np.ndarray, mu: float, r_ref: float, frame_rotation: Any = None
+) -> dict[str, np.ndarray]:
+    """Osculating element histories for one ``(T, 6)`` trajectory (element frame)."""
     from lunaris.common.math_utils import screening_orbital_elements_vec
 
+    y = rotate_states_element_frame(y, frame_rotation)
     a_m, e, inc, argp = screening_orbital_elements_vec(
         y[:, :3], y[:, 3:], float(mu)
     )
@@ -733,6 +852,7 @@ class FrozenSearchPipeline:
         validation: ValidationPropagator,
         out_dir: str | Path,
         sensitivity_validations: list[ValidationPropagator] | None = None,
+        element_frame_rotation: Any = None,
     ) -> None:
         self.config = config
         self.screening = screening
@@ -757,6 +877,14 @@ class FrozenSearchPipeline:
                 strict_frame_required=strict,
                 role=f"sensitivity validation ({getattr(extra, 'backend_label', '?')})",
             )
+        # Inclination / argument of perilune are measured against the lunar
+        # equator whenever the field rotates with the Moon; the validation
+        # backend (which makes the classification claims) decides first.
+        self.element_frame_rotation, self.element_frame = resolve_element_frame(
+            ("validation", validation),
+            ("screening", screening),
+            explicit_rotation=element_frame_rotation,
+        )
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.run_id = uuid.uuid4().hex[:12]
@@ -775,6 +903,9 @@ class FrozenSearchPipeline:
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "git_commit": _git_commit(),
             "config": _json_safe(self.config.to_dict()),
+            "element_frame": self.element_frame["frame"],
+            "element_frame_rotation_source": self.element_frame["rotation_source"],
+            "element_frame_rotation": _json_safe(self.element_frame_rotation),
             "screening_backend": str(self.screening.backend_name),
             "screening_provenance": _json_safe(dict(self.screening.provenance)),
             "validation_backend": str(self.validation.backend_label),
@@ -807,6 +938,7 @@ class FrozenSearchPipeline:
             r_ref_km=float(self.config.reference_radius_m) / 1_000.0,
         )
         np.savez_compressed(path, elements=elements)
+        provenance["element_frame"] = self.element_frame["frame"]
         manifest["sampling_provenance"] = _json_safe(provenance)
         self._mark_stage(manifest, "stage0", STAGE0_SAMPLES, n_samples=elements.shape[0])
         return elements
@@ -841,7 +973,9 @@ class FrozenSearchPipeline:
             )
             return arrays
 
-        Y0 = elements_to_states(elements, self.config.mu_m3s2)
+        Y0 = elements_to_states(
+            elements, self.config.mu_m3s2, frame_rotation=self.element_frame_rotation
+        )
         t_out, Y_out, impact_flags, t_impact = self._propagate_screening_block(
             Y0, 0, int(Y0.shape[0])
         )
@@ -936,9 +1070,12 @@ class FrozenSearchPipeline:
     ) -> tuple[dict[str, Any], DomainGuardResult, np.ndarray, np.ndarray]:
         from lunaris.batch.summary import summarize_ensemble
 
+        # Stored states stay inertial; every element-based quantity below is
+        # measured in the element frame. Radii (domain guard) are invariant.
+        Y_elem = rotate_states_element_frame(Y_out, self.element_frame_rotation)
         summary = summarize_ensemble(
             t_out,
-            Y_out,
+            Y_elem,
             impact_flags,
             t_impact,
             mu_m3s2=float(self.config.mu_m3s2),
@@ -955,7 +1092,7 @@ class FrozenSearchPipeline:
         if self.config.screening_score == SCREENING_SCORE_FROZEN:
             raw_scores, extra = frozen_screening_scores(
                 t_out,
-                Y_out,
+                Y_elem,
                 impact_flags,
                 t_impact,
                 guard_result,
@@ -979,7 +1116,9 @@ class FrozenSearchPipeline:
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         from lunaris.batch.summary import TopKTrajectoryBuffer
 
-        Y0 = elements_to_states(elements, self.config.mu_m3s2)
+        Y0 = elements_to_states(
+            elements, self.config.mu_m3s2, frame_rotation=self.element_frame_rotation
+        )
         n_samples = int(Y0.shape[0])
         batch_size = int(self.config.screening_summary_batch_size)
         history_k = self._stage1_history_top_k()
@@ -1211,7 +1350,13 @@ class FrozenSearchPipeline:
             float(self.config.validation_duration_s),
             float(self.config.validation_output_dt_s),
         )
-        hist = _element_history(t, y, self.config.mu_m3s2, self.config.reference_radius_m)
+        hist = _element_history(
+            t,
+            y,
+            self.config.mu_m3s2,
+            self.config.reference_radius_m,
+            self.element_frame_rotation,
+        )
         guard_result = evaluate_domain_guard(
             hist["t_s"],
             np.asarray(y, dtype=np.float64)[:, None, :],
@@ -1273,7 +1418,9 @@ class FrozenSearchPipeline:
             elements = np.array(
                 [record["elements"][name] for name in ELEMENT_NAMES], dtype=np.float64
             )
-            y0 = elements_to_states(elements[None, :], self.config.mu_m3s2)[0]
+            y0 = elements_to_states(
+                elements[None, :], self.config.mu_m3s2, frame_rotation=self.element_frame_rotation
+            )[0]
 
             primary, _raw = self._validate_one(y0, self.validation)
             sensitivity: list[dict[str, Any]] = []
@@ -1388,7 +1535,9 @@ class FrozenSearchPipeline:
         """Stage-4 refinement objective: short screening re-propagation."""
 
         def _score_fn(x: np.ndarray) -> float:
-            y0 = elements_to_states(x[None, :], self.config.mu_m3s2)
+            y0 = elements_to_states(
+                x[None, :], self.config.mu_m3s2, frame_rotation=self.element_frame_rotation
+            )
             t, Y, impacts, t_imp = self.screening.propagate(
                 y0,
                 float(self.config.screening_duration_s),
@@ -1405,7 +1554,11 @@ class FrozenSearchPipeline:
             if bool(guard_result.domain_exit_flag[0]):
                 return float("inf")
             hist = _element_history(
-                t, np.asarray(Y)[:, 0, :], self.config.mu_m3s2, self.config.reference_radius_m
+                t,
+                np.asarray(Y)[:, 0, :],
+                self.config.mu_m3s2,
+                self.config.reference_radius_m,
+                self.element_frame_rotation,
             )
             metrics = compute_frozen_metrics(
                 hist["t_s"],
@@ -1426,6 +1579,20 @@ class FrozenSearchPipeline:
     def run(self, *, resume: bool = True) -> dict[str, Any]:
         """Run all stages (respecting existing stage files when ``resume``)."""
         manifest = self._load_manifest()
+        # A manifest without "element_frame" predates the element-frame fix and
+        # measured elements in the integration frame, which is the current
+        # identity-frame behaviour but not the lunar-equator one.
+        stored_frame = manifest.get("element_frame", ELEMENT_FRAME_INERTIAL_IDENTITY)
+        if resume and stored_frame != self.element_frame["frame"]:
+            raise RuntimeError(
+                f"cannot resume {self.out_dir}: its stage files were written with "
+                f"element_frame={stored_frame!r} but this run uses "
+                f"{self.element_frame['frame']!r}; stage files from two element frames "
+                "cannot be mixed. Use a new out_dir or resume=False."
+            )
+        manifest["element_frame"] = self.element_frame["frame"]
+        manifest["element_frame_rotation_source"] = self.element_frame["rotation_source"]
+        manifest["element_frame_rotation"] = _json_safe(self.element_frame_rotation)
         t0 = time.perf_counter()
         elements = self.stage0_samples(manifest, resume=resume)
         screening = self.stage1_screening(manifest, elements, resume=resume)
@@ -1451,6 +1618,8 @@ class FrozenSearchPipeline:
 
 
 __all__ = [
+    "ELEMENT_FRAME_INERTIAL_IDENTITY",
+    "ELEMENT_FRAME_LUNAR_EQUATOR",
     "MANIFEST",
     "STAGE0_SAMPLES",
     "STAGE1_SCREENING",
@@ -1469,5 +1638,8 @@ __all__ = [
     "enforce_classical_validation_rule",
     "enforce_strict_frame_rule",
     "is_identity_or_unresolved_frame",
+    "quaternion_i2f_to_matrix",
+    "resolve_element_frame",
+    "rotate_states_element_frame",
     "sobol_element_samples",
 ]

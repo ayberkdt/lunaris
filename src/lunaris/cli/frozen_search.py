@@ -16,6 +16,7 @@ off. Statuses obey the R21 rule: only classical SH validation can produce
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import sys
 from pathlib import Path
@@ -378,7 +379,14 @@ def main(argv: list[str] | None = None) -> int:
     # Validation runs in the rotating frame when third-body is active OR under
     # paper-safe/strict-frame, so a "rotating Moon-fixed SH only, no third-body"
     # paper-safe run no longer has to enable third-body just to pass the guard.
-    validation_needs_ephem = bool(validation_third_body) or strict_frame_required
+    # ST-LRPS screening always flies the rotating Moon-fixed field, so its
+    # candidates must be validated in that frame too; an identity-frame
+    # validation would judge a different orbit.
+    validation_needs_ephem = (
+        bool(validation_third_body)
+        or strict_frame_required
+        or screening_backend == "st-lrps"
+    )
     try:
         validation = ClassicalSHValidationPropagator(
             degree=int(args.validation_degree),
@@ -410,6 +418,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
 
+    # Element <-> state conversions use the validation field's own GM rather
+    # than a hard-coded lunar constant.
+    if validation.gravity_mu_m3s2 is not None:
+        config = dataclasses.replace(config, mu_m3s2=float(validation.gravity_mu_m3s2))
     pipeline = FrozenSearchPipeline(
         config,
         screening=screening,
