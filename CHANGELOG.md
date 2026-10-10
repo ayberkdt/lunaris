@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: the ST-LRPS CPU provider path honours `strict_domain` and no longer computes a discarded potential.** `SurrogateGravityModel.from_model_dir` now forwards `strict_domain` (and a new `paper_safe` flag) to the canonical runtime loader, so a strict provider raises on the CPU `acceleration_fixed*` path below the training envelope instead of only warning; non-strict loads still warn. A `paper_safe` load never falls back to the legacy local path. `acceleration_fixed` / `acceleration_fixed_batch` return the same acceleration bit for bit without the potential pass (planD_dirfix model, SH25 baseline, CPU: 3.2x per single call, 10x for N=2000). A `mu_override` more than 20% from the artifact's `resolved_mu_si` raises instead of being ignored. Empty `(0, 3)` batches pass the CPU and tensor domain guards. `import lunaris.surrogate.runtime` no longer imports torch. Tests are in `tests/test_surrogate_runtime_provider_fixes.py`.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.

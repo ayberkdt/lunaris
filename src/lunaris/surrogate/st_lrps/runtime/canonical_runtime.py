@@ -257,10 +257,11 @@ def enforce_altitude_envelope_torch(
 
     Mirrors :meth:`SurrogateForceModel._enforce_domain` semantics for tensor
     entry points: hard-fail when ``strict``, otherwise warn once. No-op when
-    the envelope is unknown (never blocks on unknown bounds). Returns the new
+    the envelope is unknown (never blocks on unknown bounds) and for an empty
+    ``(0, 3)`` batch (``torch.min`` cannot reduce it). Returns the new
     warn-once state so stateless callers can persist it.
     """
-    if alt_min_km is None or alt_max_km is None:
+    if alt_min_km is None or alt_max_km is None or x_m.shape[0] == 0:
         return already_warned
     with torch.no_grad():
         r = torch.linalg.norm(x_m.detach().to(dtype=torch.float32), dim=1)
@@ -644,8 +645,22 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         exceeds_scaler_radius : bool
         recommended_fallback : bool
         reason : str
+
+        An empty ``(0, 3)`` batch has nothing to validate and returns a benign
+        status (``torch.min`` / ``torch.max`` cannot reduce it).
         """
         x_t = _to_tensor(x_m, self.device, self._torch_dtype).detach()
+        if x_t.shape[0] == 0:
+            return {
+                "finite_input": True,
+                "altitude_km_min": float("nan"),
+                "altitude_km_max": float("nan"),
+                "in_training_altitude_range": None,
+                "normalized_radius_max": float("nan"),
+                "exceeds_scaler_radius": False,
+                "recommended_fallback": False,
+                "reason": "empty input (0 positions); nothing to validate",
+            }
         finite_input = bool(torch.isfinite(x_t).all().item())
         x_eval = x_t.to(dtype=torch.float64)
         r_norm = torch.linalg.norm(x_eval, dim=1)
