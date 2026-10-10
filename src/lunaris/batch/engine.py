@@ -14,7 +14,7 @@ import logging
 import math
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -81,6 +81,26 @@ _FIXED_STEP_BATCH_BACKENDS = frozenset(
         "gpu_st_lrps_third_body",
     }
 )
+
+
+def merge_archive_metadata(*blocks: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge provenance blocks into one kwargs dict, later blocks winning.
+
+    The ST-LRPS artifact block and the backend plan legitimately share keys
+    (``runtime_model_kind`` is derived from the artifact); splatting both into
+    ``write_metadata(**...)`` raised ``TypeError`` after a completed surrogate
+    propagation. A differing duplicate is logged rather than hidden.
+    """
+    merged: dict[str, Any] = {}
+    for block in blocks:
+        for key, value in dict(block).items():
+            if key in merged and merged[key] != value:
+                logger.warning(
+                    "Batch archive metadata key %r values differ across blocks: %r -> %r",
+                    key, merged[key], value,
+                )
+            merged[key] = value
+    return merged
 
 
 def _batch_timestep_provenance(
@@ -1370,9 +1390,7 @@ class BatchPropagationEngine:
                 detect_impact=bool(batch_cfg.impact_detection_enabled),
                 compute_impact_statistics=bool(batch_cfg.impact_statistics_enabled),
                 impact_frame_available=bool(getattr(self._dyn, "ephem", None) is not None),
-                **_provenance_hashes,
-                **_st_lrps_meta,
-                **_plan_meta,
+                **merge_archive_metadata(_provenance_hashes, _st_lrps_meta, _plan_meta),
             )
             writer.write_final(
                 sc_samples,
