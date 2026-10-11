@@ -2583,6 +2583,9 @@ entries:
       - path: src/lunaris/core/torch_frame.py
         symbol: hermite_state
         role: torch_implementation
+      - path: src/lunaris/core/torch_frame.py
+        symbol: terrain_substep_count
+        role: torch_implementation
       - path: src/lunaris/core/batch_propagator.py
         symbol: _rk4_batch_kernel
         role: cuda_implementation
@@ -2600,6 +2603,7 @@ entries:
     lunaris_modifications:
       - the step is the cubic Hermite curve through both step-end states (the LUNARIS-ALG-INTP-002 basis), not the straight chord, which sags g dt^2/8 below the arc
       - the curve is sampled at 32 sub-steps (residual sub-chord sag g (dt/32)^2/8, 0.18 m for a low lunar orbit at dt = 30 s)
+      - in terrain mode, steps that pass the envelope gate use K = dt max|v| / (0.5 radius_const res) samples, rounded up to a multiple of 32 (the 32-sample grid stays a subset) and clamped to [32, 512], so the along-track spacing is at most half a map pixel (224 samples for a low lunar orbit at dt = 30 s on LDEM 64 ppd); the sphere path keeps 32
       - the whole-step chord and the outer maximum-terrain sphere act as conservative rejection gates
       - sphere crossings are refined by Newton steps clamped to the bracketing sub-interval
       - body-frame rotation is evaluated once at the step midpoint
@@ -2608,13 +2612,16 @@ entries:
       - the first resolved downward crossing within the fixed step is the impact
       - lunar rotation during one step is negligible relative to terrain relief
     limitations:
-      - terrain relief narrower than the sub-sample spacing (v dt / 32 along track) can be crossed between samples undetected
+      - an arc that dips below the terrain by less than G s / 2 between two samples (s the sample spacing, G the along-track gradient of the height residual) can go undetected; at half-pixel spacing that is the top quarter of a one-pixel spike
+      - past the 512-sample cap (arcs over 121 km per step on LDEM 64 ppd, i.e. dt > 72 s in low lunar orbit, or finer maps) the spacing grows to arc / 512
+      - the count uses the meridional grid spacing; east-west pixels shrink by cos(latitude), so near the poles a feature one longitude pixel wide is narrower than the spacing
       - the crossing state interpolates the integrator step ends, so its accuracy is bounded by the fixed-step truncation error
       - accuracy is bounded by the propagation step, raster, and midpoint-frame approximation
     validation:
       - tests/test_torch_terrain_freeze.py
       - tests/test_hermite_impact_detection.py
       - tests/test_terrain_multistep_descent.py
+      - tests/test_terrain_ridge_impact_resolution.py
     see_also:
       - LUNARIS-HEUR-EVT-001
       - LUNARIS-HEUR-INTP-001

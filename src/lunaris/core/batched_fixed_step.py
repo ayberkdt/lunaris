@@ -527,7 +527,8 @@ def _propagate_chunk(
     # snapshot interval (one bounded host sync per snapshot for the gather
     # size); inside the interval the loop advances ONLY the compacted subset
     # with the same mask-based freeze/impact logic as before, so the hot loop
-    # keeps fixed shapes and stays free of per-step device-host syncs. RK4 and
+    # keeps fixed shapes and stays free of per-step device-host syncs (terrain
+    # impact detection syncs each step to size its envelope-gated rows). RK4 and
     # every provider are row-independent, so subsetting the sample axis is
     # bitwise-neutral; impacted samples stay frozen/terminal in the output.
     with torch.no_grad():
