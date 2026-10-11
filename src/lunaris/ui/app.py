@@ -140,6 +140,19 @@ from lunaris.ui.pages.mission_propagation_page import UISolverConfig, UISpacecra
 from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
 
 
+def _child_process_environment() -> QtCore.QProcessEnvironment:
+    """Environment for the run/batch child processes: unbuffered, UTF-8 streams.
+
+    On Windows a child whose stdout is a pipe encodes with the ANSI code page
+    (cp1252) and raises ``UnicodeEncodeError`` on the first character outside
+    it, killing the run; the UI decodes the streams as UTF-8 anyway.
+    """
+    env = QtCore.QProcessEnvironment.systemEnvironment()
+    env.insert("PYTHONUNBUFFERED", "1")
+    env.insert("PYTHONIOENCODING", "utf-8")
+    return env
+
+
 @dataclass
 class SimulationState:
     """Tracks the current engine status for UI synchronization."""
@@ -1110,9 +1123,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batch_process.readyReadStandardError.connect(self._on_batch_stderr)
         self.batch_process.finished.connect(self._on_batch_finished)
 
-        env = QtCore.QProcessEnvironment.systemEnvironment()
-        env.insert("PYTHONUNBUFFERED", "1")
-        self.batch_process.setProcessEnvironment(env)
+        self.batch_process.setProcessEnvironment(_child_process_environment())
 
         self._batch_stdout_buf = ""
         self._batch_metrics: dict = {}
@@ -2029,10 +2040,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.process.readyReadStandardError.connect(self._handle_stderr)
         self.process.finished.connect(self._on_process_finished)
 
-        # Ensure python process uses unbuffered output for streaming telemetry
-        env = QtCore.QProcessEnvironment.systemEnvironment()
-        env.insert("PYTHONUNBUFFERED", "1")
-        self.process.setProcessEnvironment(env)
+        # Unbuffered UTF-8 output for streaming telemetry (see _child_process_environment).
+        self.process.setProcessEnvironment(_child_process_environment())
 
         self.process.start(cmd_list[0], cmd_list[1:])
         if not self.process.waitForStarted(1500):

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: Mission Studio run and batch children could die on a non-ASCII print (Windows).**
+  - A Python child whose stdout is a pipe encodes with the ANSI code page; the first character outside cp1252 (for example an arrow) raised `UnicodeEncodeError` and killed the run (reproduced on this machine). The children now run with `PYTHONIOENCODING=utf-8`, matching the UI's UTF-8 decoding. Ported from Sidera (64d48728).
+
 - **Fixed: an impulsive-manoeuvre run re-spaced its output grid per segment (output times change).**
   - Each segment between burns built its own evenly spaced grid over its burn-shifted duration: `output_dt_s = 60` with a burn at 1000 s gave 58.82 s spacing before the burn and 59.09 s after, neither 60 s nor aligned to t0 (without `output_dt_s`, each segment re-derived it from its own post-burn period).
   - The output is now the grid a run without burns would produce, plus each burn epoch; each segment integrates its exact slice. Trajectories are unchanged; only the sample times move. Ported from Sidera.
