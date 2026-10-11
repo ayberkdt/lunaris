@@ -2,8 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: YAML benchmark configs are parsed by PyYAML only.** A hand-written subset parser stood in when PyYAML was missing, so the same file parsed differently per machine. Under the subset parser, `rtol: 1e-10` was a float (a string under PyYAML), `n: 5  # five` kept its comment, and `seed: 010` was 10 (8 under PyYAML). Without PyYAML, a YAML config now raises `BenchmarkConfigError`. JSON configs still need nothing extra.
 - **Fixed: honest ST-LRPS and third-body tests.**
-  - `tests/test_st_lrps.py` had 34 `except ImportError: print("[SKIP]"); return` guards, which let a broken in-repo import pass as green. The in-repo imports are now unguarded. Optional `h5py` uses `pytest.importorskip`.
+  - `tests/test_st_lrps.py` had 35 `except ImportError: print("[SKIP]"); return` guards, which let a broken in-repo import pass as green. The in-repo imports are now unguarded. Optional `h5py` uses `pytest.importorskip`.
   - Four `_test_*` functions that pytest never collected (scaler round-trip, chain rule, direction mask, artifact resolver) are renamed to `test_*`, and all four pass.
   - `tests/test_third_body_effects.py` dropped its local constant fallback, whose `MU_SUN` (1.32712440018e20) disagreed with the SSOT (1.32712440042e20).
 - **Fixed: the perturbation-budget summary labels its geometry honestly.** Sampling always uses synthetic Sun/Earth geometry, but the summary printed `ephemeris_requested` whenever the synthetic *gravity* fallback was off. The summary now always reads `synthetic_geometry`. `use_ephemeris=True`, which was silently ignored, now raises `NotImplementedError`. The config field that gates synthetic gravity coefficients is renamed from `use_synthetic_geometry_fallback` to `use_synthetic_gravity_fallback`. The CLI flag `--synthetic-fallback` is unchanged.
