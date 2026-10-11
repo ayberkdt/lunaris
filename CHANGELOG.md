@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Fixed: albedo and thermal-IR wrapper inputs.** The simple backend of
+  `albedo_accel` now honours `AlbedoConfig.enable_eclipse` like the facet
+  backend and reads the canonical `albedo_const`. `AlbedoConfig` keeps its
+  legacy alias `A_moon` equal to `albedo_const`, also after
+  `dataclasses.replace(cfg, albedo_const=...)`. Before, the alias kept the
+  previous value. In `temperature_grid` mode, `calc_thermal_ir_accel` (and
+  `thermal_accel`) now raises `ValueError` when the per-facet temperature grid
+  is missing or has the wrong length. Before, it returned a silent zero.
+  Default results are unchanged. Tests are in `tests/test_surface_effects.py`
+  and `tests/test_thermal_ir.py`.
 - **Fixed: strict SHADR loading.** In strict mode every numeric field must now
   be a complete literal. Before, a regex fallback read `1.0-08` as the two
   numbers 1.0 and -8.0 and accepted `-9.0E-05junk`. Fortran `D` exponents

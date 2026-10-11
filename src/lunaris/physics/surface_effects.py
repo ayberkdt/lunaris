@@ -140,13 +140,16 @@ class AlbedoConfig:
         mode = {0: "constant_albedo", 1: "albedo_grid", 2: "scaled_dn_grid"}[mode_code]
 
         # ``albedo_const`` is the canonical constant-albedo field; ``A_moon`` is a
-        # legacy alias. Mirror whichever the caller set away from the shared
-        # default so both backends honor a single intent.
+        # legacy alias that always mirrors it. Only a caller that left
+        # ``albedo_const`` at its default and set ``A_moon`` (legacy usage) has
+        # ``A_moon`` adopted; otherwise ``albedo_const`` wins. This also covers
+        # ``dataclasses.replace(cfg, albedo_const=x)`` on a config whose alias
+        # already holds the previous value.
         albedo_const = float(self.albedo_const)
         a_moon = float(self.A_moon)
         if albedo_const == 0.12 and a_moon != 0.12:
             albedo_const = a_moon
-        elif a_moon == 0.12 and albedo_const != 0.12:
+        else:
             a_moon = albedo_const
 
         object.__setattr__(self, "albedo_model", model)
@@ -389,7 +392,8 @@ def albedo_accel(
             f"Unsupported albedo model: {model!r}. Supported: 'lambert_facets', 'simple'."
         )
 
-    eclipse_flag = 1 if enable_eclipse else 0
+    # Same gating as the facet backend: both the call flag and the config.
+    eclipse_flag = 1 if (enable_eclipse and config.enable_eclipse) else 0
 
     ax, ay, az = accel_albedo_simple(
         float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
@@ -397,7 +401,7 @@ def albedo_accel(
         float(R_moon),
         float(config.AU_m),
         float(config.P0),
-        float(config.A_moon),
+        float(config.albedo_const),
         float(config.k_lambert),
         float(sc_props.cr),
         float(sc_props.area_m2),

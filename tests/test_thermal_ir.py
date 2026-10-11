@@ -186,3 +186,21 @@ def test_dynamics_thermal_ir_adds_finite_acceleration_without_surface_provider()
     breakdown = engine.get_acceleration_breakdown(0.0, y)
     assert np.all(np.isfinite(dydt[3:6]))
     assert breakdown["Thermal IR"] > 0.0
+
+
+def test_calc_thermal_ir_grid_mode_requires_one_temperature_per_facet():
+    """The wrapper used to return a silent zero acceleration in grid mode when
+    the temperature grid was missing or shorter than the facet list."""
+    import pytest
+
+    pos, normals, areas, _, _ = build_latlon_facets(18, 36, radius_m=R_MOON)
+    r = np.array([R_MOON + 100e3, 0.0, 0.0])
+    s = np.array([AU, 0.0, 0.0])
+    with pytest.raises(ValueError, match="facet_temperatures_K"):
+        calc_thermal_ir_accel(r, s, pos, normals, areas, mode="temperature_grid")
+    with pytest.raises(ValueError, match="facets"):
+        calc_thermal_ir_accel(r, s, pos, normals, areas, mode="temperature_grid",
+                              facet_temperatures_K=np.full(areas.shape[0] - 1, 300.0))
+    a = calc_thermal_ir_accel(r, s, pos, normals, areas, mode="temperature_grid",
+                              facet_temperatures_K=np.full(areas.shape[0], 300.0))
+    assert np.linalg.norm(a) > 0.0

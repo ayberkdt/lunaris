@@ -204,3 +204,40 @@ def test_thermal_accel_equilibrium_eclipse_uses_optional_earth_vector():
 
     assert np.linalg.norm(no_eclipse) > 0.0
     np.testing.assert_allclose(eclipsed, 0.0, rtol=0.0, atol=0.0)
+
+
+def test_albedo_config_replace_albedo_const_updates_alias():
+    """``replace(cfg, albedo_const=x)`` on a config whose alias was already
+    mirrored used to leave ``A_moon`` at the old value, so the two backends
+    disagreed."""
+    from dataclasses import replace
+
+    cfg = replace(AlbedoConfig(A_moon=0.2), albedo_const=0.3)
+    assert cfg.albedo_const == 0.3
+    assert cfg.A_moon == 0.3
+
+
+def test_simple_albedo_wrapper_honours_config_eclipse_and_canonical_albedo():
+    """The simple backend of ``albedo_accel`` ignored ``config.enable_eclipse``
+    (the facet backend honours it) and read the legacy alias."""
+    from dataclasses import replace
+
+    sc = SpacecraftProps(mass_kg=100.0, area_m2=2.0, cr=1.5)
+    sun = np.array([AU, 0.0, 0.0])
+    r_night = np.array([-(R_MOON_MEAN + 100e3), 0.0, 0.0])  # Moon umbra
+    on = AlbedoConfig(albedo_model="simple")
+    off = AlbedoConfig(albedo_model="simple", enable_eclipse=False)
+    assert np.linalg.norm(albedo_accel(r_night, sun, sc, on)) == 0.0
+    assert np.linalg.norm(albedo_accel(r_night, sun, sc, off)) > 0.0
+
+    r_day = np.array([R_MOON_MEAN + 100e3, 0.0, 0.0])
+    base = albedo_accel(r_day, sun, sc, on)
+    doubled = albedo_accel(r_day, sun, sc, replace(AlbedoConfig(albedo_model="simple", A_moon=0.12), albedo_const=0.24))
+    np.testing.assert_allclose(doubled, 2.0 * base, rtol=1e-14)
+
+
+def test_thermal_accel_grid_mode_without_temperatures_raises():
+    sc = SpacecraftProps(mass_kg=100.0, area_m2=2.0, cr=1.5)
+    cfg = ThermalConfig(thermal_mode="temperature_grid", facet_lat_count=4, facet_lon_count=8)
+    with pytest.raises(ValueError, match="facet_temperatures_K"):
+        thermal_accel(np.array([R_MOON_MEAN + 100e3, 0.0, 0.0]), np.array([AU, 0.0, 0.0]), sc, cfg)
