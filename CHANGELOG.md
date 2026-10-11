@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed: worst-tail field statistics took one entry too many.**
+  - The worst-1%/5% means sliced from `ceil(0.99*n) - 1`, which averaged 2 of 100 errors instead of 1.
+  - They now take exactly `max(1, ceil(fraction*n))` entries.
+  - The paper does not use these keys.
+
 - **Fixed: frozen-search orbital elements are measured against the lunar equator.**
   - **The defect.** With a rotating Moon-fixed field (ST-LRPS screening, `--strict-frame`, `--paper-safe`, third-body validation), `elements_to_states` and the element histories used the J2000 integration frame. Inclination, node and argument of perilune, the `--i-deg` / `--argp-choices` sampling and every inclination/ω criterion were therefore measured from the Earth's equator, which is tilted about 23.5 deg from the lunar one.
   - **The fix.** Elements now live in the lunar equator of epoch, `R = q_i2f(t=0)` from the run's ephemeris. Stored states stay inertial. Identity-frame runs are bit-identical. The manifest records `element_frame`, its source and the matrix. Resuming a run written in another element frame is refused. Figures rotate the same way.

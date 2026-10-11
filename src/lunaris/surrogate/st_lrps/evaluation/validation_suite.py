@@ -95,6 +95,14 @@ def _rms(values: np.ndarray) -> float:
     return float(np.sqrt(np.mean(arr * arr))) if arr.size else float("nan")
 
 
+def _worst_tail(sorted_err: np.ndarray, fraction: float) -> np.ndarray:
+    """Largest ``ceil(fraction * n)`` entries (at least one) of an ascending array."""
+    if sorted_err.size == 0:
+        return sorted_err
+    count = max(1, int(np.ceil(float(fraction) * sorted_err.size)))
+    return sorted_err[sorted_err.size - count :]
+
+
 def _binned_error(
     coordinate: np.ndarray,
     err_norm: np.ndarray,
@@ -186,8 +194,8 @@ def compute_field_metrics(
 
     finite_err = err_norm[np.isfinite(err_norm)]
     sorted_err = np.sort(finite_err)
-    worst_1 = sorted_err[max(0, int(np.ceil(0.99 * sorted_err.size)) - 1) :] if sorted_err.size else sorted_err
-    worst_5 = sorted_err[max(0, int(np.ceil(0.95 * sorted_err.size)) - 1) :] if sorted_err.size else sorted_err
+    worst_1 = _worst_tail(sorted_err, 0.01)
+    worst_5 = _worst_tail(sorted_err, 0.05)
 
     return {
         "count": int(n),

@@ -371,3 +371,15 @@ def test_content_hash_is_recomputed_not_trusted(tmp_path: Path) -> None:
     tampered = validate_dataset_file(path, n_check=24)
     assert tampered["passed"] is False
     assert any("content_sha256 mismatch" in e for e in tampered["errors"])
+
+
+def test_worst_tail_takes_exactly_the_requested_fraction():
+    import numpy as np
+
+    from lunaris.surrogate.st_lrps.evaluation.validation_suite import _worst_tail
+
+    err = np.arange(1.0, 101.0)  # ascending, n = 100
+    assert _worst_tail(err, 0.01).tolist() == [100.0]
+    assert _worst_tail(err, 0.05).tolist() == [96.0, 97.0, 98.0, 99.0, 100.0]
+    assert _worst_tail(np.arange(1.0, 11.0), 0.01).tolist() == [10.0]  # at least one
+    assert _worst_tail(np.array([]), 0.01).size == 0
