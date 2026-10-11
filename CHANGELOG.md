@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: batch config flags that could not be set, and a paper-safe overclaim.** `CPUBatchPropagator` read `allow_sample_failures` from the batch config, but `BatchPropagationConfig` (frozen, slots) had no such field, so the NaN-fill branch was unreachable. It is now a field (default `False`). `paper_safe` / `strict_backend` / `benchmark_mode` exist on no shipped config or CLI; `docs/PAPER_SAFE_POLICY.md` row 3 and the `backend_policy` docstrings now say that a batch run forbids backend fallback only under `sh_fallback_policy='error'`.
+
 - **Fixed: the capability matrix named a trainer command that does not exist.** It said `lunaris-train-st-lrps`; the installed console script is `lunaris-train`. Fixed in `shared/capabilities.py` and the generated `docs/ST_LRPS_CAPABILITY_MATRIX.md`.
 
 - **Fixed: SPICE kernel provenance could vanish without a trace.** The batch archive and single-run diagnostics wrapped `kernel_provenance()` in `contextlib.suppress(Exception)`, so a failure removed `spice_kernels` silently. Both now go through `physics.ephemeris.spice_provenance_fields`, which records `spice_kernels_unavailable_reason` and warns. Tables with no kernel provenance (an archive without `kernel_provenance_json`) now say so (`kernels_unavailable_reason`) instead of reporting an empty kernel list.

@@ -401,6 +401,10 @@ class BatchPropagationConfig:
     impact_surface_mode: ImpactSurfaceMode = "sphere"  # "sphere" or "terrain"
     sigma_levels: tuple[float, ...] = (1.0, 2.0, 3.0)
 
+    # CPU backend only: a sample whose propagation raises is NaN-filled (with a
+    # RuntimeWarning and valid_mask=False) instead of aborting the whole run.
+    allow_sample_failures: bool = False
+
     def __post_init__(self) -> None:
         if self.n_samples < 2:
             raise ValueError(f"n_samples must be >= 2, got {self.n_samples}")
