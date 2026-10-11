@@ -104,6 +104,10 @@ except ImportError:
 _GPU_WS: int = 26
 NUMBA_CUDA_SH_MAX_DEGREE: int = _GPU_WS - 2
 NUMBA_CUDA_SH_SUPPORTED_TIERS: tuple[int, ...] = (NUMBA_CUDA_SH_MAX_DEGREE,)
+# Hermite sub-samples per step for impact detection; must equal
+# ``torch_frame.IMPACT_HERMITE_SUBSTEPS`` (residual sag g*(dt/K)^2/8 = 0.18 m
+# for a low lunar orbit at dt = 30 s). A compile-time constant in the kernel.
+_IMPACT_HERMITE_SUBSTEPS: int = 32
 
 
 TOPO_META_SIZE: int = 22
@@ -582,21 +586,40 @@ if _CUDA_AVAILABLE:
         return scale_m * dn_i + bias_m
 
     @cuda.jit(device=True, inline=True)
-    def _terrain_residual_cuda(
-        alpha, px0, py0, pz0, dx, dy, dz, q0, q1, q2, q3, dn, meta, impact_alt_m
-    ):
-        """``f(alpha) = ||p(alpha)|| - terrain_radius(lat, lon) - impact_alt``.
+    def _hermite_point_cuda(s, px0, py0, pz0, ax, ay, az, ex, ey, ez, gx, gy, gz):
+        """Cubic Hermite position of one step at fraction ``s`` (Horner form).
 
-        ``p(alpha) = p0 + alpha * dp`` (inertial). The sub-point lat/lon come from
-        the body-fixed position obtained by rotating ``p(alpha)`` with the
-        crossing-time quaternion (inlined ``_quat_rot_cuda`` to avoid a local
-        array per evaluation), then rotated into the map frame by the row-major
-        ``meta[13:22]`` matrix (MOON_PA -> MOON_ME for LOLA maps; identity when
-        the propagation frame already is the map frame).
+        ``p(s) = p0 + a s + e s**2 + g s**3`` with ``a = dt v0``, ``e = 3 dp -
+        2 a - b`` and ``g = a + b - 2 dp`` (``dp = p1 - p0``, ``b = dt v1``): the
+        endpoint-value/endpoint-derivative Hermite basis regrouped by powers of
+        ``s``; the torch twin is ``torch_frame._hermite_coeffs``.
         """
-        rx = px0 + alpha * dx
-        ry = py0 + alpha * dy
-        rz = pz0 + alpha * dz
+        return (
+            px0 + s * (ax + s * (ex + s * gx)),
+            py0 + s * (ay + s * (ey + s * gy)),
+            pz0 + s * (az + s * (ez + s * gz)),
+        )
+
+    @cuda.jit(device=True, inline=True)
+    def _hermite_tangent_cuda(s, ax, ay, az, ex, ey, ez, gx, gy, gz):
+        """``dp/ds`` of ``_hermite_point_cuda`` (velocity is ``dp/ds / dt``)."""
+        return (
+            ax + s * (2.0 * ex + s * (3.0 * gx)),
+            ay + s * (2.0 * ey + s * (3.0 * gy)),
+            az + s * (2.0 * ez + s * (3.0 * gz)),
+        )
+
+    @cuda.jit(device=True, inline=True)
+    def _terrain_residual_at_cuda(rx, ry, rz, q0, q1, q2, q3, dn, meta, impact_alt_m):
+        """``f(p) = ||p|| - terrain_radius(lat, lon) - impact_alt`` at inertial ``p``.
+
+        The sub-point lat/lon come from the body-fixed position obtained by
+        rotating ``p`` with the crossing-time quaternion (inlined
+        ``_quat_rot_cuda`` to avoid a local array per evaluation), then rotated
+        into the map frame by the row-major ``meta[13:22]`` matrix (MOON_PA ->
+        MOON_ME for LOLA maps; identity when the propagation frame already is
+        the map frame).
+        """
         r = math.sqrt(rx * rx + ry * ry + rz * rz)
         # Inertial -> body-fixed (scalar-first quaternion rotation, inlined).
         tx = 2.0 * (q2 * rz - q3 * ry)
@@ -619,6 +642,27 @@ if _CUDA_AVAILABLE:
         lon = math.degrees(math.atan2(bfy, bfx))
         terrain_r = _sample_topo_radius_cuda(lat, lon, dn, meta)
         return r - terrain_r - impact_alt_m
+
+    @cuda.jit(device=True, inline=True)
+    def _terrain_residual_cuda(
+        alpha, px0, py0, pz0, dx, dy, dz, q0, q1, q2, q3, dn, meta, impact_alt_m
+    ):
+        """``f(alpha) = ||p(alpha)|| - terrain_radius(lat, lon) - impact_alt``.
+
+        ``p(alpha) = p0 + alpha * dp`` (inertial); see ``_terrain_residual_at_cuda``.
+        """
+        return _terrain_residual_at_cuda(
+            px0 + alpha * dx,
+            py0 + alpha * dy,
+            pz0 + alpha * dz,
+            q0,
+            q1,
+            q2,
+            q3,
+            dn,
+            meta,
+            impact_alt_m,
+        )
 
     @cuda.jit
     def _initial_terrain_impact_kernel(Y, q_tab, dn, meta, impact_alt_m, at_surface):
@@ -1694,10 +1738,95 @@ if _CUDA_AVAILABLE:
                         elif alpha > 1.0:
                             alpha = 1.0
 
-            # Stage 2: refine the envelope crossing down to the true terrain
-            # surface by bisecting f(alpha) = ||p|| - terrain_r - impact_alt on
-            # [alpha_enter, 1]. The crossing-time body-fixed mapping uses the
-            # segment-midpoint quaternion (Moon rotation over one step is tiny).
+            # The chord above is only a conservative gate: it sags up to
+            # g*dt^2/8 (183 m for a low lunar orbit at dt = 30 s) below the
+            # true arc. Stage 2 decides on the step's cubic Hermite arc, built
+            # from both step-end positions and velocities (dt*v scaled).
+            ax = dt * Y[i, 3]
+            ay = dt * Y[i, 4]
+            az = dt * Y[i, 5]
+            bx = dt * y[3]
+            by = dt * y[4]
+            bz = dt * y[5]
+            ex = 3.0 * dx - 2.0 * ax - bx
+            ey = 3.0 * dy - 2.0 * ay - by
+            ez = 3.0 * dz - 2.0 * az - bz
+            gx = ax + bx - 2.0 * dx
+            gy = ay + by - 2.0 * dy
+            gz = az + bz - 2.0 * dz
+            inv_k = 1.0 / _IMPACT_HERMITE_SUBSTEPS
+
+            # Stage 2 (sphere): first Hermite sub-chord entering the sphere
+            # (residual sag g*(dt/K)^2/8), then Newton on ||p(s)|| - r inside
+            # that sub-interval when it ends inside the sphere.
+            if segment_hit == 1 and use_terrain == 0 and cc > 0.0:
+                segment_hit = 0
+                rr = r_bracket * r_bracket
+                qax = px0
+                qay = py0
+                qaz = pz0
+                s_lo = 0.0
+                end_inside = 0
+                for kk in range(1, _IMPACT_HERMITE_SUBSTEPS + 1):
+                    qbx, qby, qbz = _hermite_point_cuda(
+                        kk * inv_k, px0, py0, pz0, ax, ay, az, ex, ey, ez, gx, gy, gz
+                    )
+                    wx = qbx - qax
+                    wy = qby - qay
+                    wz = qbz - qaz
+                    a2 = wx * wx + wy * wy + wz * wz
+                    if a2 > EPS_1E18:
+                        b2 = 2.0 * (qax * wx + qay * wy + qaz * wz)
+                        c2 = qax * qax + qay * qay + qaz * qaz - rr
+                        disc = b2 * b2 - 4.0 * a2 * c2
+                        disc_scale = b2 * b2 + abs(4.0 * a2 * c2)
+                        if disc_scale < 1.0:
+                            disc_scale = 1.0
+                        if disc >= -64.0 * 2.220446049250313e-16 * disc_scale:
+                            if disc < 0.0:
+                                disc = 0.0
+                            a_sub = (-b2 - math.sqrt(disc)) / (2.0 * a2)
+                            if a_sub >= -EPS_1E12 and a_sub <= 1.0 + EPS_1E12:
+                                if a_sub < 0.0:
+                                    a_sub = 0.0
+                                elif a_sub > 1.0:
+                                    a_sub = 1.0
+                                segment_hit = 1
+                                s_lo = (kk - 1) * inv_k
+                                alpha = s_lo + a_sub * inv_k
+                                if qbx * qbx + qby * qby + qbz * qbz <= rr:
+                                    end_inside = 1
+                                break
+                    qax = qbx
+                    qay = qby
+                    qaz = qbz
+                if end_inside == 1:
+                    s_hi = s_lo + inv_k
+                    for _ni in range(3):
+                        hx, hy, hz = _hermite_point_cuda(
+                            alpha, px0, py0, pz0, ax, ay, az, ex, ey, ez, gx, gy, gz
+                        )
+                        tx, ty, tz = _hermite_tangent_cuda(
+                            alpha, ax, ay, az, ex, ey, ez, gx, gy, gz
+                        )
+                        rh = math.sqrt(hx * hx + hy * hy + hz * hz)
+                        if rh < EPS_1E30:
+                            rh = EPS_1E30
+                        fp = (hx * tx + hy * ty + hz * tz) / rh
+                        if fp < 0.0:
+                            alpha = alpha - (rh - r_bracket) / fp
+                            if alpha < s_lo:
+                                alpha = s_lo
+                            elif alpha > s_hi:
+                                alpha = s_hi
+
+            # Stage 2 (terrain): the first Hermite sample at/below the terrain
+            # closes the bracket (a step starting at/below it enters at 0);
+            # bisect f(s) = ||p(s)|| - terrain_r - impact_alt on the Hermite arc
+            # inside that sub-interval. A step that starts inside the envelope
+            # (cc <= 0, a descent lasting several steps) is examined too. The
+            # crossing-time body-fixed mapping uses the step-midpoint
+            # quaternion (Moon rotation over one step is tiny).
             if segment_hit == 1 and use_terrain == 1:
                 quat_imp = cuda.local.array(4, numba.float64)
                 _interp4_cuda(t_val + 0.5 * dt, ephem_dt, q_tab, n_ephem, quat_imp)
@@ -1705,59 +1834,54 @@ if _CUDA_AVAILABLE:
                 qi1 = quat_imp[1]
                 qi2 = quat_imp[2]
                 qi3 = quat_imp[3]
-                a_lo = alpha
-                a_hi = 1.0
-                f_hi = _terrain_residual_cuda(
-                    a_hi,
-                    px0,
-                    py0,
-                    pz0,
-                    dx,
-                    dy,
-                    dz,
-                    qi0,
-                    qi1,
-                    qi2,
-                    qi3,
-                    topo_dn,
-                    topo_meta,
-                    impact_alt_m,
-                )
-                if f_hi <= 0.0:
+                k_hit = -1
+                for kk in range(_IMPACT_HERMITE_SUBSTEPS + 1):
+                    hx, hy, hz = _hermite_point_cuda(
+                        kk * inv_k, px0, py0, pz0, ax, ay, az, ex, ey, ez, gx, gy, gz
+                    )
+                    f_k = _terrain_residual_at_cuda(
+                        hx, hy, hz, qi0, qi1, qi2, qi3, topo_dn, topo_meta, impact_alt_m
+                    )
+                    if f_k <= 0.0:
+                        k_hit = kk
+                        break
+                if k_hit < 0:
+                    # Reached the envelope but stayed above terrain this step.
+                    segment_hit = 0
+                elif k_hit == 0:
+                    alpha = 0.0
+                else:
+                    a_lo = (k_hit - 1) * inv_k
+                    a_hi = k_hit * inv_k
                     for _bi in range(40):
                         a_mid = 0.5 * (a_lo + a_hi)
-                        f_mid = _terrain_residual_cuda(
-                            a_mid,
-                            px0,
-                            py0,
-                            pz0,
-                            dx,
-                            dy,
-                            dz,
-                            qi0,
-                            qi1,
-                            qi2,
-                            qi3,
-                            topo_dn,
-                            topo_meta,
-                            impact_alt_m,
+                        hx, hy, hz = _hermite_point_cuda(
+                            a_mid, px0, py0, pz0, ax, ay, az, ex, ey, ez, gx, gy, gz
+                        )
+                        f_mid = _terrain_residual_at_cuda(
+                            hx, hy, hz, qi0, qi1, qi2, qi3, topo_dn, topo_meta, impact_alt_m
                         )
                         if f_mid > 0.0:
                             a_lo = a_mid
                         else:
                             a_hi = a_mid
                     alpha = 0.5 * (a_lo + a_hi)
-                else:
-                    # Entered the envelope but stayed above terrain this step.
-                    segment_hit = 0
 
             if segment_hit == 1:
                 impact_flags[i] = 1
                 impact_times[i] = t_val + alpha * dt
-                # Interpolate position + velocity to the crossing and overwrite y
-                # so the write-back below freezes the state on the surface.
-                for j in range(6):
-                    y[j] = Y[i, j] + alpha * (y[j] - Y[i, j])
+                # Hermite position + velocity at the crossing overwrite y so the
+                # write-back below freezes the state on the surface.
+                hx, hy, hz = _hermite_point_cuda(
+                    alpha, px0, py0, pz0, ax, ay, az, ex, ey, ez, gx, gy, gz
+                )
+                tx, ty, tz = _hermite_tangent_cuda(alpha, ax, ay, az, ex, ey, ez, gx, gy, gz)
+                y[0] = hx
+                y[1] = hy
+                y[2] = hz
+                y[3] = tx / dt
+                y[4] = ty / dt
+                y[5] = tz / dt
                 impact_positions[i, 0] = y[0]
                 impact_positions[i, 1] = y[1]
                 impact_positions[i, 2] = y[2]
@@ -2246,7 +2370,7 @@ class GPUBatchPropagator:
         t_out : (T,) snapshot times [s]
         Y_out : (T, N, 6) state snapshots
         impact_flags : (N,) float64 – 1.0 if impacted, else 0.0
-        t_impact : (N,) float64 – linearly interpolated crossing time (NaN if no impact)
+        t_impact : (N,) float64 – crossing time on the step's Hermite arc (NaN if no impact)
         """
         N = int(Y0.shape[0])
         dt = float(self._cfg.dt_s)

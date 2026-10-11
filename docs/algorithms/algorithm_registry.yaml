@@ -2577,35 +2577,53 @@ entries:
       - path: src/lunaris/core/batched_fixed_step.py
         symbol: _propagate_chunk
         role: torch_implementation
+      - path: src/lunaris/core/torch_frame.py
+        symbol: hermite_sphere_intersection
+        role: torch_implementation
+      - path: src/lunaris/core/torch_frame.py
+        symbol: hermite_state
+        role: torch_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _rk4_batch_kernel
+        role: cuda_implementation
     mathematical_contract:
       inputs: >-
-        batched inertial segment endpoints [m], segment epoch/step [s],
-        inertial-to-fixed frame, terrain raster, and impact altitude [m]
-      outputs: per-segment hit mask and interpolation fraction alpha in [0, 1]
+        batched inertial step-end positions [m] and velocities [m/s], step
+        epoch/size [s], inertial-to-fixed frame, terrain raster or impact
+        sphere radius [m], and impact altitude [m]
+      outputs: per-step hit mask and step fraction alpha in [0, 1]
       exact_or_approximate: fixed_iteration_segment_crossing_localization
       preserved_properties:
         - non-hit rows return alpha=1
-        - impacted state position and velocity use the same interpolation fraction
+        - impacted state position and velocity come from the same Hermite curve at alpha
+        - non-impacting trajectories are not altered by the detection
     lunaris_modifications:
-      - outer maximum-terrain sphere rejects impossible crossings
-      - body-frame rotation is evaluated once at the segment midpoint
-      - fixed-count bisection runs on the terrain-height residual
+      - the step is the cubic Hermite curve through both step-end states (the LUNARIS-ALG-INTP-002 basis), not the straight chord, which sags g dt^2/8 below the arc
+      - the curve is sampled at 32 sub-steps (residual sub-chord sag g (dt/32)^2/8, 0.18 m for a low lunar orbit at dt = 30 s)
+      - the whole-step chord and the outer maximum-terrain sphere act as conservative rejection gates
+      - sphere crossings are refined by Newton steps clamped to the bracketing sub-interval
+      - body-frame rotation is evaluated once at the step midpoint
+      - fixed-count bisection runs on the terrain-height residual along the Hermite curve
     assumptions:
-      - one resolved downward crossing within the fixed step
+      - the first resolved downward crossing within the fixed step is the impact
       - lunar rotation during one step is negligible relative to terrain relief
     limitations:
-      - transient dip-and-recovery crossings inside one step are not detected
-      - crossing state is linearly interpolated between integrator endpoints
+      - terrain relief narrower than the sub-sample spacing (v dt / 32 along track) can be crossed between samples undetected
+      - the crossing state interpolates the integrator step ends, so its accuracy is bounded by the fixed-step truncation error
       - accuracy is bounded by the propagation step, raster, and midpoint-frame approximation
     validation:
       - tests/test_torch_terrain_freeze.py
+      - tests/test_hermite_impact_detection.py
+      - tests/test_terrain_multistep_descent.py
     see_also:
       - LUNARIS-HEUR-EVT-001
       - LUNARIS-HEUR-INTP-001
+      - LUNARIS-ALG-INTP-002
     notes: >-
-      This is a Lunaris batched-impact policy composed from elementary sphere
-      intersection and bisection. It is not presented as a published terrain
-      collision algorithm.
+      This is a Lunaris batched-impact policy composed from cubic Hermite
+      interpolation, elementary sphere intersection, Newton steps, and
+      bisection. It is not presented as a published terrain collision
+      algorithm.
 
   - id: LUNARIS-HEUR-INTP-001
     slug: periodic_planetary_grid_sampling_policy

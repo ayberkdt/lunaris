@@ -17,16 +17,17 @@ datum, falling at 150 m/s with 200 m/s eastward drift. The envelope is 8 km
 above the datum (a mountain far away), the local ground about 1.5 km below it,
 so the fall spends ~6 steps of 10 s inside the envelope before the ground.
 
-Tolerances: the batch kernels place the crossing on the straight chord of the
-impact step, by design. The chord sags inside the arc by up to
-``g dt^2 / 8 = 20.3 m`` (g = 1.62 m/s^2, dt = 10 s), which at the ~255 m/s
-descent rate near the ground moves the crossing up to ~0.08 s earlier than the
-true event. So the kernels are compared with the *chord* crossing of the SciPy
-trajectory (its states at the bounding step epochs, root of the same terrain
-residual on the chord) to 1e-3 s -- the RK4 state error over these few steps is
-millimetres and both bisections resolve alpha far below that -- and that chord
-crossing is checked against the true event time with the 0.1 s sag bound.
-Before the fix both kernels reported no impact at all.
+Tolerances: the batch kernels place the crossing on the cubic Hermite curve
+through the impact step's end positions and velocities. That curve matches the
+arc to ``dt^4 |d4r/dt4| / 384`` -- micrometres here -- and the RK4 state error
+over these few 10 s steps is of the same order, so the kernel time is compared
+directly with the true event to 1e-5 s (2.6 mm of fall at the ~255 m/s descent
+rate; measured 2.9e-7 s on torch CPU/CUDA). The kernels used to place the
+crossing on the straight chord of the step, which sags inside the arc by up to
+``g dt^2 / 8 = 20.3 m`` (g = 1.62 m/s^2) and put the crossing 0.073 s early;
+the chord crossing of the SciPy trajectory is kept as a guard that this
+tolerance would reject it. Before the multi-step fix both kernels reported no
+impact at all.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ RES_DEG = 1.0
 DT_S = 10.0
 DURATION_S = 200.0
 OUTPUT_DT_S = 50.0
-CHORD_TOL_S = 1.0e-3
+EVENT_TOL_S = 1.0e-5
 SAG_TOL_S = 0.1
 
 
@@ -152,11 +153,11 @@ def cpu_reference_impact_time() -> float:
 
 
 def assert_batch_impact_time(t_batch: float) -> None:
-    """Batch crossing == chord crossing (1e-3 s); chord within the sag bound of the event."""
+    """Batch crossing == true event (1e-5 s); the chord crossing would fail that."""
     t_true = cpu_reference_impact_time()
     t_chord = chord_reference_impact_time(t_true)
-    assert abs(t_chord - t_true) < SAG_TOL_S, (t_chord, t_true)
-    assert abs(t_batch - t_chord) < CHORD_TOL_S, (t_batch, t_chord, t_true)
+    assert 100.0 * EVENT_TOL_S < abs(t_chord - t_true) < SAG_TOL_S, (t_chord, t_true)
+    assert abs(t_batch - t_true) < EVENT_TOL_S, (t_batch, t_true, t_chord)
 
 
 def test_descent_really_spends_several_steps_inside_the_envelope() -> None:

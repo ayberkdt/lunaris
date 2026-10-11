@@ -70,9 +70,9 @@ def test_torch_sh_impact_sphere_uses_model_reference_radius() -> None:
 
 def test_torch_sh_shipped_model_radius_is_unchanged() -> None:
     # With the shipped SHADR radius (== R_MOON) the sphere is bit-identical.
-    # 1 km: above the ~183 m chord sagitta of a 30 s step at this radius, which
-    # the segment-crossing test would otherwise (correctly by its own rule) flag.
-    y0 = _state(float(R_MOON) + 1000.0)
+    # 100 m: inside the ~183 m chord sag of a 30 s step, which the former
+    # straight-chord crossing test flagged; the Hermite-arc test must not.
+    y0 = _state(float(R_MOON) + 100.0)
     prop = _torch_sh(float(R_MOON))
     _, _, impact, _ = prop.propagate(y0, *([np.ones(1)] * 4), duration_s=60.0, output_dt_s=30.0)
     assert impact[0] == 0.0

@@ -39,7 +39,8 @@ from lunaris.core.batch_checkpoint import (
     y0_digest,
 )
 from lunaris.core.torch_frame import (
-    line_sphere_intersection,
+    hermite_sphere_intersection,
+    hermite_state,
     terrain_segment_intersection,
 )
 
@@ -564,12 +565,15 @@ def _propagate_chunk(
                     t_curr += dt_eff
                     global_step += 1
                     if detect_impact:
-                        # True segment intersection over the step, then replace
-                        # the main state with the crossing state so impacted
+                        # Crossing of the step's cubic Hermite arc (both
+                        # step-end positions and velocities), then replace the
+                        # main state with the crossing state so impacted
                         # trajectories freeze ON the surface (position+velocity),
-                        # not at the sub-surface step endpoint. Terrain-aware
-                        # when a topography payload is present; otherwise the
-                        # constant impact sphere.
+                        # not at the sub-surface step endpoint. The straight
+                        # chord would sag up to g*dt^2/8 below the arc and flag
+                        # orbits passing that close above the surface.
+                        # Terrain-aware when a topography payload is present;
+                        # otherwise the constant impact sphere.
                         if topo is not None:
                             segment_hit, alpha = terrain_segment_intersection(
                                 prev_state[:, :3],
@@ -579,15 +583,18 @@ def _propagate_chunk(
                                 frame=frame,
                                 topo=topo,
                                 impact_alt_m=impact_alt_m,
+                                v_prev=prev_state[:, 3:6],
+                                v_curr=sub_state[:, 3:6],
                             )
                         else:
-                            segment_hit, alpha = line_sphere_intersection(
-                                prev_state[:, :3],
-                                sub_state[:, :3],
+                            segment_hit, alpha = hermite_sphere_intersection(
+                                prev_state,
+                                sub_state,
+                                dt_eff,
                                 impact_r_m,
                             )
                         newly = sub_alive & segment_hit
-                        cross_state = prev_state + alpha.unsqueeze(1) * (sub_state - prev_state)
+                        cross_state = hermite_state(prev_state, sub_state, dt_eff, alpha)
                         t_cross = (float(global_step - 1) + alpha) * dt_eff
                         sub_impact_step = torch.where(
                             newly, torch.full_like(sub_impact_step, global_step), sub_impact_step
