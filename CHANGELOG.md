@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: `tools/gpu_qualification.py` reported PASS when every GPU test was skipped.**
+  - The verdict was pytest's exit code, which is 0 when no CUDA is visible and every `requires_cuda` test skips. The tool now reads a JUnit report and fails unless at least one test passed. `--help` prints usage instead of running the suite. Ported from Sidera (64d48728).
+
 - **Fixed: surface and eclipse event factories faked or lost crossings near the start (default behaviour changes).**
   - Terminator, node, target-flyover, occultation, stability and solar-eclipse events returned a constant for absolute `t < 1 s`. A start on the other side of the surface reported a fake crossing at t = 1 s (a run starting in shadow got a false eclipse entry), a real crossing in the first second was lost, and a run whose t0 is an epoch never got the window.
   - `t_guard_s` now defaults to 0 and, when positive, is start-relative and returns NaN (never a crossing), like the apsis and longitude events; a negative or non-finite value raises.
