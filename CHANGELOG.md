@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: report history extractors read the state layout from the time grid and stop guessing units.** Two bugs are fixed in `extract_rv_vectors` / `extract_elements`:
+  - A row-major `(N, 6)` state with `N >= 6` was read as `(6, N)`. Now, when both axes could hold the state, the time grid decides. The canonical `(6, N)` layout wins for a square state, and a shape that matches neither axis raises.
+  - Magnitude-based unit guesses (`_maybe_km`, `_maybe_r_m`, `_maybe_v_mps`) are removed. Histories are SI by contract, and canonical `*_km` / `*_kmps` keys are kept as stored. Before, an `r_norm_km` above 1e5 km was divided by 1000 again.
 - **Fixed: the step-size convergence gate (`lunaris.validation.convergence`).** Three changes:
   - It is now one-sided (`observed >= expected - order_tol`), as its docstring always said. Superconvergence no longer fails.
   - The reference-based order comes from the finest (medium, fine) error pair instead of the coarse pair, which could hide a stalled sequence.
