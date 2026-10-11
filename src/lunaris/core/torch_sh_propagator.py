@@ -61,7 +61,6 @@ from lunaris.common.frame_policy import (
 logger = logging.getLogger(__name__)
 from lunaris.core.backend_capabilities import unsupported_force_models
 from lunaris.core.batch_checkpoint import BatchCheckpointSpec
-from lunaris.core.propagation.time_grid import get_ref_radius_and_mu
 from lunaris.core.batched_fixed_step import (
     query_device_memory,
     resolve_vram_aware_chunk_size,
@@ -69,6 +68,7 @@ from lunaris.core.batched_fixed_step import (
     rk4_step,
     run_batched_fixed_step,
 )
+from lunaris.core.propagation.time_grid import get_ref_radius_and_mu
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
