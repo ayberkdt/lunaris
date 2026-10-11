@@ -2024,7 +2024,7 @@ def evaluate(
     _dm_top = cfg.get("degree_min")
     _dm_meta = (cfg.get("dataset_meta") or {}).get("degree_min")
     degree_min = int(_dm_top if _dm_top is not None else (_dm_meta if _dm_meta is not None else -1))
-    a_sign_resolved = float(cfg.get("resolved_a_sign", a_sign))
+    a_sign_resolved = _require_unit_a_sign(cfg.get("resolved_a_sign", a_sign), "a_sign")
     if a_sign_resolved != a_sign:
         print(f"[INFO] Overriding CLI a_sign={a_sign} with config.json resolved_a_sign={a_sign_resolved}")
         a_sign = a_sign_resolved
@@ -3011,6 +3011,25 @@ def evaluate(
 # -----------------------------
 # CLI
 # -----------------------------
+def _require_unit_a_sign(value: Any, source: str) -> float:
+    """Return ``value`` as +1.0 / -1.0 or raise.
+
+    ``a_sign`` is a sign convention (U vs -U), not a scale: any other value
+    rescales both the base potential and the residual acceleration.
+    """
+    sign = float(value)
+    if sign not in (1.0, -1.0):
+        raise ValueError(f"{source} must be +1 or -1 (sign convention), got {value!r}")
+    return sign
+
+
+def _a_sign_arg(text: str) -> float:
+    try:
+        return _require_unit_a_sign(text, "--a-sign")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-dir", "--run-dir", dest="model_dir", default=None, help="Directory containing config.json, scaler.json, and checkpoints/ckpt_best.pt or ckpt_last.pt. If omitted, auto-detects the newest lunar-compatible run near this script or via env ST_LRPS_MODEL_DIR.")
@@ -3026,7 +3045,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--out", "--output-dir", dest="out", default=None, help="Output directory (default: <run-dir>/evals/eval_<dataset>_<timestamp>).")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     ap.add_argument("--batch-size", type=int, default=8192)
-    ap.add_argument("--a-sign", type=float, default=1.0, help="Fallback a_sign if config.json lacks resolved_a_sign. +1 for geodesy, -1 for physics.")
+    ap.add_argument("--a-sign", type=_a_sign_arg, default=1.0, help="Fallback a_sign if config.json lacks resolved_a_sign. +1 for geodesy, -1 for physics.")
     ap.add_argument("--r-ref-m", type=float, default=None, help="Reference radius for altitude (meters). If omitted, auto-infer from dataset metadata and fall back to the lunar reference radius.")
     ap.add_argument("--alt-bin-km", type=float, default=50.0, help="Altitude bin size for spatial RMSE breakdown (km).")
     ap.add_argument("--start", type=int, default=0, help="Start row for evaluation.")
