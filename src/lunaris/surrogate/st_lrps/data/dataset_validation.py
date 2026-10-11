@@ -18,6 +18,49 @@ def _json_text(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n"
 
 
+# Headroom over the first-order storage-error bounds below. Measured on a stored
+# float32 residual dataset (SH degree 20..200, 60-100 km altitude, 2000 points):
+# potential error <= 0.24 and acceleration error <= 0.04 of the scale each factor
+# multiplies, so 4 leaves >= 16x margin while a corrupted label (wrong sign,
+# shifted coefficient, wrong degree band) is off by O(1) of its own magnitude.
+_RECOMPUTE_TOL_FACTOR = 4.0
+
+
+def _recompute_tolerances(
+    xyz: np.ndarray,
+    u: np.ndarray,
+    a: np.ndarray,
+    storage_dtype: np.dtype,
+    degree_max: int | None,
+) -> tuple[float, float]:
+    """Absolute (potential, acceleration) tolerances for the label recompute check.
+
+    Labels are computed in float64 at float64 positions, then the whole row is
+    rounded to the storage dtype (machine epsilon ``eps``). Recomputing at the
+    rounded positions therefore differs from the stored labels by, per point and
+    to first order in ``eps``:
+
+    * potential: ``0.5*eps*|U|`` (label rounding) + ``|a . dr| <= 0.5*eps*|a|*|r|``
+      (position rounding, ``|dr| <= 0.5*eps*|r|``, ``grad U = a``);
+    * acceleration: ``0.5*eps*|a|`` + ``|H dr|``; for a field of spherical-harmonic
+      degree <= N about the origin ``|H| <~ (N + 2)*|a|/|r|``, so
+      ``|H dr| <~ 0.5*eps*(N + 2)*|a|``.
+
+    A fixed 1e-8 / 1e-10 tolerance rejected every float32 dataset. The
+    position-rounding term is what a magnitude-only ``k*eps*max|U|`` rule
+    misses: for a residual band starting at degree n it is ~(n + 1) times the
+    label-rounding term (measured: 8.9 eps*max|U| on the dataset above).
+    """
+    eps = float(np.finfo(storage_dtype).eps) if np.issubdtype(storage_dtype, np.floating) else float(np.finfo(np.float64).eps)
+    if u.size == 0:
+        return 0.0, 0.0
+    r_norm = np.linalg.norm(xyz, axis=1)
+    a_norm = np.linalg.norm(a, axis=1)
+    pot_scale = float(np.max(np.abs(u) + a_norm * r_norm))
+    acc_scale = float((max(int(degree_max or 0), 0) + 2) * np.max(a_norm))
+    return _RECOMPUTE_TOL_FACTOR * eps * pot_scale, _RECOMPUTE_TOL_FACTOR * eps * acc_scale
+
+
 def _sample_indices(n_total: int, n_check: int, seed: int) -> np.ndarray:
     n = min(int(n_total), max(1, int(n_check)))
     if n >= int(n_total):
@@ -48,10 +91,16 @@ def validate_dataset_file(
     strict: bool = True,
     truth_fn: GravityFn | None = None,
     baseline_fn: GravityFn | None = None,
-    potential_atol: float = 1e-8,
-    accel_atol: float = 1e-10,
+    potential_atol: float | None = None,
+    accel_atol: float | None = None,
 ) -> dict[str, Any]:
-    """Validate an ST-LRPS HDF5 dataset and optionally write a JSON report."""
+    """Validate an ST-LRPS HDF5 dataset and optionally write a JSON report.
+
+    ``potential_atol``/``accel_atol`` default to ``None``: the label recompute
+    tolerance is then derived from the storage dtype (see
+    ``_recompute_tolerances``). The stamped ``content_sha256`` is recomputed from
+    the payload and compared, so a file edited after stamping fails.
+    """
 
     path = Path(data_path).expanduser().resolve()
     errors: list[str] = []
@@ -78,11 +127,13 @@ def validate_dataset_file(
                     name = key
                     break
         shape: tuple[int, ...]
+        stored_dtype: np.dtype = np.dtype(np.float64)
         if name is None:
             errors.append("no HDF5 dataset found")
             shape = (0, 0)
         else:
             shape = tuple(int(v) for v in handle[name].shape)
+            stored_dtype = np.dtype(handle[name].dtype)
     if len(shape) != 2 or shape[1] != 7:
         errors.append(f"dataset must have shape (N, 7), got {shape}")
         n_total = int(shape[0]) if shape else 0
@@ -100,6 +151,24 @@ def validate_dataset_file(
         idx = _sample_indices(n_total, n_check, seed)
         data, _ = _read_subset(path, dataset_name, idx)
     checked.append("shape")
+
+    # content_sha256 is the tamper check: recompute it from the payload and
+    # compare, instead of trusting the value stamped next to it.
+    content_sha256_recorded: str | None = None
+    content_sha256_observed: str | None = None
+    if contract is not None and name is not None and len(shape) == 2 and shape[1] == 7:
+        from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
+
+        content_sha256_recorded = contract.content_sha256 or None
+        content_sha256_observed = content_sha256_for_hdf5_dataset(path, dataset_name=name)
+        if content_sha256_recorded is None:
+            warnings.append("dataset contract records no content_sha256; payload integrity not verified")
+        elif content_sha256_observed != content_sha256_recorded:
+            errors.append(
+                f"content_sha256 mismatch: recorded={content_sha256_recorded} "
+                f"recomputed={content_sha256_observed} (payload modified after stamping)"
+            )
+        checked.append("content_sha256")
 
     np.isfinite(data)
     nan_count = int(np.isnan(data).sum())
@@ -148,15 +217,21 @@ def validate_dataset_file(
         observed_a = data[:, 4:7].reshape(-1, 3)
         residual_potential_max_abs_error = float(np.max(np.abs(observed_u - expected_u))) if observed_u.size else 0.0
         residual_accel_max_abs_error = float(np.max(np.abs(observed_a - expected_a))) if observed_a.size else 0.0
-        if residual_potential_max_abs_error > float(potential_atol):
+        derived_u_atol, derived_a_atol = _recompute_tolerances(
+            data[:, 0:3], observed_u, observed_a, stored_dtype,
+            contract.degree_max if contract is not None else None,
+        )
+        resolved_potential_atol = float(potential_atol) if potential_atol is not None else derived_u_atol
+        resolved_accel_atol = float(accel_atol) if accel_atol is not None else derived_a_atol
+        if residual_potential_max_abs_error > resolved_potential_atol:
             errors.append(
                 "residual potential label mismatch: "
-                f"max_abs_error={residual_potential_max_abs_error:.6e}"
+                f"max_abs_error={residual_potential_max_abs_error:.6e} (atol={resolved_potential_atol:.6e})"
             )
-        if residual_accel_max_abs_error > float(accel_atol):
+        if residual_accel_max_abs_error > resolved_accel_atol:
             errors.append(
                 "residual acceleration label mismatch: "
-                f"max_abs_error={residual_accel_max_abs_error:.6e}"
+                f"max_abs_error={residual_accel_max_abs_error:.6e} (atol={resolved_accel_atol:.6e})"
             )
         checked.append("residual_label_recompute")
 
@@ -199,6 +274,8 @@ def validate_dataset_file(
         "duplicate_fraction": duplicate_fraction,
         "outlier_summary": outlier_summary,
         "contract": contract.to_dict() if contract is not None else None,
+        "content_sha256_recorded": content_sha256_recorded,
+        "content_sha256_observed": content_sha256_observed,
     }
     if out_dir is not None:
         out = Path(out_dir).expanduser().resolve()

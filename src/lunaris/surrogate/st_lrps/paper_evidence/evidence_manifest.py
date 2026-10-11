@@ -12,7 +12,10 @@ yet.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -116,19 +119,26 @@ def write_evidence_manifest(
     """Merge a run entry into the top-level evidence manifest under ``runs[run_key]``.
 
     Multiple seeds/stages accumulate in one canonical file. Writing is additive,
-    so the manifest can be built incrementally as runs complete.
+    so the manifest can be built incrementally as runs complete. An existing file
+    that is not valid JSON, or not an evidence manifest, is refused rather than
+    silently replaced (that would drop every earlier run's record). The write is
+    atomic, so an interrupted write cannot leave a truncated manifest.
     """
     path = Path(manifest_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    manifest: dict[str, Any]
+    manifest: Any
     if path.exists():
         try:
-            manifest = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            manifest = {}
+            manifest = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"evidence manifest {path} is not valid JSON; move it aside before re-running"
+            ) from exc
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("runs"), dict):
+            raise ValueError(
+                f"{path} is not an evidence manifest (no 'runs' mapping); move it aside before re-running"
+            )
     else:
-        manifest = {}
-    if not isinstance(manifest, dict) or "runs" not in manifest:
         manifest = {
             "schema_version": EVIDENCE_MANIFEST_SCHEMA_VERSION,
             "created_at_utc": utc_now_iso(),
@@ -136,10 +146,19 @@ def write_evidence_manifest(
         }
     manifest["updated_at_utc"] = utc_now_iso()
     manifest["runs"][str(run_key)] = dict(entry)
-    path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
-        encoding="utf-8",
-    )
+    text = json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n"
+    # Atomic write: temp file in the same directory, fsync, then replace.
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        # Gone after a successful replace; removes the partial file on failure.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
     return path
 
 

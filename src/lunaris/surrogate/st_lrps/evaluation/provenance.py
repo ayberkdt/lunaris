@@ -260,6 +260,13 @@ def write_json(path: str | Path, payload: Mapping[str, Any]) -> Path:
 
 
 def _find_checkpoint(model_dir: Any) -> Path | None:
+    """The checkpoint the run loads (best, else last; nested or flat layout), or ``None``.
+
+    There is deliberately no fallback to the first ``*.pt``/``*.pth``/``*.ckpt``
+    found anywhere below the run: that could record the hash of an optimizer
+    state or another run's weights as this model's. A run without a standard
+    checkpoint is recorded as missing instead.
+    """
     if not model_dir:
         return None
     path = Path(str(model_dir)).expanduser()
@@ -271,14 +278,7 @@ def _find_checkpoint(model_dir: Any) -> Path | None:
         path / "ckpt_best.pt",
         path / "ckpt_last.pt",
     ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    try:
-        all_candidates = sorted(path.glob("**/*.pt")) + sorted(path.glob("**/*.pth")) + sorted(path.glob("**/*.ckpt"))
-    except Exception:
-        all_candidates = []
-    return all_candidates[0] if all_candidates else None
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
 def _model_config_path(model_dir: Any) -> Path | None:

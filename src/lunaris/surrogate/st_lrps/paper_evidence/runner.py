@@ -25,6 +25,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.paper_evidence.config_validation import (
     PaperConfigError,
@@ -115,7 +117,7 @@ def verify_paper_run_artifacts(run_dir: str | Path) -> dict[str, Path]:
     if not split_manifest_path.exists():
         raise PaperEvidenceError(f"missing split_manifest.json under {run_dir}/provenance")
     split_manifest = json.loads(split_manifest_path.read_text(encoding="utf-8"))
-    _verify_split_disjointness(split_manifest)
+    _verify_split_disjointness(split_manifest, provenance_dir=layout.provenance_dir)
 
     # 3. Artifact contract must be readable (i.e. it was written).
     try:
@@ -139,13 +141,15 @@ def verify_paper_run_artifacts(run_dir: str | Path) -> dict[str, Path]:
     }
 
 
-def _verify_split_disjointness(split_manifest: Mapping[str, Any]) -> None:
-    """Sanity-check split separation from the manifest.
+def _verify_split_disjointness(split_manifest: Mapping[str, Any], *, provenance_dir: Path | None = None) -> None:
+    """Verify split separation from the manifest and, when present, the actual indices.
 
-    The split system guarantees disjoint indices by construction (and is unit
-    tested). Persisted manifests carry only per-split index hashes, so here we
-    assert those hashes are pairwise distinct for non-empty splits — identical
-    hashes would mean the same indices were reused across splits (a leak).
+    Distinct index hashes are a weak check: two different index sets that merely
+    overlap (train=[0..99], val=[50..59]) have distinct hashes. When
+    ``provenance_dir`` holds ``split_indices.npz`` each array is hash-verified
+    against ``index_hashes`` and the non-empty splits are intersected pairwise.
+    Independent-file splits have no in-file indices; they must record distinct
+    ``train_file_sha256`` / ``val_file_sha256`` content hashes instead.
     """
     hashes = split_manifest.get("index_hashes")
     counts = {
@@ -154,15 +158,25 @@ def _verify_split_disjointness(split_manifest: Mapping[str, Any]) -> None:
         "test": split_manifest.get("test_count", 0),
         "ood": split_manifest.get("ood_count", 0),
     }
+    if str(split_manifest.get("split_policy")) == "independent_files":
+        train_hash = split_manifest.get("train_file_sha256")
+        val_hash = split_manifest.get("val_file_sha256")
+        if not train_hash or not val_hash:
+            raise PaperEvidenceError(
+                "split_manifest.json has split_policy='independent_files' but is missing "
+                "train_file_sha256/val_file_sha256 (cannot verify the files are actually distinct)."
+            )
+        if train_hash == val_hash:
+            raise PaperEvidenceError(
+                "split_manifest.json split_policy='independent_files' but train_file_sha256 == "
+                "val_file_sha256 (train and val are the same file)."
+            )
+        return
     if not isinstance(hashes, Mapping):
-        # Independent-file splits legitimately omit index hashes.
-        if str(split_manifest.get("split_policy")) == "independent_files":
-            return
         raise PaperEvidenceError("split_manifest.json is missing index_hashes")
+    non_empty = [name for name, count in counts.items() if int(count or 0) > 0]
     seen: dict[str, str] = {}
-    for name, count in counts.items():
-        if int(count or 0) <= 0:
-            continue
+    for name in non_empty:
         digest = hashes.get(name)
         if not digest:
             raise PaperEvidenceError(f"split_manifest.json missing index hash for non-empty split {name!r}")
@@ -172,6 +186,34 @@ def _verify_split_disjointness(split_manifest: Mapping[str, Any]) -> None:
                 "(train/val/test/OOD splits overlap)."
             )
         seen[digest] = name
+
+    if provenance_dir is None:
+        return
+    indices_path = Path(provenance_dir) / "split_indices.npz"
+    if not indices_path.exists():
+        return  # older run without the sidecar: only the hash check above applies
+    from lunaris.surrogate.st_lrps.data.splits import hash_indices
+
+    try:
+        with np.load(indices_path, allow_pickle=False) as data:
+            arrays = {str(k): np.asarray(data[k], dtype=np.int64).reshape(-1) for k in data.files}
+    except Exception as exc:  # noqa: BLE001 - an unreadable sidecar must not pass as "older run"
+        raise PaperEvidenceError(f"split_indices.npz exists but cannot be read: {exc}") from exc
+    for name, arr in arrays.items():
+        expected = hashes.get(name)
+        if expected and hash_indices(arr) != str(expected):
+            raise PaperEvidenceError(
+                f"split_indices.npz[{name!r}] does not match the split manifest's index hash"
+            )
+    present = sorted(name for name in non_empty if name in arrays)
+    for i, a_name in enumerate(present):
+        for b_name in present[i + 1 :]:
+            overlap = np.intersect1d(arrays[a_name], arrays[b_name])
+            if overlap.size:
+                raise PaperEvidenceError(
+                    f"split index overlap: {a_name!r} and {b_name!r} share {overlap.size} row "
+                    "index(es) (train/val/test/OOD splits overlap)."
+                )
 
 
 def mark_run_pre_hygiene(run_dir: str | Path, *, reason: str = "trained before the validation-hygiene refactor") -> Path:

@@ -70,8 +70,17 @@ def compute_trajectory_metrics(
     r_ref  = truth_res.y[:, :3]
     v_ref  = truth_res.y[:, 3:6]
 
-    # Use time-grid interpolation instead of raw index truncation
-    y_model = interpolate_state_to_times(model_res.t, model_res.y, t_ref)
+    # Use time-grid interpolation instead of raw index truncation. A model
+    # trajectory that does not cover the truth grid (e.g. it terminated early)
+    # is a failed comparison, not a state held constant to the end.
+    try:
+        y_model = interpolate_state_to_times(model_res.t, model_res.y, t_ref)
+    except ValueError as exc:
+        print(f"    WARNING: model {model_name} not compared: {exc}", flush=True)
+        return dict.fromkeys(_METRICS_FIELDNAMES) | {
+            "scenario_id": scenario.scenario_id,
+            "model": model_name, "status": "failed_time_coverage",
+        }
     r_test  = y_model[:, :3]
     v_test  = y_model[:, 3:6]
 
@@ -322,7 +331,16 @@ def compute_gpu_batch_metrics_for_model(
 
         t_truth = truth.t_by_scenario[scenario.scenario_id]
         y_truth = truth.y_by_scenario[scenario.scenario_id]
-        y_model_at_truth = interpolate_state_to_times(result.t, y_model, t_truth)
+        try:
+            y_model_at_truth = interpolate_state_to_times(result.t, y_model, t_truth)
+        except ValueError as exc:
+            rows.append({
+                **base,
+                **{k: np.nan for k in _GPU_BATCH_METRICS_FIELDNAMES if k not in base},
+                "status": "failed",
+                "failure_reason": f"time_coverage: {exc}",
+            })
+            continue
         r_ref = y_truth[:, :3]
         v_ref = y_truth[:, 3:]
         r_test = y_model_at_truth[:, :3]
@@ -479,12 +497,16 @@ def _cached_gpu_runtime_rows(
             cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
             if cached is None:
                 continue
-            if np.isfinite(cached.runtime_s):
-                runtime += float(cached.runtime_s)
-            n += 1
-            steps += max(0, int(cached.t.shape[0] - 1))
             device = str(cached.metadata.get("device", device))
             backend = str(cached.metadata.get("backend", backend))
+            if not np.isfinite(cached.runtime_s):
+                # No measured runtime: excluded from the sum, so it must also be
+                # excluded from n and the step count, or runtime_per_scenario_s
+                # and the throughput are diluted by scenarios that added no time.
+                continue
+            runtime += float(cached.runtime_s)
+            n += 1
+            steps += max(0, int(cached.t.shape[0] - 1))
         if n == 0:
             continue
         rows.append({
@@ -768,9 +790,14 @@ def build_gpu_runtime_metrics(
             "n_saved_outputs": int(len(result.t)),
             "total_runtime_s": runtime,
             "runtime_per_scenario_s": runtime / n_scenarios,
-            "cold_time_s": runtime,
-            "warm_time_s": runtime,
-            "jit_compile_time_s": 0.0,
+            # One wall-clock number per model run is measured here; a cold call,
+            # a warm call and the JIT/compile overhead are not timed separately.
+            # cold = warm = runtime, jit = 0.0 was a fabrication that trivially
+            # satisfied the validator's cold >= warm + jit check: report "".
+            "cold_time_s": "",
+            "warm_time_s": "",
+            "jit_compile_time_s": "",
+            "timing_protocol": "not_measured",
             "propagation_time_s": runtime,
             "trajectory_steps_per_second": steps_rate,
             "acceleration_evaluations_per_second": evals_rate,

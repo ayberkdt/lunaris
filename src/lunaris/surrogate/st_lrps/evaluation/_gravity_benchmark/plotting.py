@@ -395,6 +395,17 @@ def plot_selected_scenario(
     r_ref  = truth_res.y[:, :3]
     v_ref  = truth_res.y[:, 3:6]
     other_models = [m for m in model_trajectories if m != truth_model]
+    # interpolate_state_to_times refuses to extrapolate; a model trajectory that
+    # does not span the truth grid (terminated early) is left out of the plots.
+    _covering = []
+    for m in other_models:
+        try:
+            interpolate_state_to_times(model_trajectories[m].t, model_trajectories[m].y, truth_res.t)
+        except ValueError as exc:
+            print(f"  [plot] {m}: skipped ({exc})", flush=True)
+            continue
+        _covering.append(m)
+    other_models = _covering
 
     # 3D orbit
     fig = plt.figure(figsize=(9, 7))
@@ -1206,7 +1217,10 @@ def plot_gpu_batch_report_figures(
             for i, sc in enumerate(scenarios):
                 if sc.scenario_id not in truth.t_by_scenario:
                     continue
-                y_model = interpolate_state_to_times(result.t, result.y[:, i, :], common_t)
+                try:
+                    y_model = interpolate_state_to_times(result.t, result.y[:, i, :], common_t)
+                except ValueError:
+                    continue  # trajectory does not span the truth grid (no extrapolation)
                 if not np.isfinite(y_model).all():
                     # partial result: this scenario failed and is NaN-filled.
                     continue
@@ -1344,7 +1358,10 @@ def plot_gpu_batch_report_figures(
         for result in results:
             if result.status not in ("ok", "partial"):
                 continue
-            y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
+            try:
+                y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
+            except ValueError:
+                continue  # trajectory does not span the truth grid (no extrapolation)
             if not np.isfinite(y_model).all():
                 # partial result: this selected scenario failed for this model.
                 continue
@@ -1461,7 +1478,10 @@ def plot_gpu_batch_report_figures(
             for result in results:
                 if result.status not in ("ok", "partial"):
                     continue
-                y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
+                try:
+                    y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
+                except ValueError:
+                    continue  # trajectory does not span the truth grid (no extrapolation)
                 if not np.isfinite(y_model).all():
                     continue
                 rk = y_model[:, :3] / 1000.0

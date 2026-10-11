@@ -30,7 +30,12 @@ def _flag(argv: list[str], name: str, value: Any) -> None:
 def _bool_flag(argv: list[str], value: Any, *, on: str, off: str) -> None:
     if value is None:
         return
-    argv.append(on if bool(value) else off)
+    # bool("false") is True (any non-empty string is truthy), so a JSON config
+    # value of "false" used to emit the `on` flag. Strings are parsed; one that
+    # is neither a true nor a false spelling is refused rather than guessed.
+    if isinstance(value, str) and value.strip().lower() not in _TRUE_STRINGS | _FALSE_STRINGS:
+        raise ValueError(f"cannot interpret {value!r} as a boolean for {on}/{off}")
+    argv.append(on if _truthy(value) else off)
 
 
 def build_training_argv(config: Mapping[str, Any]) -> list[str]:
@@ -142,9 +147,13 @@ def _is_placeholder(value: str) -> bool:
     return text.startswith("<") or "FILL" in text.upper() or text.upper() in {"TODO", "TBD"}
 
 
+_TRUE_STRINGS = frozenset({"1", "true", "yes", "y", "t"})
+_FALSE_STRINGS = frozenset({"0", "false", "no", "n", "f", ""})
+
+
 def _truthy(value: Any) -> bool:
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y", "t"}
+        return value.strip().lower() in _TRUE_STRINGS
     return bool(value)
 
 

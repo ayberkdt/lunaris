@@ -55,6 +55,16 @@ RUNTIME_TIMING_COLUMNS = (
     "propagation_time_s",
 )
 
+# cold/warm/JIT are meaningful only when a harness times a cold call, a warm
+# call and the compile overhead separately. A harness that measures one total
+# wall-clock number reports them as "" (not measured) instead of fabricating
+# cold = warm = total, jit = 0 to pass the consistency checks below.
+RUNTIME_OPTIONAL_UNMEASURED_TIMING_COLUMNS = (
+    "cold_time_s",
+    "warm_time_s",
+    "jit_compile_time_s",
+)
+
 RUNTIME_THROUGHPUT_COLUMNS = (
     "acceleration_evaluations_per_second",
     "propagated_seconds_per_wall_second",
@@ -884,6 +894,9 @@ def _check_runtime_timing_columns(
         for col in required:
             value = _to_float(row.get(col))
             if value is None:
+                if col in RUNTIME_OPTIONAL_UNMEASURED_TIMING_COLUMNS and str(row.get(col, "")).strip() == "":
+                    checked.append(f"runtime_timing:{col}:not_measured")
+                    continue
                 errors.append(f"runtime_summary.csv row {index} column {col} is required")
                 continue
             checked.append(f"runtime_timing:{col}:finite")

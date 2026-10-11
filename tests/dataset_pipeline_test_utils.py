@@ -127,4 +127,10 @@ def write_toy_contract_h5(
         handle.attrs["source_gravity_file_path"] = str(contract.source_gravity_file_path or "")
         handle.attrs["source_gravity_file_sha256"] = str(contract.source_gravity_file_sha256 or "")
         contract.write_hdf5_attrs(handle, generation_config={"name": "toy"})
+    if "content_sha256" not in (contract_overrides or {}):
+        # validate_dataset_file recomputes the payload hash, so the file carries
+        # its real hash (the contract helper's placeholder would read as tampering).
+        from lunaris.surrogate.st_lrps.data.dataset_contract import stamp_hdf5_content_hash
+
+        stamp_hdf5_content_hash(path, dataset_name="data")
     return path

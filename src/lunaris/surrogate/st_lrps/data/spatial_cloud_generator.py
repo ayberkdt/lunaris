@@ -23,6 +23,7 @@ import hashlib
 import heapq
 import json
 import math
+import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -433,6 +434,23 @@ def load_coeffs_from_ssot(*, degree_max: int, gfc_path: str | None) -> tuple[np.
 # =============================================================================
 _G: dict[str, object] = {}
 
+# Chunk-seeding scheme, recorded in the file attributes. The previous scheme
+# seeded chunk i with ``base_seed + i``, so chunk 1 of seed 100 WAS chunk 0 of
+# seed 101: datasets generated from neighbouring seeds (e.g. a train file with
+# seed 42 and a val file with seed 43) shared all but one chunk row for row.
+CHUNK_RNG_VERSION = "seed_sequence_v2"
+
+
+def _chunk_seed(base_seed: int, chunk_index: int) -> int:
+    """Independent RNG seed for chunk ``chunk_index`` of a cloud seeded ``base_seed``.
+
+    ``np.random.SeedSequence`` mixes the (base_seed, chunk_index) pair as entropy,
+    so distinct pairs give unrelated streams; there is no arithmetic relation for
+    neighbouring base seeds to collide on.
+    """
+    seq = np.random.SeedSequence([int(base_seed), int(chunk_index)])
+    return int(seq.generate_state(1)[0])
+
 
 def _init_worker(globals_blob: dict[str, object]) -> None:
     global _G
@@ -792,6 +810,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
         "coordinate_frame": DEFAULT_COORDINATE_FRAME,
         "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
         "generator_version": "spatial_cloud_generator_contract_v1",
+        "chunk_rng_version": CHUNK_RNG_VERSION,
         "created_at_utc": utc_now_iso(),
         "sampling_strategy": str(cfg.sampling_strategy),
         "surface_bias_ratio": str(float(cfg.surface_bias_ratio)),
@@ -846,16 +865,20 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
     }
 
     base_seed = int(cfg.seed)
+    # Write beside the final name and rename when complete, so an interrupted run
+    # never leaves a valid-looking file (the contract is stamped up front, the
+    # content hash only at the end) under the name consumers open.
+    partial_path = out_path.with_name(out_path.name + ".partial")
 
     if fmt == "h5":
-        with write_h5_streaming(out_path, n_samples, dtype_out, min(chunk_size, 1_000_000), attrs) as f:
+        with write_h5_streaming(partial_path, n_samples, dtype_out, min(chunk_size, 1_000_000), attrs) as f:
             dset = f["data"]
             if bool(cfg.no_multiprocessing) or int(cfg.workers) <= 1:
                 _init_worker(globals_blob)
                 offset = 0
                 for i in range(n_chunks):
                     n_i = min(chunk_size, n_samples - offset)
-                    seed_i = base_seed + i
+                    seed_i = _chunk_seed(base_seed, i)
                     start_i, chunk = _worker_compute_chunk(offset, n_i, seed_i)
                     dset[start_i : start_i + n_i, :] = chunk
                     offset += n_i
@@ -871,7 +894,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                     offset = 0
                     for i in range(n_chunks):
                         n_i = min(chunk_size, n_samples - offset)
-                        seed_i = base_seed + i
+                        seed_i = _chunk_seed(base_seed, i)
                         futures.append(ex.submit(_worker_compute_chunk, offset, n_i, seed_i))
                         offset += n_i
 
@@ -884,7 +907,8 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                         _emit_progress(done, n_samples)
 
             f.flush()
-        stamp_hdf5_content_hash(out_path, dataset_name="data")
+        stamp_hdf5_content_hash(partial_path, dataset_name="data")
+        os.replace(partial_path, out_path)
         print("[done] HDF5 saved.")
 
     elif fmt == "pt":
@@ -903,7 +927,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
             offset = 0
             for i in range(n_chunks):
                 n_i = min(chunk_size, n_samples - offset)
-                seed_i = base_seed + i
+                seed_i = _chunk_seed(base_seed, i)
                 _worker_write_memmap(str(memmap_path), n_samples, offset, n_i, seed_i)
                 offset += n_i
                 # Each worker already flushes its memmap slice to disk.
@@ -916,7 +940,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                 offset = 0
                 for i in range(n_chunks):
                     n_i = min(chunk_size, n_samples - offset)
-                    seed_i = base_seed + i
+                    seed_i = _chunk_seed(base_seed, i)
                     futures.append(ex.submit(_worker_write_memmap, str(memmap_path), n_samples, offset, n_i, seed_i))
                     offset += n_i
 
@@ -926,7 +950,8 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                     _emit_progress(done, n_samples)
 
         print(f"[info] finalizing .pt to: {out_path}")
-        finalize_pt_from_memmap(memmap_path, out_path, n_samples, dtype_out, attrs, delete_memmap=True)
+        finalize_pt_from_memmap(memmap_path, partial_path, n_samples, dtype_out, attrs, delete_memmap=True)
+        os.replace(partial_path, out_path)
         print("[done] PT saved.")
 
     else:
@@ -978,7 +1003,9 @@ def _write_suite_h5(
     n = int(data.shape[0])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     chunk_rows = max(1, min(chunk_size, n))
-    with h5py.File(str(out_path), "w") as f:
+    # Write beside the final name and rename once stamped (see run_generation).
+    partial_path = out_path.with_name(out_path.name + ".partial")
+    with h5py.File(str(partial_path), "w") as f:
         ds = f.create_dataset(
             "data",
             shape=(n, 7),
@@ -998,7 +1025,8 @@ def _write_suite_h5(
         except Exception:
             generation_config = {}
         contract.write_hdf5_attrs(f, generation_config=generation_config)
-    stamp_hdf5_content_hash(out_path, dataset_name="data")
+    stamp_hdf5_content_hash(partial_path, dataset_name="data")
+    os.replace(partial_path, out_path)
     print(f"[suite] wrote {n:,} rows -> {out_path.name}")
 
 
@@ -2109,7 +2137,8 @@ def _run_active_refinement(a, ap) -> None:
         alt_max_out = alt_min_out + 1e-6
 
     print(f"[active-refinement] Saving labeled HDF5 to {h5_path} (shape={data_out.shape}) ...")
-    with _h5py.File(str(h5_path), "w") as hf:
+    partial_h5 = h5_path.with_name(h5_path.name + ".partial")
+    with _h5py.File(str(partial_h5), "w") as hf:
         hf.create_dataset("data", data=data_out.astype(np.float64),
                                 chunks=(min(65536, data_out.shape[0]), 7),
                                 compression="gzip", compression_opts=4)
@@ -2162,7 +2191,8 @@ def _run_active_refinement(a, ap) -> None:
                 "active_seed": int(getattr(a, "active_seed", 42)),
             },
         )
-    stamp_hdf5_content_hash(h5_path, dataset_name="data")
+    stamp_hdf5_content_hash(partial_h5, dataset_name="data")
+    os.replace(partial_h5, h5_path)
 
     # Save metadata JSON
     meta = {
