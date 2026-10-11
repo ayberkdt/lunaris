@@ -13,6 +13,7 @@ from `lunaris.ui.widgets` into a single desktop workflow.
 from __future__ import annotations
 
 import ast
+import codecs
 import json
 import os
 import subprocess
@@ -284,7 +285,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batch_process: QtCore.QProcess | None = None
         self.preflight_worker: PreFlightWorker | None = None
         self.batch_runner_script_path   = _lunaris_pkg / "cli" / "batch_runner.py"
-        self._batch_stdout_buf: str = ""
+        self._reset_batch_streams()
 
         # UI State Containers (Mutable)
         self.sim_state = SimulationState()
@@ -1125,7 +1126,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.batch_process.setProcessEnvironment(_child_process_environment())
 
-        self._batch_stdout_buf = ""
+        self._reset_batch_streams()
         self._batch_metrics: dict = {}
         self._batch_output_path: str = batch_data.get("output_path", "")
 
@@ -1134,6 +1135,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message("[BATCH][Error] Failed to start batch process.", severity="error")
             self.page_batch.on_run_finished(1, "", None, None)
             self.batch_process = None
+
+    def _reset_batch_streams(self) -> None:
+        """Fresh line assemblers and UTF-8 decoders for a new batch subprocess.
+
+        Each stream keeps its partial line between reads (and a multi-byte
+        character split across two reads), so ``_on_batch_finished`` can
+        emit the final line even when it has no trailing newline.
+        """
+        self._batch_stdout_assembler = LineAssembler()
+        self._batch_stderr_assembler = LineAssembler()
+        self._batch_stdout_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._batch_stderr_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def _on_batch_stdout(self) -> None:
         """
@@ -1147,61 +1160,75 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.batch_process is None:
             return
         try:
-            raw = bytes(self.batch_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            raw = self._batch_stdout_decoder.decode(bytes(self.batch_process.readAllStandardOutput()))
         except Exception:
             return
+        for line in self._batch_stdout_assembler.push(raw):
+            self._consume_batch_stdout_line(line)
 
-        self._batch_stdout_buf += raw
-        while "\n" in self._batch_stdout_buf:
-            line, self._batch_stdout_buf = self._batch_stdout_buf.split("\n", 1)
-            line = line.rstrip()
-            if not line:
-                continue
+    def _consume_batch_stdout_line(self, line: str) -> None:
+        """Route one complete batch stdout line (control payload or log text)."""
+        line = line.rstrip()
+        if not line:
+            return
 
-            if line.startswith("[BATCH_PROGRESS]"):
-                try:
-                    payload = json.loads(line[len("[BATCH_PROGRESS]"):].strip())
-                except Exception:
-                    self._log_message("[BATCH] Ignored malformed progress payload.", severity="warning")
-                else:
-                    if hasattr(self, "page_batch"):
-                        self.page_batch.update_progress_payload(payload)
-                    # Mirror into the Mission Monitor's batch observability.
-                    with contextlib.suppress(Exception):
-                        self.monitor_controller.set_batch_progress(payload)
-                continue
+        if line.startswith("[BATCH_PROGRESS]"):
+            try:
+                payload = json.loads(line[len("[BATCH_PROGRESS]"):].strip())
+            except Exception:
+                self._log_message("[BATCH] Ignored malformed progress payload.", severity="warning")
+            else:
+                if hasattr(self, "page_batch"):
+                    self.page_batch.update_progress_payload(payload)
+                # Mirror into the Mission Monitor's batch observability.
+                with contextlib.suppress(Exception):
+                    self.monitor_controller.set_batch_progress(payload)
+            return
 
-            if line.startswith("[BATCH_METRICS]"):
-                try:
-                    payload = line[len("[BATCH_METRICS]"):].strip()
-                    self._batch_metrics = json.loads(payload)
-                except Exception:
-                    self._log_message("[BATCH] Ignored malformed metrics payload.", severity="warning")
-                else:
-                    with contextlib.suppress(Exception):
-                        self.monitor_controller.set_batch_metrics(self._batch_metrics)
-                continue
+        if line.startswith("[BATCH_METRICS]"):
+            try:
+                payload = line[len("[BATCH_METRICS]"):].strip()
+                self._batch_metrics = json.loads(payload)
+            except Exception:
+                self._log_message("[BATCH] Ignored malformed metrics payload.", severity="warning")
+            else:
+                with contextlib.suppress(Exception):
+                    self.monitor_controller.set_batch_metrics(self._batch_metrics)
+            return
 
-            self._log_message(line, severity="info", source="batch")
+        self._log_message(line, severity="info", source="batch")
 
-            # Forward to the page's mini-log + progress bar
-            if hasattr(self, "page_batch"):
-                self.page_batch.update_progress(line)
+        # Forward to the page's mini-log + progress bar
+        if hasattr(self, "page_batch"):
+            self.page_batch.update_progress(line)
 
     def _on_batch_stderr(self) -> None:
         """Route batch stderr to the main log as warnings."""
         if self.batch_process is None:
             return
         try:
-            raw = bytes(self.batch_process.readAllStandardError()).decode("utf-8", errors="replace")
+            raw = self._batch_stderr_decoder.decode(bytes(self.batch_process.readAllStandardError()))
         except Exception:
             return
-        for line in raw.splitlines():
-            if line.strip():
-                self._log_message(f"[BATCH] {line.strip()}", severity="warning")
+        for line in self._batch_stderr_assembler.push(raw):
+            self._log_batch_stderr_line(line)
+
+    def _log_batch_stderr_line(self, line: str) -> None:
+        if line.strip():
+            self._log_message(f"[BATCH] {line.strip()}", severity="warning")
 
     def _on_batch_finished(self, exit_code: int, _exit_status) -> None:
         """Handle batch subprocess completion and update the page."""
+        # The last line of each stream may have no newline (or end inside a
+        # multi-byte character); emit it before the metrics are read below.
+        for line in self._batch_stderr_assembler.push(self._batch_stderr_decoder.decode(b"", final=True)):
+            self._log_batch_stderr_line(line)
+        for line in self._batch_stderr_assembler.flush():
+            self._log_batch_stderr_line(line)
+        for line in self._batch_stdout_assembler.push(self._batch_stdout_decoder.decode(b"", final=True)):
+            self._consume_batch_stdout_line(line)
+        for line in self._batch_stdout_assembler.flush():
+            self._consume_batch_stdout_line(line)
         metrics = getattr(self, "_batch_metrics", {}) or {}
         output_path = metrics.get("output_path", getattr(self, "_batch_output_path", ""))
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: a batch run lost its last stdout line.** When the final line had no trailing newline it stayed in the buffer, so a closing `[BATCH_METRICS]` payload was dropped and the run reported `?/?` impacts. Batch stdout and stderr now each use a line assembler with an incremental UTF-8 decoder, and both are flushed before the metrics are read. Stderr lines split across reads, and multi-byte characters split across reads, are no longer broken.
+
 - **Fixed: the Mission Monitor doubled every panel when it restored a saved dashboard.** `clear_docks` scheduled the old docks with `deleteLater`, and `restoreState` matched them by object name before they were gone. Removed docks now lose their object name and are hidden first.
 
 - **Fixed: a Mission Studio session save could write a page blank.** A page whose state could not be read was saved with empty defaults, and the 30 s auto-save replaced the last good session with it. The snapshot now lists such pages in `meta.unreadable_sections`, and both the auto-save and Save Profile refuse to write it, log a warning and keep the previous file.
