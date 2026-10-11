@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Performance: the CPU lunar RHS compiles once per process and is cached on disk.**
+  The numba RHS kernels were closures over the run's arrays and settings, which
+  numba freezes as constants, so every `DynamicsEngine` (each CPU batch sample,
+  each validation run) recompiled them: 1.6-2.5 s per engine for GL1800F
+  degree 50/200, SH-only and SH + Sun/Earth. They are now module-level
+  `cache=True` kernels that read one `_RhsPack` (a numba StructRef). Results are
+  bit-identical (`np.array_equal`) on 27 force configurations: 1000 RHS states
+  and a 1-day DOP853 trajectory each. The surrogate (Python) RHS is unchanged.
+  Numba checks a cached kernel only against `engine.py`, so after editing a
+  force kernel in another module, delete `core/dynamics/__pycache__/engine.*.nb*`.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.

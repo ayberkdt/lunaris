@@ -9,9 +9,9 @@ Architecture
 ------------
 High-level Python objects (gravity, ephemeris, surface data, etc.) are kept
 outside the inner loop. ``build_rhs()`` extracts all required inputs into
-Numba-friendly primitives (floats, arrays, booleans) and constructs a JIT-
-compiled RHS closure. The compiled RHS must not allocate heap memory or access
-Python objects.
+Numba-friendly primitives (floats, arrays, booleans), packs them into one
+``_RhsPack`` and wraps a module-level, disk-cached JIT RHS kernel that reads
+it. The compiled RHS must not allocate heap memory or access Python objects.
 
 Reference frames
 ----------------
@@ -51,6 +51,8 @@ from typing import Any, NamedTuple
 
 import numpy as np
 from numba import njit
+from numba.core import types as nb_types
+from numba.experimental import structref
 
 from lunaris.common.constants import (
     AU,
@@ -153,6 +155,543 @@ class _PreparedForces(NamedTuple):
     earth_j2: _EarthJ2Pack
     tides: _TidePack
     thermal: _ThermalPack
+
+
+# =============================================================================
+# 0b.                         RHS KERNELS (numba)
+# =============================================================================
+# Module-level and disk-cached. Every run-specific value reaches the kernels as
+# data, never as a captured closure constant, so the compiled code depends only
+# on the TYPES of that data: one compilation per process (none with a warm
+# on-disk cache) replaces the former per-engine closure compile (1.6-2.5 s each,
+# paid again for every CPU batch sample). The former compile-time constants
+# (USE_*, NEED_*) are runtime branches; the force code is the former closure
+# code verbatim, so the arithmetic and its order are unchanged (bit-identical
+# RHS: tests/test_dynamics_rhs_kernel_cache.py).
+#
+# The data travels as ONE ``_RhsPack`` (a numba StructRef over the tuples built
+# in ``DynamicsEngine._build_solver_rhs``; the tuple layouts below are a
+# contract with it). Numba unboxes every array argument on every call, so
+# passing the ~30 arrays as arguments costs microseconds per RHS evaluation;
+# the pack is unboxed as one object. Each force's tuple is unpacked inside its
+# own branch, so a run pays reference counting only for what it uses.
+#
+# Numba revalidates a cached kernel against THIS file only: after editing a
+# force-model callee in another module, delete the engine kernels' cache files
+# (``core/dynamics/__pycache__/engine.*.nbi`` / ``.nbc``) before trusting
+# results from a warm cache.
+
+
+@structref.register
+class _RhsPackType(nb_types.StructRef):
+    """Numba type of `_RhsPack`; field types are the run's tuple types."""
+
+    def preprocess_fields(self, fields: Any) -> tuple:
+        return tuple((name, nb_types.unliteral(typ)) for name, typ in fields)
+
+
+class _RhsPack(structref.StructRefProxy):
+    """One engine's run data for the cached RHS kernels (built by `_new_rhs_pack`)."""
+
+
+_RHS_PACK_FIELDS = ("flags", "consts", "srp", "eph", "grav", "adaptive", "alb", "ej2_tide", "th", "ws")
+structref.define_proxy(_RhsPack, _RhsPackType, list(_RHS_PACK_FIELDS))
+
+
+@njit(cache=True)
+def _new_rhs_pack(
+    flags: tuple,
+    consts: tuple,
+    srp: tuple,
+    eph: tuple,
+    grav: tuple,
+    adaptive: tuple,
+    alb: tuple,
+    ej2_tide: tuple,
+    th: tuple,
+    ws: tuple,
+) -> _RhsPack:
+    """Cached constructor (the proxy's own Python constructor compiles per process)."""
+    return _RhsPack(flags, consts, srp, eph, grav, adaptive, alb, ej2_tide, th, ws)
+
+
+@njit(cache=True, nogil=True)
+def _rhs_sh_only_numba(t: float, y: np.ndarray, pack: _RhsPack) -> np.ndarray:
+    """SH-only RHS (R13 fast path): frame rotation, SH acceleration, dy/dt."""
+    NEED_EPH = pack.flags[15]  # last flag; layout as unpacked in _rhs_kernel_numba
+    EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE = pack.eph
+    G_NMAX, G_RREF, G_GM, G_CNM, G_SNM, G_DIAG, G_SUB, G_A, G_B, G_SCL = pack.grav
+    (
+        G_ADAPTIVE_ENABLED, G_ADAPTIVE_MODE, G_ADAPTIVE_POWER, G_ADAPTIVE_MIN_DEG,
+        G_ADAPTIVE_QSTEP, G_ADAPTIVE_ALT_KM, G_ADAPTIVE_DEG, G_ADAPTIVE_TABLE_LEN,
+    ) = pack.adaptive
+    WS_P, WS_DP, WS_COS, WS_SIN = pack.ws
+
+    rx, ry, rz = y[0], y[1], y[2]
+    vx, vy, vz = y[3], y[4], y[5]
+
+    q0 = 1.0
+    q1 = 0.0
+    q2 = 0.0
+    q3 = 0.0
+    if NEED_EPH:
+        _sunx, _suny, _sunz, _earthx, _earthy, _earthz, q0, q1, q2, q3 = get_ephem_state_with_velocity(
+            t, EPH_DT_S, EPH_SUN, EPH_EARTH,
+            EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE,
+        )
+
+    rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+    n_eval = G_NMAX
+    if G_ADAPTIVE_ENABLED:
+        r_norm = math.sqrt(rx * rx + ry * ry + rz * rz)
+        n_eval = _select_adaptive_sh_degree(
+            r_norm,
+            G_RREF,
+            G_NMAX,
+            G_ADAPTIVE_MODE,
+            G_ADAPTIVE_POWER,
+            G_ADAPTIVE_MIN_DEG,
+            G_ADAPTIVE_QSTEP,
+            G_ADAPTIVE_ALT_KM,
+            G_ADAPTIVE_DEG,
+            G_ADAPTIVE_TABLE_LEN,
+        )
+    afx, afy, afz = sh_accel_fixed_numba(
+        rfx,
+        rfy,
+        rfz,
+        n_eval,
+        G_RREF,
+        G_GM,
+        G_CNM,
+        G_SNM,
+        G_DIAG,
+        G_SUB,
+        G_A,
+        G_B,
+        G_SCL,
+        WS_P,
+        WS_DP,
+        WS_COS,
+        WS_SIN,
+    )
+    ax, ay, az = quat_rotate_vec(q0, -q1, -q2, -q3, afx, afy, afz)
+
+    dydt = np.empty_like(y)
+    dydt[0] = vx
+    dydt[1] = vy
+    dydt[2] = vz
+    dydt[3] = ax
+    dydt[4] = ay
+    dydt[5] = az
+    if y.shape[0] > 6:
+        dydt[6] = 0.0
+    return dydt
+
+
+@njit(cache=True, nogil=True)
+def _rhs_kernel_numba(t: float, y: np.ndarray, pack: _RhsPack) -> np.ndarray:
+    """General lunar RHS: every force of the CPU line, selected by ``pack.flags``."""
+    (
+        USE_SH, USE_3RD_SUN, USE_3RD_EARTH, USE_SRP, USE_ALBEDO, USE_REL, USE_REL_EXTERNAL,
+        USE_EJ2, USE_TIDES, USE_TIDE_EARTH, USE_TIDE_SUN, USE_THERMAL,
+        NEED_FIXED_FRAME, NEED_SUN_FIXED, NEED_EARTH_FIXED, NEED_EPH,
+    ) = pack.flags
+    SC_MASS, SC_AREA, SC_CR, MU_M, MU_S, MU_E = pack.consts
+    RMOON, R_EARTH, AU_, P1AU, SRP_MOON_ECLIPSE, SRP_EARTH_ECLIPSE = pack.srp
+    EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE = pack.eph
+    (
+        EJ2_J2, EJ2_RREF, EJ2_KX, EJ2_KY, EJ2_KZ,
+        TIDE_USE_K2, TIDE_USE_K3, TIDE_K2, TIDE_K3, TIDE_RREF,
+    ) = pack.ej2_tide
+    ENABLE_ECLIPSE = True
+
+    rx, ry, rz = y[0], y[1], y[2]
+    vx, vy, vz = y[3], y[4], y[5]
+
+    n = y.shape[0]
+    mass = SC_MASS if n <= 6 else y[6]
+
+    ax = 0.0
+    ay = 0.0
+    az = 0.0
+
+    # Ephemeris state (defaults)
+    sunx = 0.0
+    suny = 0.0
+    sunz = 0.0
+    earthx = 0.0
+    earthy = 0.0
+    earthz = 0.0
+    q0 = 1.0
+    q1 = 0.0
+    q2 = 0.0
+    q3 = 0.0
+
+    if NEED_EPH:
+        sunx, suny, sunz, earthx, earthy, earthz, q0, q1, q2, q3 = get_ephem_state_with_velocity(
+            t, EPH_DT_S, EPH_SUN, EPH_EARTH,
+            EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE,
+        )
+
+    rfx = rx
+    rfy = ry
+    rfz = rz
+    sfx = sunx
+    sfy = suny
+    sfz = sunz
+    efx = earthx
+    efy = earthy
+    efz = earthz
+    if NEED_FIXED_FRAME:
+        rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+    if NEED_SUN_FIXED:
+        sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+    if NEED_EARTH_FIXED:
+        efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
+
+    # A) Central gravity
+    if USE_SH:
+        G_NMAX, G_RREF, G_GM, G_CNM, G_SNM, G_DIAG, G_SUB, G_A, G_B, G_SCL = pack.grav
+        (
+            G_ADAPTIVE_ENABLED, G_ADAPTIVE_MODE, G_ADAPTIVE_POWER, G_ADAPTIVE_MIN_DEG,
+            G_ADAPTIVE_QSTEP, G_ADAPTIVE_ALT_KM, G_ADAPTIVE_DEG, G_ADAPTIVE_TABLE_LEN,
+        ) = pack.adaptive
+        WS_P, WS_DP, WS_COS, WS_SIN = pack.ws
+        n_eval = G_NMAX
+        if G_ADAPTIVE_ENABLED:
+            r_norm = math.sqrt(rx * rx + ry * ry + rz * rz)
+            n_eval = _select_adaptive_sh_degree(
+                r_norm,
+                G_RREF,
+                G_NMAX,
+                G_ADAPTIVE_MODE,
+                G_ADAPTIVE_POWER,
+                G_ADAPTIVE_MIN_DEG,
+                G_ADAPTIVE_QSTEP,
+                G_ADAPTIVE_ALT_KM,
+                G_ADAPTIVE_DEG,
+                G_ADAPTIVE_TABLE_LEN,
+            )
+        afx, afy, afz = sh_accel_fixed_numba(
+            rfx,
+            rfy,
+            rfz,
+            n_eval,
+            G_RREF,
+            G_GM,
+            G_CNM,
+            G_SNM,
+            G_DIAG,
+            G_SUB,
+            G_A,
+            G_B,
+            G_SCL,
+            WS_P,
+            WS_DP,
+            WS_COS,
+            WS_SIN,
+        )
+        agx, agy, agz = quat_rotate_vec(q0, -q1, -q2, -q3, afx, afy, afz)
+        ax += agx
+        ay += agy
+        az += agz
+    else:
+        gax, gay, gaz = compute_point_mass_acceleration(rx, ry, rz, MU_M)
+        ax += gax
+        ay += gay
+        az += gaz
+
+    # B) Third-body
+    if USE_3RD_SUN:
+        a3x, a3y, a3z = accel_third_body_numba(rx, ry, rz, sunx, suny, sunz, MU_S)
+        ax += a3x
+        ay += a3y
+        az += a3z
+
+    if USE_3RD_EARTH:
+        a3x, a3y, a3z = accel_third_body_numba(rx, ry, rz, earthx, earthy, earthz, MU_E)
+        ax += a3x
+        ay += a3y
+        az += a3z
+
+    if USE_EJ2:
+        j2x, j2y, j2z = accel_j2_oblate_diff_numba(
+            rx,
+            ry,
+            rz,
+            earthx,
+            earthy,
+            earthz,
+            MU_E,
+            EJ2_RREF,
+            EJ2_J2,
+            EJ2_KX,
+            EJ2_KY,
+            EJ2_KZ,
+        )
+        ax += j2x
+        ay += j2y
+        az += j2z
+
+    # C) Solid-body tides (Moon-fixed potential gradient)
+    if USE_TIDES:
+        if USE_TIDE_EARTH:
+            atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                rfx,
+                rfy,
+                rfz,
+                efx,
+                efy,
+                efz,
+                MU_E,
+                TIDE_RREF,
+                TIDE_K2,
+                TIDE_K3,
+                TIDE_USE_K2,
+                TIDE_USE_K3,
+            )
+            atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
+            ax += atx
+            ay += aty
+            az += atz
+
+        if USE_TIDE_SUN:
+            atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                rfx,
+                rfy,
+                rfz,
+                sfx,
+                sfy,
+                sfz,
+                MU_S,
+                TIDE_RREF,
+                TIDE_K2,
+                TIDE_K3,
+                TIDE_USE_K2,
+                TIDE_USE_K3,
+            )
+            atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
+            ax += atx
+            ay += aty
+            az += atz
+
+    # D) SRP
+    if USE_SRP:
+        earth_r2 = earthx * earthx + earthy * earthy + earthz * earthz
+        enable_earth = SRP_EARTH_ECLIPSE and (earth_r2 > 1.0e12)
+
+        asx, asy, asz = accel_srp(
+            rx,
+            ry,
+            rz,
+            sunx,
+            suny,
+            sunz,
+            earthx,
+            earthy,
+            earthz,
+            RMOON,
+            R_EARTH,
+            AU_,
+            P1AU,
+            SC_CR,
+            SC_AREA,
+            mass,
+            SRP_MOON_ECLIPSE,
+            enable_earth,
+        )
+        ax += asx
+        ay += asy
+        az += asz
+
+    # E) Albedo (reflected solar radiation pressure)
+    if USE_ALBEDO:
+        (
+            ALB_BACKEND, ALB_MODE, ALB_CONST, ALB_SCALE, ALB_KLAMB, ALB_GRID, ALB_DN,
+            ALB_NLINES, ALB_NSAMPLES, ALB_RES, ALB_LON0, ALB_LAT0, ALB_SF, ALB_OFF,
+            ALB_MISSING, ALB_FLIP, ALB_LATMIN, ALB_LATMAX,
+            ALB_FACET_POS, ALB_FACET_NORM, ALB_FACET_AREA, ALB_FACET_ALB,
+            ALB_PCOEF, ALB_SOLAR_FLUX, ALB_AU, ALB_C, ALB_R_EARTH, ALB_SCALE_SUN_DIST, ALB_ECLIPSE,
+        ) = pack.alb
+        if ALB_BACKEND == 1:
+            # Lambertian facet model: sum reflected-solar contributions
+            # from sunlit, visible facets in the Moon-fixed frame.
+            aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
+                rfx,
+                rfy,
+                rfz,
+                sfx,
+                sfy,
+                sfz,
+                efx,
+                efy,
+                efz,
+                ALB_FACET_POS,
+                ALB_FACET_NORM,
+                ALB_FACET_AREA,
+                ALB_FACET_ALB,
+                ALB_PCOEF,
+                SC_AREA,
+                mass,
+                ALB_SOLAR_FLUX,
+                ALB_AU,
+                ALB_C,
+                ALB_R_EARTH,
+                ALB_SCALE_SUN_DIST,
+                ALB_ECLIPSE,
+            )
+        else:
+            # Legacy cannonball: single sub-satellite albedo sample.
+            lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
+
+            alb_val = ALB_CONST
+            if ALB_MODE == 0:
+                alb_val = sample_grid_bilinear_kernel(
+                    lat_deg,
+                    lon_deg,
+                    ALB_GRID,
+                    ALB_NLINES,
+                    ALB_NSAMPLES,
+                    ALB_RES,
+                    ALB_LON0,
+                    ALB_LAT0,
+                )
+            elif ALB_MODE == 1:
+                alb_val = _sample_albedo_dn_scaled(
+                    lat_deg,
+                    lon_deg,
+                    ALB_DN,
+                    ALB_NLINES,
+                    ALB_NSAMPLES,
+                    ALB_RES,
+                    ALB_LON0,
+                    ALB_LAT0,
+                    ALB_FLIP,
+                    ALB_SF,
+                    ALB_OFF,
+                    ALB_MISSING,
+                    ALB_LATMIN,
+                    ALB_LATMAX,
+                )
+
+            if math.isnan(alb_val):
+                alb_val = ALB_CONST
+            if alb_val < 0.0:
+                alb_val = 0.0
+            elif alb_val > 1.0:
+                alb_val = 1.0
+            alb_val *= ALB_SCALE
+
+            aax_f, aay_f, aaz_f = accel_albedo_simple(
+                rfx,
+                rfy,
+                rfz,
+                sfx,
+                sfy,
+                sfz,
+                RMOON,
+                AU_,
+                P1AU,
+                alb_val,
+                ALB_KLAMB,
+                SC_CR,
+                SC_AREA,
+                mass,
+                1 if ENABLE_ECLIPSE else 0,
+            )
+
+        aax, aay, aaz = quat_rotate_vec(q0, -q1, -q2, -q3, aax_f, aay_f, aaz_f)
+        ax += aax
+        ay += aay
+        az += aaz
+
+    # F) Lunar thermal IR radiation pressure
+    if USE_THERMAL:
+        (
+            TH_MODE, TH_EPS, TH_ALB, TH_TEMP, TH_NIGHT_TEMP, TH_FLOOR, TH_COEFF,
+            TH_SOLAR_FLUX, TH_AU, TH_C, TH_SIGMA, TH_SCALE_SUN_DIST, TH_ECLIPSE, TH_R_EARTH,
+            TH_POS, TH_NORMALS, TH_AREAS, TH_TEMPS,
+        ) = pack.th
+        athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
+            rfx,
+            rfy,
+            rfz,
+            sfx,
+            sfy,
+            sfz,
+            efx,
+            efy,
+            efz,
+            TH_POS,
+            TH_NORMALS,
+            TH_AREAS,
+            TH_TEMPS,
+            TH_MODE,
+            TH_EPS,
+            TH_ALB,
+            TH_TEMP,
+            TH_NIGHT_TEMP,
+            TH_FLOOR,
+            TH_COEFF,
+            SC_AREA,
+            mass,
+            TH_SOLAR_FLUX,
+            TH_AU,
+            TH_C,
+            TH_SIGMA,
+            TH_SCALE_SUN_DIST,
+            TH_R_EARTH,
+            TH_ECLIPSE,
+        )
+        athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
+        ax += athx
+        ay += athy
+        az += athz
+
+    # G) Relativity
+    if USE_REL:
+        arx, ary, arz = schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
+        ax += arx
+        ay += ary
+        az += arz
+        if USE_REL_EXTERNAL:
+            svx, svy, svz = interp_vec3_state_derivative(
+                t, EPH_DT_S, EPH_SUN, EPH_SUN_V, EPH_USE_HERMITE
+            )
+            erx, ery, erz = external_1pn_components(
+                rx, ry, rz, vx, vy, vz,
+                sunx, suny, sunz,
+                svx, svy, svz,
+                MU_S,
+            )
+            ax += erx
+            ay += ery
+            az += erz
+
+            evx, evy, evz = interp_vec3_state_derivative(
+                t, EPH_DT_S, EPH_EARTH, EPH_EARTH_V, EPH_USE_HERMITE
+            )
+            erx, ery, erz = external_1pn_components(
+                rx, ry, rz, vx, vy, vz,
+                earthx, earthy, earthz,
+                evx, evy, evz,
+                MU_E,
+            )
+            ax += erx
+            ay += ery
+            az += erz
+
+    dydt = np.empty_like(y)
+    dydt[0] = vx
+    dydt[1] = vy
+    dydt[2] = vz
+    dydt[3] = ax
+    dydt[4] = ay
+    dydt[5] = az
+    if n > 6:
+        dydt[6] = 0.0
+    return dydt
 
 
 # =============================================================================
@@ -318,7 +857,7 @@ class DynamicsEngine:
         # --- 1) Prepare per-force data packs (orchestration; no numerics) ------
         req, gp, ep, ap, ej, tp, th = self._prepare_force_packs()
 
-        # --- 2) Flatten pack fields into locals captured by the RHS kernels ----
+        # --- 2) Flatten pack fields into locals (surrogate closure / _RhsPack) --
         # Flags captured into closure
         USE_SH = bool(req.use_sh)
         USE_SURROGATE = bool(req.use_surrogate_gravity)
@@ -736,91 +1275,59 @@ class DynamicsEngine:
             )
             return rhs
 
+        # Run data for the module-level cached kernels (layout: _RHS_PACK_FIELDS
+        # and the tuple unpacking at the top of each kernel).
+        if not USE_SH:
+            # The cached general kernel types its SH branch even when it never
+            # runs; the point-mass pack carries 1-D A/B placeholders where the
+            # SH recursion indexes 2-D arrays. Unused values, SH-field types.
+            G_A = G_B = np.zeros((1, 1), dtype=np.float64)
+        pack = _new_rhs_pack(
+            (
+                USE_SH, USE_3RD_SUN, USE_3RD_EARTH, USE_SRP, USE_ALBEDO, USE_REL, USE_REL_EXTERNAL,
+                USE_EJ2, USE_TIDES, USE_TIDE_EARTH, USE_TIDE_SUN, USE_THERMAL,
+                NEED_FIXED_FRAME, NEED_SUN_FIXED, NEED_EARTH_FIXED, NEED_EPH,
+            ),
+            (SC_MASS, SC_AREA, SC_CR, MU_M, MU_S, MU_E),
+            (RMOON, R_EARTH, AU_, P1AU, SRP_MOON_ECLIPSE, SRP_EARTH_ECLIPSE),
+            (EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE),
+            (G_NMAX, G_RREF, G_GM, G_CNM, G_SNM, G_DIAG, G_SUB, G_A, G_B, G_SCL),
+            (
+                G_ADAPTIVE_ENABLED, G_ADAPTIVE_MODE, G_ADAPTIVE_POWER, G_ADAPTIVE_MIN_DEG,
+                G_ADAPTIVE_QSTEP, G_ADAPTIVE_ALT_KM, G_ADAPTIVE_DEG, G_ADAPTIVE_TABLE_LEN,
+            ),
+            (
+                ALB_BACKEND, ALB_MODE, ALB_CONST, ALB_SCALE, ALB_KLAMB, ALB_GRID, ALB_DN,
+                ALB_NLINES, ALB_NSAMPLES, ALB_RES, ALB_LON0, ALB_LAT0, ALB_SF, ALB_OFF,
+                ALB_MISSING, ALB_FLIP, ALB_LATMIN, ALB_LATMAX,
+                ALB_FACET_POS, ALB_FACET_NORM, ALB_FACET_AREA, ALB_FACET_ALB,
+                ALB_PCOEF, ALB_SOLAR_FLUX, ALB_AU, ALB_C, ALB_R_EARTH, ALB_SCALE_SUN_DIST, ALB_ECLIPSE,
+            ),
+            (
+                EJ2_J2, EJ2_RREF, EJ2_KX, EJ2_KY, EJ2_KZ,
+                TIDE_USE_K2, TIDE_USE_K3, TIDE_K2, TIDE_K3, TIDE_RREF,
+            ),
+            (
+                TH_MODE, TH_EPS, TH_ALB, TH_TEMP, TH_NIGHT_TEMP, TH_FLOOR, TH_COEFF,
+                TH_SOLAR_FLUX, TH_AU, TH_C, TH_SIGMA, TH_SCALE_SUN_DIST, TH_ECLIPSE, TH_R_EARTH,
+                TH_POS, TH_NORMALS, TH_AREAS, TH_TEMPS,
+            ),
+            (WS_P, WS_DP, WS_COS, WS_SIN),
+        )
+
         if SH_ONLY_FAST_PATH:
             # R13: minimal classical-SH RHS for paper-safe SH-only baselines.
             # It keeps only state unpacking, optional Moon-fixed frame rotation,
             # SH acceleration, inverse rotation, and dy/dt assembly.
-            @njit(cache=False, nogil=True)
-            def _rhs_sh_only_numba(
-                t: float,
-                y: np.ndarray,
-                WS_P: np.ndarray,
-                WS_DP: np.ndarray,
-                WS_COS: np.ndarray,
-                WS_SIN: np.ndarray,
-            ) -> np.ndarray:
-                rx, ry, rz = y[0], y[1], y[2]
-                vx, vy, vz = y[3], y[4], y[5]
-
-                q0 = 1.0
-                q1 = 0.0
-                q2 = 0.0
-                q3 = 0.0
-                if NEED_EPH:
-                    _sunx, _suny, _sunz, _earthx, _earthy, _earthz, q0, q1, q2, q3 = get_ephem_state_with_velocity(
-                        t, EPH_DT_S, EPH_SUN, EPH_EARTH,
-                        EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE,
-                    )
-
-                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-                n_eval = G_NMAX
-                if G_ADAPTIVE_ENABLED:
-                    r_norm = math.sqrt(rx * rx + ry * ry + rz * rz)
-                    n_eval = _select_adaptive_sh_degree(
-                        r_norm,
-                        G_RREF,
-                        G_NMAX,
-                        G_ADAPTIVE_MODE,
-                        G_ADAPTIVE_POWER,
-                        G_ADAPTIVE_MIN_DEG,
-                        G_ADAPTIVE_QSTEP,
-                        G_ADAPTIVE_ALT_KM,
-                        G_ADAPTIVE_DEG,
-                        G_ADAPTIVE_TABLE_LEN,
-                    )
-                afx, afy, afz = sh_accel_fixed_numba(
-                    rfx,
-                    rfy,
-                    rfz,
-                    n_eval,
-                    G_RREF,
-                    G_GM,
-                    G_CNM,
-                    G_SNM,
-                    G_DIAG,
-                    G_SUB,
-                    G_A,
-                    G_B,
-                    G_SCL,
-                    WS_P,
-                    WS_DP,
-                    WS_COS,
-                    WS_SIN,
-                )
-                ax, ay, az = quat_rotate_vec(q0, -q1, -q2, -q3, afx, afy, afz)
-
-                dydt = np.empty_like(y)
-                dydt[0] = vx
-                dydt[1] = vy
-                dydt[2] = vz
-                dydt[3] = ax
-                dydt[4] = ay
-                dydt[5] = az
-                if y.shape[0] > 6:
-                    dydt[6] = 0.0
-                return dydt
-
             rhs_state_checked = False
 
             def rhs(t: float, y: np.ndarray) -> np.ndarray:
                 nonlocal rhs_state_checked
                 if rhs_state_checked:
-                    return _rhs_sh_only_numba(
-                        t, np.asarray(y, dtype=np.float64), WS_P, WS_DP, WS_COS, WS_SIN
-                    )
+                    return _rhs_sh_only_numba(t, np.asarray(y, dtype=np.float64), pack)
                 y = _validate_rhs_state_vector(y)
                 rhs_state_checked = True
-                return _rhs_sh_only_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
+                return _rhs_sh_only_numba(t, y, pack)
 
             self._rhs_cache = rhs
             self._prep["rhs_path"] = "sh_only_numba"
@@ -830,398 +1337,15 @@ class DynamicsEngine:
 
             return rhs
 
-        # This closure captures runtime-sized arrays/config values, so Numba
-        # cannot persist it to disk cache reliably. Disabling cache avoids a
-        # noisy warning on every run without changing numerical behavior.
-        @njit(cache=False, nogil=True)
-        def _rhs_kernel_numba(
-            t: float,
-            y: np.ndarray,
-            WS_P: np.ndarray,
-            WS_DP: np.ndarray,
-            WS_COS: np.ndarray,
-            WS_SIN: np.ndarray,
-        ) -> np.ndarray:
-            rx, ry, rz = y[0], y[1], y[2]
-            vx, vy, vz = y[3], y[4], y[5]
-
-            n = y.shape[0]
-            mass = SC_MASS if n <= 6 else y[6]
-
-            ax = 0.0
-            ay = 0.0
-            az = 0.0
-
-            # Ephemeris state (defaults)
-            sunx = 0.0
-            suny = 0.0
-            sunz = 0.0
-            earthx = 0.0
-            earthy = 0.0
-            earthz = 0.0
-            q0 = 1.0
-            q1 = 0.0
-            q2 = 0.0
-            q3 = 0.0
-
-            if NEED_EPH:
-                sunx, suny, sunz, earthx, earthy, earthz, q0, q1, q2, q3 = get_ephem_state_with_velocity(
-                    t, EPH_DT_S, EPH_SUN, EPH_EARTH,
-                    EPH_SUN_V, EPH_EARTH_V, EPH_QTAB, EPH_USE_HERMITE,
-                )
-
-            rfx = rx
-            rfy = ry
-            rfz = rz
-            sfx = sunx
-            sfy = suny
-            sfz = sunz
-            efx = earthx
-            efy = earthy
-            efz = earthz
-            if NEED_FIXED_FRAME:
-                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-            if NEED_SUN_FIXED:
-                sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
-            if NEED_EARTH_FIXED:
-                efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
-
-            # A) Central gravity
-            if USE_SH:
-                n_eval = G_NMAX
-                if G_ADAPTIVE_ENABLED:
-                    r_norm = math.sqrt(rx * rx + ry * ry + rz * rz)
-                    n_eval = _select_adaptive_sh_degree(
-                        r_norm,
-                        G_RREF,
-                        G_NMAX,
-                        G_ADAPTIVE_MODE,
-                        G_ADAPTIVE_POWER,
-                        G_ADAPTIVE_MIN_DEG,
-                        G_ADAPTIVE_QSTEP,
-                        G_ADAPTIVE_ALT_KM,
-                        G_ADAPTIVE_DEG,
-                        G_ADAPTIVE_TABLE_LEN,
-                    )
-                afx, afy, afz = sh_accel_fixed_numba(
-                    rfx,
-                    rfy,
-                    rfz,
-                    n_eval,
-                    G_RREF,
-                    G_GM,
-                    G_CNM,
-                    G_SNM,
-                    G_DIAG,
-                    G_SUB,
-                    G_A,
-                    G_B,
-                    G_SCL,
-                    WS_P,
-                    WS_DP,
-                    WS_COS,
-                    WS_SIN,
-                )
-                agx, agy, agz = quat_rotate_vec(q0, -q1, -q2, -q3, afx, afy, afz)
-                ax += agx
-                ay += agy
-                az += agz
-            else:
-                gax, gay, gaz = compute_point_mass_acceleration(rx, ry, rz, MU_M)
-                ax += gax
-                ay += gay
-                az += gaz
-
-            # B) Third-body
-            if USE_3RD_SUN:
-                a3x, a3y, a3z = accel_third_body_numba(rx, ry, rz, sunx, suny, sunz, MU_S)
-                ax += a3x
-                ay += a3y
-                az += a3z
-
-            if USE_3RD_EARTH:
-                a3x, a3y, a3z = accel_third_body_numba(rx, ry, rz, earthx, earthy, earthz, MU_E)
-                ax += a3x
-                ay += a3y
-                az += a3z
-
-            if USE_EJ2:
-                j2x, j2y, j2z = accel_j2_oblate_diff_numba(
-                    rx,
-                    ry,
-                    rz,
-                    earthx,
-                    earthy,
-                    earthz,
-                    MU_E,
-                    EJ2_RREF,
-                    EJ2_J2,
-                    EJ2_KX,
-                    EJ2_KY,
-                    EJ2_KZ,
-                )
-                ax += j2x
-                ay += j2y
-                az += j2z
-
-            # C) Solid-body tides (Moon-fixed potential gradient)
-            if USE_TIDES:
-                if USE_TIDE_EARTH:
-                    atx_f, aty_f, atz_f = accel_solid_tides_numba(
-                        rfx,
-                        rfy,
-                        rfz,
-                        efx,
-                        efy,
-                        efz,
-                        MU_E,
-                        TIDE_RREF,
-                        TIDE_K2,
-                        TIDE_K3,
-                        TIDE_USE_K2,
-                        TIDE_USE_K3,
-                    )
-                    atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
-                    ax += atx
-                    ay += aty
-                    az += atz
-
-                if USE_TIDE_SUN:
-                    atx_f, aty_f, atz_f = accel_solid_tides_numba(
-                        rfx,
-                        rfy,
-                        rfz,
-                        sfx,
-                        sfy,
-                        sfz,
-                        MU_S,
-                        TIDE_RREF,
-                        TIDE_K2,
-                        TIDE_K3,
-                        TIDE_USE_K2,
-                        TIDE_USE_K3,
-                    )
-                    atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
-                    ax += atx
-                    ay += aty
-                    az += atz
-
-            # D) SRP
-            if USE_SRP:
-                earth_r2 = earthx * earthx + earthy * earthy + earthz * earthz
-                enable_earth = SRP_EARTH_ECLIPSE and (earth_r2 > 1.0e12)
-
-                asx, asy, asz = accel_srp(
-                    rx,
-                    ry,
-                    rz,
-                    sunx,
-                    suny,
-                    sunz,
-                    earthx,
-                    earthy,
-                    earthz,
-                    RMOON,
-                    R_EARTH,
-                    AU_,
-                    P1AU,
-                    SC_CR,
-                    SC_AREA,
-                    mass,
-                    SRP_MOON_ECLIPSE,
-                    enable_earth,
-                )
-                ax += asx
-                ay += asy
-                az += asz
-
-            # E) Albedo (reflected solar radiation pressure)
-            if USE_ALBEDO:
-                if ALB_BACKEND == 1:
-                    # Lambertian facet model: sum reflected-solar contributions
-                    # from sunlit, visible facets in the Moon-fixed frame.
-                    aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
-                        rfx,
-                        rfy,
-                        rfz,
-                        sfx,
-                        sfy,
-                        sfz,
-                        efx,
-                        efy,
-                        efz,
-                        ALB_FACET_POS,
-                        ALB_FACET_NORM,
-                        ALB_FACET_AREA,
-                        ALB_FACET_ALB,
-                        ALB_PCOEF,
-                        SC_AREA,
-                        mass,
-                        ALB_SOLAR_FLUX,
-                        ALB_AU,
-                        ALB_C,
-                        ALB_R_EARTH,
-                        ALB_SCALE_SUN_DIST,
-                        ALB_ECLIPSE,
-                    )
-                else:
-                    # Legacy cannonball: single sub-satellite albedo sample.
-                    lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
-
-                    alb_val = ALB_CONST
-                    if ALB_MODE == 0:
-                        alb_val = sample_grid_bilinear_kernel(
-                            lat_deg,
-                            lon_deg,
-                            ALB_GRID,
-                            ALB_NLINES,
-                            ALB_NSAMPLES,
-                            ALB_RES,
-                            ALB_LON0,
-                            ALB_LAT0,
-                        )
-                    elif ALB_MODE == 1:
-                        alb_val = _sample_albedo_dn_scaled(
-                            lat_deg,
-                            lon_deg,
-                            ALB_DN,
-                            ALB_NLINES,
-                            ALB_NSAMPLES,
-                            ALB_RES,
-                            ALB_LON0,
-                            ALB_LAT0,
-                            ALB_FLIP,
-                            ALB_SF,
-                            ALB_OFF,
-                            ALB_MISSING,
-                            ALB_LATMIN,
-                            ALB_LATMAX,
-                        )
-
-                    if math.isnan(alb_val):
-                        alb_val = ALB_CONST
-                    if alb_val < 0.0:
-                        alb_val = 0.0
-                    elif alb_val > 1.0:
-                        alb_val = 1.0
-                    alb_val *= ALB_SCALE
-
-                    aax_f, aay_f, aaz_f = accel_albedo_simple(
-                        rfx,
-                        rfy,
-                        rfz,
-                        sfx,
-                        sfy,
-                        sfz,
-                        RMOON,
-                        AU_,
-                        P1AU,
-                        alb_val,
-                        ALB_KLAMB,
-                        SC_CR,
-                        SC_AREA,
-                        mass,
-                        1 if ENABLE_ECLIPSE else 0,
-                    )
-
-                aax, aay, aaz = quat_rotate_vec(q0, -q1, -q2, -q3, aax_f, aay_f, aaz_f)
-                ax += aax
-                ay += aay
-                az += aaz
-
-            # F) Lunar thermal IR radiation pressure
-            if USE_THERMAL:
-                athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
-                    rfx,
-                    rfy,
-                    rfz,
-                    sfx,
-                    sfy,
-                    sfz,
-                    efx,
-                    efy,
-                    efz,
-                    TH_POS,
-                    TH_NORMALS,
-                    TH_AREAS,
-                    TH_TEMPS,
-                    TH_MODE,
-                    TH_EPS,
-                    TH_ALB,
-                    TH_TEMP,
-                    TH_NIGHT_TEMP,
-                    TH_FLOOR,
-                    TH_COEFF,
-                    SC_AREA,
-                    mass,
-                    TH_SOLAR_FLUX,
-                    TH_AU,
-                    TH_C,
-                    TH_SIGMA,
-                    TH_SCALE_SUN_DIST,
-                    TH_R_EARTH,
-                    TH_ECLIPSE,
-                )
-                athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
-                ax += athx
-                ay += athy
-                az += athz
-
-            # G) Relativity
-            if USE_REL:
-                arx, ary, arz = schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
-                ax += arx
-                ay += ary
-                az += arz
-                if USE_REL_EXTERNAL:
-                    svx, svy, svz = interp_vec3_state_derivative(
-                        t, EPH_DT_S, EPH_SUN, EPH_SUN_V, EPH_USE_HERMITE
-                    )
-                    erx, ery, erz = external_1pn_components(
-                        rx, ry, rz, vx, vy, vz,
-                        sunx, suny, sunz,
-                        svx, svy, svz,
-                        MU_S,
-                    )
-                    ax += erx
-                    ay += ery
-                    az += erz
-
-                    evx, evy, evz = interp_vec3_state_derivative(
-                        t, EPH_DT_S, EPH_EARTH, EPH_EARTH_V, EPH_USE_HERMITE
-                    )
-                    erx, ery, erz = external_1pn_components(
-                        rx, ry, rz, vx, vy, vz,
-                        earthx, earthy, earthz,
-                        evx, evy, evz,
-                        MU_E,
-                    )
-                    ax += erx
-                    ay += ery
-                    az += erz
-
-            dydt = np.empty_like(y)
-            dydt[0] = vx
-            dydt[1] = vy
-            dydt[2] = vz
-            dydt[3] = ax
-            dydt[4] = ay
-            dydt[5] = az
-            if n > 6:
-                dydt[6] = 0.0
-            return dydt
-
         rhs_state_checked = False
 
         def rhs(t: float, y: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
             nonlocal rhs_state_checked
             if rhs_state_checked:
-                return _rhs_kernel_numba(
-                    t, np.asarray(y, dtype=np.float64), WS_P, WS_DP, WS_COS, WS_SIN
-                )
+                return _rhs_kernel_numba(t, np.asarray(y, dtype=np.float64), pack)
             y = _validate_rhs_state_vector(y)
             rhs_state_checked = True
-            return _rhs_kernel_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
+            return _rhs_kernel_numba(t, y, pack)
 
         self._rhs_cache = rhs
         self._prep["rhs_path"] = "general_numba"
