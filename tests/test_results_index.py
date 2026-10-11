@@ -211,6 +211,25 @@ def test_run_kpis_report_units_and_engine_values(tmp_path: Path) -> None:
     assert kpis["Energy drift (rel.)"] == "1.200e-09"
 
 
+def test_run_kpis_duration_from_a_real_run_config(tmp_path: Path) -> None:
+    """The runner writes ``asdict(SimConfig)``: ``time.duration_s``, no ``duration_days``.
+
+    Regression: the Duration KPI read only ``time.duration_days`` (a property
+    that never reaches the JSON), so it was missing for every real run.
+    """
+    from dataclasses import asdict
+
+    from lunaris.common.type_defs import TimeConfig
+
+    time_cfg = TimeConfig(duration_s=2.5 * 86400.0)
+    assert time_cfg.duration_days == 2.5
+    payload = {"time": json.loads(json.dumps(asdict(time_cfg), default=str))}
+    assert "duration_days" not in payload["time"]
+    _make_run(tmp_path, "run", config=payload)
+    (record,) = index_runs(tmp_path)
+    assert dict(run_kpis(record))["Duration"] == "2.5 days"
+
+
 def test_run_kpis_omit_absent_values(tmp_path: Path) -> None:
     _make_run(tmp_path, "run", config={}, diagnostics=None)
     (record,) = index_runs(tmp_path)

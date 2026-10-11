@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: the Results page Duration KPI was missing for every real run.**
+  - It read `time.duration_days`, a `TimeConfig` property that `asdict()` never writes to `run_config.json`. It now reads `time.duration_s` (a hand-written `duration_days` still works). Ported from Sidera (66237c40).
+
 - **Fixed: a PDS3 `MISSING_CONSTANT` written as a based integer was read as its radix.**
   - `parse_pds3_cyl_label` matched `16#FF7FFFFB#` with a decimal pattern and stored `16.0`, so a DN of 16 was masked as missing and the real null was not.
   - ODL based integers (`radix#[sign]digits#`, radix 2-16) are now decoded: as the integer for integer samples (range-checked), as the IEEE bit pattern of the sample word for real samples (`16#FF7FFFFB#` = float32 -3.4028226550889045e38). Malformed constants raise `PDS3ParseError`. Decimal constants are unchanged; no repository data label uses the based form. Ported from Sidera (66237c40).

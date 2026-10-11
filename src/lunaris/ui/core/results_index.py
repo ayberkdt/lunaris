@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.constants import DAY_S
 from lunaris.common.telemetry_contract import (
     TELEMETRY_ARTIFACT_NAME as _TELEMETRY_ARTIFACT_NAME,
 )
@@ -294,7 +295,16 @@ def run_kpis(record: RunRecord) -> list[tuple[str, str]]:
 
     add("Integrator", _fmt(diag.get("method") or _config_get(cfg, "propagator", "method"), "{}", ""))
     add("SH degree", _fmt(diag.get("degree") if diag.get("degree") is not None else _config_get(cfg, "gravity", "degree"), "{}", ""))
-    add("Duration", _fmt(_config_get(cfg, "time", "duration_days"), "{}", "days"))
+    # run_config.json carries time.duration_s (TimeConfig.duration_days is a
+    # property, so asdict() never writes it); a hand-written config may still
+    # state duration_days.
+    duration_s = _config_get(cfg, "time", "duration_s")
+    duration_days = (
+        duration_s / DAY_S
+        if isinstance(duration_s, int | float) and not isinstance(duration_s, bool)
+        else _config_get(cfg, "time", "duration_days")
+    )
+    add("Duration", _fmt(duration_days, "{}", "days"))
     add("Output interval", _fmt(diag.get("output_dt_s") if diag.get("output_dt_s") is not None else _config_get(cfg, "time", "output_dt_s"), "{}", "s"))
     add("Wall time", _fmt(diag.get("wall_time_s"), "{:.3f}", "s"))
     add("RHS evaluations", _fmt(diag.get("nfev"), "{:,.0f}", ""))
