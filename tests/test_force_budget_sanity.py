@@ -129,7 +129,9 @@ def test_earth_j2_budget_is_finite_nonzero_and_plausible(alt_km: float) -> None:
 def test_srp_budget_is_finite_nonzero_and_plausible(alt_km: float) -> None:
     engine = _engine(
         flags=PerturbationFlags(enable_sh=False, enable_srp=True),
-        srp=SRPConfig(enable_moon_eclipse=False),
+        # The static Earth sits on the Sun-Moon line (a lunar eclipse), so the
+        # Earth shadow - on by default - must be off too for an unshadowed budget.
+        srp=SRPConfig(enable_moon_eclipse=False, enable_earth_eclipse=False),
     )
     value = _breakdown(engine, alt_km)["SRP"]
 

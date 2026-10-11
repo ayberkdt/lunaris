@@ -84,6 +84,88 @@
 - **Fixed: field-validation and paper-evidence hygiene.** Field metrics are NaN when any prediction is non-finite. Split kinds are downgraded to interpolation unless the model was trained with the same split policy. Independent-file runs are hash-checked against the training file. The paper-evidence gate intersects the persisted split indices. The multi-seed `std` is the sample stdev (`None` for one seed). An unreadable evidence manifest is refused instead of being reset, and the manifest is written atomically. String booleans such as `"false"` are parsed in the training argv.
 - **Fixed: dataset generator seeding and validation.** Chunk seeds come from `numpy.random.SeedSequence` (`chunk_rng_version=seed_sequence_v2`). Previously chunk *i* of seed *s* was chunk *i-1* of seed *s+1*. Single-cloud datasets therefore differ bit for bit from earlier ones; suite datasets are unchanged. All writers write `<name>.partial` and rename it when done. `validate_dataset_file` recomputes `content_sha256` and derives the label recompute tolerance from the storage dtype.
 - **Fixed: benchmark output honesty.** Missing scenario statistics are left blank instead of being copied from other statistics. Cold, warm and JIT timings that were never measured are reported as `""` with `timing_protocol=not_measured`, and the validator accepts that. Cached runtime rows count only scenarios with a measured runtime. The phase-explained fraction compares variances over the same epochs. Provenance no longer records the first `*.pt` it finds as the model checkpoint.
+- **Fixed: post-processing GM, radius and eclipse timing.**
+  - GM and radius: `process_simulation_results` and `build_orbit_analysis`
+    read `mu_m3s2` / `R_body_m` attributes that the dynamics engine does not
+    have. They therefore always used a hard-coded 4.902801e12 m^3/s^2 and
+    1737.4 km, or `MU_MOON`. They now use the run's gravity model
+    (`engine.grav.GM_m3s2` / `R_ref_m`), the same source the propagator uses,
+    and fall back to `MU_MOON` / `R_MOON`. Altitudes and elements in reports
+    of SH runs change accordingly (GL1800F: altitude reference 1738.0 km
+    instead of 1737.4 km).
+  - Eclipse mask: it now interpolates the Sun/Earth ephemeris at each sample
+    time. Before, it used the next table row. Its Moon radius is the SRP
+    occulter radius when the engine has one.
+  - The ephemeris index helper now returns the nearest-left row, as its
+    docstring states. The ground track uses this helper.
+
+  Tests are in `tests/test_analysis_gm_radius.py`.
+- **Fixed: rv-to-COE edge cases.**
+  - Inclination: `acos(hz/|h|)` lost precision near 0 and 180 deg (1e-6 rad
+    came back 4e-5 relative off; below about 1.5e-8 rad it came back as 0).
+    `atan2(|h_xy|, hz)` is now used for |cos i| >= 0.5.
+  - Retrograde equatorial orbits: the longitude of periapsis and the true
+    longitude are now measured in the direction of motion, so rv -> COE -> rv
+    round-trips. Before, the round trip mirrored the orbit in y.
+  - `wrap_angle_2pi` no longer returns exactly 2*pi for tiny negative angles.
+
+  On 20,000 lunar orbits (i 40-140 deg, e 0.005-0.1), only the inclination
+  output of `rv_to_coe_select` and `batch_y_to_elements` changes. It changes
+  in 2,120 samples, all outside 60-120 deg, by at most 4.4e-16 rad (3 ulp).
+  The frozen-search `screening_orbital_elements_vec` is a separate code path
+  and is bit-identical. Tests are in `tests/test_math_utils.py`.
+- **Fixed: albedo and thermal-IR wrapper inputs.** The simple backend of
+  `albedo_accel` now honours `AlbedoConfig.enable_eclipse` like the facet
+  backend and reads the canonical `albedo_const`. `AlbedoConfig` keeps its
+  legacy alias `A_moon` equal to `albedo_const`, also after
+  `dataclasses.replace(cfg, albedo_const=...)`. Before, the alias kept the
+  previous value. In `temperature_grid` mode, `calc_thermal_ir_accel` (and
+  `thermal_accel`) now raises `ValueError` when the per-facet temperature grid
+  is missing or has the wrong length. Before, it returned a silent zero.
+  Default results are unchanged. Tests are in `tests/test_surface_effects.py`
+  and `tests/test_thermal_ir.py`.
+- **Fixed: strict SHADR loading.** In strict mode every numeric field must now
+  be a complete literal. Before, a regex fallback read `1.0-08` as the two
+  numbers 1.0 and -8.0 and accepted `-9.0E-05junk`. Fortran `D` exponents
+  parse as one number. A non-integral degree/order index or normalization
+  state (`1.7`, `1.5`, `nan`) is rejected instead of truncated or skipped, in
+  both `load_shadr_ascii` and `read_gravity_model_header`. ICGEM `.gfc` files
+  are refused with a clear error instead of reaching the binary SHBDR parser,
+  and `--gravity-file-path` no longer offers `.gfc`. The GL1800F table loads
+  bit-identically (SHA-256 of the coefficient arrays at degree 1800, 660 and
+  50 unchanged). Tests are in `tests/test_io_gravity.py`.
+- **Fixed: SH acceleration within nanometres of the polar axis.** The numba and
+  torch kernels softened the longitudinal projection to `1/(rho^2 + 1e-24)`,
+  which halved it at `rho = 1e-12 m` (up to 49% transverse error against a
+  finite difference of the potential); they now use the exact `1/rho^2` above
+  the axis cutoff, and the longitude fallback uses the same `rho^2 >= 1e-24`
+  test as the cutoff. The batch potential kernel dropped the whole transverse
+  field for `1e-14 m < rho <= 1e-14 r` and now applies the analytic axis limit
+  there. Off-axis results (`rho >= 0.13 mm`) are bit-identical (measured on
+  205 points for the serial, parallel, batch and torch paths). Tests are in
+  `tests/test_sh_pole_axis.py`.
+- **Fixed: strict SH helpers no longer inherit `fastmath`.** Numba compiles a
+  helper with the flags of whichever caller compiles it first and caches that
+  build on disk. The helpers shared by the strict serial SH kernel and the
+  fastmath kernels (`_compute_sh_acceleration_parallel`,
+  `sh_potential_accel_batch_serial`), including `_kahan_sum_step` and
+  `common.math_utils.clamp`, now set `fastmath=False` explicitly. Measured on a
+  degree-200 field: before, the serial acceleration moved by up to 11 ulp
+  (1.1e-15 relative) when a fastmath kernel compiled first, and the drift
+  persisted through the cache; after, it is bit-identical in every compile
+  order. Results compiled in the strict order are unchanged. Tests are in
+  `tests/test_sh_fastmath_isolation.py`.
+- **Fixed: SRP eclipse geometry.** The conical shadow factor is now the
+  visible solar-disk fraction (lens area of the apparent solar and occulter
+  disks, Montenbruck & Gill 2000, sec. 3.4) instead of a smoothstep across the
+  penumbra cones. Against an exact spherical-cap integral it is within 3e-4 in
+  `nu` (the smoothstep was up to 0.046 off near the Moon and returned ~0 in the
+  annular region beyond the umbra apex). Full-sun and umbra limits stay exactly
+  1 and 0. `SRPConfig.enable_earth_eclipse` now defaults to `True`, so SRP is
+  dimmed during lunar eclipses like albedo and thermal IR; a zero Earth vector
+  (no ephemeris) is ignored. Default SRP, albedo-eclipse and thermal-IR-eclipse
+  results change inside penumbrae and Earth shadows. Tests are in
+  `tests/test_srp_eclipse.py`.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.

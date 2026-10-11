@@ -42,7 +42,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.constants import DAY_S
+from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 
 # Prefer package-relative imports; fall back to local imports when running as a script.
 try:
@@ -630,11 +630,26 @@ def _require_ephem(ctx: Any) -> dict[str, Any]:
 
 
 def _map_sim_time_to_ephem_index(t_sim_s: np.ndarray, t_ephem_s: np.ndarray, t0_s: float) -> np.ndarray:
-    """Map simulation times to ephemeris indices with nearest-left lookup."""
+    """Map simulation times to ephemeris indices with nearest-left lookup.
+
+    Index ``j`` satisfies ``t_ephem[j] <= t_rel < t_ephem[j + 1]`` (clamped to the
+    table). ``searchsorted(side="left")`` alone returned the row *after* ``t_rel``
+    for every time between samples.
+    """
     t_sim_s = _as_np(t_sim_s, dtype=float)
     t_rel = t_sim_s - float(t0_s)
-    j = np.searchsorted(t_ephem_s, t_rel, side="left")
+    j = np.searchsorted(t_ephem_s, t_rel, side="right") - 1
     return np.clip(j, 0, int(t_ephem_s.size) - 1).astype(np.int64)
+
+
+def _interp_ephem_rows(
+    t_sim_s: np.ndarray, t_ephem_s: np.ndarray, t0_s: float, table: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate an ``(Nt, k)`` ephemeris table at simulation times (clamped)."""
+    t_rel = _as_np(t_sim_s, dtype=float) - float(t0_s)
+    return np.column_stack(
+        [np.interp(t_rel, t_ephem_s, table[:, column]) for column in range(table.shape[1])]
+    )
 
 
 def _accel_breakdown_if_available(
@@ -783,14 +798,15 @@ def _eclipse_if_available(
 
     ephem = _require_ephem(ctx)
     t_ephem = ephem["t_s"]
-    j = _map_sim_time_to_ephem_index(t_s, t_ephem, ephem["t0_s"])
 
-    r_sc = y[:3, :].T              # (N,3) Moon->SC
-    r_sun = ephem["r_sun_i_m"][j]  # (N,3) Moon->Sun
+    # Sun/Earth interpolated at each sample time (the rows used to be the next
+    # ephemeris row after the sample, up to one table step late).
+    r_sc = y[:3, :].T                                                            # (N,3) Moon->SC
+    r_sun = _interp_ephem_rows(t_s, t_ephem, ephem["t0_s"], ephem["r_sun_i_m"])  # (N,3) Moon->Sun
 
     r_earth = ephem.get("r_earth_i_m", None)
     if r_earth is not None:
-        r_earth = r_earth[j]       # (N,3)
+        r_earth = _interp_ephem_rows(t_s, t_ephem, ephem["t0_s"], r_earth)       # (N,3)
 
     # Earth radius (strict default unless ctx provides a valid override)
     R_earth_m = 6_378_137.0
@@ -803,6 +819,10 @@ def _eclipse_if_available(
         except Exception:
             pass
 
+    # Moon occulting radius: the SRP model's (the shadow it actually applies)
+    # when the engine carries one, else the caller's reference radius.
+    R_moon_occ = _positive_finite(getattr(getattr(ctx, "srp", None), "R_moon_m", None)) or float(R_body)
+
     # Segment-sphere intersection test for Moon and (optionally) Earth
     p1 = r_sc
     p2 = r_sun
@@ -814,7 +834,7 @@ def _eclipse_if_available(
     u0 = -np.einsum("ij,ij->i", p1, d) / dd
     u = np.clip(u0, 0.0, 1.0)
     closest = p1 + (u[:, None] * d)
-    moon_mask = np.einsum("ij,ij->i", closest, closest) <= float(R_body) ** 2
+    moon_mask = np.einsum("ij,ij->i", closest, closest) <= R_moon_occ ** 2
 
     earth_mask = np.zeros_like(moon_mask, dtype=bool)
     if r_earth is not None:
@@ -1057,6 +1077,46 @@ def summarize_history(hist: dict[str, Any]) -> dict[str, float]:
 # 6.                       HIGH-LEVEL ENTRYPOINT (STRICT)
 # =============================================================================
 
+def _positive_finite(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if np.isfinite(out) and out > 0.0 else None
+
+
+def _run_gm_and_radius(ctx: Any) -> tuple[float | None, float | None]:
+    """GM [m^3/s^2] and reference radius [m] of a run, ``None`` where unknown.
+
+    Explicit ``mu_m3s2``/``mu`` and ``R_body_m``/``R_m``/``radius_m``
+    attributes on ``ctx`` win. Otherwise the attached gravity model
+    (``ctx.grav.GM_m3s2`` / ``ctx.grav.R_ref_m``) is used: the same SSOT the
+    propagator takes GM and the impact/altitude radius from
+    (``core.propagation.time_grid.get_ref_radius_and_mu``). The dynamics
+    engine has no ``mu_m3s2`` attribute, so without this the gravity model's
+    GM and radius were never read.
+    """
+    if ctx is None:
+        return None, None
+    grav = getattr(ctx, "grav", None)
+    mu = None
+    for value in (getattr(ctx, "mu_m3s2", None), getattr(ctx, "mu", None), getattr(grav, "GM_m3s2", None)):
+        mu = _positive_finite(value)
+        if mu is not None:
+            break
+    radius = None
+    for value in (
+        getattr(ctx, "R_body_m", None),
+        getattr(ctx, "R_m", None),
+        getattr(ctx, "radius_m", None),
+        getattr(grav, "R_ref_m", None),
+    ):
+        radius = _positive_finite(value)
+        if radius is not None:
+            break
+    return mu, radius
+
+
 def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *, strict: bool = False) -> dict[str, Any]:
     """
     Preferred postprocess entry point.
@@ -1157,22 +1217,11 @@ def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *,
     impact_alt_km_for_post = (impact_alt_km if detect_impact else None)
 
     # ---------------------------------------------------------------------
-    # 2) mu and body radius (prefer ctx)
+    # 2) mu and body radius: the run's gravity model, constants as fallback
     # ---------------------------------------------------------------------
-    mu_fallback = 4.902801e12
-    R_fallback = 1_737_400.0
-
-    mu = mu_fallback
-    R = R_fallback
-    if ctx is not None:
-        try:
-            mu = float(getattr(ctx, "mu_m3s2", None) or getattr(ctx, "mu", None) or mu_fallback)
-        except Exception:
-            mu = mu_fallback
-        try:
-            R = float(getattr(ctx, "R_body_m", None) or getattr(ctx, "R_m", None) or getattr(ctx, "radius_m", None) or R_fallback)
-        except Exception:
-            R = R_fallback
+    mu_ctx, R_ctx = _run_gm_and_radius(ctx)
+    mu = mu_ctx if mu_ctx is not None else float(MU_MOON)
+    R = R_ctx if R_ctx is not None else float(R_MOON)
 
     # ---------------------------------------------------------------------
     # 3) Build history

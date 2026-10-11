@@ -524,11 +524,11 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `MontenbruckGill2000SatelliteOrbits` -- Montenbruck, 2000. "Satellite Orbits: Models, Methods and Applications" (chapter 3 (Force Models); section 3.4 (solar radiation pressure and shadow function)) [DOI: 10.1007/978-3-642-58351-3]
-- **Verification notes**: The cannonball law a = (P0 Cr A/m)(AU/d)^2 nu u_hat(sun->sc) and the dual-cone (umbra + penumbra) shadow geometry with a finite solar disk follow Montenbruck & Gill (2000), Section 3.4 (identifiers verified as for LUNARIS-ALG-SH-002). Lunaris ADAPTS the penumbra: the fractional illumination uses a cubic-Hermite smoothstep across the umbra->penumbra band instead of the exact overlapping-disk area, and supports both Moon and Earth occulters (shadow = min of the two).
+- **Verification notes**: The cannonball law a = (P0 Cr A/m)(AU/d)^2 nu u_hat(sun->sc) and the dual-cone (umbra + penumbra) shadow geometry with a finite solar disk follow Montenbruck & Gill (2000), Section 3.4 (identifiers verified as for LUNARIS-ALG-SH-002). The shadow factor is the book's apparent-radius occultation: the overlap area of the apparent solar and occulter disks seen from the spacecraft, nu = 1 - A/(pi a^2), with the annular case 1 - b^2/a^2. Section-level provenance only; equation numbers were not re-checked against the text. Lunaris supports both Moon and Earth occulters (shadow = min of the two).
 - **Mathematical contract**:
   - Inputs: Moon-centred spacecraft, Sun and Earth positions; radii; AU; P0; Cr; area; mass; eclipse toggles
   - Outputs: solar-radiation-pressure acceleration (m/s^2)
-  - Exactness: cannonball_with_smoothstep_penumbra
+  - Exactness: cannonball_with_apparent_disk_overlap_penumbra
   - Preserves: inverse-square flux falloff with heliocentric distance
   - Preserves: zero force inside the umbra
 - **Implementing symbols**:
@@ -538,13 +538,12 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/core/batch_propagator.py` -- `_srp_accel_cuda` (cuda_implementation)
   - `src/lunaris/core/batch_propagator.py` -- `_shadow_factor_conical_cuda` (cuda_implementation)
 - **Lunaris modifications**:
-  - smoothstep penumbra transition instead of exact occulted-disk area
   - combined Moon+Earth shadow via the minimum shadow factor
 - **Assumptions**:
   - spherical spacecraft (cannonball), single reflectivity coefficient Cr
 - **Limitations**:
   - no attitude-dependent or multi-surface SRP
-  - penumbra fraction is an approximation, not the exact geometric area
+  - planar disk-overlap area (within 3e-4 in nu of the exact spherical-cap integral near 1 AU); no solar limb darkening, occulter oblateness or light time
 - **Validated by**:
   - `tests/test_solar_effects.py`
   - `tests/test_srp_eclipse.py`

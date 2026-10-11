@@ -76,6 +76,11 @@ intentionally left in place; replacing it with a build-time flag would change
 behaviour when the ephemeris carries a real Earth vector while no Earth
 perturbation is enabled. Locked by `tests/test_srp_eclipse.py`.
 
+Later change: the penumbra factor is now the visible solar-disk fraction
+(apparent-disk overlap, Montenbruck & Gill 2000, sec. 3.4). It is within 3e-4
+of an exact spherical-cap integral; the earlier smoothstep was up to 0.046
+off. The Earth shadow (`SRPConfig.enable_earth_eclipse`) is on by default.
+
 SRP is a cannonball `Cr*A/m` area model, not an attitude-dependent flat-plate
 force. Batch manifests record this as `srp_force_model`.
 

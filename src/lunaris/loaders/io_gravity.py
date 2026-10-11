@@ -154,28 +154,94 @@ def load_shbdr(
 # =============================================================================
 
 # Regex to find floating point numbers in loose ASCII text
-# Matches: 123, -123.45, 1.23E-4, +5.0e+05
-_FLOAT_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?")
+# Matches: 123, -123.45, 1.23E-4, +5.0e+05, and Fortran double-precision
+# literals using D/d for the exponent (e.g. -2.0321D-04): the exponent marker
+# is part of the same token so it is not mistaken for a delimiter that splits
+# one number into two ("-2.0321" and "-04").
+_FLOAT_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?", re.ASCII)
 _NUM_DELIM_TRANS = str.maketrans({",": " ", "\t": " "})
+# Spelled-out non-finite values pass the strict tokenizer so the loaders' own
+# finiteness checks report them with their specific messages.
+_NONFINITE_WORDS = frozenset({"nan", "inf", "infinity"})
 
 
-def _parse_nums(line: str) -> list[float]:
+def _to_float(token: str) -> float:
+    """``float()`` that also accepts a Fortran D/d exponent marker."""
+    return float(token.replace("D", "E").replace("d", "e"))
+
+
+def _floats(s: str) -> list[float]:
+    """Whitespace-separated floats; a Fortran D/d exponent is read as E."""
+    if "D" in s or "d" in s:
+        s = s.replace("D", "E").replace("d", "e")
+    return [float(x) for x in s.split()]
+
+
+def _parse_nums(line: str, *, strict: bool = False, line_no: int | None = None) -> list[float]:
     """
     Robust numeric tokenizer for ASCII lines.
 
     Strategy:
     1) Fast path: replace common delimiters -> split -> float(...)
     2) Fallback: regex scan (handles tightly packed fixed-width numbers)
+
+    With ``strict=True`` there is no fallback: every delimiter-separated token
+    must be a complete decimal literal (``_FLOAT_RE``, D/d exponents allowed)
+    or a spelled-out nan/inf (left to the callers' finiteness checks),
+    otherwise a ``ValueError`` names ``line_no`` and the line. The regex scan
+    would otherwise re-read ``1.0-08`` as the two numbers 1.0 and -8.0 and
+    accept ``-9.0E-05junk`` as -9.0e-5.
     """
     s = line.translate(_NUM_DELIM_TRANS).strip()
     if not s:
         return []
 
+    if strict:
+        # float() alone accepts exactly the _FLOAT_RE literals (after the D->E
+        # rewrite) and nan/inf, except for digit-group underscores and
+        # non-ASCII digits; those two are excluded explicitly. This keeps
+        # strict parsing of 1.6-million-line tables as cheap as the fast path.
+        try:
+            if "_" not in s and s.isascii():
+                return _floats(s)
+        except ValueError:
+            pass
+        for token in s.split():
+            if _FLOAT_RE.fullmatch(token) is None and token.lower().lstrip("+-") not in _NONFINITE_WORDS:
+                raise ValueError(
+                    f"Malformed numeric field {token!r} at line {line_no}: {line.rstrip()[:200]}"
+                )
+        return _floats(s)
+
     try:
-        return [float(x) for x in s.split()]
+        return _floats(s)
     except ValueError:
         # Fallback for weird formatting (e.g. merged columns)
-        return [float(m.group(0)) for m in _FLOAT_RE.finditer(line)]
+        return [_to_float(m.group(0)) for m in _FLOAT_RE.finditer(line)]
+
+
+def _to_integral_index(value: float) -> int:
+    """Degree/order/state from a parsed numeric token, rejecting non-integral values.
+
+    ``int(1.7)`` truncates to ``1`` silently; an index or normalization state
+    that is not (to float round-off) a whole number is malformed.
+    """
+    if not math.isfinite(value):
+        raise ValueError(f"Expected an integral value, got {value!r}")
+    rounded = round(value)
+    if abs(value - rounded) > 1e-9:
+        raise ValueError(f"Expected an integral value, got {value!r}")
+    return int(rounded)
+
+
+def _header_normalization_state(value: float) -> int:
+    """SHADR header normalization state: a finite whole number, else ``ValueError``."""
+    try:
+        return _to_integral_index(value)
+    except ValueError:
+        raise ValueError(
+            f"SHADR header normalization state must be a whole number. Got {value!r}."
+        ) from None
 
 
 def _infer_column_order(sample_lines: list[tuple[int, int, float, float]]) -> bool:
@@ -353,7 +419,7 @@ def load_shadr_ascii(
             if header_nums is None:
                 if not line.strip():
                     continue
-                header_nums = _parse_nums(line)
+                header_nums = _parse_nums(line, strict=strict, line_no=i_line)
                 if len(header_nums) < 8:
                     raise ValueError(
                         "Invalid SHADR header. Expected at least 8 fields: "
@@ -364,12 +430,17 @@ def load_shadr_ascii(
                 GM_km3s2 = float(header_nums[1])
                 file_n_max = int(header_nums[3])
                 file_m_max = int(header_nums[4])
+                # The header is parsed as floats: only a finite whole number is a
+                # normalization state. Anything else used to become None (or be
+                # truncated, 1.5 -> 1) and silently pass the strict check.
                 try:
-                    norm_state = int(header_nums[5])
-                except Exception:
+                    norm_state = _header_normalization_state(float(header_nums[5]))
+                except ValueError:
+                    if strict and require_normalization_state is not None:
+                        raise
                     norm_state = None
 
-                if strict and require_normalization_state is not None and norm_state is not None:
+                if strict and require_normalization_state is not None:
                     if norm_state != int(require_normalization_state):
                         raise ValueError(
                             f"Unsupported normalization_state={norm_state} in SHADR header. "
@@ -433,7 +504,7 @@ def load_shadr_ascii(
 
             assert Cnm is not None and Snm is not None
 
-            nums = _parse_nums(line)
+            nums = _parse_nums(line, strict=strict, line_no=i_line)
             if len(nums) < 4:
                 skipped_short += 1
                 if strict:
@@ -443,15 +514,16 @@ def load_shadr_ascii(
                 continue
 
             try:
-                raw1 = int(nums[0])
-                raw2 = int(nums[1])
+                raw1 = _to_integral_index(nums[0])
+                raw2 = _to_integral_index(nums[1])
                 val_C = float(nums[2])
                 val_S = float(nums[3])
-            except ValueError:
+            except ValueError as error:
                 skipped_parse += 1
                 if strict:
                     raise ValueError(
-                        f"Failed to parse coefficient indices/values at line {i_line}: {line.rstrip()[:200]}"
+                        f"Failed to parse coefficient indices/values at line {i_line} ({error}): "
+                        f"{line.rstrip()[:200]}"
                     ) from None
                 continue
 
@@ -573,6 +645,15 @@ def _looks_like_ascii_model(file_path: str) -> bool:
     return any(name.endswith(sfx) for sfx in _ASCII_ENDINGS)
 
 
+def _reject_icgem_model(file_path: str) -> None:
+    """Refuse an ICGEM ``.gfc`` file, which must never reach the binary SHBDR parser."""
+    if os.path.basename(str(file_path)).lower().endswith(".gfc"):
+        raise ValueError(
+            f"ICGEM .gfc gravity models are not supported: {file_path}. "
+            "Use a PDS SHADR ASCII table (.tab/.sha/.txt) or a binary SHBDR file."
+        )
+
+
 def read_gravity_model_header(file_path: str) -> tuple[int, float, float, int]:
     """Read only the physical header of a gravity model.
 
@@ -583,13 +664,14 @@ def read_gravity_model_header(file_path: str) -> tuple[int, float, float, int]:
     """
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"Gravity model file not found: {file_path}")
+    _reject_icgem_model(file_path)
 
     if _looks_like_ascii_model(file_path):
         with open(file_path, encoding="utf-8", errors="strict") as stream:
             header_nums: list[float] = []
-            for line in stream:
+            for line_no, line in enumerate(stream, 1):
                 if line.strip():
-                    header_nums = _parse_nums(line)
+                    header_nums = _parse_nums(line, strict=True, line_no=line_no)
                     break
         if len(header_nums) < 8:
             raise ValueError(
@@ -599,8 +681,8 @@ def read_gravity_model_header(file_path: str) -> tuple[int, float, float, int]:
             )
         radius_m = float(header_nums[0]) * 1000.0
         gm_m3s2 = float(header_nums[1]) * 1.0e9
-        degree = max(int(header_nums[3]), int(header_nums[4]))
-        normalization = int(header_nums[5])
+        degree = max(_to_integral_index(header_nums[3]), _to_integral_index(header_nums[4]))
+        normalization = _header_normalization_state(header_nums[5])
     else:
         with open(file_path, "rb") as stream:
             header_data = stream.read(56)
@@ -725,6 +807,7 @@ def load_gravity_model(
     Dispatch
     --------
     - ASCII (PDS/GRAIL style): .tab/.sha/.txt (+ .tab.txt/.sha.txt) -> :func:`load_shadr_ascii`
+    - ICGEM .gfc: refused with a ``ValueError`` (not supported)
     - Otherwise: legacy/binary SHBDR-like -> :func:`load_shbdr`
 
     Parameters
@@ -753,6 +836,7 @@ def load_gravity_model(
         degree_max = int(degree_max)
         if degree_max < 0:
             raise ValueError(f"degree_max must be >= 0. Got {degree_max}.")
+    _reject_icgem_model(file_path)
 
     # 1) ASCII loader
     if _looks_like_ascii_model(file_path):

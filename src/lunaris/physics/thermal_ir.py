@@ -389,6 +389,10 @@ def calc_thermal_ir_accel(
     ``r_earth_fixed`` (Moon-fixed Earth position) and ``enable_eclipse`` drive the
     optional lunar-eclipse dimming of the equilibrium-mode solar input. They are
     off by default so existing callers are unaffected.
+
+    In ``temperature_grid`` mode ``facet_temperatures_K`` must hold exactly one
+    temperature per facet; a missing or mis-sized grid raises ``ValueError``
+    instead of the kernel's silent zero acceleration.
     """
     r = np.asarray(r_sc_fixed, dtype=np.float64).reshape(3)
     s = np.asarray(r_sun_fixed, dtype=np.float64).reshape(3)
@@ -402,6 +406,22 @@ def calc_thermal_ir_accel(
         if facet_temperatures_K is None
         else np.ascontiguousarray(np.asarray(facet_temperatures_K, dtype=np.float64).reshape(-1))
     )
+    mode_id = normalize_thermal_mode(mode)
+    if mode_id == THERMAL_MODE_TEMPERATURE_GRID:
+        # The kernel returns zero when the grid is shorter than the facet list;
+        # here that would be a silent "no thermal IR", so refuse it (the
+        # dynamics-engine path validates the grid length on its own).
+        n_facets = int(np.asarray(facet_areas_m2).reshape(-1).shape[0])
+        if facet_temperatures_K is None:
+            raise ValueError(
+                "calc_thermal_ir_accel: mode 'temperature_grid' needs facet_temperatures_K "
+                f"(one temperature [K] per facet, {n_facets} facets); none was given."
+            )
+        if temps.shape[0] != n_facets:
+            raise ValueError(
+                "calc_thermal_ir_accel: facet_temperatures_K has "
+                f"{temps.shape[0]} values but there are {n_facets} facets."
+            )
     ax, ay, az = accel_thermal_ir_facets_numba(
         float(r[0]),
         float(r[1]),
@@ -416,7 +436,7 @@ def calc_thermal_ir_accel(
         np.ascontiguousarray(facet_normals, dtype=np.float64),
         np.ascontiguousarray(facet_areas_m2, dtype=np.float64),
         temps,
-        normalize_thermal_mode(mode),
+        mode_id,
         float(surface_emissivity),
         float(surface_albedo),
         float(temperature_K),
