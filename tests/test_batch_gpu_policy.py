@@ -78,7 +78,8 @@ def test_numba_cuda_srp_diagnostics_disclose_conical_shadow_model() -> None:
 
     assert diag["srp_force_model"] == "cannonball_cr_area_over_mass"
     assert diag["srp_attitude_model"] == "none"
-    # SRPConfig defaults: Moon eclipse on, Earth eclipse off (same labels as CPU).
+    # Bare __new__ object: only the Moon eclipse is set here (SRPConfig itself now
+    # defaults the Earth eclipse on); labels are the CPU ones.
     assert diag["srp_shadow_model"] == "conical_moon_shadow_factor"
     assert diag["srp_shadow_model_fidelity"] == "engineering_conical_shadow"
     assert diag["srp_earth_eclipse_supported"] is True
