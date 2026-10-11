@@ -46,6 +46,42 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _restore_qt_application_look():
+    """Undo app-wide Qt look changes (style, font, palette, stylesheet) after each test.
+
+    Several tests apply the Studio theme to the shared ``QApplication``
+    (``apply_premium_dark_theme``) and never undo it. Its font then leaks into
+    every later test in the process, so layout tests that measure size hints
+    (e.g. the Mission Studio header budget) pass or fail by random test order.
+    PySide6 is only consulted when a test has already imported it; restoring
+    happens only for what actually changed (an app-wide restyle is expensive).
+    """
+    import sys
+
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = widgets.QApplication.instance() if widgets is not None else None
+    before = None
+    if app is not None:
+        before = (app.styleSheet(), app.style().name(), app.font(), app.palette())
+    yield
+    if before is None:
+        return
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = widgets.QApplication.instance() if widgets is not None else None
+    if app is None:
+        return
+    sheet, style_name, font, palette = before
+    if app.style().name() != style_name:
+        app.setStyle(style_name)
+    if app.font() != font:
+        app.setFont(font)
+    if app.palette() != palette:
+        app.setPalette(palette)
+    if app.styleSheet() != sheet:
+        app.setStyleSheet(sheet)
+
+
 def _lunaris_data_available() -> bool:
     """Return True only when both the lunar gravity model and SPICE kernels exist.
 
