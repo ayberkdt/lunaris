@@ -498,7 +498,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         with contextlib.suppress(Exception):
             self.ent_out_dir.editingFinished.connect(self.refresh_runs)
-        QtCore.QTimer.singleShot(0, self.refresh_runs)
+        QtCore.QTimer.singleShot(0, self, self.refresh_runs)
         return section
 
     def refresh_runs(self, *_args) -> None:
@@ -1148,7 +1148,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         except Exception:
             pass
 
-        QtCore.QTimer.singleShot(0, self._refresh_artifact_browser)
+        QtCore.QTimer.singleShot(0, self, self._refresh_artifact_browser)
         return section
 
     def _on_out_dir_text_changed_for_browser(self, _text: str) -> None:

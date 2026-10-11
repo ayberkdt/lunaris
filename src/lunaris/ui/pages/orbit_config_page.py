@@ -409,7 +409,7 @@ class OrbitViz3D(QtWidgets.QWidget):
         layout.addWidget(self._build_controls())
 
         # Initial draw
-        QtCore.QTimer.singleShot(100, self.update_orbit)
+        QtCore.QTimer.singleShot(100, self, self.update_orbit)
 
     # -------------------------------------------------------------------------
     # Construction helpers
@@ -523,7 +523,7 @@ class OrbitViz3D(QtWidgets.QWidget):
         layers.addWidget(self._focus_button)
         col.addLayout(layers)
 
-        QtCore.QTimer.singleShot(0, self._update_control_density)
+        QtCore.QTimer.singleShot(0, self, self._update_control_density)
 
         return panel
 
@@ -607,7 +607,7 @@ class OrbitViz3D(QtWidgets.QWidget):
             if not self._camera_user_modified:
                 self._fit_camera(mark_user=False)
 
-        QtCore.QTimer.singleShot(0, apply_fit)
+        QtCore.QTimer.singleShot(0, self, apply_fit)
 
     def set_focus_mode(self, active: bool) -> None:
         """Keep the reversible focus-mode control honest and discoverable."""
@@ -1336,7 +1336,7 @@ class OrbitPage(QtWidgets.QWidget):
         self._exit_focus_shortcut.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
         self._exit_focus_shortcut.activated.connect(self._exit_preview_focus)
 
-        QtCore.QTimer.singleShot(0, self._update_responsive_layout)
+        QtCore.QTimer.singleShot(0, self, self._update_responsive_layout)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -1347,7 +1347,7 @@ class OrbitPage(QtWidgets.QWidget):
             watched is getattr(self, "group_viz", None)
             and event.type() == QtCore.QEvent.Resize
         ):
-            QtCore.QTimer.singleShot(0, self._update_metric_layout)
+            QtCore.QTimer.singleShot(0, self, self._update_metric_layout)
         return super().eventFilter(watched, event)
 
     def _update_responsive_layout(self) -> None:
@@ -1397,7 +1397,7 @@ class OrbitPage(QtWidgets.QWidget):
                 self._split.setSizes(self._focus_restore_sizes)
         self._preview_focus_active = active
         self.orbit_viz_3d.set_focus_mode(active)
-        QtCore.QTimer.singleShot(0, self._update_metric_layout)
+        QtCore.QTimer.singleShot(0, self, self._update_metric_layout)
 
     def _create_params_group(self) -> Section:
         """Orbit parameters card with Modern Segmented Control."""
@@ -1624,7 +1624,7 @@ class OrbitPage(QtWidgets.QWidget):
 
         layout.addWidget(info_frame)
 
-        QtCore.QTimer.singleShot(100, self._update_orbit_3d)
+        QtCore.QTimer.singleShot(100, self, self._update_orbit_3d)
         return gb
 
     def _update_metric_layout(self) -> None:

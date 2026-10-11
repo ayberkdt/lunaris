@@ -13,6 +13,7 @@ from `lunaris.ui.widgets` into a single desktop workflow.
 from __future__ import annotations
 
 import ast
+import codecs
 import json
 import os
 import subprocess
@@ -110,7 +111,7 @@ from lunaris.ui.core.command_builder import (
     build_command_preview,
     build_preflight_snapshot,
 )
-from lunaris.ui.core.log_stream import LineAssembler
+from lunaris.ui.core.log_stream import LineAssembler, StderrClassifier
 from lunaris.ui.core.preflight_validation import PreFlightWorker
 from lunaris.ui.core.session_persistence import (
     SessionFileUnreadable,
@@ -284,7 +285,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batch_process: QtCore.QProcess | None = None
         self.preflight_worker: PreFlightWorker | None = None
         self.batch_runner_script_path   = _lunaris_pkg / "cli" / "batch_runner.py"
-        self._batch_stdout_buf: str = ""
+        self._reset_batch_streams()
 
         # UI State Containers (Mutable)
         self.sim_state = SimulationState()
@@ -314,6 +315,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # each stream owns a dedicated assembler.
         self._stdout_assembler = LineAssembler()
         self._stderr_assembler = LineAssembler()
+        self._stderr_classifier = StderrClassifier()
         # Reset impact monitoring for this run
         self._collision_triggered = False
         self._collision_reason = ""
@@ -887,7 +889,9 @@ class MainWindow(QtWidgets.QMainWindow):
     # -------------------------------------------------------------------------
     @staticmethod
     def _density_settings() -> QtCore.QSettings:
-        return QtCore.QSettings("Lunaris", "MissionStudio")
+        from lunaris.ui.core.ui_commons import mission_studio_settings
+
+        return mission_studio_settings()
 
     def _load_density_pref(self) -> str:
         value = str(self._density_settings().value("ui/density", "comfortable") or "comfortable")
@@ -1125,7 +1129,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.batch_process.setProcessEnvironment(_child_process_environment())
 
-        self._batch_stdout_buf = ""
+        self._reset_batch_streams()
         self._batch_metrics: dict = {}
         self._batch_output_path: str = batch_data.get("output_path", "")
 
@@ -1134,6 +1138,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message("[BATCH][Error] Failed to start batch process.", severity="error")
             self.page_batch.on_run_finished(1, "", None, None)
             self.batch_process = None
+
+    def _reset_batch_streams(self) -> None:
+        """Fresh line assemblers and UTF-8 decoders for a new batch subprocess.
+
+        Each stream keeps its partial line between reads (and a multi-byte
+        character split across two reads), so ``_on_batch_finished`` can
+        emit the final line even when it has no trailing newline.
+        """
+        self._batch_stdout_assembler = LineAssembler()
+        self._batch_stderr_assembler = LineAssembler()
+        self._batch_stdout_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._batch_stderr_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._batch_stderr_classifier = StderrClassifier()
 
     def _on_batch_stdout(self) -> None:
         """
@@ -1147,61 +1164,77 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.batch_process is None:
             return
         try:
-            raw = bytes(self.batch_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            raw = self._batch_stdout_decoder.decode(bytes(self.batch_process.readAllStandardOutput()))
         except Exception:
             return
+        for line in self._batch_stdout_assembler.push(raw):
+            self._consume_batch_stdout_line(line)
 
-        self._batch_stdout_buf += raw
-        while "\n" in self._batch_stdout_buf:
-            line, self._batch_stdout_buf = self._batch_stdout_buf.split("\n", 1)
-            line = line.rstrip()
-            if not line:
-                continue
+    def _consume_batch_stdout_line(self, line: str) -> None:
+        """Route one complete batch stdout line (control payload or log text)."""
+        line = line.rstrip()
+        if not line:
+            return
 
-            if line.startswith("[BATCH_PROGRESS]"):
-                try:
-                    payload = json.loads(line[len("[BATCH_PROGRESS]"):].strip())
-                except Exception:
-                    self._log_message("[BATCH] Ignored malformed progress payload.", severity="warning")
-                else:
-                    if hasattr(self, "page_batch"):
-                        self.page_batch.update_progress_payload(payload)
-                    # Mirror into the Mission Monitor's batch observability.
-                    with contextlib.suppress(Exception):
-                        self.monitor_controller.set_batch_progress(payload)
-                continue
+        if line.startswith("[BATCH_PROGRESS]"):
+            try:
+                payload = json.loads(line[len("[BATCH_PROGRESS]"):].strip())
+            except Exception:
+                self._log_message("[BATCH] Ignored malformed progress payload.", severity="warning")
+            else:
+                if hasattr(self, "page_batch"):
+                    self.page_batch.update_progress_payload(payload)
+                # Mirror into the Mission Monitor's batch observability.
+                with contextlib.suppress(Exception):
+                    self.monitor_controller.set_batch_progress(payload)
+            return
 
-            if line.startswith("[BATCH_METRICS]"):
-                try:
-                    payload = line[len("[BATCH_METRICS]"):].strip()
-                    self._batch_metrics = json.loads(payload)
-                except Exception:
-                    self._log_message("[BATCH] Ignored malformed metrics payload.", severity="warning")
-                else:
-                    with contextlib.suppress(Exception):
-                        self.monitor_controller.set_batch_metrics(self._batch_metrics)
-                continue
+        if line.startswith("[BATCH_METRICS]"):
+            try:
+                payload = line[len("[BATCH_METRICS]"):].strip()
+                self._batch_metrics = json.loads(payload)
+            except Exception:
+                self._log_message("[BATCH] Ignored malformed metrics payload.", severity="warning")
+            else:
+                with contextlib.suppress(Exception):
+                    self.monitor_controller.set_batch_metrics(self._batch_metrics)
+            return
 
-            self._log_message(line, severity="info", source="batch")
+        self._log_message(line, severity="info", source="batch")
 
-            # Forward to the page's mini-log + progress bar
-            if hasattr(self, "page_batch"):
-                self.page_batch.update_progress(line)
+        # Forward to the page's mini-log + progress bar
+        if hasattr(self, "page_batch"):
+            self.page_batch.update_progress(line)
 
     def _on_batch_stderr(self) -> None:
         """Route batch stderr to the main log as warnings."""
         if self.batch_process is None:
             return
         try:
-            raw = bytes(self.batch_process.readAllStandardError()).decode("utf-8", errors="replace")
+            raw = self._batch_stderr_decoder.decode(bytes(self.batch_process.readAllStandardError()))
         except Exception:
             return
-        for line in raw.splitlines():
-            if line.strip():
-                self._log_message(f"[BATCH] {line.strip()}", severity="warning")
+        for line in self._batch_stderr_assembler.push(raw):
+            self._log_batch_stderr_line(line)
+
+    def _log_batch_stderr_line(self, line: str) -> None:
+        if line.strip():
+            # Classify before stripping: indentation marks continuation lines.
+            severity = self._batch_stderr_classifier.classify(line)
+            self._log_message(f"[BATCH] {line.strip()}", severity=severity)
 
     def _on_batch_finished(self, exit_code: int, _exit_status) -> None:
         """Handle batch subprocess completion and update the page."""
+        # The last line of each stream may have no newline (or end inside a
+        # multi-byte character); emit it before the metrics are read below.
+        for line in self._batch_stderr_assembler.push(self._batch_stderr_decoder.decode(b"", final=True)):
+            self._log_batch_stderr_line(line)
+        for line in self._batch_stderr_assembler.flush():
+            self._log_batch_stderr_line(line)
+        for line in self._batch_stdout_assembler.push(self._batch_stdout_decoder.decode(b"", final=True)):
+            self._consume_batch_stdout_line(line)
+        for line in self._batch_stdout_assembler.flush():
+            self._consume_batch_stdout_line(line)
         metrics = getattr(self, "_batch_metrics", {}) or {}
         output_path = metrics.get("output_path", getattr(self, "_batch_output_path", ""))
 
@@ -1632,7 +1665,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if success:
             self._log_message(f"[System] {message}", severity="success")
             # Proceed with actual simulation
-            QtCore.QTimer.singleShot(100, self._run_process)
+            QtCore.QTimer.singleShot(100, self, self._run_process)
         else:
             self._log_message(f"[System] {message}", severity="error")
             self._set_preflight_state("idle")
@@ -1971,6 +2004,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
         self._stdout_assembler.clear()
         self._stderr_assembler.clear()
+        self._stderr_classifier.reset()
         self._run_wall_t0 = time.time()
         self._last_telem_t_s = None
         self._reset_run_watch_state()
@@ -2071,23 +2105,27 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self._log_message(f"[Warning] Could not create stop file: {e}", severity="warning")
 
-        # Step 1: Try graceful termination
+        # Graceful termination first, then a force-kill on a timer. Waiting
+        # here (waitForFinished) froze the window for 2-3 s on every Stop: on
+        # Windows terminate() posts WM_CLOSE, which a console child ignores.
+        # The UI returns to idle through finished -> _on_process_finished. The
+        # timer is bound to the process, so it dies with a disposed wrapper.
+        with contextlib.suppress(Exception):
+            self.btn_stop.setEnabled(False)
         proc.terminate()
+        QtCore.QTimer.singleShot(2000, proc, lambda: self._force_kill_if_still_running(proc))
 
-        # Wait for graceful termination
-        if not proc.waitForFinished(2000):  # Wait 2 seconds
+    def _force_kill_if_still_running(self, proc: QtCore.QProcess) -> None:
+        """Second stop step: kill *proc* if it is still this window's live process."""
+        if proc is not self.process:
+            return
+        try:
+            if proc.state() == QtCore.QProcess.NotRunning:
+                return
             self._log_message("[System] Graceful termination failed -> forcing kill...", severity="error")
-
-            # Step 2: Force kill
             proc.kill()
-
-            # Wait for kill to complete
-            if not proc.waitForFinished(1000):  # Wait 1 more second
-                self._log_message("[System] Kill command may have failed", severity="error")
-
-        # Update UI
-        self._set_run_state("idle")
-        self._dispose_process()
+        except RuntimeError:
+            return  # the wrapper was already deleted
 
 
     # -------------------------------------------------------------------------
@@ -2434,18 +2472,6 @@ class MainWindow(QtWidgets.QMainWindow):
                         eta_txt = f" | ETA {eta_s:.0f} s"
                 self.lbl_progress.setText(f"{t_days:.2f}/{T_days:.2f} d{eta_txt}")
 
-    @staticmethod
-    def _classify_stderr_line(line: str) -> str:
-        """Classify a single stderr line as 'warning' or 'error'."""
-        lowered = line.lower()
-        is_warning = (
-            "warning" in lowered
-            and "traceback" not in lowered
-            and "[fatal]" not in lowered
-            and "fatal error" not in lowered
-        )
-        return "warning" if is_warning else "error"
-
     def _handle_stderr(self):
         """Assemble complete stderr lines with warning/error classification.
 
@@ -2460,7 +2486,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for line in self._stderr_assembler.push(data):
             if line.strip():
-                self._log_message(line, severity=self._classify_stderr_line(line))
+                self._log_message(line, severity=self._stderr_classifier.classify(line))
 
     def _flush_stream_buffers(self):
         """Flush trailing partial stdout/stderr lines left without a newline.
@@ -2471,7 +2497,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         for line in self._stderr_assembler.flush():
             if line.strip():
-                self._log_message(line, severity=self._classify_stderr_line(line))
+                self._log_message(line, severity=self._stderr_classifier.classify(line))
         for line in self._stdout_assembler.flush():
             self._consume_stdout_line(line)
 
@@ -2698,6 +2724,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"Failed to load session file:\n\n{e!s}"
             )
 
+    def _session_payload_for_save(self) -> dict[str, Any]:
+        """The session snapshot, refused when a page could not be read.
+
+        Writing it anyway would store that section blank and replace the last
+        good session with it; the callers report the error instead.
+        """
+        data = self._collect_preset_dict()
+        unreadable = (data.get("meta") or {}).get("unreadable_sections")
+        if unreadable:
+            raise RuntimeError(
+                "not written, the previous file is kept: could not read "
+                + "; ".join(str(item) for item in unreadable)
+            )
+        return data
+
     def _action_save_session(self, _checked: bool = False):
         """Save session to file."""
         current = str(self.app_data_dir / "mission_profile.json")
@@ -2709,7 +2750,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            data = self._collect_preset_dict()
+            data = self._session_payload_for_save()
             write_session_file(Path(path), data)
             self._log_message(f"[UI] Session saved to: {Path(path).name}", severity="success")
         except Exception as e:
@@ -2822,14 +2863,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # splitter ratio; this prevents page size hints from trapping the log
         # panel at an awkwardly small height.
         if not self._visual_state_restored:
-            QtCore.QTimer.singleShot(0, self._apply_default_log_splitter_sizes)
+            QtCore.QTimer.singleShot(0, self, self._apply_default_log_splitter_sizes)
 
         # Update command preview (delayed: lets UI settle)
-        QtCore.QTimer.singleShot(500, self._update_command_preview_silent)
+        QtCore.QTimer.singleShot(500, self, self._update_command_preview_silent)
 
         # Auto-detect gravity file if none set
         if not self.gravity_cfg.file_path:
-            QtCore.QTimer.singleShot(1000, self._auto_detect_gravity)
+            QtCore.QTimer.singleShot(1000, self, self._auto_detect_gravity)
 
     def _auto_detect_gravity(self):
         """Auto-detect gravity file in background."""
@@ -2943,7 +2984,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lifecycle event such as window close.
         """
         try:
-            data = self._collect_preset_dict()
+            data = self._session_payload_for_save()
             write_session_file(self.session_path, data)
             self._last_autosave_error = None
             return True
@@ -3112,7 +3153,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     """Application entry point."""
+    from lunaris.ui_foundation.qt_setup import prepare_qt_application
 
+    prepare_qt_application()  # C number locale + shared GL contexts, before QApplication
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("ST_LRPS")

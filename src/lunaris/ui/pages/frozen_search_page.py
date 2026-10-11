@@ -123,11 +123,11 @@ class FrozenSearchPage(QtWidgets.QWidget):
         self._workspace_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self._workspace_scroll.setWidget(self._scroll_body)
         root.addWidget(self._workspace_scroll, 1)
-        QtCore.QTimer.singleShot(0, self._refresh_workspace_width)
+        QtCore.QTimer.singleShot(0, self, self._refresh_workspace_width)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        QtCore.QTimer.singleShot(0, self._refresh_workspace_width)
+        QtCore.QTimer.singleShot(0, self, self._refresh_workspace_width)
 
     def _refresh_workspace_width(self) -> None:
         """Release the old two-column width after a responsive stack."""
@@ -580,7 +580,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
             return
         self.txt_log.appendPlainText("[FROZEN] Cancellation requested.")
         proc.terminate()
-        QtCore.QTimer.singleShot(3000, self._kill_if_running)
+        QtCore.QTimer.singleShot(3000, self, self._kill_if_running)
 
     def shutdown(self) -> None:
         self.cancel_run()

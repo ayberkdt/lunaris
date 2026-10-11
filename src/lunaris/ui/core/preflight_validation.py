@@ -122,8 +122,11 @@ class PreFlightWorker(QtCore.QThread):
                     self.validation_error.emit(message)
                     self.validation_complete.emit(False, "Gravity file validation failed")
                     return
+                # A success message is a note, not a warning: gravity is on by
+                # default, so a warning here lit the log's badge on every run.
+                # Real concerns are emitted as warnings inside the check.
                 if message:
-                    self.validation_warning.emit(message)
+                    self.validation_progress.emit(message)
 
             if self.command_data.get("albedo_enabled", False):
                 if self._is_cancelled():
@@ -135,7 +138,7 @@ class PreFlightWorker(QtCore.QThread):
                     self.validation_complete.emit(False, "Albedo file validation failed")
                     return
                 if message:
-                    self.validation_warning.emit(message)
+                    self.validation_progress.emit(message)
 
             if self._is_cancelled():
                 return
@@ -300,10 +303,11 @@ class PreFlightWorker(QtCore.QThread):
             return True, f"Gravity file validated: {path.name}"
 
         if file_size_mb > 500.0:
-            return True, f"Large gravity file detected ({file_size_mb:.1f} MB). Loading may be slow."
-        if file_size_mb > 100.0:
-            return True, f"Gravity file size: {file_size_mb:.1f} MB"
-        return True, f"Gravity file validated: {path.name}"
+            self.validation_warning.emit(
+                f"Large gravity file detected ({file_size_mb:.1f} MB). Loading may be slow."
+            )
+        # The default model is about 190 MB: its size is a note, not a warning.
+        return True, f"Gravity file validated: {path.name} ({file_size_mb:.1f} MB)"
 
     def _validate_albedo_files(self) -> tuple[bool, str]:
         """

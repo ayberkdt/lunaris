@@ -677,6 +677,14 @@ class LauncherWindow(QtWidgets.QWidget):
 
         app = QtWidgets.QApplication.instance()
         if app is not None:
+            # The Studio theme is application-wide (style, font, palette,
+            # stylesheet); keep the look it replaces so closing the Studio
+            # gives it back to the launcher and a later Mission Studio.
+            if getattr(self, "_app_look", None) is None:
+                self._app_look = (
+                    app.styleSheet(), app.style().name(),
+                    QtGui.QFont(app.font()), QtGui.QPalette(app.palette()),
+                )
             apply_premium_dark_theme(app)
             # Install the Studio's wheel guard once for the shared application.
             if not getattr(self, "_studio_wheel_guard", None):
@@ -709,7 +717,7 @@ class LauncherWindow(QtWidgets.QWidget):
         self._show_opening_overlay(name)
         # Defer the blocking build so the overlay paints first and the Moon gets
         # a few frames of motion before the build pause.
-        QtCore.QTimer.singleShot(_OPENING_BUILD_DELAY_MS, lambda: self._finish_open(name, builder))
+        QtCore.QTimer.singleShot(_OPENING_BUILD_DELAY_MS, self, lambda: self._finish_open(name, builder))
 
     def _finish_open(self, name: str, builder) -> None:
         """Build the workspace, then hand off from the launcher to it."""
@@ -717,6 +725,7 @@ class LauncherWindow(QtWidgets.QWidget):
             window = builder()
         except Exception as exc:  # pragma: no cover - environment dependent
             self._hide_opening_overlay()
+            self._restore_app_look()
             self._opening = False
             self._report_launch_error(name, exc)
             return
@@ -772,9 +781,24 @@ class LauncherWindow(QtWidgets.QWidget):
         window.activateWindow()
         self.hide()
 
+    def _restore_app_look(self) -> None:
+        """Undo the application-wide Studio theme (no-op unless it was applied)."""
+        look = getattr(self, "_app_look", None)
+        app = QtWidgets.QApplication.instance()
+        if look is None or app is None:
+            return
+        self._app_look = None
+        sheet, style, font, palette = look
+        app.setStyleSheet(sheet)
+        if style:
+            app.setStyle(style)
+        app.setFont(font)
+        app.setPalette(palette)
+
     def _on_workspace_closed(self, _obj: object = None) -> None:
         """Bring the launcher (and its still-loaded Moon) back to the front."""
         self._active_workspace = None
+        self._restore_app_look()
         self.show()
         self.raise_()
         self.activateWindow()
@@ -815,6 +839,9 @@ def main() -> None:
     with contextlib.suppress(Exception):
         os.chdir(str(find_project_root()))
 
+    from lunaris.ui_foundation.qt_setup import prepare_qt_application
+
+    prepare_qt_application()  # C number locale + shared GL contexts, before QApplication
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Lunaris")
     app.setFont(load_fonts())

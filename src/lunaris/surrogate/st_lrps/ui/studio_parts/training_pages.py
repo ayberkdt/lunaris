@@ -755,7 +755,7 @@ class _ResponsiveLaunchStrip(QFrame):
         self._grid.setSpacing(16)
         self._compact: bool | None = None
         self._relayout(False)
-        QTimer.singleShot(0, self._refresh_layout)
+        QTimer.singleShot(0, self, self._refresh_layout)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -768,7 +768,7 @@ class _ResponsiveLaunchStrip(QFrame):
             QEvent.Type.PolishRequest,
             QEvent.Type.Show,
         ):
-            QTimer.singleShot(0, self._refresh_layout)
+            QTimer.singleShot(0, self, self._refresh_layout)
         return handled
 
     def _refresh_layout(self) -> None:
@@ -823,7 +823,7 @@ class _ResponsiveMonitorSplitter(QSplitter):
         self.setStretchFactor(0, 3)
         self.setStretchFactor(1, 2)
         self.setSizes([880, 420])
-        QTimer.singleShot(0, self._refresh_orientation)
+        QTimer.singleShot(0, self, self._refresh_orientation)
 
     @property
     def compact(self) -> bool:
@@ -840,7 +840,7 @@ class _ResponsiveMonitorSplitter(QSplitter):
             QEvent.Type.PolishRequest,
             QEvent.Type.Show,
         ):
-            QTimer.singleShot(0, self._refresh_orientation)
+            QTimer.singleShot(0, self, self._refresh_orientation)
         return handled
 
     def _refresh_orientation(self) -> None:
@@ -2134,7 +2134,7 @@ class STLRPSTrainTab(QWidget):
             for button in (self.btn_enqueue_setup, self.btn_start_setup):
                 button.setMinimumWidth(button.sizeHint().width())
 
-        QTimer.singleShot(0, _fit_launch_buttons_after_polish)
+        QTimer.singleShot(0, self, _fit_launch_buttons_after_polish)
 
         # Resolved values are visible before launch; the panel is fed from the
         # current widgets and the engine's resolver in _refresh_launch_plan().
@@ -4411,7 +4411,7 @@ class STLRPSTrainTab(QWidget):
 
         # --- Discover output dir from log if not already set ---
         if exit_status == QProcess.ExitStatus.NormalExit and not self.runner._output_dir:
-            text = self.runner.log.toPlainText()
+            text = self.runner.output_text()
             for pat in [
                 r"(?:out_dir|Output dir|Run dir|Saving to)\s*[:=]\s*(.+)",
                 r"Using default output directory:\s*(.+)",

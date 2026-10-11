@@ -441,6 +441,12 @@ class MonitorWorkspace(QtWidgets.QWidget):
     def clear_docks(self) -> None:
         for dock in self._docks.values():
             self._host.removeDockWidget(dock)
+            # Until deleteLater runs the dock is still a child of the host;
+            # restoreState matches docks by object name and would bring this
+            # one back beside its replacement (the dashboard doubled on every
+            # relaunch). Drop the name so it can never be matched.
+            dock.setObjectName("")
+            dock.hide()
             dock.deleteLater()
         self._docks.clear()
 

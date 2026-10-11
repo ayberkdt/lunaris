@@ -22,6 +22,7 @@ import ast
 import importlib
 import importlib.util
 import os
+import tempfile
 from functools import lru_cache
 
 # Pin the Qt binding for the whole test process BEFORE any Qt-aware library is
@@ -32,6 +33,13 @@ from functools import lru_cache
 # PySide6; this keeps the binding deterministic regardless of test order.
 os.environ.setdefault("QT_API", "pyside6")
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
+
+# Keep every UI test out of the developer's real Qt settings store (the Windows
+# registry), session file and dashboard layout: both desktop apps put all of
+# them under LUNARIS_APP_DATA_DIR when it is set (lunaris.ui_foundation.settings).
+# Overwritten, not setdefault: a portable install's real folder must not be used.
+# Tests that need their own folder still monkeypatch it.
+os.environ["LUNARIS_APP_DATA_DIR"] = tempfile.mkdtemp(prefix="lunaris_test_appdata_")
 
 from pathlib import Path
 
