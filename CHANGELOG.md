@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: a Mission Monitor layout file that is not UTF-8 was overwritten instead of kept.**
+  - `load_layout` let `UnicodeDecodeError` escape (it is not an `OSError` or `LayoutError`), the caller swallowed it, no `.bak` was made, and the layout was overwritten at close. It now raises `LayoutError`, so the file is quarantined like invalid JSON. Ported from Sidera.
+
 - **Fixed: Mission Studio run and batch children could die on a non-ASCII print (Windows).**
   - A Python child whose stdout is a pipe encodes with the ANSI code page; the first character outside cp1252 (for example an arrow) raised `UnicodeEncodeError` and killed the run (reproduced on this machine). The children now run with `PYTHONIOENCODING=utf-8`, matching the UI's UTF-8 decoding. Ported from Sidera (64d48728).
 

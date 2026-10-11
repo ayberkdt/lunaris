@@ -93,6 +93,16 @@ class TestFiles:
         assert path.with_suffix(".json.bak").exists()  # user data preserved
         assert warnings and "backed up" in warnings[0]
 
+    def test_non_utf8_file_is_quarantined_not_raised(self, tmp_path):
+        """Regression: UnicodeDecodeError escaped (it is a ValueError, not
+        OSError/LayoutError), the caller swallowed it, no backup was made and
+        the file was overwritten at close."""
+        path = tmp_path / "monitor_layout.json"
+        path.write_bytes(b"\xff\xfe\x00garbage")
+        assert load_layout_or_quarantine(path) is None
+        assert not path.exists()
+        assert path.with_suffix(".json.bak").read_bytes() == b"\xff\xfe\x00garbage"
+
     def test_foreign_schema_file_is_quarantined(self, tmp_path):
         path = tmp_path / "monitor_layout.json"
         payload = layout_to_payload(make_layout())
