@@ -858,17 +858,28 @@ def test_predict_total_accel_torch_shape(tmp_path: Path) -> None:
 
 
 @pytest.mark.requires_data
-def test_predict_total_accel_torch_zero_net_matches_point_mass(tmp_path: Path) -> None:
-    """Zero-weight network → total acceleration equals point-mass (residual mode)."""
-    from lunaris.common.constants import MU_MOON
+def test_predict_total_accel_torch_zero_net_matches_sh_baseline(tmp_path: Path) -> None:
+    """Zero-weight network -> total acceleration equals the SH(degree_min) baseline.
+
+    The tiny artifact declares ``degree_min=10``, so in residual mode the total is
+    SH10 + residual, not a point mass: at 100 km the SH10 terms differ from
+    ``-mu/r^2`` by ~4e-4 relative. The expected value comes from the CPU SH
+    kernel on the same gravity file, independent of the torch evaluator.
+    """
+    from lunaris.physics.spherical_harmonics import GravityModel
+
     model = _make_tiny_surrogate(tmp_path)
+    assert model.baseline_degree == 10
+    assert model.baseline_gravity_path is not None
 
     r = 1_838_000.0
     x = torch.tensor([[r, 0.0, 0.0]], dtype=torch.float32)
     out = model.predict_total_accel_torch(x)  # [1, 3]
 
-    expected_ax = -float(MU_MOON) / (r * r)
-    assert abs(float(out[0, 0]) - expected_ax) / abs(expected_ax) < 1e-4
+    sh10 = GravityModel.from_file(model.baseline_gravity_path, requested_degree=10)
+    expected = sh10.accel_fixed(np.array([r, 0.0, 0.0]), degree=10)
+    # float32 network/evaluator output against a float64 reference
+    assert np.allclose(out[0].double().numpy(), expected, rtol=0.0, atol=1e-6 * np.linalg.norm(expected))
     assert abs(float(out[0, 1])) < 1e-3
     assert abs(float(out[0, 2])) < 1e-3
 
