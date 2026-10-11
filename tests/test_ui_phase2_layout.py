@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets, wait_until
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets, preserved_app_look, wait_until
 
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
@@ -337,31 +337,32 @@ def test_st_lrps_shell_uses_shared_palette_and_compact_navigation() -> None:
     assert qt_common.THEME is THEME
 
     app = _app()
-    qt_common.apply_premium_dark_theme(app)
-    window = MainWindow()
-    window.resize(1024, 768)
-    window.show()
-    app.processEvents()
-    try:
-        assert window._sidebar.width() == DESIGN_TOKENS.layout.nav_compact_width
-        # The global ST-LRPS experiment header was retired in favour of
-        # page-local headers, so the shell no longer mounts one.
-        assert window._experiment_header is None
-        # The Data workspace section nav is now a compact horizontal strip.
-        assert window._data_page._section_nav.maximumHeight() == 50
+    with preserved_app_look(app):
+        qt_common.apply_premium_dark_theme(app)
+        window = MainWindow()
+        window.resize(1024, 768)
+        window.show()
+        app.processEvents()
+        try:
+            assert window._sidebar.width() == DESIGN_TOKENS.layout.nav_compact_width
+            # The global ST-LRPS experiment header was retired in favour of
+            # page-local headers, so the shell no longer mounts one.
+            assert window._experiment_header is None
+            # The Data workspace section nav is now a compact horizontal strip.
+            assert window._data_page._section_nav.maximumHeight() == 50
 
-        window._navigate(2)
-        app.processEvents()
-        assert window._stack.currentIndex() == 2
-        control_bar = window._train_monitor_page.findChild(
-            QtWidgets.QFrame, "trainRunBar"
-        )
-        assert control_bar is not None
-        assert control_bar.sizeHint().width() <= window._train_monitor_page.width()
-    finally:
-        window.close()
-        window.deleteLater()
-        app.processEvents()
+            window._navigate(2)
+            app.processEvents()
+            assert window._stack.currentIndex() == 2
+            control_bar = window._train_monitor_page.findChild(
+                QtWidgets.QFrame, "trainRunBar"
+            )
+            assert control_bar is not None
+            assert control_bar.sizeHint().width() <= window._train_monitor_page.width()
+        finally:
+            window.close()
+            window.deleteLater()
+            app.processEvents()
 
 
 def test_settings_dialogs_share_title_description_and_primary_action() -> None:

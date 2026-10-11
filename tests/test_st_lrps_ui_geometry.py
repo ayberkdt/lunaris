@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import pytest
-from tests.ui_qt_helpers import QtCore, QtWidgets
+from tests.ui_qt_helpers import QtCore, QtWidgets, preserved_app_look
 
 pytest.importorskip("torch")
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_app_look():
+    # _window() applies the Studio theme app-wide; undo it after this module so
+    # its font does not leak into later size-hint layout tests.
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    with preserved_app_look(app):
+        yield
 
 
 def _window(width: int, height: int, *, page_index: int | None = None):

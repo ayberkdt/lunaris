@@ -8,7 +8,7 @@ support.
 from __future__ import annotations
 
 import pytest
-from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets, preserved_app_look
 
 
 def _app():
@@ -161,40 +161,41 @@ def test_st_lrps_focusable_widgets_have_accessible_identity() -> None:
     )
 
     app = _app()
-    apply_premium_dark_theme(app)
-    window = MainWindow()
-    try:
-        interactive = _interactive_types()
-        buddies = {
-            id(lbl.buddy()): lbl
-            for lbl in window.findChildren(QtWidgets.QLabel)
-            if lbl.buddy() is not None
-        }
-        missing: list[str] = []
-        for widget in window.findChildren(QtWidgets.QWidget):
-            if not isinstance(widget, interactive):
-                continue
-            if isinstance(widget, QtWidgets.QScrollBar):
-                continue
-            if widget.objectName() in _SKIP_OBJECT_NAMES:
-                continue
-            if widget.focusPolicy() == QtCore.Qt.NoFocus:
-                continue
-            if _in_composite_control(widget):
-                continue
-            if widget.accessibleName().strip():
-                continue
-            if isinstance(widget, QtWidgets.QAbstractButton) and widget.text().strip():
-                continue
-            buddy = buddies.get(id(widget))
-            if buddy is not None and buddy.text().strip():
-                continue
-            missing.append(f"{type(widget).__name__}: {_widget_path(widget)}")
-        assert not missing, (
-            "Focusable ST-LRPS widgets without an accessible identity:\n"
-            + "\n".join(missing)
-        )
-    finally:
-        window.close()
-        window.deleteLater()
-        app.processEvents()
+    with preserved_app_look(app):
+        apply_premium_dark_theme(app)
+        window = MainWindow()
+        try:
+            interactive = _interactive_types()
+            buddies = {
+                id(lbl.buddy()): lbl
+                for lbl in window.findChildren(QtWidgets.QLabel)
+                if lbl.buddy() is not None
+            }
+            missing: list[str] = []
+            for widget in window.findChildren(QtWidgets.QWidget):
+                if not isinstance(widget, interactive):
+                    continue
+                if isinstance(widget, QtWidgets.QScrollBar):
+                    continue
+                if widget.objectName() in _SKIP_OBJECT_NAMES:
+                    continue
+                if widget.focusPolicy() == QtCore.Qt.NoFocus:
+                    continue
+                if _in_composite_control(widget):
+                    continue
+                if widget.accessibleName().strip():
+                    continue
+                if isinstance(widget, QtWidgets.QAbstractButton) and widget.text().strip():
+                    continue
+                buddy = buddies.get(id(widget))
+                if buddy is not None and buddy.text().strip():
+                    continue
+                missing.append(f"{type(widget).__name__}: {_widget_path(widget)}")
+            assert not missing, (
+                "Focusable ST-LRPS widgets without an accessible identity:\n"
+                + "\n".join(missing)
+            )
+        finally:
+            window.close()
+            window.deleteLater()
+            app.processEvents()
