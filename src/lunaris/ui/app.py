@@ -2100,23 +2100,27 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self._log_message(f"[Warning] Could not create stop file: {e}", severity="warning")
 
-        # Step 1: Try graceful termination
+        # Graceful termination first, then a force-kill on a timer. Waiting
+        # here (waitForFinished) froze the window for 2-3 s on every Stop: on
+        # Windows terminate() posts WM_CLOSE, which a console child ignores.
+        # The UI returns to idle through finished -> _on_process_finished. The
+        # timer is bound to the process, so it dies with a disposed wrapper.
+        with contextlib.suppress(Exception):
+            self.btn_stop.setEnabled(False)
         proc.terminate()
+        QtCore.QTimer.singleShot(2000, proc, lambda: self._force_kill_if_still_running(proc))
 
-        # Wait for graceful termination
-        if not proc.waitForFinished(2000):  # Wait 2 seconds
+    def _force_kill_if_still_running(self, proc: QtCore.QProcess) -> None:
+        """Second stop step: kill *proc* if it is still this window's live process."""
+        if proc is not self.process:
+            return
+        try:
+            if proc.state() == QtCore.QProcess.NotRunning:
+                return
             self._log_message("[System] Graceful termination failed -> forcing kill...", severity="error")
-
-            # Step 2: Force kill
             proc.kill()
-
-            # Wait for kill to complete
-            if not proc.waitForFinished(1000):  # Wait 1 more second
-                self._log_message("[System] Kill command may have failed", severity="error")
-
-        # Update UI
-        self._set_run_state("idle")
-        self._dispose_process()
+        except RuntimeError:
+            return  # the wrapper was already deleted
 
 
     # -------------------------------------------------------------------------

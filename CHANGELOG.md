@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: Stop froze Mission Studio for 2-3 s.** `_stop_process` blocked the GUI thread in `waitForFinished(2000)` and then `waitForFinished(1000)`. On Windows `terminate()` posts WM_CLOSE, which a console Python child ignores, so the full wait was spent on every Stop (measured 2.0 s). Stop now returns at once. It disables the Stop button and schedules the force-kill 2 s later on a timer bound to the process. The window returns to idle through the process's `finished` signal.
+
 - **Fixed: pre-flight logged a warning on every Mission Studio run.** The gravity and albedo checks returned a success note ("Using default gravity model", "Gravity file size: 190.4 MB", "Using constant albedo model"), and the worker sent every non-empty message as `validation_warning`. Gravity is on by default, so every run lit the log's warning badge. Success notes now go to the `[Validation]` progress line. A gravity file over 500 MB, swapped apsides and every other real concern still warn.
 
 - **Fixed: deferred UI callbacks ran on destroyed widgets.** `QTimer.singleShot(ms, callable)` has no receiver, so PySide6 ran lambdas and local closures after their widget was deleted: the Studio force-kill check, the launcher's open step, the orbit camera refit and the launch-button fit. A pending bound-method shot also ran after a synchronous delete. The Studio launch strip's `_refresh_layout` then read a deleted child and raised. All 33 single shots in the UI packages now pass their widget as the receiver. A scan test keeps it that way.
