@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Fixed: SH acceleration within nanometres of the polar axis.** The numba and
+  torch kernels softened the longitudinal projection to `1/(rho^2 + 1e-24)`,
+  which halved it at `rho = 1e-12 m` (up to 49% transverse error against a
+  finite difference of the potential); they now use the exact `1/rho^2` above
+  the axis cutoff, and the longitude fallback uses the same `rho^2 >= 1e-24`
+  test as the cutoff. The batch potential kernel dropped the whole transverse
+  field for `1e-14 m < rho <= 1e-14 r` and now applies the analytic axis limit
+  there. Off-axis results (`rho >= 0.13 mm`) are bit-identical (measured on
+  205 points for the serial, parallel, batch and torch paths). Tests are in
+  `tests/test_sh_pole_axis.py`.
 - **Fixed: strict SH helpers no longer inherit `fastmath`.** Numba compiles a
   helper with the flags of whichever caller compiles it first and caches that
   build on disk. The helpers shared by the strict serial SH kernel and the

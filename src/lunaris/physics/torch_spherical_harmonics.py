@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.constants import EPS_1E12, EPS_1E24, EPS_1E30
+from lunaris.common.constants import EPS_1E24, EPS_1E30
 
 
 class TorchSHGravityEvaluator:
@@ -95,7 +95,8 @@ class TorchSHGravityEvaluator:
 
         sin_phi = z * inv_r
         cos_phi = rho * inv_r
-        pole = rho > EPS_1E12
+        # Same cutoff as axis_mask below (and the numba kernel): rho^2, not rho.
+        pole = rho_sq >= EPS_1E24
         cos_lon = torch.where(pole, x / rho.clamp_min(EPS_1E30), torch.ones_like(x))
         sin_lon = torch.where(pole, y / rho.clamp_min(EPS_1E30), torch.zeros_like(y))
 
@@ -171,10 +172,14 @@ class TorchSHGravityEvaluator:
                 r_ratio_n = r_ratio_n * r_ratio_base
 
         phi_factor = dv_dphi * inv_r
+        # Exact 1/rho^2 off the axis (the former 1/(rho^2 + EPS_1E24) halved the
+        # longitudinal term at rho = 1e-12 m; it is bit-identical for
+        # rho >= 0.13 mm). On the axis the term is zeroed and replaced below.
+        axis_mask = rho_sq < EPS_1E24
         inv_rho_sq = torch.where(
-            rho_sq < EPS_1E24,
+            axis_mask,
             torch.zeros_like(rho_sq),
-            1.0 / (rho_sq + EPS_1E24),
+            1.0 / torch.where(axis_mask, torch.ones_like(rho_sq), rho_sq),
         )
         ax = dv_dr * u_r[:, 0] + phi_factor * u_phi[:, 0] - dv_dlambda * y * inv_rho_sq
         ay = dv_dr * u_r[:, 1] + phi_factor * u_phi[:, 1] + dv_dlambda * x * inv_rho_sq
@@ -187,7 +192,6 @@ class TorchSHGravityEvaluator:
         # (a_y with S_n1; sigma_n = 1 north, (-1)^(n+1) south). Mirrors the
         # serial numba kernel's _axis_transverse_m1 for backend parity; the
         # axial component from the m=0 sector is already correct.
-        axis_mask = rho_sq < EPS_1E24
         if nmax >= 1 and bool(torch.any(axis_mask)):
             idx = torch.nonzero(axis_mask, as_tuple=True)[0]
             inv_r_ax = inv_r[idx]
