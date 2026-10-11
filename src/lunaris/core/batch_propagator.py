@@ -14,8 +14,8 @@ GPU path  — ``GPUBatchPropagator``
       * Spherical harmonics gravity up to degree 24 (compile-time fixed workspace).
       * Point-mass fallback (when ``sh_degree=0``).
       * Third-body Sun / Earth point-mass perturbations.
-      * Solar Radiation Pressure (cannonball Cr*A/m area model with
-        reduced-fidelity CUDA shadow: cylindrical Moon umbra, no Earth eclipse).
+      * Solar Radiation Pressure (cannonball Cr*A/m area model with the
+        conical Moon/Earth shadow factor of the CPU SRP kernel).
       * Selected 1PN corrections (Moon Schwarzschild plus external-body
         differential Schwarzschild/de Sitter terms when ephemeris tables are present).
 
@@ -74,6 +74,7 @@ from lunaris.common.constants import (
     P_SUN_1AU,
     R_EARTH_MEAN,
     R_MOON,
+    R_SUN_MEAN,
 )
 from lunaris.common.type_defs import F64Array
 
@@ -105,15 +106,61 @@ NUMBA_CUDA_SH_MAX_DEGREE: int = _GPU_WS - 2
 NUMBA_CUDA_SH_SUPPORTED_TIERS: tuple[int, ...] = (NUMBA_CUDA_SH_MAX_DEGREE,)
 
 
+TOPO_META_SIZE: int = 22
+
+
+def topo_meta_array(payload: dict[str, Any] | None) -> F64Array:
+    """Pack a topography payload's scalars for the CUDA terrain sampler.
+
+    Layout: ``[n_lines, n_samples, res_deg, lon0, lat0, scale_m, bias_m,
+    flip_lat, lat_min, lat_max, missing_dn, r_terrain_max, radius_const,
+    R00, R01, R02, R10, R11, R12, R20, R21, R22]``. ``R`` is the payload's
+    body-fixed -> map-frame rotation (``map_rotation``, row-major), identity when
+    absent; ``_terrain_residual_cuda`` applies it before taking latitude and
+    longitude. Without a grid the scalars stay zero (the constant-sphere path).
+    """
+    meta = np.zeros(TOPO_META_SIZE, dtype=np.float64)
+    rotation = np.eye(3, dtype=np.float64)
+    if payload is not None and payload.get("dn", None) is not None:
+        meta[0] = float(int(payload["n_lines"]))
+        meta[1] = float(int(payload["n_samples"]))
+        meta[2] = float(payload["res_deg"])
+        meta[3] = float(payload["lon0_deg"])
+        meta[4] = float(payload["lat0_deg"])
+        meta[5] = float(payload["scale_m"])
+        meta[6] = float(payload["bias_m"])
+        meta[7] = float(int(payload.get("flip_lat", 0)))
+        meta[8] = float(payload["lat_min_deg"])
+        meta[9] = float(payload["lat_max_deg"])
+        meta[10] = float(payload.get("missing_dn", float("nan")))
+        meta[11] = float(payload["r_terrain_max_m"])
+        meta[12] = float(payload.get("radius_const_m", float(R_MOON)))
+        if payload.get("map_rotation", None) is not None:
+            rotation = np.asarray(payload["map_rotation"], dtype=np.float64).reshape(3, 3)
+    meta[13:22] = rotation.reshape(9)
+    return meta
+
+
+def _srp_shadow_label(moon_eclipse: bool, earth_eclipse: bool) -> str:
+    """Provenance label of the conical SRP shadow (same strings as the CPU batch path)."""
+    if moon_eclipse and earth_eclipse:
+        return "conical_moon_and_earth_shadow_factor"
+    if moon_eclipse:
+        return "conical_moon_shadow_factor"
+    if earth_eclipse:
+        return "conical_earth_shadow_factor"
+    return "disabled"
+
+
 def gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
     """
     Return the active physics options that the current CUDA backend cannot model.
 
     The GPU path now covers Moon SH gravity, Sun/Earth third-body terms, Earth
     J2, SRP, and selected 1PN corrections.  GPU SRP uses the cannonball Cr*A/m
-    area model with a reduced-fidelity shadow model (cylindrical Moon umbra, no
-    Earth eclipse); surface-lighting forces and solid tides still require the
-    CPU propagator supporting every currently implemented force flag.
+    area model with the CPU conical Moon/Earth shadow factor; surface-lighting
+    forces and solid tides still require the CPU propagator supporting every
+    currently implemented force flag.
     """
 
     unsupported: list[str] = []
@@ -178,14 +225,24 @@ def _initial_impact_bookkeeping(
     r_impact: float,
     *,
     detect_impact: bool,
+    at_surface: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Build host-side t=0 impact flags/time/position before launching the kernel."""
+    """Build host-side t=0 impact flags/time/position before launching the kernel.
+
+    A sample is impacted at t = 0 when ``|r| <= r_impact`` (constant sphere) or,
+    in terrain mode, when the caller's ``at_surface`` mask says so. That mask
+    comes from the same device terrain sampler and map rotation the kernel
+    steps use (``_initial_terrain_at_surface``); ``r_impact`` is then ignored,
+    so a sample below the mean radius but above a local basin floor is not
+    frozen, and one above the mean radius but inside a mountain is.
+    """
     n_samples = int(Y0.shape[0])
     flags = np.zeros(n_samples, dtype=np.int32)
     times = np.full(n_samples, np.nan, dtype=np.float64)
     positions = np.full((n_samples, 3), np.nan, dtype=np.float64)
     if detect_impact:
-        at_surface = np.linalg.norm(Y0[:, :3], axis=1) <= float(r_impact)
+        if at_surface is None:
+            at_surface = np.linalg.norm(Y0[:, :3], axis=1) <= float(r_impact)
         flags[at_surface] = 1
         times[at_surface] = 0.0
         positions[at_surface] = np.asarray(Y0[at_surface, :3], dtype=np.float64)
@@ -402,6 +459,12 @@ if _CUDA_AVAILABLE:
         if i >= n_tab - 1:
             i = n_tab - 2
         a = u - float(i)
+        # Hold the end quaternions outside the table (as the CPU SLERP and the
+        # torch frame do) instead of extrapolating the SLERP parameter.
+        if a < 0.0:
+            a = 0.0
+        elif a > 1.0:
+            a = 1.0
         a0 = tab[i, 0]
         a1 = tab[i, 1]
         a2 = tab[i, 2]
@@ -527,7 +590,9 @@ if _CUDA_AVAILABLE:
         ``p(alpha) = p0 + alpha * dp`` (inertial). The sub-point lat/lon come from
         the body-fixed position obtained by rotating ``p(alpha)`` with the
         crossing-time quaternion (inlined ``_quat_rot_cuda`` to avoid a local
-        array per evaluation).
+        array per evaluation), then rotated into the map frame by the row-major
+        ``meta[13:22]`` matrix (MOON_PA -> MOON_ME for LOLA maps; identity when
+        the propagation frame already is the map frame).
         """
         rx = px0 + alpha * dx
         ry = py0 + alpha * dy
@@ -537,9 +602,13 @@ if _CUDA_AVAILABLE:
         tx = 2.0 * (q2 * rz - q3 * ry)
         ty = 2.0 * (q3 * rx - q1 * rz)
         tz = 2.0 * (q1 * ry - q2 * rx)
-        bfx = rx + q0 * tx + (q2 * tz - q3 * ty)
-        bfy = ry + q0 * ty + (q3 * tx - q1 * tz)
-        bfz = rz + q0 * tz + (q1 * ty - q2 * tx)
+        fx = rx + q0 * tx + (q2 * tz - q3 * ty)
+        fy = ry + q0 * ty + (q3 * tx - q1 * tz)
+        fz = rz + q0 * tz + (q1 * ty - q2 * tx)
+        # Body-fixed -> map frame.
+        bfx = meta[13] * fx + meta[14] * fy + meta[15] * fz
+        bfy = meta[16] * fx + meta[17] * fy + meta[18] * fz
+        bfz = meta[19] * fx + meta[20] * fy + meta[21] * fz
         r_safe = r if r > EPS_1E30 else EPS_1E30
         s = bfz / r_safe
         if s > 1.0:
@@ -550,6 +619,43 @@ if _CUDA_AVAILABLE:
         lon = math.degrees(math.atan2(bfy, bfx))
         terrain_r = _sample_topo_radius_cuda(lat, lon, dn, meta)
         return r - terrain_r - impact_alt_m
+
+    @cuda.jit
+    def _initial_terrain_impact_kernel(Y, q_tab, dn, meta, impact_alt_m, at_surface):
+        """t = 0 terrain test per sample: ``|r| <= terrain_radius + impact_alt``."""
+        i = cuda.grid(1)
+        if i < Y.shape[0]:
+            f0 = _terrain_residual_cuda(
+                0.0,
+                Y[i, 0],
+                Y[i, 1],
+                Y[i, 2],
+                0.0,
+                0.0,
+                0.0,
+                q_tab[0, 0],
+                q_tab[0, 1],
+                q_tab[0, 2],
+                q_tab[0, 3],
+                dn,
+                meta,
+                impact_alt_m,
+            )
+            at_surface[i] = 1 if f0 <= 0.0 else 0
+
+    def _initial_terrain_at_surface(Y0, q_tab, dn, meta, impact_alt_m, tpb):
+        """Host launcher for the t = 0 terrain mask (``q_tab[0]`` is the t = 0 rotation)."""
+        n = int(Y0.shape[0])
+        d_at_surface = cuda.to_device(np.zeros(n, dtype=np.int32))
+        _initial_terrain_impact_kernel[(n + tpb - 1) // tpb, tpb](
+            cuda.to_device(np.ascontiguousarray(Y0, dtype=np.float64)),
+            q_tab,
+            dn,
+            meta,
+            np.float64(impact_alt_m),
+            d_at_surface,
+        )
+        return d_at_surface.copy_to_host().astype(bool)
 
     @cuda.jit(device=True)
     def _sh_accel_cuda(
@@ -604,7 +710,10 @@ if _CUDA_AVAILABLE:
         sin_ph = rz * inv_r
         cos_ph = rho * inv_r
 
-        if rho > EPS_1E6:
+        # Same pole-safety threshold as the CPU kernel
+        # (_transform_cartesian_to_spherical_basis); the former 1e-6 m cutoff
+        # paired the lambda = 0 fallback with a non-zero longitudinal term.
+        if rho > EPS_1E12:
             inv_rho = 1.0 / rho
             cos_lon = rx * inv_rho
             sin_lon = ry * inv_rho
@@ -710,11 +819,94 @@ if _CUDA_AVAILABLE:
         # Gradient → Cartesian acceleration
         # ----------------------------------------------------------------
         phi_fac = dv_dphi * inv_r
-        inv_rho2 = 1.0 / (rho2 + EPS_1E24)
+        # CPU _compute_pole_safe_inv_rho_sq: zero inside the polar cutoff, the
+        # unchanged softened inverse elsewhere.
+        if rho2 < EPS_1E24:
+            inv_rho2 = 0.0
+        else:
+            inv_rho2 = 1.0 / (rho2 + EPS_1E24)
 
         out[0] = dv_dr * rx * inv_r + phi_fac * u_phi_x - dv_dlambda * ry * inv_rho2
         out[1] = dv_dr * ry * inv_r + phi_fac * u_phi_y + dv_dlambda * rx * inv_rho2
         out[2] = dv_dr * rz * inv_r + phi_fac * u_phi_z
+
+        # Polar-axis limit (mirror of the CPU _axis_transverse_m1, without its
+        # Kahan compensation): inside the cutoff the lambda = 0 fallback leaves
+        # the transverse components wrong, so replace them with the analytic
+        # m = 1 limit
+        #   a_x = sum_n (mu/r^2)(R/r)^n sqrt(n(n+1)(2n+1)/2) sigma_n C_n1
+        # (a_y with S_n1; sigma_n = 1 north, (-1)^(n+1) south). The axial
+        # component from the m = 0 sector is already correct.
+        if rho2 < EPS_1E24 and n_eff >= 1:
+            ax_axis = 0.0
+            ay_axis = 0.0
+            r_ratio_ax = r_ratio
+            for n in range(1, n_eff + 1):
+                k_ax = mu_inv_r2 * r_ratio_ax * math.sqrt(0.5 * n * (n + 1.0) * (2.0 * n + 1.0))
+                if sin_ph < 0.0 and n % 2 == 0:
+                    k_ax = -k_ax
+                ax_axis += k_ax * Cnm[n][1]
+                ay_axis += k_ax * Snm[n][1]
+                r_ratio_ax *= r_ratio
+            out[0] = ax_axis
+            out[1] = ay_axis
+
+    @cuda.jit(device=True, inline=True)
+    def _shadow_factor_conical_cuda(rx, ry, rz, sx, sy, sz, r_occult):
+        """
+        Device mirror of ``physics.solar_effects._shadow_factor_conical``.
+
+        Conical umbra/penumbra of one spherical occulter with a finite Sun
+        (``R_SUN_MEAN``), smoothstep across the penumbra; inputs are
+        occulter-centred. Keep the branch structure identical to the CPU kernel.
+        """
+        dist_sun_sq = sx * sx + sy * sy + sz * sz
+        if dist_sun_sq <= EPS_1E24:
+            return 1.0
+        dist_sun = math.sqrt(dist_sun_sq)
+        inv_dist_sun = 1.0 / dist_sun
+        u_sx = sx * inv_dist_sun
+        u_sy = sy * inv_dist_sun
+        u_sz = sz * inv_dist_sun
+
+        # proj >= 0: the spacecraft is on the day side of the occulter.
+        proj = rx * u_sx + ry * u_sy + rz * u_sz
+        if proj >= 0.0:
+            return 1.0
+        x = -proj
+
+        r_sq = rx * rx + ry * ry + rz * rz
+        rho2 = r_sq - proj * proj
+        if rho2 < 0.0:
+            rho2 = 0.0
+
+        denom_u = R_SUN_MEAN - r_occult
+        if denom_u <= EPS_1E12:
+            return 1.0
+        common_factor = r_occult * dist_sun
+        L_u = common_factor / denom_u
+        denom_p = R_SUN_MEAN + r_occult
+        if denom_p <= EPS_1E12:
+            return 1.0
+        L_p = common_factor / denom_p
+
+        if x >= L_u:
+            r_u = 0.0
+        else:
+            r_u = r_occult * (1.0 - x / L_u)
+        r_p = r_occult * (1.0 + x / L_p)
+
+        if rho2 <= r_u * r_u:
+            return 0.0
+        if rho2 >= r_p * r_p:
+            return 1.0
+
+        rho = math.sqrt(rho2)
+        width = r_p - r_u
+        if width <= EPS_1E12:
+            return 0.0
+        u = (rho - r_u) / width
+        return u * u * (3.0 - 2.0 * u)
 
     @cuda.jit(device=True, inline=True)
     def _srp_accel_cuda(
@@ -724,8 +916,11 @@ if _CUDA_AVAILABLE:
         sun_x,
         sun_y,
         sun_z,
+        earth_x,
+        earth_y,
+        earth_z,
         r_moon,
-        r_earth_aux,
+        r_earth,
         au,
         p_1au,
         cr,
@@ -734,11 +929,15 @@ if _CUDA_AVAILABLE:
         out,
     ):
         """
-        Cannonball SRP acceleration with simplified lunar shadow.
+        Cannonball SRP acceleration with the conical Moon and Earth shadows.
 
-        This CUDA screening path uses a cylindrical Moon umbra approximation
-        and omits Earth eclipse. CPU SRP remains the full conical Moon/Earth
-        shadow implementation; diagnostics disclose this reduced-fidelity path.
+        Device mirror of the shadow handling in ``physics.solar_effects.accel_srp``
+        (``_min_shadow_factor``): the factor is ``min(nu_moon, nu_earth)`` from
+        ``_shadow_factor_conical_cuda``, and a factor ``<= 1e-6`` switches SRP
+        off. A non-positive ``r_moon`` / ``r_earth`` disables that occulter (the
+        host encodes ``SRPConfig.enable_moon_eclipse`` / ``enable_earth_eclipse``
+        this way); the Earth shadow also needs a real Earth vector
+        (``|r_earth|^2 > 1e12`` m^2), as in the CPU dynamics engine.
         """
         # Sun-spacecraft vector
         s2sc_x = rx - sun_x
@@ -754,39 +953,35 @@ if _CUDA_AVAILABLE:
         r_sc_sun = math.sqrt(r2_sc_sun)
         inv_rss = 1.0 / r_sc_sun
 
-        # Moon shadow: project Sun→SC line onto Sun→Moon direction
-        sun_mag2 = sun_x * sun_x + sun_y * sun_y + sun_z * sun_z
-        if sun_mag2 < 1.0:
+        # Moon shadow (Moon at the origin), then Earth shadow (Earth-centred).
+        nu = 1.0
+        if r_moon > 0.0:
+            nu = _shadow_factor_conical_cuda(rx, ry, rz, sun_x, sun_y, sun_z, r_moon)
+        if (
+            nu > EPS_1E6
+            and r_earth > 0.0
+            and (earth_x * earth_x + earth_y * earth_y + earth_z * earth_z) > 1.0e12
+        ):
+            nu_earth = _shadow_factor_conical_cuda(
+                rx - earth_x,
+                ry - earth_y,
+                rz - earth_z,
+                sun_x - earth_x,
+                sun_y - earth_y,
+                sun_z - earth_z,
+                r_earth,
+            )
+            if nu_earth < nu:
+                nu = nu_earth
+        if nu <= EPS_1E6:
             out[0] = 0.0
             out[1] = 0.0
             out[2] = 0.0
             return
 
-        inv_sm = 1.0 / math.sqrt(sun_mag2)
-        # unit vector Sun → Moon (Moon is at origin, so Moon - Sun = -sun)
-        d_x = -sun_x * inv_sm
-        d_y = -sun_y * inv_sm
-        d_z = -sun_z * inv_sm
-
-        # Projection of (SC - Sun) onto shadow axis
-        proj = s2sc_x * d_x + s2sc_y * d_y + s2sc_z * d_z
-
-        # Shadow cylinder check (reduced-fidelity lunar umbra)
-        in_shadow = 0
-        if proj > 0.0:
-            perp2 = r2_sc_sun - proj * proj
-            if perp2 < r_moon * r_moon:
-                in_shadow = 1
-
-        if in_shadow:
-            out[0] = 0.0
-            out[1] = 0.0
-            out[2] = 0.0
-            return
-
-        # SRP magnitude: F/m = (P_1AU * CR * A/m) * (AU/r)²
+        # SRP magnitude: F/m = (P_1AU * CR * A/m) * (AU/r)² * shadow
         au2 = au * au
-        factor = (p_1au * cr * area / mass) * (au2 / r2_sc_sun)
+        factor = (p_1au * cr * area / mass) * (au2 / r2_sc_sun) * nu
 
         # Direction: unit vector from Sun to SC
         out[0] = factor * s2sc_x * inv_rss
@@ -1082,6 +1277,9 @@ if _CUDA_AVAILABLE:
                 sun[0],
                 sun[1],
                 sun[2],
+                earth[0],
+                earth[1],
+                earth[2],
                 r_moon,
                 r_earth,
                 au,
@@ -1210,7 +1408,7 @@ if _CUDA_AVAILABLE:
         r_impact,  # impact radius [m]
         # Terrain-aware impact freeze
         topo_dn,  # (L, S) float64 device array (1x1 dummy when unused)
-        topo_meta,  # (13,) float64 device array (payload scalars)
+        topo_meta,  # (TOPO_META_SIZE,) float64 device array (payload scalars + map rotation)
         impact_alt_m,  # float64 altitude threshold [m]
         use_terrain,  # int32 boolean
     ):
@@ -1457,7 +1655,14 @@ if _CUDA_AVAILABLE:
 
             segment_hit = 0
             alpha = 1.0
-            if aa > EPS_1E18:
+            # A step that starts inside r_bracket (cc <= 0) has its entering
+            # root at alpha <= 0, outside the [0, 1] window below, so a descent
+            # that spends several steps inside the terrain envelope never
+            # bracketed the ground. "Already inside" enters at alpha = 0.
+            if cc <= 0.0:
+                segment_hit = 1
+                alpha = 0.0
+            elif aa > EPS_1E18:
                 disc = bb * bb - 4.0 * aa * cc
                 disc_scale = bb * bb + abs(4.0 * aa * cc)
                 if disc_scale < 1.0:
@@ -1662,10 +1867,20 @@ class GPUBatchPropagator:
         prov: Any = getattr(ep, "get_data_provider", lambda: {})() if ep is not None else {}
         self._mu_sun = float(provider_get(prov, "mu_sun_m3s2", MU_SUN))
         self._mu_earth = float(provider_get(prov, "mu_earth_m3s2", MU_EARTH))
-        self._r_moon = float(R_MOON)
-        self._r_earth = float(R_EARTH_MEAN)
-        self._au = float(AU)
-        self._p1au = float(P_SUN_1AU)
+        # SRP environment read from the same SRPConfig, with the same fallbacks,
+        # as the CPU dynamics engine; a zero occulter radius tells the kernel
+        # that this eclipse is disabled.
+        srp_cfg = getattr(dynamics_engine, "srp", None)
+        self._srp_moon_eclipse = bool(getattr(srp_cfg, "enable_moon_eclipse", True))
+        self._srp_earth_eclipse = bool(getattr(srp_cfg, "enable_earth_eclipse", False))
+        self._r_moon = (
+            float(getattr(srp_cfg, "R_moon_m", R_MOON)) if self._srp_moon_eclipse else 0.0
+        )
+        self._r_earth = (
+            float(getattr(srp_cfg, "R_earth_m", R_EARTH_MEAN)) if self._srp_earth_eclipse else 0.0
+        )
+        self._au = float(getattr(srp_cfg, "AU_m", AU))
+        self._p1au = float(getattr(srp_cfg, "P0", P_SUN_1AU))
         self._detect_impact = bool(getattr(batch_cfg, "impact_detection_enabled", True))
         self._impact_alt_m = float(getattr(batch_cfg, "impact_alt_km", 0.0)) * 1_000.0
 
@@ -1860,34 +2075,18 @@ class GPUBatchPropagator:
         """Move a topography payload to device memory for terrain-aware freeze.
 
         Returns ``{"d_dn", "d_meta", "use_terrain"}`` with device arrays ``d_dn``
-        (L, S float64) and ``d_meta`` (13 float64). When ``payload`` is None / has
-        no grid, a 1x1 dummy is allocated and ``use_terrain=0`` so the kernel
-        takes the constant-sphere path (zero behaviour change). ``d_meta`` layout
-        matches ``_sample_topo_radius_cuda`` and the kernel impact block:
-        ``[n_lines, n_samples, res_deg, lon0, lat0, scale_m, bias_m, flip_lat,
-        lat_min, lat_max, missing_dn, r_terrain_max, radius_const]``.
+        (L, S float64) and ``d_meta`` (:func:`topo_meta_array`). When ``payload``
+        is None / has no grid, a 1x1 dummy is allocated and ``use_terrain=0`` so
+        the kernel takes the constant-sphere path (zero behaviour change).
         """
         if payload is None or payload.get("dn", None) is None:
             with cuda.gpus[self._device_id]:
                 d_dn = cuda.to_device(np.zeros((1, 1), dtype=np.float64))
-                d_meta = cuda.to_device(np.zeros(13, dtype=np.float64))
+                d_meta = cuda.to_device(topo_meta_array(None))
             return {"d_dn": d_dn, "d_meta": d_meta, "use_terrain": 0}
 
         dn = np.ascontiguousarray(np.asarray(payload["dn"], dtype=np.float64))
-        meta = np.zeros(13, dtype=np.float64)
-        meta[0] = float(int(payload["n_lines"]))
-        meta[1] = float(int(payload["n_samples"]))
-        meta[2] = float(payload["res_deg"])
-        meta[3] = float(payload["lon0_deg"])
-        meta[4] = float(payload["lat0_deg"])
-        meta[5] = float(payload["scale_m"])
-        meta[6] = float(payload["bias_m"])
-        meta[7] = float(int(payload.get("flip_lat", 0)))
-        meta[8] = float(payload["lat_min_deg"])
-        meta[9] = float(payload["lat_max_deg"])
-        meta[10] = float(payload.get("missing_dn", float("nan")))
-        meta[11] = float(payload["r_terrain_max_m"])
-        meta[12] = float(payload.get("radius_const_m", float(R_MOON)))
+        meta = topo_meta_array(payload)
         with cuda.gpus[self._device_id]:
             d_dn = cuda.to_device(dn)
             d_meta = cuda.to_device(meta)
@@ -1948,17 +2147,20 @@ class GPUBatchPropagator:
             ),
             "srp_attitude_model": "none" if int(getattr(self, "_use_srp", 0)) else "",
             "srp_shadow_model": (
-                "cylindrical_moon_umbra_no_earth_eclipse"
+                _srp_shadow_label(
+                    bool(getattr(self, "_srp_moon_eclipse", True)),
+                    bool(getattr(self, "_srp_earth_eclipse", False)),
+                )
                 if int(getattr(self, "_use_srp", 0))
                 else ""
             ),
             "srp_shadow_model_fidelity": (
-                "reduced_gpu_approximation" if int(getattr(self, "_use_srp", 0)) else ""
+                "engineering_conical_shadow" if int(getattr(self, "_use_srp", 0)) else ""
             ),
-            "srp_earth_eclipse_supported": False if int(getattr(self, "_use_srp", 0)) else None,
+            "srp_earth_eclipse_supported": True if int(getattr(self, "_use_srp", 0)) else None,
             "srp_shadow_model_note": (
-                "Numba CUDA SRP uses a simplified cylindrical Moon umbra check "
-                "and omits Earth eclipse; CPU SRP uses conical Moon/Earth shadow factors."
+                "Numba CUDA SRP applies the CPU conical Moon/Earth shadow factor "
+                "with the SRPConfig radii, eclipse switches, AU and P0."
                 if int(getattr(self, "_use_srp", 0))
                 else ""
             ),
@@ -2057,10 +2259,23 @@ class GPUBatchPropagator:
             d_masses = cuda.to_device(np.ascontiguousarray(masses, dtype=np.float64), stream=stream)
             d_areas = cuda.to_device(np.ascontiguousarray(areas, dtype=np.float64), stream=stream)
             d_crs = cuda.to_device(np.ascontiguousarray(crs, dtype=np.float64), stream=stream)
+            at_surface0 = (
+                _initial_terrain_at_surface(
+                    Y0,
+                    ep.d_quat,
+                    self._topo_pack["d_dn"],
+                    self._topo_pack["d_meta"],
+                    float(self._impact_alt_m),
+                    tpb,
+                )
+                if self._detect_impact and self._terrain_enabled
+                else None
+            )
             impact_init, t_impact_init, impact_pos_init = _initial_impact_bookkeeping(
                 Y0,
                 r_impact,
                 detect_impact=self._detect_impact,
+                at_surface=at_surface0,
             )
             d_impact = cuda.to_device(impact_init, stream=stream)
             d_t_impact = cuda.to_device(t_impact_init, stream=stream)

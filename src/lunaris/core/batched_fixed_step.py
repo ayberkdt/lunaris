@@ -465,12 +465,11 @@ def _propagate_chunk(
     # and freeze it from the start instead of propagating through the body.
     r0 = torch.linalg.norm(state[:, :3], dim=1)
     if topo is not None:
-        from lunaris.core.torch_frame import sample_topo_radius_torch
+        from lunaris.core.torch_frame import sample_topo_radius_torch, topo_latlon_deg
         r_safe = r0.clamp_min(1e-30)
         use_rot = frame is not None and bool(getattr(frame, "uses_rotation", False))
         p_bf = frame.inertial_to_fixed(0.0, state[:, :3]) if use_rot else state[:, :3]
-        lat = torch.rad2deg(torch.asin((p_bf[:, 2] / r_safe).clamp(-1.0, 1.0)))
-        lon = torch.rad2deg(torch.atan2(p_bf[:, 1], p_bf[:, 0]))
+        lat, lon = topo_latlon_deg(topo, p_bf, r_safe)
         terrain_r = sample_topo_radius_torch(topo, lat, lon)
         at_surface0 = r0 <= terrain_r + float(impact_alt_m)
     else:

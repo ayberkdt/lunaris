@@ -159,7 +159,30 @@ def topo_payload_to_torch(
     out["dn"] = torch.as_tensor(
         np.asarray(payload["dn"], dtype=np.float64), device=device, dtype=dtype
     )
+    if payload.get("map_rotation") is not None:
+        out["map_rotation"] = torch.as_tensor(
+            np.asarray(payload["map_rotation"], dtype=np.float64).reshape(3, 3),
+            device=device,
+            dtype=dtype,
+        )
     return out
+
+
+def topo_latlon_deg(topo: dict[str, Any], p_bf: Any, r_safe: Any) -> tuple[Any, Any]:
+    """Map latitude/longitude [deg] of ``[N, 3]`` body-fixed positions.
+
+    Applies the payload's body-fixed -> map-frame rotation (``map_rotation``,
+    present when the propagation frame is MOON_PA and the map is on mean-Earth
+    axes, see :mod:`lunaris.common.lunar_map_frame`) before the angles are
+    taken; the rotation preserves ``r_safe``.
+    """
+    import torch
+
+    rotation = topo.get("map_rotation")
+    p_map = p_bf if rotation is None else p_bf @ rotation.T
+    lat = torch.rad2deg(torch.asin((p_map[:, 2] / r_safe).clamp(-1.0, 1.0)))
+    lon = torch.rad2deg(torch.atan2(p_map[:, 1], p_map[:, 0]))
+    return lat, lon
 
 
 def terrain_segment_intersection(
@@ -179,7 +202,9 @@ def terrain_segment_intersection(
 
     1. **Outer envelope.** A segment can only touch terrain if it reaches the
        bounding sphere ``r_terrain_max + impact_alt`` (max terrain height plus the
-       altitude threshold). Rows that miss this sphere cannot impact.
+       altitude threshold). Rows that miss this sphere cannot impact. A row that
+       already starts inside the envelope (a descent lasting several steps)
+       enters at ``alpha = 0`` instead of needing a crossing.
     2. **Terrain bisection.** On ``[alpha_enter, 1]`` solve the downward crossing
        of ``f(alpha) = ||p(alpha)|| - terrain_radius(lat, lon) - impact_alt``. The
        sub-point latitude/longitude come from the body-fixed position; the
@@ -198,6 +223,12 @@ def terrain_segment_intersection(
     impact_alt = float(impact_alt_m)
     r_outer = float(topo.get("r_terrain_max_m", topo.get("radius_const_m", 0.0))) + impact_alt
     hit_outer, alpha_enter = line_sphere_intersection(p_prev, p_curr, r_outer)
+    # A step that starts inside the envelope has its entering root at
+    # alpha <= 0, outside line_sphere_intersection's [0, 1] hit window, so a
+    # descent lasting several steps never bracketed the ground.
+    starts_inside = torch.linalg.norm(p_prev, dim=1) <= r_outer
+    hit_outer = hit_outer | starts_inside
+    alpha_enter = torch.where(starts_inside, torch.zeros_like(alpha_enter), alpha_enter)
 
     t_rep = float(t_prev_s) + 0.5 * float(dt_s)
     use_rot = frame is not None and bool(getattr(frame, "uses_rotation", False))
@@ -207,8 +238,7 @@ def terrain_segment_intersection(
         r = torch.linalg.norm(p, dim=1)
         p_bf = frame.inertial_to_fixed(t_rep, p) if use_rot else p
         r_safe = r.clamp_min(EPS_1E30)
-        lat = torch.rad2deg(torch.asin((p_bf[:, 2] / r_safe).clamp(-1.0, 1.0)))
-        lon = torch.rad2deg(torch.atan2(p_bf[:, 1], p_bf[:, 0]))
+        lat, lon = topo_latlon_deg(topo, p_bf, r_safe)
         terrain_r = sample_topo_radius_torch(topo, lat, lon)
         return r - terrain_r - impact_alt
 
@@ -404,5 +434,6 @@ __all__ = [
     "quat_rotate_torch",
     "sample_topo_radius_torch",
     "terrain_segment_intersection",
+    "topo_latlon_deg",
     "topo_payload_to_torch",
 ]

@@ -2940,6 +2940,12 @@ entries:
       - path: src/lunaris/physics/solar_effects.py
         symbol: compute_srp_accel
         role: api_entry_point
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _srp_accel_cuda
+        role: cuda_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _shadow_factor_conical_cuda
+        role: cuda_implementation
     mathematical_contract:
       inputs: >-
         Moon-centred spacecraft, Sun and Earth positions; radii; AU; P0; Cr;
@@ -2960,6 +2966,7 @@ entries:
     validation:
       - tests/test_solar_effects.py
       - tests/test_srp_eclipse.py
+      - tests/test_gpu_batch_kernel_fixes.py
     see_also:
       - LUNARIS-MODEL-RAD-002
       - LUNARIS-MODEL-RAD-003
@@ -3437,3 +3444,84 @@ entries:
     notes: >-
       PA vs ME is a common source of lunar-gravity frame errors; this entry
       records that Lunaris uses the PA frame consistent with the coefficient set.
+
+  - id: LUNARIS-STD-FRM-002
+    slug: lunar_pa_to_me_surface_map_alignment
+    canonical_name: >-
+      Constant lunar principal-axis to mean-Earth rotation for surface-map sampling
+    category: frame_time_convention
+    domain: FRM
+    status: active
+    added: "2026-10-11"
+    implementation_class: standard_implementation
+    verification_status: verified_secondary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - ParkFolkner2021DE440
+    primary_reference:
+      type: article
+      citation_key: ParkFolkner2021DE440
+      identifier_kind: doi
+      doi: 10.3847/1538-3881/abd414
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/
+      edition: null
+      chapter: null
+      section: null
+      equations: []
+      pages: null
+      verification_notes: >-
+        Verified 2026-10-11 against the NAIF DE440 lunar frame kernel shipped
+        with the data (data/ephemeris_models/moon_de440_250416.tf), which cites
+        Park et al. (2021) for the rotation: MOON_ME_DE440_ME421 is a TK frame
+        relative to MOON_PA_DE440 with TKFRAME_31009_ANGLES (67.8526, 78.6944,
+        0.2785) arcsec about AXES (3, 2, 1); MOON_PA and MOON_ME are identity
+        aliases. The implemented PA->ME matrix ([a1]_3 [a2]_2 [a3]_1)^T agreed
+        with SPICE pxform("MOON_PA", "MOON_ME", et) to 5.4e-20 at three epochs
+        (1990, 2000, 2026); the rotation angle is 103.908 arcsec (875 m on the
+        surface). The LOLA LDEM label reads COORDINATE_SYSTEM_NAME "MEAN
+        EARTH/POLAR AXIS OF DE421"; the kernel bounds the DE421 vs DE440-ME421
+        difference at 5.8e-7 rad (about 1 m). The defining passage in the Park
+        et al. article itself was not located, hence verified_secondary_source.
+    symbols:
+      - path: src/lunaris/common/lunar_map_frame.py
+        symbol: moon_pa_de440_to_me_matrix
+        role: cpu_implementation
+      - path: src/lunaris/common/lunar_map_frame.py
+        symbol: surface_map_rotation
+        role: api_entry_point
+      - path: src/lunaris/core/propagation/events.py
+        symbol: _build_r_i_to_surface_map
+        role: cpu_implementation
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: topo_meta_array
+        role: config_surface
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _terrain_residual_cuda
+        role: cuda_implementation
+      - path: src/lunaris/core/torch_frame.py
+        symbol: topo_latlon_deg
+        role: torch_implementation
+    mathematical_contract:
+      inputs: Moon-fixed position on DE440 principal axes and the ephemeris fixed-frame name
+      outputs: the same position on mean-Earth axes, for latitude/longitude map lookup
+      exact_or_approximate: exact
+      preserved_properties:
+        - proper orthogonal (length-preserving) constant rotation
+        - identity when the propagation frame already is MOON_ME
+    lunaris_modifications:
+      - applied on every terrain-sampling path (CPU impact event and telemetry, torch, numba CUDA)
+    assumptions:
+      - the principal-axes attitude tables are the DE440 realisation
+      - lunar topography maps are tabulated on mean-Earth/polar axes
+    limitations:
+      - IAU_MOON and other lunar frame realisations get no rotation
+      - not applied to albedo/thermal surface maps
+    validation:
+      - tests/test_lunar_map_frame.py
+    see_also:
+      - LUNARIS-STD-FRM-001
+      - LUNARIS-HEUR-IMP-001
+    notes: ""

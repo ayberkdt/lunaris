@@ -404,9 +404,9 @@ Analysis code imports from `lunaris.analysis.ensemble`.
     uses compile-time fixed `(26 x 26)` per-thread arrays, so its degree ceiling is
     **24**. That ceiling is a kernel-workspace limit, **not** a physical one. Best
     for low-degree, high-throughput screening. Its SRP is the same cannonball
-    `Cr*A/m` area model used by the CPU SRP kernel, but its shadowing is a
-    reduced-fidelity GPU approximation (cylindrical Moon umbra, no Earth
-    eclipse), recorded in batch provenance as `srp_force_model` and
+    `Cr*A/m` area model used by the CPU SRP kernel, with a device mirror of the
+    CPU conical Moon/Earth shadow factor (same `SRPConfig` radii and eclipse
+    switches), recorded in batch provenance as `srp_force_model` and
     `srp_shadow_model`.
   - **`torch_cuda_sh`** — the PyTorch CUDA RK4 path
     (`lunaris.core.torch_sh_propagator.TorchSHBatchPropagator`) using the canonical

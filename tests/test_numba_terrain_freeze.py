@@ -37,7 +37,11 @@ def test_numba_topo_sampler_matches_cpu_reference() -> None:
 import numpy as np
 from numba import cuda
 
-from lunaris.core.batch_propagator import _sample_topo_radius_cuda, _terrain_residual_cuda
+from lunaris.core.batch_propagator import (
+    _sample_topo_radius_cuda,
+    _terrain_residual_cuda,
+    topo_meta_array,
+)
 from lunaris.loaders.io_surface import sample_topo_radius_m
 
 # --- Synthetic regional grid (interior sampling only) ---------------------
@@ -57,12 +61,13 @@ lon0 = LON_W + 0.5 * RES
 lat0 = float(lat_centers[0])
 r = SCALE_M * dn + BIAS_M
 
-meta = np.zeros(13, dtype=np.float64)
+meta = np.zeros(22, dtype=np.float64)
 meta[0] = LINES; meta[1] = SAMPLES; meta[2] = RES
 meta[3] = lon0; meta[4] = lat0; meta[5] = SCALE_M; meta[6] = BIAS_M
 meta[7] = 0.0
 meta[8] = float(lat_centers.min()); meta[9] = float(lat_centers.max())
 meta[10] = float('nan'); meta[11] = float(r.max()); meta[12] = 1737400.0
+meta[13:22] = np.eye(3).reshape(9)  # identity body-fixed -> map rotation
 
 payload = {
     "dn": dn, "n_lines": LINES, "n_samples": SAMPLES, "res_deg": RES,
@@ -72,6 +77,8 @@ payload = {
     "r_terrain_min_m": float(r.min()), "r_terrain_max_m": float(r.max()),
     "radius_const_m": 1737400.0,
 }
+# The host packer builds the same layout (identity map rotation without one).
+np.testing.assert_array_equal(meta, topo_meta_array(payload))
 
 
 @cuda.jit

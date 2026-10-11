@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**51 entries.**
+**52 entries.**
 
-Implementation class: adaptation (10), delegated_library (8), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (9)
+Implementation class: adaptation (10), delegated_library (8), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (10)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (41), verified_secondary_source (1)
+Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (41), verified_secondary_source (2)
 
 ## Index
 
@@ -67,6 +67,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 | [`LUNARIS-MODEL-REL-003`](#lunarismodelrel003) | External-body differential first post-Newtonian correction (Schwarzschild + de Sitter) | adaptation | verified_primary_source |
 | [`LUNARIS-MODEL-TID-001`](#lunarismodeltid001) | Elastic lunar solid-body tide (degree-2 and degree-3 Love-number disturbing potential) | adaptation | verified_primary_source |
 | [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001) | Lunar principal-axis (PA) body-fixed frame realized by DE440 | standard_implementation | verified_primary_source |
+| [`LUNARIS-STD-FRM-002`](#lunarisstdfrm002) | Constant lunar principal-axis to mean-Earth rotation for surface-map sampling | standard_implementation | verified_secondary_source |
 
 ## Third-body gravity (TB)
 
@@ -534,6 +535,8 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/physics/solar_effects.py` -- `accel_srp` (numba_implementation)
   - `src/lunaris/physics/solar_effects.py` -- `_shadow_factor_conical` (numba_implementation)
   - `src/lunaris/physics/solar_effects.py` -- `compute_srp_accel` (api_entry_point)
+  - `src/lunaris/core/batch_propagator.py` -- `_srp_accel_cuda` (cuda_implementation)
+  - `src/lunaris/core/batch_propagator.py` -- `_shadow_factor_conical_cuda` (cuda_implementation)
 - **Lunaris modifications**:
   - smoothstep penumbra transition instead of exact occulted-disk area
   - combined Moon+Earth shadow via the minimum shadow factor
@@ -545,6 +548,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Validated by**:
   - `tests/test_solar_effects.py`
   - `tests/test_srp_eclipse.py`
+  - `tests/test_gpu_batch_kernel_fixes.py`
 - **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002), [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003)
 
 <a id="lunarismodelrad002"></a>
@@ -763,6 +767,40 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `tests/test_sh_convention_lock.py`
 - **See also**: [`LUNARIS-ALG-FRM-002`](#lunarisalgfrm002), [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001), [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
 - **Notes**: PA vs ME is a common source of lunar-gravity frame errors; this entry records that Lunaris uses the PA frame consistent with the coefficient set.
+
+<a id="lunarisstdfrm002"></a>
+### LUNARIS-STD-FRM-002 -- Constant lunar principal-axis to mean-Earth rotation for surface-map sampling
+
+- **Slug**: `lunar_pa_to_me_surface_map_alignment`
+- **Category**: frame_time_convention | **Domain**: FRM | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_secondary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `ParkFolkner2021DE440` -- Park, 2021. "The {JPL} Planetary and Lunar Ephemerides {DE440} and {DE441}" [DOI: 10.3847/1538-3881/abd414]
+- **Verification notes**: Verified 2026-10-11 against the NAIF DE440 lunar frame kernel shipped with the data (data/ephemeris_models/moon_de440_250416.tf), which cites Park et al. (2021) for the rotation: MOON_ME_DE440_ME421 is a TK frame relative to MOON_PA_DE440 with TKFRAME_31009_ANGLES (67.8526, 78.6944, 0.2785) arcsec about AXES (3, 2, 1); MOON_PA and MOON_ME are identity aliases. The implemented PA->ME matrix ([a1]_3 [a2]_2 [a3]_1)^T agreed with SPICE pxform("MOON_PA", "MOON_ME", et) to 5.4e-20 at three epochs (1990, 2000, 2026); the rotation angle is 103.908 arcsec (875 m on the surface). The LOLA LDEM label reads COORDINATE_SYSTEM_NAME "MEAN EARTH/POLAR AXIS OF DE421"; the kernel bounds the DE421 vs DE440-ME421 difference at 5.8e-7 rad (about 1 m). The defining passage in the Park et al. article itself was not located, hence verified_secondary_source.
+- **Mathematical contract**:
+  - Inputs: Moon-fixed position on DE440 principal axes and the ephemeris fixed-frame name
+  - Outputs: the same position on mean-Earth axes, for latitude/longitude map lookup
+  - Exactness: exact
+  - Preserves: proper orthogonal (length-preserving) constant rotation
+  - Preserves: identity when the propagation frame already is MOON_ME
+- **Implementing symbols**:
+  - `src/lunaris/common/lunar_map_frame.py` -- `moon_pa_de440_to_me_matrix` (cpu_implementation)
+  - `src/lunaris/common/lunar_map_frame.py` -- `surface_map_rotation` (api_entry_point)
+  - `src/lunaris/core/propagation/events.py` -- `_build_r_i_to_surface_map` (cpu_implementation)
+  - `src/lunaris/core/batch_propagator.py` -- `topo_meta_array` (config_surface)
+  - `src/lunaris/core/batch_propagator.py` -- `_terrain_residual_cuda` (cuda_implementation)
+  - `src/lunaris/core/torch_frame.py` -- `topo_latlon_deg` (torch_implementation)
+- **Lunaris modifications**:
+  - applied on every terrain-sampling path (CPU impact event and telemetry, torch, numba CUDA)
+- **Assumptions**:
+  - the principal-axes attitude tables are the DE440 realisation
+  - lunar topography maps are tabulated on mean-Earth/polar axes
+- **Limitations**:
+  - IAU_MOON and other lunar frame realisations get no rotation
+  - not applied to albedo/thermal surface maps
+- **Validated by**:
+  - `tests/test_lunar_map_frame.py`
+- **See also**: [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001), [`LUNARIS-HEUR-IMP-001`](#lunarisheurimp001)
 
 ## Integrators (INT)
 
