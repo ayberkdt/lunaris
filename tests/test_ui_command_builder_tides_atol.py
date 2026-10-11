@@ -196,3 +196,41 @@ def test_propagation_page_atol_reaches_the_preflight_snapshot() -> None:
         albedo_cfg=None,
     )
     assert snapshot["atol"] == pytest.approx(1e-11)
+
+
+def test_batch_command_reports_invalid_solver_text() -> None:
+    """Regression: the batch builder replaced invalid max step / rtol / atol
+    text with defaults without a word (the single-run builder warns)."""
+    warnings: list[str] = []
+    propagation = {
+        "timeline": {"duration": "1", "unit": "Days"},
+        "integrator": {"method": "DOP853 (Adaptive)", "rtol": "abc", "atol": "x", "max_step": "fast"},
+    }
+    build_batch_command(
+        python_executable="python",
+        batch_runner_path=Path("batch_runner.py"),
+        orbit=_ORBIT,
+        forces=_forces(),
+        propagation=propagation,
+        batch_data={"n_samples": 4, "use_gpu": False},
+        data_files=DataFilesState(),
+        gravity_cfg=_Gravity(),
+        solver_cfg=_Solver(),
+        spacecraft_cfg=_Spacecraft(),
+        log_warning=warnings.append,
+    )
+    joined = " ".join(warnings)
+    assert "max step" in joined and "rtol" in joined and "atol" in joined
+
+
+def test_batch_command_keeps_full_precision_solver_values() -> None:
+    """Regression: ``:g`` formatting kept six significant digits."""
+    propagation = {
+        "timeline": {"duration": "1", "unit": "Days"},
+        "integrator": {"method": "DOP853 (Adaptive)", "rtol": "1.23456789e-10",
+                       "atol": "1e-12", "max_step": "123.4567891"},
+    }
+    command = _batch(_forces(), propagation)
+    assert float(_val(command, "--user-max-step-s")) == 123.4567891
+    assert float(_val(command, "--rtol")) == 1.23456789e-10
+    assert _val(command, "--atol") == "1e-12"

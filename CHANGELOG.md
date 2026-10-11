@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: the batch command silently replaced invalid solver text and rounded solver values.**
+  - Invalid max step / rtol / atol text on the Propagation page was replaced by defaults without a warning (the single-run builder warns); it now warns the same way.
+  - The values were written with `:g`, six significant digits (a max step of 123.4567891 s became 123.457); they now round-trip exactly. Ported from Sidera.
+
 - **Fixed: the Mission Studio orbit page disagreed with the run by 0.6 km.**
   - The page converted altitudes with the mean radius (1737.4 km); the runner converts `--hp-km/--ha-km/--alt-km` with `R_MOON` = 1738.0 km. The preview's semi-major axis was 0.6 km below the launched one, and in a/e mode the periselene/aposelene the page showed were 0.6 km above what the run used. The page now uses the runner's radius. Ported from Sidera.
 

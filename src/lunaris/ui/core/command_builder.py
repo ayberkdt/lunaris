@@ -80,6 +80,16 @@ def _ui_telemetry_cadence_s(timeline: Mapping[str, Any], output_dt_s: str | None
     return max(5.0, min(600.0, float(cadence)))
 
 
+def _cli_number(value: float) -> str:
+    """Compact text for a float flag that parses back to the same value.
+
+    ``f"{v:g}"`` keeps six significant digits (a max step of 123.4567891 s
+    became 123.457); fall back to ``repr`` whenever it would round.
+    """
+    short = f"{value:g}"
+    return short if float(short) == value else repr(value)
+
+
 def _ui_atol(integrator: Mapping[str, Any], solver_cfg: Any) -> Any:
     """The absolute tolerance the Propagation page shows; ``solver_cfg.atol`` fills a blank field."""
     return str(integrator.get("atol", "") or "").strip() or getattr(solver_cfg, "atol", None)
@@ -622,20 +632,30 @@ def build_batch_command(
         command.extend(["--method", integrator_method])
 
     max_step_raw = str(integrator.get("max_step", "") or "").strip()
+    # Text the policy replaces with a default is reported, as the single-run
+    # builder does, instead of silently running other settings.
+    if max_step_raw and coerce_positive_float(max_step_raw) is None:
+        _warn(log_warning, f"[UI] Invalid max step: '{max_step_raw}'. Using solver settings value instead.")
+    rtol_raw = str(integrator.get("rtol", "") or "").strip()
+    if rtol_raw and coerce_positive_float(rtol_raw) is None:
+        _warn(log_warning, f"[UI] Invalid rtol: '{rtol_raw}'. Using a safe default value instead.")
+    atol_raw = _ui_atol(integrator, solver_cfg)
+    if coerce_positive_float(atol_raw) is None:
+        _warn(log_warning, f"[UI] Invalid atol: '{atol_raw}'. Using a safe default value instead.")
     max_step_value = choose_max_step(
         max_step_raw or getattr(solver_cfg, "max_step", None),
         default=getattr(solver_cfg, "max_step", DEFAULT_MAX_STEP_S),
     )
     if max_step_value is not None:
-        command.extend(["--user-max-step-s", f"{float(max_step_value):g}"])
+        command.extend(["--user-max-step-s", _cli_number(float(max_step_value))])
 
     rtol_value, atol_value = choose_solver_tolerances(
         integrator_label or "DOP853 (Adaptive)",
         rtol=integrator.get("rtol", getattr(solver_cfg, "rtol", None)),
-        atol=_ui_atol(integrator, solver_cfg),
+        atol=atol_raw,
     )
-    command.extend(["--rtol", f"{float(rtol_value):g}"])
-    command.extend(["--atol", f"{float(atol_value):g}"])
+    command.extend(["--rtol", _cli_number(float(rtol_value))])
+    command.extend(["--atol", _cli_number(float(atol_value))])
 
     command.extend(["--n-samples",             str(batch_data.get("n_samples",  500))])
     command.extend(["--sampling-method",       str(batch_data.get("sampling_method", "random"))])
