@@ -183,8 +183,8 @@ def test_ephemeris_case_a_linear_interp_clamp_and_out_buffer() -> None:
     np.testing.assert_allclose(mgr.get_sun_position(0.0), np.array([0.0, 0.0, 0.0]), atol=1e-12)
     np.testing.assert_allclose(mgr.get_sun_position(10.0), np.array([10.0, 0.0, 0.0]), atol=1e-12)
 
-    # Clamp behavior
-    np.testing.assert_allclose(mgr.get_sun_position(-5.0), np.array([0.0, 0.0, 0.0]), atol=1e-12)
+    # Clamp behavior beyond the one-interval edge continuation (Yoshida overhang band)
+    np.testing.assert_allclose(mgr.get_sun_position(-15.0), np.array([0.0, 0.0, 0.0]), atol=1e-12)
     np.testing.assert_allclose(mgr.get_sun_position(999.0), np.array([10.0, 0.0, 0.0]), atol=1e-12)
 
     # Out-buffer behavior

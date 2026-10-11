@@ -72,7 +72,7 @@ Core fields:
 - `generator_name`, `generator_version`, `repo_commit_sha`, `random_seed`
 - `n_samples`, `dataset_layout`, and column names
 - `target_mode`, `baseline_kind`, `degree_min`, `degree_max`
-- `mu_si`, `r_ref_m`, `a_sign`, coordinate frame, and SI unit block
+- `mu_si`, `r_ref_m`, `a_sign`, coordinate frame, and unit block (SI; canonical `DU`, `VU^2`, `DU/TU^2` for `--canonical` datasets)
 - `altitude_min_km`, `altitude_max_km`, sampling policy, and split policy
 - source gravity model/path/SHA-256 and dataset content SHA-256 when known
 - `derivative_convention`, which must be `dP_dphi_corrected_v1`

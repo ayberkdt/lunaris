@@ -39,6 +39,7 @@ from lunaris.core.propagation.integrators.fixed_step import (
     _integrate_fixed_step,
     _is_fixed_step_method,
     accel_form_velocity_dependence_violations,
+    fixed_step_stage_overhang,
     symplectic_breaks_separability,
     symplectic_discontinuous_gravity,
     symplectic_impulsive_maneuver_violations,
@@ -100,7 +101,9 @@ def _rhs_path_for_diagnostics(dynamics: Any) -> str:
     return "unknown"
 
 
-def _require_ephemeris_coverage(dynamics: Any, t0_s: float, tf_s: float) -> None:
+def _require_ephemeris_coverage(
+    dynamics: Any, t0_s: float, tf_s: float, *, stage_overhang_s: float = 0.0
+) -> None:
     """Reject a solver window outside the sampled ephemeris table.
 
     The table interpolators clamp to the end rows outside their grid, so an
@@ -109,6 +112,11 @@ def _require_ephemeris_coverage(dynamics: Any, t0_s: float, tf_s: float) -> None
     from its start epoch (``start_date``), the same clock as solver time.
     Dynamics without an ephemeris manager, and constant (single-row) tables,
     have no window to check.
+
+    ``stage_overhang_s`` is how far a Yoshida composition samples the force
+    before ``t0`` / after ``tf`` (``stage_time_overhang * h``). The Hermite and
+    attitude samplers continue the edge segment for one table interval, so those
+    stage times must lie in ``[-dt, (N - 1) dt + dt]``.
     """
     ephem = getattr(dynamics, "ephem", None)
     if ephem is None or not hasattr(ephem, "get_data_provider"):
@@ -124,6 +132,14 @@ def _require_ephemeris_coverage(dynamics: Any, t0_s: float, tf_s: float) -> None
             f"Propagation window [{float(t0_s)}, {float(tf_s)}] s lies outside the "
             f"ephemeris table [0, {hi}] s (t measured from start_date). Rebuild the "
             "tables over t0_s + duration_s."
+        )
+    ov = float(stage_overhang_s)
+    if ov > 0.0 and (float(t0_s) - ov < -float(dt_s) - tol or float(tf_s) + ov > hi + float(dt_s) + tol):
+        raise ValueError(
+            f"The integrator samples the force {ov:g} s outside [{float(t0_s)}, {float(tf_s)}] s, "
+            f"beyond the one-interval ({float(dt_s):g} s) extrapolation band of the ephemeris "
+            f"table [0, {hi}] s. Use a smaller step or output_dt_s, start later than "
+            "start_date (t0_s), or a method whose stages stay inside the step (PEFRL, RK4, RK8)."
         )
 
 
@@ -353,6 +369,16 @@ def propagate(
                 "solve_ivp itself has no hard cap on accepted steps, so the "
                 "actual step count during integration is not limited by "
                 "max_internal_steps. Increase the limit or use a larger max_step."
+            )
+    if integration_plan.backend != "scipy":
+        _overhang = fixed_step_stage_overhang(integration_plan.method)
+        if _overhang > 0.0:
+            # Fixed-step h never exceeds max_step nor one output interval.
+            _h_bound = float(max_step)
+            if t_eval.size >= 2:
+                _h_bound = min(_h_bound, float(np.max(np.diff(t_eval))))
+            _require_ephemeris_coverage(
+                dynamics, float(t0), float(tf), stage_overhang_s=_overhang * _h_bound
             )
     checkpoint_meta = _checkpoint_metadata(method=integration_plan.method, config=cfg)
 

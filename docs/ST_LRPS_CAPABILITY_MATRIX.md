@@ -17,4 +17,4 @@ Legend: [x] supported - [ ] not yet implemented - [-] not applicable by design.
 | baseline | `full` | none | [x] supported | Full-field labels with no analytical baseline; the network sees the full field. |
 | baseline | `full` | point_mass | [x] supported | Monopole baseline U=mu/r, a=-mu r/|r|^3 subtracted analytically. |
 | baseline | `full` | spherical_harmonics | [x] supported | SH baseline through base_degree, evaluated by lunaris.physics.spherical_harmonics; requires the source gravity model coefficients (threaded in via meta.gravity_model_path). |
-| training | `potential_autograd` | sobolev_autograd | [x] supported | Main trainer (lunaris-train-st-lrps): scalar-potential SIREN with a Sobolev U/a objective and autograd acceleration. |
+| training | `potential_autograd` | sobolev_autograd | [x] supported | Main trainer (lunaris-train): scalar-potential SIREN with a Sobolev U/a objective and autograd acceleration. |

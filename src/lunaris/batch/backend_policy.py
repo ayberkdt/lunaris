@@ -34,7 +34,7 @@ Notes
   SRP, tides, relativity, albedo, thermal, and every other perturbation
   remain unsupported on the ST-LRPS GPU path: they force an explicit,
   recorded CPU fallback, or a hard error when fallback is forbidden
-  (paper_safe / strict_backend / benchmark mode / ``sh_fallback_policy='error'``).
+  (``sh_fallback_policy='error'``; see :func:`fallback_forbidden`).
 - GPU_CLASSIC_SH uses the existing Numba CUDA RK4 kernel (``numba_cuda_sh``).
   Its degree-24 ceiling is a thread-local kernel-workspace limit, not a physical
   one. Requested degrees above 24 are never clipped.
@@ -582,6 +582,11 @@ def fallback_forbidden(batch_cfg: Any) -> bool:
     ``BatchPropagationEngine._fallback_forbidden`` (which delegates to this).
     A benchmark / paper-evidence run that asks for a GPU backend or a dtype and
     quietly gets something else produces a misleading result table.
+
+    ``BatchPropagationConfig`` exposes this posture only as
+    ``sh_fallback_policy='error'``. The ``paper_safe`` / ``strict_backend`` /
+    ``benchmark_mode`` attributes are honored when a duck-typed config object
+    carries them; no shipped config or CLI sets them.
     """
     policy = str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "").strip().lower()
     if policy == "error":

@@ -55,7 +55,9 @@ from lunaris.physics.spherical_harmonics import (
 
 # ---- Physics SSOT (local lunar dataset parameters) ----
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    CANONICAL_UNITS,
     DEFAULT_COORDINATE_FRAME,
+    DEFAULT_UNITS,
     GRAVITY_LABEL_ENGINE_VERSION,
     REQUIRED_DERIVATIVE_CONVENTION,
     REQUIRED_SH_PHASE_CONVENTION,
@@ -117,6 +119,7 @@ def _contract_from_current_generator_attrs(
         source_gravity_file_sha256=str(attrs.get("source_gravity_file_sha256") or ""),
         generator_version=str(attrs.get("generator_version") or "spatial_cloud_generator_contract_v1"),
         columns=_columns_from_attr(attrs.get("columns")),
+        canonical=str(attrs.get("unit_system") or "si").strip().lower() == "canonical",
     )
     payload["created_at_utc"] = attrs.get("created_at_utc") or payload.get("created_at_utc")
     payload["generator_name"] = str(attrs.get("generator_name") or attrs.get("created_by") or "spatial_cloud_generator")
@@ -808,7 +811,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
         "alt_min_km": str(float(cfg.alt_min_km)),
         "alt_max_km": str(float(cfg.alt_max_km)),
         "coordinate_frame": DEFAULT_COORDINATE_FRAME,
-        "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
+        "units": json.dumps(CANONICAL_UNITS if bool(cfg.canonical) else DEFAULT_UNITS, sort_keys=True),
         "generator_version": "spatial_cloud_generator_contract_v1",
         "chunk_rng_version": CHUNK_RNG_VERSION,
         "created_at_utc": utc_now_iso(),

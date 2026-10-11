@@ -15,7 +15,8 @@ Generated HDF5 files embed `dataset_contract_json` in root attrs and
 - target semantics: `target_mode`, `baseline_kind`, `degree_min`,
   `degree_max`, and derivative convention
 - physics constants and frame: `mu_si`, `r_ref_m`, `a_sign`,
-  `coordinate_frame`, and SI units
+  `coordinate_frame`, and the unit block (SI, or canonical `DU`/`VU^2`/`DU/TU^2`
+  for `--canonical` datasets)
 - altitude envelope, sampling policy, split policy, HDF5 layout, and columns
 - source gravity model path/hash and dataset content hash when available
 
