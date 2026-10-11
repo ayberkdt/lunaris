@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed: `LUNARIS_DATA_DIR` set after import was ignored.**
+  - The kernel and gravity resolvers read import-time module constants.
+  - They now resolve the environment override at call time when it changed since import. Otherwise they keep the module constants, which callers and tests replace on purpose.
+- **Fixed: the gravity benchmark module exited the importing process (`sys.exit(1)`) when an in-package import failed.** It now raises.
+
 - **Fixed: the gravity benchmark swallowed a failed surrogate degree override.**
   - `propagate_for_scenario` lowered and restored the surrogate's `degree_max` inside `contextlib.suppress(Exception)`: a refused assignment benchmarked the model at another degree than recorded, and a failed restore left the cached model altered for later scenarios. Both assignments now raise. The shipped providers use plain attributes, so their runs are unchanged. Ported from Sidera.
 
