@@ -593,6 +593,25 @@ def _classify_kernel(path: str) -> str:
     return _KERNEL_KIND_BY_SUFFIX.get(suffix, "UNKNOWN")
 
 
+def spice_provenance_fields(ephem: Any) -> dict[str, Any]:
+    """Manifest fields for an ephemeris manager's SPICE provenance chain.
+
+    Returns ``{"spice_kernels": ...}`` or, when capture fails,
+    ``{"spice_kernels_unavailable_reason": "<Type>: <message>"}`` plus a
+    ``RuntimeWarning``. Provenance capture must not abort a completed run, but a
+    failure must leave a trace in the archive instead of silently removing the
+    kernel list. ``{}`` when there is no ephemeris manager.
+    """
+    if ephem is None or not hasattr(ephem, "kernel_provenance"):
+        return {}
+    try:
+        return {"spice_kernels": ephem.kernel_provenance()}
+    except Exception as exc:  # recorded and warned, never swallowed
+        reason = f"{type(exc).__name__}: {exc}"
+        warnings.warn(f"SPICE kernel provenance unavailable: {reason}", RuntimeWarning, stacklevel=2)
+        return {"spice_kernels_unavailable_reason": reason}
+
+
 def _capture_kernel_provenance(kernels: Sequence[str]) -> tuple[Mapping[str, Any], ...]:
     """Hash and classify each resolved kernel for the run manifest chain.
 
@@ -978,7 +997,16 @@ class EphemerisManager:
         t = self.tables
         et0 = float(t.et0)
         et_end = et0 + float(t.t_tab_s[-1]) if t.t_tab_s.size else et0
+        out: dict[str, Any] = {}
+        if not t.kernel_provenance:
+            # An empty list must not read as "built from no kernels": tables
+            # loaded from an archive without kernel_provenance_json carry none.
+            out["kernels_unavailable_reason"] = (
+                "the ephemeris tables carry no kernel provenance (for example, "
+                "loaded from an archive without kernel_provenance_json)"
+            )
         return {
+            **out,
             "kernels": [dict(k) for k in t.kernel_provenance],
             "time_scale_note": t.time_scale_note,
             "et_start": et0,

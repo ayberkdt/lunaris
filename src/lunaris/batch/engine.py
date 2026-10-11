@@ -8,7 +8,6 @@ Canonical batch ensemble orchestration.
 
 from __future__ import annotations
 
-import contextlib
 import inspect
 import logging
 import math
@@ -1161,9 +1160,13 @@ class BatchPropagationEngine:
                         hit_idx = int(np.argmin(np.abs(t_b - float(t_imp_b[j]))))
                     else:
                         radii = np.linalg.norm(Y_b[:, j, :3], axis=1)
+                        # Same sphere as the propagators: gravity reference radius.
+                        _r_imp_ref = float(
+                            getattr(getattr(self._dyn, "grav", None), "R_ref_m", 0.0) or R_MOON
+                        )
                         hits = np.where(
                             radii
-                            <= float(R_MOON) + float(batch_cfg.impact_alt_km) * 1_000.0
+                            <= _r_imp_ref + float(batch_cfg.impact_alt_km) * 1_000.0
                         )[0]
                         hit_idx = int(hits[0]) if hits.size else len(t_b) - 1
                         t_imp_b[j] = float(t_b[hit_idx])
@@ -1397,10 +1400,11 @@ class BatchPropagationEngine:
         # ET coverage window, so the ephemeris provenance lives in the same
         # manifest as the gravity/ST-LRPS/GPU-kernel hashes.
         _ephem = getattr(self._dyn, "ephem", None)
-        if _ephem is not None and hasattr(_ephem, "kernel_provenance"):
-            # Provenance enrichment must never abort a completed batch run.
-            with contextlib.suppress(Exception):
-                _provenance_hashes["spice_kernels"] = _ephem.kernel_provenance()
+        # Provenance enrichment must never abort a completed batch run, but a
+        # capture failure is recorded (spice_kernels_unavailable_reason), not dropped.
+        from lunaris.physics.ephemeris import spice_provenance_fields
+
+        _provenance_hashes.update(spice_provenance_fields(_ephem))
         # DEM/datum provenance for terrain-aware impact runs (None otherwise).
         _dem_prov = self._resolve_dem_provenance()
         if _dem_prov is not None:
