@@ -26,7 +26,8 @@ from lunaris.core.propagation.checkpoint import _checkpoint_metadata
 from lunaris.core.propagation.diagnostics import build_propagation_diagnostics
 from lunaris.core.propagation.events import (
     EventOutcome,
-    _build_r_i_to_bf_from_rot_table,
+    _build_r_i_to_bf_from_rot_table,  # noqa: F401 - private import path kept for callers/tests
+    _build_r_i_to_surface_map,
     _wrap_event_first6,
     build_events,
     event_outcome_from_solver_events,
@@ -185,7 +186,7 @@ def propagate(
     telem_surface_radius_m: Callable[[float, float], float] | None = None
     if topo_grid is not None:
         try:
-            telem_r_i_to_bf = _build_r_i_to_bf_from_rot_table(dynamics)
+            telem_r_i_to_bf = _build_r_i_to_surface_map(dynamics)
             if telem_r_i_to_bf is not None:
                 telem_surface_radius_m = _build_surface_radius_sampler(topo_grid)
         except (AttributeError, KeyError, IndexError, TypeError, ValueError):

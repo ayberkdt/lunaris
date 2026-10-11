@@ -53,7 +53,7 @@ def test_gpu_unsupported_features_only_reports_cpu_only_models() -> None:
     assert "Earth J2" not in unsupported
 
 
-def test_numba_cuda_srp_diagnostics_disclose_reduced_shadow_model() -> None:
+def test_numba_cuda_srp_diagnostics_disclose_conical_shadow_model() -> None:
     prop = GPUBatchPropagator.__new__(GPUBatchPropagator)
     prop._device_name = "Fake CUDA"
     prop._device_id = 0
@@ -78,9 +78,12 @@ def test_numba_cuda_srp_diagnostics_disclose_reduced_shadow_model() -> None:
 
     assert diag["srp_force_model"] == "cannonball_cr_area_over_mass"
     assert diag["srp_attitude_model"] == "none"
-    assert diag["srp_shadow_model"] == "cylindrical_moon_umbra_no_earth_eclipse"
-    assert diag["srp_shadow_model_fidelity"] == "reduced_gpu_approximation"
-    assert diag["srp_earth_eclipse_supported"] is False
+    # SRPConfig defaults: Moon eclipse on, Earth eclipse off (same labels as CPU).
+    assert diag["srp_shadow_model"] == "conical_moon_shadow_factor"
+    assert diag["srp_shadow_model_fidelity"] == "engineering_conical_shadow"
+    assert diag["srp_earth_eclipse_supported"] is True
+    prop._srp_earth_eclipse = True
+    assert prop.diagnostics_snapshot()["srp_shadow_model"] == "conical_moon_and_earth_shadow_factor"
     assert diag["relativity_model"] == "selected_1pn_corrections"
     assert "external_body_schwarzschild_differential" in " ".join(diag["relativity_terms"])
     assert diag["effective_dt_s"] == pytest.approx(62.5)

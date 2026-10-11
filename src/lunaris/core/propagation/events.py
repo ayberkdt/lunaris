@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.lunar_map_frame import ephemeris_fixed_frame, surface_map_rotation
 from lunaris.common.math_utils import quat_rotate_np, quat_slerp_np
 from lunaris.common.type_defs import PropagatorConfig
 from lunaris.core.dynamics import DynamicsEngine
@@ -297,6 +298,34 @@ def _build_r_i_to_bf_from_rot_table(
 
     return r_i_to_bf
 
+
+def _build_r_i_to_surface_map(
+    dynamics: DynamicsEngine,
+) -> Callable[[float, np.ndarray], np.ndarray] | None:
+    """Inertial -> surface-map position mapper for terrain sampling.
+
+    :func:`_build_r_i_to_bf_from_rot_table` rotates into the ephemeris fixed
+    frame (MOON_PA by default), while LOLA topography is tabulated on mean-Earth
+    axes; the constant PA -> ME rotation of
+    :func:`lunaris.common.lunar_map_frame.surface_map_rotation` is composed on
+    top so latitude/longitude index the map where the surface is. Fixed frames
+    without a modelled offset return the body-fixed mapper unchanged.
+    """
+    r_i_to_bf = _build_r_i_to_bf_from_rot_table(dynamics)
+    if r_i_to_bf is None:
+        return None
+    rotation = surface_map_rotation(ephemeris_fixed_frame(getattr(dynamics, "ephem", None)))
+    if rotation is None:
+        return r_i_to_bf
+    body_to_map = rotation
+    body_mapper = r_i_to_bf
+
+    def r_i_to_map(t: float, r_i: np.ndarray) -> np.ndarray:
+        return body_to_map @ body_mapper(t, r_i)
+
+    return r_i_to_map
+
+
 def _wrap_event_first6(ev: EventFn, *, role: str | None = None) -> EventFn:
     """Wrap an event function so it ignores any augmented state beyond the first 6 elements."""
     spec = EventSpec.from_event(ev, role=role)
@@ -426,7 +455,7 @@ def build_events(
     # Impact event (terminal)
     if detect_impact:
         if topo_grid is not None:
-            r_i_to_bf = _build_r_i_to_bf_from_rot_table(dynamics)
+            r_i_to_bf = _build_r_i_to_surface_map(dynamics)
             if r_i_to_bf is not None:
                 ev_imp = make_hybrid_impact_event(
                     R_ref_m=float(R_ref),
@@ -565,6 +594,7 @@ __all__ = [
     "EventOutcome",
     "EventSpec",
     "_build_r_i_to_bf_from_rot_table",
+    "_build_r_i_to_surface_map",
     "_wrap_event_first6",
     "_get_event_cfg",
     "_get_cfg_bool",

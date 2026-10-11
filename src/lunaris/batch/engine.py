@@ -546,12 +546,29 @@ class BatchPropagationEngine:
             except Exception:
                 payload = None
             if payload is not None and payload.get("dn", None) is not None:
-                return payload
+                return self._with_map_rotation(payload)
 
         if self._topo_grid is not None:
             from lunaris.loaders.io_surface import grid_topo_payload
-            return grid_topo_payload(self._topo_grid)
+            return self._with_map_rotation(grid_topo_payload(self._topo_grid))
         return None
+
+    def _with_map_rotation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Record the body-fixed -> map-frame rotation the terrain samplers apply.
+
+        The batch kernels rotate positions into the ephemeris fixed frame
+        (MOON_PA by default) while LOLA topography is tabulated on mean-Earth
+        axes; see :mod:`lunaris.common.lunar_map_frame`. The CPU impact event
+        composes the same rotation (``_build_r_i_to_surface_map``).
+        """
+        from lunaris.common.lunar_map_frame import ephemeris_fixed_frame, surface_map_rotation
+
+        rotation = surface_map_rotation(ephemeris_fixed_frame(getattr(self._dyn, "ephem", None)))
+        if rotation is None or payload.get("dn") is None:
+            return payload
+        out = dict(payload)
+        out["map_rotation"] = rotation.tolist()
+        return out
 
     def _resolve_dem_provenance(self) -> dict[str, Any] | None:
         """DEM/datum provenance (product, resolution, datum, IMG hash) or ``None``.

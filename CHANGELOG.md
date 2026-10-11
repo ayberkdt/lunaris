@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: GPU terrain batches missed impacts in multi-step descents.** The torch and Numba CUDA terrain check bracketed each step against the terrain envelope sphere and skipped steps that started inside it, so a descent spanning several steps flew through the ground. A step that starts inside the envelope now enters at `alpha = 0`. Tests: `tests/test_terrain_multistep_descent.py` (torch CPU/CUDA, Numba CUDASIM, against a SciPy event reference).
+- **Fixed: Numba CUDA t = 0 impact in terrain mode used the mean sphere.** The host mask now evaluates `|r| <= terrain_radius + impact_alt` with the device terrain sampler, as the torch backend does.
+- **Fixed: terrain maps were sampled in MOON_PA axes.** LOLA topography is on mean-Earth/polar axes (DE421). `lunaris.common.lunar_map_frame` builds the DE440 PA->ME rotation (103.9 arcsec, about 875 m on the surface; matches SPICE `pxform` to 5e-20). The CPU impact event and telemetry, the torch samplers and the CUDA kernel apply it; the CUDA topo meta grows from 13 to 22 slots. Terrain impact times and points change for MOON_PA runs. Tests: `tests/test_lunar_map_frame.py`.
+- **Fixed: Numba CUDA SRP shadow.** The cylinder test measured its projection from the Sun, so SRP was also off on the sunlit side behind the lunar disk: 2.0x the CPU eclipse time on a beta = 0 orbit. It had no Earth eclipse, no penumbra, and used `R_MOON` = 1738 km. The kernel now mirrors the CPU conical shadow factor with the `SRPConfig` radii, eclipse switches, AU and P0. GPU SRP results change. Diagnostics report the CPU shadow labels.
+- **Fixed: Numba CUDA SH near the polar axis.** The kernel used the CPU's 1e-12 m longitude cutoff instead of 1e-6 m. Inside the `rho^2 < 1e-24` cutoff it now uses the analytic m = 1 transverse limit, as the CPU does. Results off the axis are bit-identical.
+- **Fixed: Numba CUDA quaternion SLERP extrapolated past the attitude table end.** It now holds the end rows like the CPU interpolator.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.
