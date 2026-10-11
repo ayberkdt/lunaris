@@ -78,9 +78,14 @@ def default_evidence_root() -> Path:
 
 def _run_key(config: Mapping[str, Any]) -> str:
     name = str(config.get("name") or "").strip()
-    if name:
-        return name
     seed = config.get("seed")
+    if name:
+        # A fixed name reused across a --seed sweep must not collapse every
+        # candidate onto one evidence dir / manifest key. A name that already
+        # spells out its seed ("st_lrps_paper_full_seed42") is kept as is.
+        if seed is not None and f"seed{seed}" not in name:
+            return f"{name}_seed{seed}"
+        return name
     return f"seed{seed}" if seed is not None else "run"
 
 
@@ -468,7 +473,9 @@ def _write_manifest(manifest_path, run_key, config, config_path, run_out_dir, co
         artifacts={k: (str(v) if not isinstance(v, str | Path) else v) for k, v in artifacts.items()},
         command=[str(c) for c in command],
         dry_run=dry_run,
-        extra=extra,
+        # The manifest's config record holds only path/hashes, so the seed is
+        # recorded here for the multi-seed stage to pair this candidate.
+        extra={**(extra or {}), "seed": config.get("seed")},
     )
     write_evidence_manifest(manifest_path, run_key=run_key, entry=entry)
 
@@ -565,6 +572,7 @@ def run_field_validation_stage(
     config_path: str | Path,
     *,
     model_dir: str | Path | None = None,
+    seed: int | None = None,
     evidence_root: Path,
     dry_run: bool = False,
 ) -> int:
@@ -584,7 +592,7 @@ def run_field_validation_stage(
         print(f"  out dir:  {out_dir}")
         if placeholders:
             print(f"  WARNING: unfilled placeholders: {placeholders}")
-        _record_stage(evidence_root, "field-validation", "field_validation",
+        _record_stage(evidence_root, "field-validation", f"field_validation:{model_name}",
                       config_path=config_path, config=cfg, out_dir=out_dir, dry_run=True,
                       extra={"unfilled_placeholders": placeholders})
         return 0
@@ -611,9 +619,10 @@ def run_field_validation_stage(
     )
     paths = write_field_validation_csvs(report, out_dir)
     artifacts = {"field_metrics_csv": paths.get("metrics"), **_model_artifacts(model)}
-    _record_stage(evidence_root, "field-validation", "field_validation",
+    _record_stage(evidence_root, "field-validation", f"field_validation:{model_name}",
                   config_path=config_path, config=cfg, out_dir=out_dir, artifacts=artifacts,
                   extra={
+                      "seed": seed,
                       "policies": list(report.get("field_validation", {}).keys()),
                       "leakage_guard_status": (report.get("leakage_guard") or {}).get("status"),
                       "runtime_model_kind": report.get("runtime_model_kind"),
@@ -768,6 +777,31 @@ def run_ablation_stage(
 # Stage: multi-seed summary
 # ---------------------------------------------------------------------------
 
+def _find_field_validation_csv(
+    runs: Mapping[str, Any], *, seed: int, checkpoint_sha256: str | None
+) -> Path | None:
+    """Field-metrics CSV the evidence manifest recorded for one training candidate.
+
+    Matches a completed ``field-validation`` entry by its recorded
+    ``extra.seed`` or by the sha256 of the checkpoint it evaluated, and returns
+    the CSV path that entry recorded.
+    """
+    for rec in runs.values():
+        if rec.get("stage") != "field-validation" or rec.get("dry_run"):
+            continue
+        artifacts = rec.get("artifacts") or {}
+        csv_path = (artifacts.get("field_metrics_csv") or {}).get("path")
+        if not csv_path:
+            continue
+        rec_seed = (rec.get("extra") or {}).get("seed")
+        rec_sha = (artifacts.get("model_checkpoint") or {}).get("sha256")
+        if (rec_seed is not None and int(rec_seed) == int(seed)) or (
+            checkpoint_sha256 and rec_sha == checkpoint_sha256
+        ):
+            return Path(csv_path)
+    return None
+
+
 def run_multi_seed_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
     from lunaris.surrogate.st_lrps.paper_evidence.multi_seed import (
         aggregate_multi_seed,
@@ -786,21 +820,31 @@ def run_multi_seed_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
     entries: list[dict[str, Any]] = []
     if manifest_path.exists():
         manifest = _load_json(manifest_path)
-        for _run_key, rec in (manifest.get("runs", {}) or {}).items():
-            if rec.get("stage") != "train":
-                continue
-            seed = (rec.get("config", {}) or {}).get("seed")
-            if seed is None:
-                continue
+        runs = manifest.get("runs", {}) or {}
+        # The train entry records its seed under ``extra`` (the ``config``
+        # record holds only path and hashes).
+        train_runs = [
+            rec for rec in runs.values()
+            if rec.get("stage") == "train" and (rec.get("extra", {}) or {}).get("seed") is not None
+        ]
+        single_seed = len(train_runs) <= 1
+        for rec in train_runs:
+            seed = int(rec["extra"]["seed"])
             checkpoint = (rec.get("artifacts", {}).get("checkpoint", {}) or {}).get("sha256")
-            field_csv = evidence_root / "field_validation" / f"seed{seed}" / "field_validation_metrics.csv"
-            field_csv = field_csv if field_csv.exists() else (evidence_root / "field_validation" / "field_validation_metrics.csv")
+            # Pair by what the manifest recorded (seed / evaluated checkpoint),
+            # not by a directory-name convention. Shared outputs that name no
+            # candidate are borrowed only when there is a single seed: with
+            # several, every seed would get the same numbers (std 0).
+            field_csv = _find_field_validation_csv(runs, seed=seed, checkpoint_sha256=checkpoint)
+            if field_csv is None and single_seed:
+                field_csv = evidence_root / "field_validation" / "field_validation_metrics.csv"
             bench = {}
-            for case, sub in (("1day", "benchmark_1day_high_degree"), ("5day", "benchmark_5day_general")):
-                p = evidence_root / "orbit_benchmarks" / sub / "metrics_summary.csv"
-                if p.exists():
-                    bench[case] = p
-            entries.append(collect_seed_entry(int(seed), field_metrics_csv=field_csv if field_csv.exists() else None,
+            if single_seed:
+                for case, sub in (("1day", "benchmark_1day_high_degree"), ("5day", "benchmark_5day_general")):
+                    p = evidence_root / "orbit_benchmarks" / sub / "metrics_summary.csv"
+                    if p.exists():
+                        bench[case] = p
+            entries.append(collect_seed_entry(seed, field_metrics_csv=field_csv if field_csv and field_csv.exists() else None,
                                                benchmark_metrics=bench or None, artifact_hash=checkpoint))
     summary = aggregate_multi_seed(entries) if entries else aggregate_multi_seed([])
     paths = write_multi_seed_outputs(summary, out_dir)
@@ -887,7 +931,7 @@ def _dispatch_stage(stage: str, args, evidence_root: Path) -> int:
 
     if stage == "field-validation":
         cfg = _resolve_config(stage, args.config)
-        return run_field_validation_stage(cfg, model_dir=args.model_dir, evidence_root=evidence_root,
+        return run_field_validation_stage(cfg, model_dir=args.model_dir, seed=args.seed, evidence_root=evidence_root,
                                           dry_run=bool(args.dry_run))
     if stage == "orbit-benchmark":
         configs = args.benchmark_config or [

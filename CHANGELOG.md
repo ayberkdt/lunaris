@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Fixed: the ST-LRPS paper-evidence multi-seed stage aggregated no seeds.**
+  - It read each train entry's seed from the manifest's `config` record, which holds only path and hashes, so every candidate was skipped and the summary reported 0 seeds. Train entries now record `extra.seed`.
+  - Field-validation entries were all written under the manifest key `field_validation` (a second model overwrote the first), and the multi-seed lookup used a `seed{N}` folder the stage never writes. Entries are keyed `field_validation:<model>`, record `--seed`, and are paired by seed or by the evaluated checkpoint's sha256.
+  - Shared field and orbit-benchmark CSVs that name no candidate are borrowed only when there is a single seed; with several, every seed got the same numbers (std 0).
+  - A `--seed` sweep of one named config collapsed onto one manifest entry and evidence folder; the run key now appends `_seed<N>` unless the name already contains it.
+  - Ported from Sidera (64d48728), with a stricter seed-in-name check.
+
 - **Fixed: the ST-LRPS Studio relaunched an interrupted queue job from scratch.**
   - A job that was running when the Studio died was restored as Pending; Start Queue relaunched it without `--resume-from`, and the trainer started a new history in the same output folder, deleting the run's history and checkpoints. It is now restored as Interrupted and the queue skips it. Ported from Sidera (64d48728).
 
