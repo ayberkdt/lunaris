@@ -10,6 +10,9 @@ mirror:
   over a sweep of Moon-shadow, penumbra, day-side and lunar-eclipse (Earth
   shadow) geometries. The former cylinder measured its axis projection from
   the Sun, so it blanked the sunlit hemisphere behind the Moon's disk too.
+  ``_shadow_factor_conical_cuda`` mirrors the CPU disk-overlap factor in the
+  full-sun, penumbra, umbra and annular regions of both occulters, and a
+  collapsed Earth vector is ignored on both sides.
 * SH polar axis: ``_sh_accel_cuda`` matches the CPU serial kernel on, next to
   and away from the rotation axis (the CPU applies the analytic m = 1 limit).
 * Quaternion table ends: ``_interp4_cuda`` holds the end rows like the CPU
@@ -157,17 +160,17 @@ def test_numba_srp_shadow_matches_cpu_accel_srp_over_geometry_sweep() -> None:
             r, sun_arr, earth_arr,
             R_MOON_MEAN if moon_on else 0.0, R_EARTH_MEAN if earth_on else 0.0, out,
         )
-        earth_r2 = float(np.dot(earth_vec, earth_vec))
+        # The CPU kernel gates a collapsed Earth vector itself (|r_E|^2 <= 1e12).
         ref = np.array([
             accel_srp(*r[k], *sun, *earth_vec, R_MOON_MEAN, R_EARTH_MEAN, AU, P_SUN_1AU,
-                      1.3, 4.0, 500.0, moon_on, earth_on and earth_r2 > 1.0e12)
+                      1.3, 4.0, 500.0, moon_on, earth_on)
             for k in range(n)
         ])
         err = float(np.max(np.abs(out - ref))) / full_sun
         return out, ref, err
 
     out, ref, err = compare(np.zeros(3), True, False)
-    assert err < 1e-12, err
+    assert err < 1e-14, err
     lit = np.linalg.norm(ref, axis=1) > 0.0
     assert 0 < np.count_nonzero(~lit) < n
     # Sunlit side of the orbit (|theta| < 90 deg) is never blanked.
@@ -182,11 +185,135 @@ def test_numba_srp_shadow_matches_cpu_accel_srp_over_geometry_sweep() -> None:
     # Earth between Sun and Moon (lunar eclipse): Earth shadow on and off.
     earth_vec = 3.844e8 * sun_dir
     out_e, ref_e, err_e = compare(earth_vec, True, True)
-    assert err_e < 1e-12, err_e
+    assert err_e < 1e-14, err_e
     assert np.count_nonzero(np.linalg.norm(ref_e, axis=1) == 0.0) > np.count_nonzero(~lit)
     out_m, ref_m, err_m = compare(earth_vec, False, False)
-    assert err_m < 1e-12 and np.all(np.linalg.norm(out_m, axis=1) > 0.0)
-    print("OK", err, err_e, err_m)
+    assert err_m < 1e-14 and np.all(np.linalg.norm(out_m, axis=1) > 0.0)
+    # Zero / collapsed Earth vector with the Earth eclipse switched on: both
+    # kernels ignore it instead of placing the Earth at the Moon's centre.
+    out_z, ref_z, err_z = compare(np.zeros(3), True, True)
+    assert err_z < 1e-14 and np.array_equal(out_z, out), err_z
+    out_s, _, err_s = compare(np.array([1.0e5, 0.0, 0.0]), True, True)
+    assert err_s < 1e-14 and np.array_equal(out_s, out), err_s
+    print("OK", err, err_e, err_m, err_z, err_s)
+    """
+    _assert_ok(_run_cudasim(script))
+
+
+def test_numba_shadow_factor_matches_cpu_disk_overlap_in_every_region() -> None:
+    script = """
+    import math
+    import numpy as np
+    from numba import cuda
+
+    from lunaris.common.constants import AU, P_SUN_1AU, R_EARTH_MEAN, R_MOON_MEAN
+    from lunaris.core.batch_propagator import _shadow_factor_conical_cuda, _srp_accel_cuda
+    from lunaris.physics.solar_effects import _shadow_factor_conical, accel_srp
+
+    @cuda.jit
+    def launch_nu(r, s, radius, out):
+        k = cuda.grid(1)
+        if k < r.shape[0]:
+            out[k] = _shadow_factor_conical_cuda(
+                r[k, 0], r[k, 1], r[k, 2], s[k, 0], s[k, 1], s[k, 2], radius)
+
+    @cuda.jit
+    def launch_srp(r, sun, earth, out):
+        k = cuda.grid(1)
+        if k < r.shape[0]:
+            a = cuda.local.array(3, np.float64)
+            _srp_accel_cuda(
+                r[k, 0], r[k, 1], r[k, 2], sun[0], sun[1], sun[2],
+                earth[0], earth[1], earth[2], R_MOON_MEAN, R_EARTH_MEAN,
+                AU, P_SUN_1AU, 1.3, 4.0, 500.0, a,
+            )
+            out[k, 0] = a[0]
+            out[k, 1] = a[1]
+            out[k, 2] = a[2]
+
+    sun_dir = np.array([0.8, 0.6, 0.0])
+    perp = np.array([-0.6, 0.8, 0.0])
+    zhat = np.array([0.0, 0.0, 1.0])
+    sun = AU * sun_dir
+
+    def nu_pair(pts, radius):
+        pts = np.ascontiguousarray(np.array(pts))
+        s = np.ascontiguousarray(np.tile(sun, (pts.shape[0], 1)))
+        out = np.zeros(pts.shape[0])
+        launch_nu[(pts.shape[0] + 63) // 64, 64](pts, s, radius, out)
+        ref = np.array([_shadow_factor_conical(*p, *sun, radius) for p in pts])
+        return out, ref
+
+    # Moon-centred cuts across the shadow (occulter radius R_MOON_MEAN):
+    #  * 2000 km behind the Moon: umbra, penumbra, full sun;
+    #  * 5e8 m behind the Moon, past the ~3.7e8 m umbra apex: annular, partial, full;
+    #  * day side and terminator ring.
+    moon_cuts = []
+    for k in range(160):
+        moon_cuts.append(-2.0e6 * sun_dir + R_MOON_MEAN * (0.9 + 0.2 * k / 159.0) * perp)
+    for k in range(160):
+        moon_cuts.append(-5.0e8 * sun_dir + 2.5e6 * k / 159.0 * perp + 1.0e3 * zhat)
+    for k in range(90):
+        th = math.radians(4.0 * k)
+        moon_cuts.append((R_MOON_MEAN + 5.0e4) * (math.cos(th) * sun_dir + math.sin(th) * zhat))
+    out_m, ref_m = nu_pair(moon_cuts, R_MOON_MEAN)
+    err_m = float(np.max(np.abs(out_m - ref_m)))
+    assert err_m < 1e-14, err_m
+    a_ann = math.asin(6.957e8 / (AU + 5.0e8))
+    b_ann = math.asin(R_MOON_MEAN / 5.0e8)
+    annular = 1.0 - (b_ann / a_ann) ** 2
+    regions_m = {
+        "umbra": int(np.count_nonzero(ref_m == 0.0)),
+        "full": int(np.count_nonzero(ref_m == 1.0)),
+        "annular": int(np.count_nonzero(np.abs(ref_m - annular) < 1e-6)),
+        "partial": int(np.count_nonzero((ref_m > 0.0) & (ref_m < 1.0)
+                                        & (np.abs(ref_m - annular) >= 1e-6))),
+    }
+    assert min(regions_m.values()) >= 5, regions_m
+
+    # Earth-centred cut through the Earth's shadow at lunar distance
+    # (umbra ~4600 km, penumbra out to ~8200 km in radius).
+    earth_vec = 3.844e8 * sun_dir
+    earth_cut = [
+        -3.844e8 * sun_dir + 1.0e7 * k / 199.0 * (perp if k % 2 else zhat)
+        for k in range(200)
+    ]
+    sun_e = sun - earth_vec
+    pts_e = np.ascontiguousarray(np.array(earth_cut))
+    s_e = np.ascontiguousarray(np.tile(sun_e, (pts_e.shape[0], 1)))
+    out_e = np.zeros(pts_e.shape[0])
+    launch_nu[(pts_e.shape[0] + 63) // 64, 64](pts_e, s_e, R_EARTH_MEAN, out_e)
+    ref_e = np.array([_shadow_factor_conical(*p, *sun_e, R_EARTH_MEAN) for p in pts_e])
+    err_e = float(np.max(np.abs(out_e - ref_e)))
+    assert err_e < 1e-14, err_e
+    regions_e = {
+        "umbra": int(np.count_nonzero(ref_e == 0.0)),
+        "full": int(np.count_nonzero(ref_e == 1.0)),
+        "partial": int(np.count_nonzero((ref_e > 0.0) & (ref_e < 1.0))),
+    }
+    assert min(regions_e.values()) >= 5, regions_e
+
+    # Full SRP with both occulters through the Earth penumbra beside the Moon
+    # (Moon-centred points 2000-10000 km off the Moon, inside the Earth shadow).
+    srp_pts = np.ascontiguousarray(np.array(
+        [(2.0e6 + 8.0e6 * k / 199.0) * (perp if k % 2 else -zhat) for k in range(200)]))
+    out_a = np.zeros((srp_pts.shape[0], 3))
+    launch_srp[(srp_pts.shape[0] + 63) // 64, 64](
+        srp_pts, np.ascontiguousarray(sun), np.ascontiguousarray(earth_vec), out_a)
+    ref_a = np.array([
+        accel_srp(*p, *sun, *earth_vec, R_MOON_MEAN, R_EARTH_MEAN, AU, P_SUN_1AU,
+                  1.3, 4.0, 500.0, True, True)
+        for p in srp_pts
+    ])
+    full_sun = float(np.linalg.norm(accel_srp(
+        *srp_pts[0], *sun, 0.0, 0.0, 0.0, R_MOON_MEAN, R_EARTH_MEAN, AU, P_SUN_1AU,
+        1.3, 4.0, 500.0, False, False)))
+    err_a = float(np.max(np.abs(out_a - ref_a))) / full_sun
+    assert err_a < 1e-14, err_a
+    mag = np.linalg.norm(ref_a, axis=1) / full_sun
+    assert np.count_nonzero(mag == 0.0) >= 5
+    assert np.count_nonzero((mag > 0.0) & (mag < 0.999)) >= 5
+    print("OK", err_m, regions_m, err_e, regions_e, err_a)
     """
     _assert_ok(_run_cudasim(script))
 
