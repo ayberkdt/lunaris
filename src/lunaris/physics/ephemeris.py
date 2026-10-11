@@ -148,6 +148,7 @@ Typical usage
 from __future__ import annotations
 
 import json
+import re
 import threading
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
@@ -593,6 +594,28 @@ def _classify_kernel(path: str) -> str:
     return _KERNEL_KIND_BY_SUFFIX.get(suffix, "UNKNOWN")
 
 
+_RE_NON_UTC_TIME_SYSTEM = re.compile(r"\b(TDB|TDT|TT)\b", flags=re.IGNORECASE)
+
+
+def _require_utc_after_1972(start: str, et0: float, str2et: Any) -> None:
+    """Refuse a UTC start epoch before 1972-01-01.
+
+    The leapseconds kernel models UTC only from 1972 (integer TAI-UTC). For an
+    earlier UTC string ``str2et`` silently applies TAI-UTC = 9 s, while the real
+    (rubber-second) offset was 7.57 s on 1969-07-20 and ~1.4 s in 1960, so the
+    epoch, and every Sun/Earth/attitude sample, is off by seconds. A TDB or TT
+    epoch string (``"1969-07-20T20:17:40 TDB"``) has no such ambiguity.
+    """
+    if _RE_NON_UTC_TIME_SYSTEM.search(start):
+        return
+    if et0 < float(str2et("1972-01-01T00:00:00")):
+        raise ValueError(
+            f"start epoch {start!r} is UTC before 1972-01-01, where the leapseconds kernel has "
+            "no UTC model (SPICE would apply TAI-UTC = 9 s instead of the historical value). "
+            "Give the epoch in TDB or TT instead, e.g. '1969-07-20T20:17:40 TDB'."
+        )
+
+
 def spice_provenance_fields(ephem: Any) -> dict[str, Any]:
     """Manifest fields for an ephemeris manager's SPICE provenance chain.
 
@@ -746,6 +769,7 @@ def build_tables(
             et0 = float(spice.str2et(str(start_utc)))
         except SpiceyError as e:
             raise ValueError(f"SPICE failed to parse start_utc={start_utc!r}") from e
+        _require_utc_after_1972(str(start_utc), et0, spice.str2et)
 
         # Uniform ET grid
         et_tab = et0 + t_tab
