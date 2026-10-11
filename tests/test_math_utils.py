@@ -988,3 +988,66 @@ if __name__ == "__main__":
     print("This is a pytest test module. Run it with:")
     print("python -m pytest -vv -rA --durations=10 tests/test_math_utils.py")
     sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
+# rv -> COE edge cases: inclination near 0/180 deg, retrograde equatorial,
+# and the [0, 2pi) wrap.
+# ---------------------------------------------------------------------------
+
+_RT_MU = 4.9028e12
+
+
+def test_wrap_angle_2pi_never_returns_two_pi():
+    """``-1e-20 % 2pi`` rounds to exactly 2pi in float64."""
+    for angle in (-1e-20, -1e-300, -5e-324, -0.0, 2.0 * math.pi):
+        out = math_utils.wrap_angle_2pi(angle)
+        assert 0.0 <= out < 2.0 * math.pi
+
+
+@pytest.mark.parametrize("inc_deg", [0.0, 1e-8, 90.0, 180.0 - 1e-8, 180.0])
+@pytest.mark.parametrize("ecc", [0.0, 0.05])
+@pytest.mark.parametrize("argp", [0.3, 4.0])
+def test_rv_coe_rv_round_trip_across_inclination_grid(inc_deg, ecc, argp):
+    """coe -> rv -> coe -> rv reproduces the state at every inclination,
+    including retrograde equatorial orbits (whose longitude of periapsis /
+    true longitude came back mirrored) and i within 1e-8 deg of 0/180
+    (where acos(hz/|h|) lost the inclination entirely)."""
+    a, raan, nu = 1.85e6, 1.1, 2.5
+    inc = math.radians(inc_deg)
+    r, v = coe_to_rv(a, ecc, inc, raan, argp, nu, _RT_MU)
+    a2, e2, inc2, raan2, argp2, nu2 = math_utils.rv_to_coe_select(r, v, _RT_MU, mode="coe6")
+    r2, v2 = coe_to_rv(a2, e2, inc2, raan2, argp2, nu2, _RT_MU)
+    assert_allclose(r2, r, rtol=0.0, atol=1e-9 * np.linalg.norm(r))
+    assert_allclose(v2, v, rtol=0.0, atol=1e-9 * np.linalg.norm(v))
+    # Inclination itself: relative accuracy near the poles of the i-range.
+    assert abs(inc2 - inc) <= 1e-12 * max(inc, 1e-300) + 4e-16 * math.pi
+    for angle in (raan2, argp2, nu2):
+        assert 0.0 <= angle < 2.0 * math.pi
+
+
+def test_inclination_near_zero_keeps_relative_precision():
+    for inc in (1e-6, 1e-9, 1e-12):
+        r, v = coe_to_rv(1.85e6, 0.01, inc, 0.4, 0.7, 1.0, _RT_MU)
+        inc2 = math_utils.rv_to_coe_select(r, v, _RT_MU, mode="coe6")[2]
+        assert inc2 == pytest.approx(inc, rel=1e-9)
+        r, v = coe_to_rv(1.85e6, 0.01, math.pi - inc, 0.4, 0.7, 1.0, _RT_MU)
+        inc2 = math_utils.rv_to_coe_select(r, v, _RT_MU, mode="coe6")[2]
+        assert math.pi - inc2 == pytest.approx(inc, rel=1e-6)
+
+
+@pytest.mark.parametrize("ecc", [0.0, 0.05])
+@pytest.mark.parametrize("angle", [0.3, 2.0, 4.0])
+def test_exactly_equatorial_retrograde_round_trip(ecc, angle):
+    """An exactly planar retrograde state (h_z < 0, |n| = 0) takes the
+    equatorial branch. The longitude of periapsis (e > 0) or true longitude
+    (e = 0) was measured counter-clockwise from +x while the inverse map with
+    i = pi measures it clockwise, so the round trip mirrored the orbit in y."""
+    r_p, v_p = coe_to_rv(1.85e6, ecc, 0.0, 0.0, angle, 1.0, _RT_MU)
+    r = np.array([r_p[0], -r_p[1], 0.0])  # mirror y: prograde -> retrograde
+    v = np.array([v_p[0], -v_p[1], 0.0])
+    a2, e2, inc2, raan2, argp2, nu2 = math_utils.rv_to_coe_select(r, v, _RT_MU, mode="coe6")
+    assert inc2 == math.pi
+    r2, v2 = coe_to_rv(a2, e2, inc2, raan2, argp2, nu2, _RT_MU)
+    assert_allclose(r2, r, rtol=0.0, atol=1e-9 * np.linalg.norm(r))
+    assert_allclose(v2, v, rtol=0.0, atol=1e-9 * np.linalg.norm(v))

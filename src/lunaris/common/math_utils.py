@@ -141,8 +141,13 @@ def wrap_angle_2pi(angle_rad: float) -> float:
     -0.1  -> 2π - 0.1
      6.30 -> ~0.0168
     """
-    # With a positive modulus, Python/Numba's % returns a value in [0, 2π).
-    return angle_rad % TWO_PI
+    # With a positive modulus, Python/Numba's % returns a value in [0, 2π]:
+    # a tiny negative angle rounds up to exactly 2π (-1e-20 % 2π == 2π), which
+    # is the same direction as 0 and is folded onto it to keep [0, 2π).
+    wrapped = angle_rad % TWO_PI
+    if wrapped >= TWO_PI:
+        wrapped = 0.0
+    return wrapped
 
 
 # Used by: math_utils, postprocess
@@ -1012,8 +1017,17 @@ def _rv_to_coe_kernel(
     else:
         a = -mu / (2.0 * eps)
 
-    # 7) Inclination inc = acos(hz/|h|) with domain-safe clamping
-    inc = safe_acos(hz / hnorm)
+    # 7) Inclination inc = acos(hz/|h|) with domain-safe clamping. Near 0 and
+    #    pi acos amplifies the rounding of hz/|h| by 1/sin(i) (i = 1e-6 rad came
+    #    back 4e-5 relative off, i < ~1.5e-8 rad as 0), so there the
+    #    well-conditioned atan2(|h_xy|, hz) is used; |n| = |h_xy|. For
+    #    |cos i| < 0.5 (60-120 deg) acos is well conditioned (amplification
+    #    <= 1.16) and is kept, so those inclinations are bit-identical.
+    cos_inc = hz / hnorm
+    if abs(cos_inc) < 0.5:
+        inc = safe_acos(cos_inc)
+    else:
+        inc = math.atan2(nnorm, hz)
 
     # ---------------- Singularity detection ----------------
     is_circular = (e < EPS_1E12)
@@ -1029,8 +1043,14 @@ def _rv_to_coe_kernel(
     if is_circular:
         argp = 0.0
     elif is_equatorial:
-        # Longitude of periapsis (since Ω undefined)
-        argp = wrap_angle_2pi(math.atan2(ey, ex))
+        # Longitude of periapsis (since Ω undefined). With Ω = 0 and i = π the
+        # inverse map (_coe_to_rv_kernel) places periapsis at angle -ω from +x
+        # (R3(0) R1(-π) R3(-ω) mirrors y), so a retrograde orbit (h_z < 0) must
+        # report ω = atan2(-e_y, e_x) for rv -> COE -> rv to round-trip.
+        if hz < 0.0:
+            argp = wrap_angle_2pi(math.atan2(-ey, ex))
+        else:
+            argp = wrap_angle_2pi(math.atan2(ey, ex))
     else:
         # Use atan2(sinω, cosω) for robustness:
         # cosω = (n·e)/(|n||e|)
@@ -1048,8 +1068,13 @@ def _rv_to_coe_kernel(
 
     # ---------------- True anomaly ν ----------------
     if is_circular and is_equatorial:
-        # True longitude λ = atan2(y, x)
-        nu = wrap_angle_2pi(math.atan2(ry, rx))
+        # True longitude λ = atan2(y, x), measured in the direction of motion:
+        # for a retrograde orbit (h_z < 0, i = π) the inverse map places the
+        # body at angle -λ, so λ = atan2(-y, x) (see the ω branch above).
+        if hz < 0.0:
+            nu = wrap_angle_2pi(math.atan2(-ry, rx))
+        else:
+            nu = wrap_angle_2pi(math.atan2(ry, rx))
 
     elif is_circular and (not is_equatorial):
         # Argument of latitude u = atan2(sin u, cos u)

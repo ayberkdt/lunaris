@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Fixed: rv-to-COE edge cases.**
+  - Inclination: `acos(hz/|h|)` lost precision near 0 and 180 deg (1e-6 rad
+    came back 4e-5 relative off; below about 1.5e-8 rad it came back as 0).
+    `atan2(|h_xy|, hz)` is now used for |cos i| >= 0.5.
+  - Retrograde equatorial orbits: the longitude of periapsis and the true
+    longitude are now measured in the direction of motion, so rv -> COE -> rv
+    round-trips. Before, the round trip mirrored the orbit in y.
+  - `wrap_angle_2pi` no longer returns exactly 2*pi for tiny negative angles.
+
+  On 20,000 lunar orbits (i 40-140 deg, e 0.005-0.1), only the inclination
+  output of `rv_to_coe_select` and `batch_y_to_elements` changes. It changes
+  in 2,120 samples, all outside 60-120 deg, by at most 4.4e-16 rad (3 ulp).
+  The frozen-search `screening_orbital_elements_vec` is a separate code path
+  and is bit-identical. Tests are in `tests/test_math_utils.py`.
 - **Fixed: albedo and thermal-IR wrapper inputs.** The simple backend of
   `albedo_accel` now honours `AlbedoConfig.enable_eclipse` like the facet
   backend and reads the canonical `albedo_const`. `AlbedoConfig` keeps its
