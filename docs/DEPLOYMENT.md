@@ -24,7 +24,9 @@ results.
 
 ```bash
 python -m venv lunaris-env && source lunaris-env/bin/activate
-pip install lunaris[hpc]          # headless; use [all] for UI workstations
+# Install from a Lunaris checkout or a wheel you built from it. Do NOT run
+# `pip install lunaris` against PyPI: that name belongs to an unrelated project.
+pip install ".[hpc]"              # headless; use [all] for UI workstations
 lunaris-data download --preset full-gravity
 lunaris-data verify --strict --runtime
 ```
@@ -36,7 +38,8 @@ checks the recorded SHA-256 digest of every entry that has one.
 ## 3. Offline / air-gapped install
 
 1. **Wheels.** On a connected machine, download the wheel set:
-   `pip download lunaris[hpc] -d wheelhouse/` (add
+   build the Lunaris wheel from the checkout (`pip wheel --no-deps . -w wheelhouse/`)
+   and download its dependencies with `pip download ".[hpc]" -d wheelhouse/` (add
    `--index-url https://download.pytorch.org/whl/cpu` for the torch wheel).
    Transfer `wheelhouse/` and install with
    `pip install --no-index --find-links wheelhouse lunaris[hpc]`.

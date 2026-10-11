@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: install hints pointed at an unrelated PyPI package.**
+  - **The defect.** `pip install lunaris[hpc]` / `pip install lunaris[ml]` resolve on PyPI to "Lunaris — agent memory engine". That is a different project, verified on pypi.org on 2026-10-11.
+  - **The fix.** The deployment guide, the torch-missing error and the third-party notice now install from a Lunaris checkout or a locally built wheel.
+
 - **Fixed: `LUNARIS_DATA_DIR` set after import was ignored.**
   - The kernel and gravity resolvers read import-time module constants.
   - They now resolve the environment override at call time when it changed since import. Otherwise they keep the module constants, which callers and tests replace on purpose.

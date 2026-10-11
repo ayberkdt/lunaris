@@ -26,8 +26,9 @@ def _require_torch() -> tuple[Any, Any]:
     if torch is None or nn is None:
         raise RuntimeError(
             "PyTorch is required for ST-LRPS surrogate inference. "
-            "Install the optional ML stack with `pip install lunaris[ml]` "
-            "or `pip install lunaris[hpc]`."
+            "Install the optional ML stack from a Lunaris checkout with "
+            "`pip install -e \".[ml]\"` (or `\".[hpc]\"`); the PyPI package named "
+            "`lunaris` is an unrelated project."
         ) from _TORCH_IMPORT_ERROR
     return torch, nn
 

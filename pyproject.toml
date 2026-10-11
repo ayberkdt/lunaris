@@ -57,7 +57,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Optional GPU / ML stack. ``hpc`` is kept as an explicit alias of ``ml`` so the
-# documented ``pip install lunaris[hpc]`` workflow keeps working.
+# documented ``pip install ".[hpc]"`` workflow keeps working.
 ml = [
   "torch>=2.0,<3",
   "h5py>=3.8,<4",
