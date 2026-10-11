@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: an impulsive-manoeuvre run re-spaced its output grid per segment (output times change).**
+  - Each segment between burns built its own evenly spaced grid over its burn-shifted duration: `output_dt_s = 60` with a burn at 1000 s gave 58.82 s spacing before the burn and 59.09 s after, neither 60 s nor aligned to t0 (without `output_dt_s`, each segment re-derived it from its own post-burn period).
+  - The output is now the grid a run without burns would produce, plus each burn epoch; each segment integrates its exact slice. Trajectories are unchanged; only the sample times move. Ported from Sidera.
+
 - **Fixed: `lunaris-data download` never fetched companion files.**
   - Only the entry's main URL was downloaded; the detached labels listed under `companion_files` (the `.lbl` each LOLA, GRAIL and Diviner product needs) were not, so `lunaris-data verify --strict` failed right after a fresh download. Missing companions are now fetched from their own `url` or the main file's folder, hash-checked; a required companion's failure is the entry's status. Ported from Sidera.
 
