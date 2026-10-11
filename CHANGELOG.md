@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: replay step-back from a paused cursor skipped a sample.**
+  - With the cursor between two samples, one step back landed two samples back. Backward steps now count from the last sample strictly before the cursor, forward steps from the first strictly after. Ported from Sidera (66237c40).
+
 - **Fixed: the Results page Duration KPI was missing for every real run.**
   - It read `time.duration_days`, a `TimeConfig` property that `asdict()` never writes to `run_config.json`. It now reads `time.duration_s` (a hand-written `duration_days` still works). Ported from Sidera (66237c40).
 
