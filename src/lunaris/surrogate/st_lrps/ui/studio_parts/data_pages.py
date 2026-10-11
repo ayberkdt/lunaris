@@ -73,7 +73,6 @@ from .qt_common import (
     QPlainTextEdit,
     QProcess,
     QPushButton,
-    QSettings,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -2026,6 +2025,13 @@ class CloudGenTab(QWidget):
         s.endGroup()
 
 
+def _cloud_analysis_settings():
+    """The Cloud Analysis tab's store (an .ini under ``LUNARIS_APP_DATA_DIR`` when set)."""
+    from lunaris.ui_foundation.settings import persistent_settings
+
+    return persistent_settings("LunarSurrogate", "CloudAnalysis", "st_lrps_cloud_analysis.ini")
+
+
 class CloudAnalysisTab(QWidget):
     """Run spatial_cloud_analysis.py on a dataset and display the resulting plots."""
 
@@ -2210,7 +2216,7 @@ class CloudAnalysisTab(QWidget):
     # --- settings ---
 
     def _save_settings(self):
-        s = QSettings("LunarSurrogate", "CloudAnalysis")
+        s = _cloud_analysis_settings()
         s.setValue("input_file", self.input_file.text())
         s.setValue("out_dir", self.out_dir.text())
         s.setValue("sample_n", self.sample_n.value())
@@ -2223,7 +2229,7 @@ class CloudAnalysisTab(QWidget):
         s.setValue("extra_args", self.extra_args.text())
 
     def _restore_settings(self):
-        s = QSettings("LunarSurrogate", "CloudAnalysis")
+        s = _cloud_analysis_settings()
         for attr, key, _cast in [
             ("input_file", "input_file", str),
             ("out_dir", "out_dir", str),

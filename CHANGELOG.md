@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the test suite read and wrote the developer's real Qt settings.** `QSettings(organization, application)` opens the Windows registry, which `QSettings.setPath` cannot redirect. UI tests wrote window geometry and the density and motion keys there. An autouse fixture also cleared the real ST-LRPS Studio store on every run. Both apps now open their stores through `lunaris.ui_foundation.settings.persistent_settings`, which uses an .ini file under `LUNARIS_APP_DATA_DIR` when that is set. `tests/conftest.py` sets it to a fresh temporary folder for the whole session, which also isolates the session and layout files.
+
 - **Fixed: an ST-LRPS Studio post-run hook failed silently.** `ProcessPane` ran a page's finished hook under `contextlib.suppress(Exception)`. That hook chains the results refresh, train-then-evaluate and the training queue, so an exception stopped those follow-ups while the pane still read "Done". The failure is now written to the pane log, shown in the status line and logged with its traceback.
 
 - **Fixed: the batch page ran with defaults in place of unusable numbers.** Six numeric fields (GPU device, SH degree, threads per block, torch chunk, VRAM budget, impact altitude) were never validated. `get_data` replaced unparsable text with a hard-coded default. `nan`, `inf` and fractional sample counts or seeds passed the existing range checks. Every numeric field now shows one validation error when its text is empty, unparsable, non-finite, or not a whole number where one is required. The run is refused even if the button state is stale.

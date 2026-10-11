@@ -365,7 +365,9 @@ _SETTINGS_ORG = "ST_LRPS_Project"
 _SETTINGS_APP = "ST_LRPS_Dashboard"
 
 def _settings() -> QSettings:
-    return QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+    from lunaris.ui_foundation.settings import persistent_settings
+
+    return persistent_settings(_SETTINGS_ORG, _SETTINGS_APP, "st_lrps_studio_settings.ini")
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:

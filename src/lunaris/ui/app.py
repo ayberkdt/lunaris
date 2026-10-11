@@ -888,7 +888,9 @@ class MainWindow(QtWidgets.QMainWindow):
     # -------------------------------------------------------------------------
     @staticmethod
     def _density_settings() -> QtCore.QSettings:
-        return QtCore.QSettings("Lunaris", "MissionStudio")
+        from lunaris.ui.core.ui_commons import mission_studio_settings
+
+        return mission_studio_settings()
 
     def _load_density_pref(self) -> str:
         value = str(self._density_settings().value("ui/density", "comfortable") or "comfortable")

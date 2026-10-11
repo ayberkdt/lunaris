@@ -51,11 +51,9 @@ def test_toggle_switch_space_and_enter_toggle() -> None:
 
 
 def test_prefers_reduced_motion_reads_setting() -> None:
-    from PySide6.QtCore import QSettings
+    from lunaris.ui.core.ui_commons import mission_studio_settings, prefers_reduced_motion
 
-    from lunaris.ui.core.ui_commons import prefers_reduced_motion
-
-    settings = QSettings("Lunaris", "MissionStudio")
+    settings = mission_studio_settings()
     previous = settings.value("ui/reduce_motion")
     try:
         settings.setValue("ui/reduce_motion", True)
