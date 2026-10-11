@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: an ST-LRPS Studio post-run hook failed silently.** `ProcessPane` ran a page's finished hook under `contextlib.suppress(Exception)`. That hook chains the results refresh, train-then-evaluate and the training queue, so an exception stopped those follow-ups while the pane still read "Done". The failure is now written to the pane log, shown in the status line and logged with its traceback.
+
 - **Fixed: the batch page ran with defaults in place of unusable numbers.** Six numeric fields (GPU device, SH degree, threads per block, torch chunk, VRAM budget, impact altitude) were never validated. `get_data` replaced unparsable text with a hard-coded default. `nan`, `inf` and fractional sample counts or seeds passed the existing range checks. Every numeric field now shows one validation error when its text is empty, unparsable, non-finite, or not a whole number where one is required. The run is refused even if the button state is stale.
 
 - **Fixed: a batch run lost its last stdout line.** When the final line had no trailing newline it stayed in the buffer, so a closing `[BATCH_METRICS]` payload was dropped and the run reported `?/?` impacts. Batch stdout and stderr now each use a line assembler with an incremental UTF-8 decoder, and both are flushed before the metrics are read. Stderr lines split across reads, and multi-byte characters split across reads, are no longer broken.

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import math
 import os
 import platform
@@ -102,6 +103,8 @@ from .qt_common import (
     repolish,
     with_alpha,
 )
+
+_log = logging.getLogger(__name__)
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -2171,8 +2174,15 @@ class ProcessPane(QWidget):
                 "Lunar Potential Surrogate", f"Process finished (exit={exit_code})."
             )
         if self._on_finished_hook:
-            with contextlib.suppress(Exception):
+            try:
                 self._on_finished_hook(exit_code, exit_status)
+            except Exception as exc:
+                # The hook chains the queue and train-then-evaluate; a failure
+                # there stops them, so the pane says so instead of plain "Done".
+                _log.exception("ST-LRPS post-run hook failed")
+                self.append(f"[ERROR] Post-run step failed ({type(exc).__name__}: {exc}); "
+                            "queued or follow-up jobs did not start.")
+                self.status.setText(f"{st} (post-run step failed) | exit_code={exit_code}")
 
     def _open_output_folder(self) -> None:
         if self._output_dir:
