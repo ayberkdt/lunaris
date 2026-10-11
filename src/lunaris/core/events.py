@@ -560,7 +560,7 @@ def make_solar_eclipse_event(
     include_earth: bool = True,
     terminal: bool = False,
     direction: float = 0.0,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
 ) -> EventFn:
     """
     Solar eclipse (hard-shadow) event: LOS(SC->Sun) occulted by Moon and/or Earth.
@@ -592,9 +592,6 @@ def make_solar_eclipse_event(
         )
 
     def ecl_event(t: float, y: NDArray[np.float64]) -> float:
-        if t < t_guard:
-            return 1.0
-
         r_sc = as_vec3(y[:3], name="r_sc")
         r_sun = as_vec3(get_sun_vec_m(t), name="r_sun")
 
@@ -609,7 +606,9 @@ def make_solar_eclipse_event(
 
         return float(best)
 
-    return _set_event_props(ecl_event, terminal=terminal, direction=direction)
+    return _set_event_props(
+        _with_t_guard(ecl_event, t_guard_s=t_guard), terminal=terminal, direction=direction
+    )
 
 
 def make_is_eclipsed_solar(
@@ -654,40 +653,40 @@ def make_max_eclipse_duration_event(
     Guard on *continuous* eclipse time. Triggers when contiguous eclipse duration exceeds max_duration_s.
 
     Implementation notes:
-    - Uses closure state (last_t, in_ecl, dur).
-    - If solver probes non-monotone times during root localization, we do NOT update state.
-      (This avoids inconsistent toggles.)
+    - Uses closure state: the eclipse *entry* time, updated from monotone
+      (``t >= last accepted t``) calls only. Root-finding probes at earlier
+      times never mutate it; they only read it.
+    - For any ``t`` the root value is ``max_duration_s - (t - entry_t)`` when
+      an entry time is set and ``t >= entry_t``, else ``max_duration_s``. g is
+      then continuous and linear in t inside a step, so a root search locates
+      ``entry_t + max_duration_s``. (The former accumulated duration returned
+      the same stale value at both ends of the bracket: plain ``solve_ivp``
+      raised "f(a) and f(b) must have different signs".)
     """
     max_dur = float(max_duration_s)
     if not (math.isfinite(max_dur) and max_dur > 0.0):
         raise ValueError("max_duration_s must be finite and > 0.")
 
     last_t = -math.inf
-    in_ecl = False
-    dur = 0.0
+    entry_t: float | None = None
 
     def ecl_dur_event(t: float, y: NDArray[np.float64]) -> float:
-        nonlocal last_t, in_ecl, dur
+        nonlocal last_t, entry_t
 
         tt = float(t)
 
-        # If solver calls out-of-order times, avoid state mutation (keep monotone behavior).
-        if tt < last_t:
-            return max_dur - dur
+        # Only monotone (non-probe) calls update the recorded eclipse entry.
+        if tt >= last_t:
+            last_t = tt
+            if bool(is_eclipsed(tt, y)):
+                if entry_t is None:
+                    entry_t = tt
+            else:
+                entry_t = None
 
-        dt = 0.0 if not math.isfinite(last_t) else (tt - last_t)
-        last_t = tt
-
-        ecl = bool(is_eclipsed(tt, y))
-
-        if ecl:
-            dur = (dur + dt) if in_ecl else 0.0
-            in_ecl = True
-        else:
-            in_ecl = False
-            dur = 0.0
-
-        return max_dur - dur
+        if entry_t is not None and tt >= entry_t:
+            return max_dur - (tt - entry_t)
+        return max_dur
 
     return _set_event_props(ecl_dur_event, terminal=terminal, direction=-1.0)
 
@@ -699,13 +698,38 @@ def make_max_eclipse_duration_event(
 
 XformFn_t = Callable[[float, ArrayLike], ArrayLike]
 
-def _with_t_guard(fn: EventFn, *, t_guard_s: float, guard_value: float = 1.0) -> EventFn:
-    """Wrap an event to avoid spurious root detection near t=0."""
-    t_guard = float(t_guard_s)
+def _guard_span_s(t_guard_s: float) -> float:
+    guard_span = float(t_guard_s)
+    if not (math.isfinite(guard_span) and guard_span >= 0.0):
+        raise ValueError(f"t_guard_s must be finite and >= 0, got {t_guard_s!r}.")
+    return guard_span
+
+
+def _with_t_guard(fn: EventFn, *, t_guard_s: float) -> EventFn:
+    """Wrap an event so an optional window after the run's start reports no root.
+
+    The run starts at the *first* time the wrapped callable is evaluated
+    (SciPy's ``solve_ivp`` and the fixed-step driver both evaluate events at
+    ``t0``); a later call earlier than that start begins a new run. Build a
+    fresh event per run.
+
+    ``t_guard_s == 0`` (the default of every factory) passes ``fn`` through.
+    ``t_guard_s > 0`` suppresses every root in ``[start, start + t_guard_s)``
+    by returning ``math.nan`` there (NaN is never read as a crossing). A
+    constant guard value would itself fake a crossing when the window ends
+    on the other side of the surface, and an absolute-time window never
+    applies to a run whose ``t0`` is an epoch.
+    """
+    guard_span = _guard_span_s(t_guard_s)
+    t_start: list[float | None] = [None]
 
     def wrapped(t: float, y: NDArray[np.float64]) -> float:
-        if t < t_guard:
-            return float(guard_value)
+        start = t_start[0]
+        if start is None or t < start:
+            start = float(t)
+            t_start[0] = start
+        if t < start + guard_span:
+            return math.nan
         return fn(t, y)
 
     return wrapped
@@ -717,7 +741,7 @@ def make_terminator_crossing_event(
     r_i_to_bf: XformFn_t,
     terminal: bool = False,
     direction: float = 0.0,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
 ) -> EventFn:
     """
     Terminator crossing (day/night boundary) event.
@@ -743,7 +767,7 @@ def make_node_crossing_event(
     r_i_to_ref: XformFn_t | None = None,
     which: str = "both",
     terminal: bool = False,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
 ) -> EventFn:
     """
     Ascending/descending node crossing w.r.t. reference plane z=0.
@@ -821,7 +845,7 @@ def make_target_flyover_event(
     max_central_angle_deg: float,
     r_i_to_bf: XformFn_t,
     terminal: bool = False,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
 ) -> EventFn:
     """
     Target flyover: triggers when subsatellite point enters a spherical cap.
@@ -855,7 +879,7 @@ def make_occultation_event(
     R_ref_m: float,
     terminal: bool = False,
     direction: float = 0.0,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
 ) -> EventFn:
     """
     Occultation: Moon blocks LOS between spacecraft and a body (Earth/Sun).
@@ -918,7 +942,7 @@ def make_stability_violation_event(
     rp_min_alt_km: float | None = None,
     ra_max_alt_km: float | None = None,
     terminal: bool = True,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
 ) -> EventFn:
     """
     Frozen-orbit / stability guard: triggers when e/i/periapsis/apoapsis exceed bounds.
@@ -1017,7 +1041,7 @@ def make_stability_violation_event(
 
         return float(max(viol)) if viol else -1.0
 
-    ev = _with_t_guard(core, t_guard_s=t_guard_s, guard_value=-1.0)
+    ev = _with_t_guard(core, t_guard_s=t_guard_s)
     return _set_event_props(ev, terminal=terminal, direction=+1.0)
 
 

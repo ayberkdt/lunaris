@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: surface and eclipse event factories faked or lost crossings near the start (default behaviour changes).**
+  - Terminator, node, target-flyover, occultation, stability and solar-eclipse events returned a constant for absolute `t < 1 s`. A start on the other side of the surface reported a fake crossing at t = 1 s (a run starting in shadow got a false eclipse entry), a real crossing in the first second was lost, and a run whose t0 is an epoch never got the window.
+  - `t_guard_s` now defaults to 0 and, when positive, is start-relative and returns NaN (never a crossing), like the apsis and longitude events; a negative or non-finite value raises.
+  - `make_max_eclipse_duration_event` returned the same stale value at both ends of a root bracket, so plain `solve_ivp` raised "f(a) and f(b) must have different signs" (through the step-consistent wrapper it reported 171 s for a 150 s limit). It now records the eclipse entry time from monotone calls and returns `max_duration_s - (t - entry_t)`, linear inside a step.
+  - No production path builds these events; they are public API. Ported from Sidera (66237c40, 64d48728); Sidera's start-on-surface rule is not ported (the SciPy step-consistent wrapper already covers that case).
+
 - **Fixed: Mission Studio impact watchdog and live telemetry around `rhs_probe` samples.**
   - An `rhs_probe` sample (a solver evaluation that may belong to a rejected adaptive step) reached the impact watchdog, so one probe below the surface could stop a run. Probes no longer count as impact evidence; output states still do (the engine's own impact events are unchanged).
   - The output states the engine emits from t0 after the integration were drawn after the live probe trace (the orbit twice, with a line back to t0) and ran the progress bar from ~100 % back to 0. The first output state now replaces the probe trace, and progress follows the probes only.
