@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Fixed: ST-LRPS `--resume-from` failed every time.** A new scaler recorded `dataset_content_sha256 = None` when the dataset contract did not embed the hash, while the reuse check computed it from the file. `training_config_hash`, which changes with `--epochs` and `--resume-from`, was also a critical config field. A checkpoint from before the output envelope also differed from its rebuilt config on `output_envelope_power`, because the field was absent on one side. The scaler now records the hash it is checked against, the config hash is no longer critical, and a missing `output_envelope_power` compares as `0.0` (envelope off). The end-to-end resume test now fails on a non-zero exit instead of skipping.
+- **Fixed: ST-LRPS epoch losses were means of per-batch means.** The validation loader keeps its last, smaller batch, so that batch was over-weighted in `val_total_loss`, which picks the best checkpoint. All epoch statistics, including `loss_rel`, `rel_a_mean` and `wtz_frac`, are now sample-weighted. When the last validation batch is smaller than the others, reported losses and best-epoch selection can differ from earlier runs.
+- **Fixed: ST-LRPS training-loop robustness.** The changes are:
+  - A NaN/Inf validation loss writes `failure_manifest.json` and marks the run failed. Before, it raised from checkpoint scoring and left the run marked "running".
+  - Resuming from an older snapshot drops the history rows and periodic-eval records of the epochs it re-trains.
+  - Each run attaches and removes its own `train.log` handler. Before, `logging.basicConfig` wrote no log for a second run in the same process.
+  - A training split smaller than one batch is refused. Before, it trained zero batches per epoch.
+  - An independent `--val-data` file is validated like the train file.
+  - Independent-file split manifests record `train_file_sha256` and `val_file_sha256`.
+- **Fixed: ST-LRPS artifact checks.** `load_scaler_for_run` now checks a checkpoint's pinned `scaler_hash` when the checkpoint has no embedded scaler. `read_artifact_contract(strict=True)` now raises `ArtifactContractError` for an unreadable `config.json` or an unloadable or mismatched scaler, where it used to fall back silently. Existing runs load unchanged.
+- **Fixed: GradNorm `update_interval=1` updated only on the first step.** It now updates every step, and `update_interval < 1` is rejected. Intervals of 2 or more behave as before.
+- **Fixed: a malformed `w0_bands_tensor` checkpoint buffer was swallowed on load.** A buffer with the wrong type, shape or length, or with non-finite values, now raises `ValueError`. Checkpoints with a valid buffer, or with none, load as before.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.
