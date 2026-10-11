@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**51 entries.**
+**53 entries.**
 
-Implementation class: adaptation (10), delegated_library (8), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (9)
+Implementation class: adaptation (10), delegated_library (9), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (10)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (41), verified_secondary_source (1)
+Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (42), verified_secondary_source (2)
 
 ## Index
 
@@ -33,6 +33,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 | [`LUNARIS-ALG-INTP-002`](#lunarisalgintp002) | Cubic Hermite interpolation of ephemeris position and velocity states | exact | verified_primary_source |
 | [`LUNARIS-ALG-ML-001`](#lunarisalgml001) | Sinusoidal Representation Network (SIREN) | exact | verified_primary_source |
 | [`LUNARIS-ALG-ML-002`](#lunarisalgml002) | Random Fourier feature input encoding | exact | verified_primary_source |
+| [`LUNARIS-ALG-NUM-001`](#lunarisalgnum001) | Gauss-Legendre quadrature nodes and weights mapped to the unit interval | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OE-001`](#lunarisalgoe001) | Classical orbital-element conversions (state vector to/from Keplerian elements) | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-001`](#lunarisalgopt001) | AdamW (decoupled weight decay) optimizer as delegated to PyTorch | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | GradNorm adaptive multi-task loss balancing | adaptation | verified_primary_source |
@@ -67,6 +68,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 | [`LUNARIS-MODEL-REL-003`](#lunarismodelrel003) | External-body differential first post-Newtonian correction (Schwarzschild + de Sitter) | adaptation | verified_primary_source |
 | [`LUNARIS-MODEL-TID-001`](#lunarismodeltid001) | Elastic lunar solid-body tide (degree-2 and degree-3 Love-number disturbing potential) | adaptation | verified_primary_source |
 | [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001) | Lunar principal-axis (PA) body-fixed frame realized by DE440 | standard_implementation | verified_primary_source |
+| [`LUNARIS-STD-FRM-002`](#lunarisstdfrm002) | Constant lunar principal-axis to mean-Earth rotation for surface-map sampling | standard_implementation | verified_secondary_source |
 
 ## Third-body gravity (TB)
 
@@ -523,28 +525,30 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `MontenbruckGill2000SatelliteOrbits` -- Montenbruck, 2000. "Satellite Orbits: Models, Methods and Applications" (chapter 3 (Force Models); section 3.4 (solar radiation pressure and shadow function)) [DOI: 10.1007/978-3-642-58351-3]
-- **Verification notes**: The cannonball law a = (P0 Cr A/m)(AU/d)^2 nu u_hat(sun->sc) and the dual-cone (umbra + penumbra) shadow geometry with a finite solar disk follow Montenbruck & Gill (2000), Section 3.4 (identifiers verified as for LUNARIS-ALG-SH-002). Lunaris ADAPTS the penumbra: the fractional illumination uses a cubic-Hermite smoothstep across the umbra->penumbra band instead of the exact overlapping-disk area, and supports both Moon and Earth occulters (shadow = min of the two).
+- **Verification notes**: The cannonball law a = (P0 Cr A/m)(AU/d)^2 nu u_hat(sun->sc) and the dual-cone (umbra + penumbra) shadow geometry with a finite solar disk follow Montenbruck & Gill (2000), Section 3.4 (identifiers verified as for LUNARIS-ALG-SH-002). The shadow factor is the book's apparent-radius occultation: the overlap area of the apparent solar and occulter disks seen from the spacecraft, nu = 1 - A/(pi a^2), with the annular case 1 - b^2/a^2. Section-level provenance only; equation numbers were not re-checked against the text. Lunaris supports both Moon and Earth occulters (shadow = min of the two).
 - **Mathematical contract**:
   - Inputs: Moon-centred spacecraft, Sun and Earth positions; radii; AU; P0; Cr; area; mass; eclipse toggles
   - Outputs: solar-radiation-pressure acceleration (m/s^2)
-  - Exactness: cannonball_with_smoothstep_penumbra
+  - Exactness: cannonball_with_apparent_disk_overlap_penumbra
   - Preserves: inverse-square flux falloff with heliocentric distance
   - Preserves: zero force inside the umbra
 - **Implementing symbols**:
   - `src/lunaris/physics/solar_effects.py` -- `accel_srp` (numba_implementation)
   - `src/lunaris/physics/solar_effects.py` -- `_shadow_factor_conical` (numba_implementation)
   - `src/lunaris/physics/solar_effects.py` -- `compute_srp_accel` (api_entry_point)
+  - `src/lunaris/core/batch_propagator.py` -- `_srp_accel_cuda` (cuda_implementation)
+  - `src/lunaris/core/batch_propagator.py` -- `_shadow_factor_conical_cuda` (cuda_implementation)
 - **Lunaris modifications**:
-  - smoothstep penumbra transition instead of exact occulted-disk area
   - combined Moon+Earth shadow via the minimum shadow factor
 - **Assumptions**:
   - spherical spacecraft (cannonball), single reflectivity coefficient Cr
 - **Limitations**:
   - no attitude-dependent or multi-surface SRP
-  - penumbra fraction is an approximation, not the exact geometric area
+  - planar disk-overlap area (within 3e-4 in nu of the exact spherical-cap integral near 1 AU); no solar limb darkening, occulter oblateness or light time
 - **Validated by**:
   - `tests/test_solar_effects.py`
   - `tests/test_srp_eclipse.py`
+  - `tests/test_gpu_batch_kernel_fixes.py`
 - **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002), [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003)
 
 <a id="lunarismodelrad002"></a>
@@ -555,26 +559,33 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `Knocke1988EarthRadiation` -- Knocke, 1988. "Earth Radiation Pressure Effects on Satellites" (section Diffuse-body shortwave (albedo) radiation force; pages 577-587) [DOI: 10.2514/6.1988-4292]
-- **Verification notes**: P. C. Knocke, J. C. Ries & B. D. Tapley, "Earth Radiation Pressure Effects on Satellites", AIAA Paper 88-4292, 1988, pp. 577-587. DOI 10.2514/6.1988-4292 verified via AIAA. Lunaris ADAPTS this diffuse-body shortwave (albedo) radiation-pressure model from Earth to the MOON, summing reflected-sunlight contributions over a lat/lon facet grid.
+- **Verification notes**: P. C. Knocke, J. C. Ries & B. D. Tapley, "Earth Radiation Pressure Effects on Satellites", AIAA Paper 88-4292, 1988, pp. 577-587. DOI 10.2514/6.1988-4292 verified via AIAA. Lunaris ADAPTS this diffuse-body shortwave (albedo) radiation-pressure model from Earth to the MOON, summing reflected-sunlight contributions over a lat/lon facet grid or (default since 2026-10-11) integrating them over the visible disk.
 - **Mathematical contract**:
   - Inputs: spacecraft state, Sun direction, facet grid, albedo, spacecraft props
   - Outputs: albedo radiation-pressure acceleration (m/s^2)
   - Exactness: faceted_diffuse_reflection_sum
   - Preserves: only sunlit, visible facets contribute
 - **Implementing symbols**:
+  - `src/lunaris/physics/surface_radiation_quadrature.py` -- `accel_albedo_quadrature_numba` (numba_implementation)
+  - `src/lunaris/physics/surface_effects.py` -- `AlbedoConfig` (config_surface)
+  - `src/lunaris/physics/surface_effects.py` -- `albedo_accel` (api_entry_point)
   - `src/lunaris/physics/lunar_albedo.py` -- `albedo_single_facet_accel_numba` (numba_implementation)
   - `src/lunaris/physics/lunar_albedo.py` -- `accel_albedo_facets_numba` (numba_implementation)
   - `src/lunaris/physics/lunar_albedo.py` -- `calc_albedo_accel` (api_entry_point)
 - **Lunaris modifications**:
   - Earth ERP formalism applied to lunar albedo over a lat/lon facet grid
+  - default surface integration is a visible-disk solid-angle quadrature (Gauss-Legendre in v with cos(alpha) = cos(beta) + (1 - cos(beta)) v^2, periodic midpoint rule in azimuth; 16 x 32 nodes, altitude-independent); the 18 x 36 point-facet sum stays selectable with surface_integration='facets' (0.39x-1.25x of the converged value at 100 km on a sunlit disk, verified against a brute-force cap integral)
 - **Assumptions**:
   - Lambertian diffuse reflection; cannonball spacecraft response
 - **Limitations**:
-  - facet-resolution dependent; static albedo map
+  - static albedo map read per lat/lon cell; quadrature converges only algebraically where the day/night terminator crosses the visible disk (measured error <= 2e-4 of the full-Sun magnitude at 30-1000 km)
+  - point-facet integration is facet-resolution dependent
 - **Validated by**:
   - `tests/test_lunar_albedo.py`
   - `tests/test_surface_effects.py`
-- **See also**: [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003)
+  - `tests/test_surface_radiation_quadrature.py`
+  - `tests/test_dynamics_surface_radiation.py`
+- **See also**: [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003), [`LUNARIS-ALG-NUM-001`](#lunarisalgnum001)
 
 <a id="lunarismodelrad003"></a>
 ### LUNARIS-MODEL-RAD-003 -- Faceted lunar thermal-infrared (longwave) radiation-pressure model
@@ -584,26 +595,32 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `Knocke1988EarthRadiation` -- Knocke, 1988. "Earth Radiation Pressure Effects on Satellites" (section Diffuse-body longwave (thermal) radiation force; pages 577-587) [DOI: 10.2514/6.1988-4292]
-- **Verification notes**: Same primary source as LUNARIS-MODEL-RAD-002 (Knocke et al. 1988, DOI 10.2514/6.1988-4292 verified); this entry is the longwave (thermal-IR) counterpart, summing thermal re-emission over the lunar facet grid.
+- **Verification notes**: Same primary source as LUNARIS-MODEL-RAD-002 (Knocke et al. 1988, DOI 10.2514/6.1988-4292 verified); this entry is the longwave (thermal-IR) counterpart, summing thermal re-emission over the lunar facet grid or (default since 2026-10-11) integrating it over the visible disk.
 - **Mathematical contract**:
   - Inputs: spacecraft state, facet grid, thermal emission model, spacecraft props
   - Outputs: thermal-IR radiation-pressure acceleration (m/s^2)
   - Exactness: faceted_thermal_emission_sum
   - Preserves: integrates longwave emission over visible facets
 - **Implementing symbols**:
+  - `src/lunaris/physics/surface_radiation_quadrature.py` -- `accel_thermal_ir_quadrature_numba` (numba_implementation)
+  - `src/lunaris/physics/surface_effects.py` -- `ThermalConfig` (config_surface)
+  - `src/lunaris/physics/surface_effects.py` -- `thermal_accel` (api_entry_point)
   - `src/lunaris/physics/thermal_ir.py` -- `build_latlon_facets` (cpu_implementation)
   - `src/lunaris/physics/thermal_ir.py` -- `accel_thermal_ir_facets_numba` (numba_implementation)
   - `src/lunaris/physics/thermal_ir.py` -- `calc_thermal_ir_accel` (api_entry_point)
 - **Lunaris modifications**:
   - Earth ERP thermal formalism applied to lunar surface facets
+  - default surface integration is the visible-disk solid-angle quadrature shared with LUNARIS-MODEL-RAD-002; it reproduces the analytic uniform-sphere limit C A/(m c) M (R/r)^2 to machine precision, where the 18 x 36 point-facet sum (surface_integration='facets') gives 0.39x-1.25x at 100 km
 - **Assumptions**:
   - diffuse thermal re-emission; cannonball spacecraft response
 - **Limitations**:
-  - depends on the surface thermal model and facet resolution
+  - depends on the surface thermal model; temperature grids are read per lat/lon cell
 - **Validated by**:
   - `tests/test_thermal_ir.py`
   - `tests/test_surface_effects.py`
-- **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002)
+  - `tests/test_surface_radiation_quadrature.py`
+  - `tests/test_dynamics_surface_radiation.py`
+- **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002), [`LUNARIS-ALG-NUM-001`](#lunarisalgnum001)
 
 ## Ephemeris and interpolation (EPH)
 
@@ -763,6 +780,40 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `tests/test_sh_convention_lock.py`
 - **See also**: [`LUNARIS-ALG-FRM-002`](#lunarisalgfrm002), [`LUNARIS-DATA-EPH-001`](#lunarisdataeph001), [`LUNARIS-ALG-SH-002`](#lunarisalgsh002)
 - **Notes**: PA vs ME is a common source of lunar-gravity frame errors; this entry records that Lunaris uses the PA frame consistent with the coefficient set.
+
+<a id="lunarisstdfrm002"></a>
+### LUNARIS-STD-FRM-002 -- Constant lunar principal-axis to mean-Earth rotation for surface-map sampling
+
+- **Slug**: `lunar_pa_to_me_surface_map_alignment`
+- **Category**: frame_time_convention | **Domain**: FRM | **Status**: active
+- **Classification**: standard_implementation
+- **Verification**: verified_secondary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `ParkFolkner2021DE440` -- Park, 2021. "The {JPL} Planetary and Lunar Ephemerides {DE440} and {DE441}" [DOI: 10.3847/1538-3881/abd414]
+- **Verification notes**: Verified 2026-10-11 against the NAIF DE440 lunar frame kernel shipped with the data (data/ephemeris_models/moon_de440_250416.tf), which cites Park et al. (2021) for the rotation: MOON_ME_DE440_ME421 is a TK frame relative to MOON_PA_DE440 with TKFRAME_31009_ANGLES (67.8526, 78.6944, 0.2785) arcsec about AXES (3, 2, 1); MOON_PA and MOON_ME are identity aliases. The implemented PA->ME matrix ([a1]_3 [a2]_2 [a3]_1)^T agreed with SPICE pxform("MOON_PA", "MOON_ME", et) to 5.4e-20 at three epochs (1990, 2000, 2026); the rotation angle is 103.908 arcsec (875 m on the surface). The LOLA LDEM label reads COORDINATE_SYSTEM_NAME "MEAN EARTH/POLAR AXIS OF DE421"; the kernel bounds the DE421 vs DE440-ME421 difference at 5.8e-7 rad (about 1 m). The defining passage in the Park et al. article itself was not located, hence verified_secondary_source.
+- **Mathematical contract**:
+  - Inputs: Moon-fixed position on DE440 principal axes and the ephemeris fixed-frame name
+  - Outputs: the same position on mean-Earth axes, for latitude/longitude map lookup
+  - Exactness: exact
+  - Preserves: proper orthogonal (length-preserving) constant rotation
+  - Preserves: identity when the propagation frame already is MOON_ME
+- **Implementing symbols**:
+  - `src/lunaris/common/lunar_map_frame.py` -- `moon_pa_de440_to_me_matrix` (cpu_implementation)
+  - `src/lunaris/common/lunar_map_frame.py` -- `surface_map_rotation` (api_entry_point)
+  - `src/lunaris/core/propagation/events.py` -- `_build_r_i_to_surface_map` (cpu_implementation)
+  - `src/lunaris/core/batch_propagator.py` -- `topo_meta_array` (config_surface)
+  - `src/lunaris/core/batch_propagator.py` -- `_terrain_residual_cuda` (cuda_implementation)
+  - `src/lunaris/core/torch_frame.py` -- `topo_latlon_deg` (torch_implementation)
+- **Lunaris modifications**:
+  - applied on every terrain-sampling path (CPU impact event and telemetry, torch, numba CUDA)
+- **Assumptions**:
+  - the principal-axes attitude tables are the DE440 realisation
+  - lunar topography maps are tabulated on mean-Earth/polar axes
+- **Limitations**:
+  - IAU_MOON and other lunar frame realisations get no rotation
+  - not applied to albedo/thermal surface maps
+- **Validated by**:
+  - `tests/test_lunar_map_frame.py`
+- **See also**: [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001), [`LUNARIS-HEUR-IMP-001`](#lunarisheurimp001)
 
 ## Integrators (INT)
 
@@ -1434,29 +1485,38 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Verification**: unverifiable | **Scientific status**: implemented_and_tested
 - **Primary reference**: Lunaris-specific; no external primary reference.
 - **Mathematical contract**:
-  - Inputs: batched inertial segment endpoints [m], segment epoch/step [s], inertial-to-fixed frame, terrain raster, and impact altitude [m]
-  - Outputs: per-segment hit mask and interpolation fraction alpha in [0, 1]
+  - Inputs: batched inertial step-end positions [m] and velocities [m/s], step epoch/size [s], inertial-to-fixed frame, terrain raster or impact sphere radius [m], and impact altitude [m]
+  - Outputs: per-step hit mask and step fraction alpha in [0, 1]
   - Exactness: fixed_iteration_segment_crossing_localization
   - Preserves: non-hit rows return alpha=1
-  - Preserves: impacted state position and velocity use the same interpolation fraction
+  - Preserves: impacted state position and velocity come from the same Hermite curve at alpha
+  - Preserves: non-impacting trajectories are not altered by the detection
 - **Implementing symbols**:
   - `src/lunaris/core/torch_frame.py` -- `terrain_segment_intersection` (torch_implementation)
   - `src/lunaris/core/batched_fixed_step.py` -- `_propagate_chunk` (torch_implementation)
+  - `src/lunaris/core/torch_frame.py` -- `hermite_sphere_intersection` (torch_implementation)
+  - `src/lunaris/core/torch_frame.py` -- `hermite_state` (torch_implementation)
+  - `src/lunaris/core/batch_propagator.py` -- `_rk4_batch_kernel` (cuda_implementation)
 - **Lunaris modifications**:
-  - outer maximum-terrain sphere rejects impossible crossings
-  - body-frame rotation is evaluated once at the segment midpoint
-  - fixed-count bisection runs on the terrain-height residual
+  - the step is the cubic Hermite curve through both step-end states (the LUNARIS-ALG-INTP-002 basis), not the straight chord, which sags g dt^2/8 below the arc
+  - the curve is sampled at 32 sub-steps (residual sub-chord sag g (dt/32)^2/8, 0.18 m for a low lunar orbit at dt = 30 s)
+  - the whole-step chord and the outer maximum-terrain sphere act as conservative rejection gates
+  - sphere crossings are refined by Newton steps clamped to the bracketing sub-interval
+  - body-frame rotation is evaluated once at the step midpoint
+  - fixed-count bisection runs on the terrain-height residual along the Hermite curve
 - **Assumptions**:
-  - one resolved downward crossing within the fixed step
+  - the first resolved downward crossing within the fixed step is the impact
   - lunar rotation during one step is negligible relative to terrain relief
 - **Limitations**:
-  - transient dip-and-recovery crossings inside one step are not detected
-  - crossing state is linearly interpolated between integrator endpoints
+  - terrain relief narrower than the sub-sample spacing (v dt / 32 along track) can be crossed between samples undetected
+  - the crossing state interpolates the integrator step ends, so its accuracy is bounded by the fixed-step truncation error
   - accuracy is bounded by the propagation step, raster, and midpoint-frame approximation
 - **Validated by**:
   - `tests/test_torch_terrain_freeze.py`
-- **See also**: [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001), [`LUNARIS-HEUR-INTP-001`](#lunarisheurintp001)
-- **Notes**: This is a Lunaris batched-impact policy composed from elementary sphere intersection and bisection. It is not presented as a published terrain collision algorithm.
+  - `tests/test_hermite_impact_detection.py`
+  - `tests/test_terrain_multistep_descent.py`
+- **See also**: [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001), [`LUNARIS-HEUR-INTP-001`](#lunarisheurintp001), [`LUNARIS-ALG-INTP-002`](#lunarisalgintp002)
+- **Notes**: This is a Lunaris batched-impact policy composed from cubic Hermite interpolation, elementary sphere intersection, Newton steps, and bisection. It is not presented as a published terrain collision algorithm.
 
 ## Neural architectures (ML)
 
@@ -1639,6 +1699,36 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `tests/test_surrogate_training_contracts.py`
 - **See also**: [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002)
 - **Notes**: This is the core physics-supervision mechanism: matching accelerations as input-gradients of the learned potential.
+
+## Numerical utilities (NUM)
+
+<a id="lunarisalgnum001"></a>
+### LUNARIS-ALG-NUM-001 -- Gauss-Legendre quadrature nodes and weights mapped to the unit interval
+
+- **Slug**: `gauss_legendre_quadrature_unit_interval`
+- **Category**: numerical_algorithm | **Domain**: NUM | **Status**: active
+- **Classification**: delegated_library
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Harris2020NumPy` -- Harris, 2020. "Array programming with {NumPy}" (section numpy.polynomial.legendre.leggauss; pages 357-362) [DOI: 10.1038/s41586-020-2649-2]
+- **Verification notes**: Read 2026-10-11: the leggauss documentation (NumPy v2.5 manual, source tag v2.5.0) returns deg Gauss-Legendre sample points and weights on [-1, 1] for weight function 1 that integrate polynomials of degree 2*deg - 1 or less exactly, with weights w_k = c / (L'_n(x_k) L_{n-1}(x_k)) scaled to integrate 1. The NumPy paper (C. R. Harris et al., "Array programming with NumPy", Nature 585(7825):357-362, 2020, DOI 10.1038/s41586-020-2649-2) was checked through its Crossref record. The page cites no original source; Gauss's quadrature paper was not read.
+- **Mathematical contract**:
+  - Inputs: a node count n >= 1
+  - Outputs: n nodes in (0, 1) and weights summing to 1
+  - Exactness: exact
+  - Preserves: integrates polynomials up to degree 2n - 1 exactly on [0, 1]
+- **Implementing symbols**:
+  - `src/lunaris/physics/surface_radiation_quadrature.py` -- `gauss_legendre_unit_interval` (cpu_implementation)
+  - `src/lunaris/core/dynamics/preparation.py` -- `_quadrature_fields` (config_surface)
+- **Lunaris modifications**:
+  - the [-1, 1] nodes and weights of numpy.polynomial.legendre.leggauss are mapped affinely to [0, 1] (x -> (x + 1)/2, w -> w/2)
+- **Assumptions**:
+  - NumPy's leggauss returns the standard Gauss-Legendre rule
+- **Limitations**:
+  - NumPy documents testing only up to degree 100; Lunaris caps the surface-radiation node count at 512 and uses 16 by default
+  - the rule is cited through the library it delegates to, not Gauss
+- **Validated by**:
+  - `tests/test_surface_radiation_quadrature.py`
+- **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002), [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003)
 
 ## Scientific data products (DATA)
 

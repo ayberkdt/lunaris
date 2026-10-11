@@ -53,7 +53,7 @@ def test_gpu_unsupported_features_only_reports_cpu_only_models() -> None:
     assert "Earth J2" not in unsupported
 
 
-def test_numba_cuda_srp_diagnostics_disclose_reduced_shadow_model() -> None:
+def test_numba_cuda_srp_diagnostics_disclose_conical_shadow_model() -> None:
     prop = GPUBatchPropagator.__new__(GPUBatchPropagator)
     prop._device_name = "Fake CUDA"
     prop._device_id = 0
@@ -78,9 +78,13 @@ def test_numba_cuda_srp_diagnostics_disclose_reduced_shadow_model() -> None:
 
     assert diag["srp_force_model"] == "cannonball_cr_area_over_mass"
     assert diag["srp_attitude_model"] == "none"
-    assert diag["srp_shadow_model"] == "cylindrical_moon_umbra_no_earth_eclipse"
-    assert diag["srp_shadow_model_fidelity"] == "reduced_gpu_approximation"
-    assert diag["srp_earth_eclipse_supported"] is False
+    # Bare __new__ object: only the Moon eclipse is set here (SRPConfig itself now
+    # defaults the Earth eclipse on); labels are the CPU ones.
+    assert diag["srp_shadow_model"] == "conical_moon_shadow_factor"
+    assert diag["srp_shadow_model_fidelity"] == "engineering_conical_shadow"
+    assert diag["srp_earth_eclipse_supported"] is True
+    prop._srp_earth_eclipse = True
+    assert prop.diagnostics_snapshot()["srp_shadow_model"] == "conical_moon_and_earth_shadow_factor"
     assert diag["relativity_model"] == "selected_1pn_corrections"
     assert "external_body_schwarzschild_differential" in " ".join(diag["relativity_terms"])
     assert diag["effective_dt_s"] == pytest.approx(62.5)
@@ -855,17 +859,28 @@ def test_predict_total_accel_torch_shape(tmp_path: Path) -> None:
 
 
 @pytest.mark.requires_data
-def test_predict_total_accel_torch_zero_net_matches_point_mass(tmp_path: Path) -> None:
-    """Zero-weight network → total acceleration equals point-mass (residual mode)."""
-    from lunaris.common.constants import MU_MOON
+def test_predict_total_accel_torch_zero_net_matches_sh_baseline(tmp_path: Path) -> None:
+    """Zero-weight network -> total acceleration equals the SH(degree_min) baseline.
+
+    The tiny artifact declares ``degree_min=10``, so in residual mode the total is
+    SH10 + residual, not a point mass: at 100 km the SH10 terms differ from
+    ``-mu/r^2`` by ~4e-4 relative. The expected value comes from the CPU SH
+    kernel on the same gravity file, independent of the torch evaluator.
+    """
+    from lunaris.physics.spherical_harmonics import GravityModel
+
     model = _make_tiny_surrogate(tmp_path)
+    assert model.baseline_degree == 10
+    assert model.baseline_gravity_path is not None
 
     r = 1_838_000.0
     x = torch.tensor([[r, 0.0, 0.0]], dtype=torch.float32)
     out = model.predict_total_accel_torch(x)  # [1, 3]
 
-    expected_ax = -float(MU_MOON) / (r * r)
-    assert abs(float(out[0, 0]) - expected_ax) / abs(expected_ax) < 1e-4
+    sh10 = GravityModel.from_file(model.baseline_gravity_path, requested_degree=10)
+    expected = sh10.accel_fixed(np.array([r, 0.0, 0.0]), degree=10)
+    # float32 network/evaluator output against a float64 reference
+    assert np.allclose(out[0].double().numpy(), expected, rtol=0.0, atol=1e-6 * np.linalg.norm(expected))
     assert abs(float(out[0, 1])) < 1e-3
     assert abs(float(out[0, 2])) < 1e-3
 

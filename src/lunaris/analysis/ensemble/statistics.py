@@ -289,7 +289,8 @@ def compute_ensemble_statistics(
     t = result.t  # (T,)
     mask = result.valid_sample_mask()
     if use_survived_only:
-        mask &= result.impact_mask < 0.5
+        # Not ``&=``: valid_sample_mask() returns the stored array itself.
+        mask = mask & (result.impact_mask < 0.5)
     indices = np.where(mask)[0]
     if indices.size < 2:
         raise ValueError("insufficient valid samples for ensemble statistics: need at least 2")

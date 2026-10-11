@@ -113,7 +113,11 @@ def test_run_field_validation_smoke(tmp_path):
     for policy in ("seeded_random", "spatial_block", "ood_low_altitude"):
         assert "error" not in field[policy], field[policy]
         assert field[policy]["count"] > 0
-        assert field[policy]["kind"] == SPLIT_KIND[policy]
+        # No split manifest -> training policy unknown -> generalization labels
+        # are downgraded to interpolation (label_split_kind).
+        assert field[policy]["kind"] == "interpolation"
+        if SPLIT_KIND[policy] != "interpolation":
+            assert field[policy]["kind_reason"]
         assert np.isfinite(field[policy]["residual_accel_rmse_m_s2"])
 
     paths = write_validation_report(report, tmp_path / "report")

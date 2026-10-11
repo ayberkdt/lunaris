@@ -112,7 +112,10 @@ def aggregate_multi_seed(
         if values:
             stats[metric] = {
                 "mean": float(statistics.fmean(values)),
-                "std": float(statistics.pstdev(values)) if len(values) > 1 else 0.0,
+                # Sample stdev (ddof=1): the seeds are a sample of possible
+                # initializations, not the whole population. Undefined for n < 2,
+                # reported as None (not 0.0, which would read as zero spread).
+                "std": float(statistics.stdev(values)) if len(values) > 1 else None,
                 "min": float(min(values)),
                 "max": float(max(values)),
                 "median": float(statistics.median(values)),

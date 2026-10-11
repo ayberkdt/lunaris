@@ -275,7 +275,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         self.content_layout.addWidget(self.workspace_splitter, 1)
         self.scroll_root.setWidget(self.content_widget)
 
-        QtCore.QTimer.singleShot(0, self._apply_default_splitter_sizes)
+        QtCore.QTimer.singleShot(0, self, self._apply_default_splitter_sizes)
 
     def _apply_default_splitter_sizes(self) -> None:
         """

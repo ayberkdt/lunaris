@@ -188,13 +188,33 @@ class PDS3ParseError(ValueError):
 _RE_PDS_COMMENT = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
 
 _RE_IMAGE_STR = re.compile(r'\^IMAGE\s*=\s*"([^"]+)"', flags=re.IGNORECASE)
-_RE_IMAGE_TUP = re.compile(r'\^IMAGE\s*=\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*\)', flags=re.IGNORECASE)
-_RE_IMAGE_REC = re.compile(r"\^IMAGE\s*=\s*(\d+)", flags=re.IGNORECASE)
+_RE_IMAGE_TUP = re.compile(
+    r'\^IMAGE\s*=\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*(<\s*BYTES\s*>)?\s*\)', flags=re.IGNORECASE
+)
+_RE_IMAGE_REC = re.compile(r"\^IMAGE\s*=\s*(\d+)\s*(<\s*BYTES\s*>)?", flags=re.IGNORECASE)
 
 _RE_FILE_NAME = re.compile(r'\bFILE_NAME\s*=\s*"([^"]+)"', flags=re.IGNORECASE | re.MULTILINE)
 _RE_RECORD_BYTES = re.compile(r"\bRECORD_BYTES\s*=\s*(\d+)", flags=re.IGNORECASE | re.MULTILINE)
 _RE_LDAM_PRODUCT = re.compile(r"(?<![A-Z0-9])LDAM(?:_[A-Z0-9]+)*(?![A-Z0-9])", flags=re.IGNORECASE)
 _RE_DGDR_PRODUCT = re.compile(r"(?<![A-Z0-9])DGDR(?:_[A-Z0-9]+)*(?![A-Z0-9])", flags=re.IGNORECASE)
+# LOLA LDEM and the LOLA/Kaguya merged SLDEM2015 products.
+_RE_LDEM_PRODUCT = re.compile(r"(?<![A-Z0-9])S?LDEM(?:[_0-9][A-Z0-9_]*)?(?![A-Z0-9])", flags=re.IGNORECASE)
+_RE_PRODUCT_ID = re.compile(r'\bPRODUCT_ID\s*=\s*"?([^"\r\n]+?)"?\s*$', flags=re.IGNORECASE | re.MULTILINE)
+_RE_TARGET_NAME = re.compile(r'\bTARGET_NAME\s*=\s*"?([A-Z0-9_ ]+?)"?\s*$', flags=re.IGNORECASE | re.MULTILINE)
+
+# PDS3 length units accepted on an LDEM label, as km per label unit.
+_LDEM_LENGTH_UNIT_KM: dict[str, float] = {
+    "KILOMETER": 1.0,
+    "KILOMETERS": 1.0,
+    "KILOMETRE": 1.0,
+    "KILOMETRES": 1.0,
+    "KM": 1.0,
+    "METER": 1.0e-3,
+    "METERS": 1.0e-3,
+    "METRE": 1.0e-3,
+    "METRES": 1.0e-3,
+    "M": 1.0e-3,
+}
 
 
 def _read_text(path: str | Path) -> str:
@@ -314,7 +334,7 @@ def _find_case_insensitive(path: str | Path) -> Path | None:
     return None
 
 
-def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[str | None, int]:
+def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[str | None, int, bool]:
     """
     Parse the PDS3 '^IMAGE' pointer.
 
@@ -322,6 +342,11 @@ def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[
       ^IMAGE = "FILE.IMG"             -> (FILE.IMG, 1)
       ^IMAGE = ("FILE.IMG", 123)      -> (FILE.IMG, 123)
       ^IMAGE = 123                    -> (None, 123)   (data in the label file itself)
+      ^IMAGE = 2049 <BYTES>           -> (None, 2049, True)
+      ^IMAGE = ("FILE.IMG", 2049 <BYTES>)
+
+    A ``<BYTES>`` unit makes the number a 1-based byte position instead of a
+    record number (PDS3 Standards Reference, pointer statements).
 
     Parameters
     ----------
@@ -331,24 +356,25 @@ def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[
 
     Returns
     -------
-    (filename, start_record)
-        filename is None if the label points to itself.
+    (filename, start, in_bytes)
+        filename is None if the label points to itself; ``in_bytes`` says
+        whether ``start`` is a 1-based byte position (else a record number).
     """
     m = _RE_IMAGE_STR.search(label_text)
     if m:
-        return m.group(1), 1
+        return m.group(1), 1, False
 
     m = _RE_IMAGE_TUP.search(label_text)
     if m:
-        return m.group(1), int(m.group(2))
+        return m.group(1), int(m.group(2)), m.group(3) is not None
 
     m = _RE_IMAGE_REC.search(label_text)
     if m:
-        return None, int(m.group(1))
+        return None, int(m.group(1)), m.group(2) is not None
 
     if strict:
         raise PDS3ParseError("PDS3 parse error: missing required ^IMAGE pointer.")
-    return None, 1
+    return None, 1, False
 
 
 def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> tuple[Path, int]:
@@ -384,13 +410,16 @@ def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> t
     raw_text = _strip_pds_comments(raw_text)
 
     # 1) Parse metadata
-    ptr_file, start_record = _parse_pds3_image_pointer(raw_text, strict=strict)
+    ptr_file, start_record, start_in_bytes = _parse_pds3_image_pointer(raw_text, strict=strict)
     explicit_file_name = _re_find_optional(_RE_FILE_NAME, raw_text, str, default=None)
     record_bytes = _re_find_optional(_RE_RECORD_BYTES, raw_text, int, default=None)
 
     # 2) Compute offset
     offset_bytes = 0
-    if start_record > 1:
+    if start_in_bytes:
+        # A <BYTES> pointer is a 1-based byte position, independent of RECORD_BYTES.
+        offset_bytes = int(start_record) - 1
+    elif start_record > 1:
         if record_bytes is None:
             # In strict mode, if ^IMAGE implies an offset but RECORD_BYTES is missing, fail fast.
             if strict:
@@ -454,7 +483,8 @@ class PDS3MapInfo:
     - `sample_type` + `sample_bits` define the binary dtype.
     - `scaling_factor` and `offset_km` convert stored samples to physical values:
         value_km = stored * scaling_factor + offset_km
-      (the exact convention is product-dependent; keep this as parsed metadata).
+      Both are normalised to km at parse time from the label's `UNIT`
+      (KILOMETER or METER); `unit` keeps the label's raw string.
     - Longitudes are interpreted using `positive_lon_direction` together with the
       provided west/east extents.
     """
@@ -511,9 +541,17 @@ def parse_ldem_label(label_path: str | Path) -> PDS3MapInfo:
     sample_bits = _re_find_one(r"\bSAMPLE_BITS\s*=\s*(\d+)", txt, int)
 
     # --- value scaling ---
-    unit = _re_find_one(r"\bUNIT\s*=\s*([A-Z]+)", txt, str)
-    scaling_factor = _re_find_one(r"\bSCALING_FACTOR\s*=\s*([0-9.+-Ee]+)", txt, float)
-    offset_km = _re_find_one(r"\bOFFSET\s*=\s*([0-9.+-Ee]+)", txt, float)
+    # SCALING_FACTOR and OFFSET are expressed in the label's UNIT; every consumer
+    # works in km, so normalise here and refuse anything that is not a length.
+    unit = _re_find_one(r'\bUNIT\s*=\s*"?([A-Z]+)', txt, str)
+    km_per_unit = _LDEM_LENGTH_UNIT_KM.get(unit.upper())
+    if km_per_unit is None:
+        raise PDS3ParseError(
+            f"PDS3 parse error: LDEM UNIT = {unit!r} is not a supported length unit "
+            f"(expected one of {sorted(_LDEM_LENGTH_UNIT_KM)}): {Path(label_path).name}"
+        )
+    scaling_factor = _re_find_one(r"\bSCALING_FACTOR\s*=\s*([0-9.+-Ee]+)", txt, float) * km_per_unit
+    offset_km = _re_find_one(r"\bOFFSET\s*=\s*([0-9.+-Ee]+)", txt, float) * km_per_unit
 
     # --- projection ---
     map_projection_type = _re_find_one(r'\bMAP_PROJECTION_TYPE\s*=\s*"([^"]+)"', txt, str)
@@ -591,12 +629,19 @@ def dtype_from_pds3_sample(sample_type: str, sample_bits: int) -> np.dtype:
     bits = int(sample_bits)
 
     # --- Floating point ----------------------------------------------------
-    # "PC_REAL" is the canonical little-endian IEEE encoding in many PDS3 labels.
-    if st in {"PC_REAL", "IEEE_REAL", "REAL"}:
+    # "PC_REAL" is little-endian; IEEE_REAL/MAC_REAL/SUN_REAL/REAL are
+    # big-endian (PDS3 Standards Reference, Appendix C).
+    if st == "PC_REAL":
         if bits == 32:
             return np.dtype("<f4")
         if bits == 64:
             return np.dtype("<f8")
+        raise ValueError(f"Unsupported REAL bit depth: {bits}")
+    if st in {"IEEE_REAL", "MAC_REAL", "SUN_REAL", "REAL"}:
+        if bits == 32:
+            return np.dtype(">f4")
+        if bits == 64:
+            return np.dtype(">f8")
         raise ValueError(f"Unsupported REAL bit depth: {bits}")
 
     # --- Signed integers ---------------------------------------------------
@@ -1112,6 +1157,50 @@ class PDS3RasterInfo:
     center_lat_deg: float
 
 
+_RE_MISSING_BASED = re.compile(
+    r"\bMISSING_CONSTANT\s*=\s*(\d+)#([+-]?)([0-9A-Za-z]+)#", flags=re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _based_missing_constant(radix: str, sign: str, digits: str, sample_type: str, sample_bits: int) -> float:
+    """A MISSING_CONSTANT written as an ODL based integer, as the sample value it marks.
+
+    ODL based integers are ``radix#[sign]digits#`` with a radix of 2 to 16
+    (PDS3 Standards Reference, 12.3.1.2). For an integer SAMPLE_TYPE the
+    constant is that integer and must fit the sample type. For a real
+    SAMPLE_TYPE the integer is read as the IEEE bit pattern of a
+    SAMPLE_BITS-wide word (``16#FF7FFFFB#`` is the float32
+    -3.4028226550889045e+38, the LRO null), taken as the pattern of the
+    decoded value, so the file's byte order does not enter. Chapter 12
+    defines only the integer; the bit-pattern reading for real samples is an
+    interpretation (the integer itself, 4286578683 here, is no float32 value).
+    """
+    text = f"MISSING_CONSTANT = {radix}#{sign}{digits}#"
+    base = int(radix)
+    if not 2 <= base <= 16:
+        raise PDS3ParseError(f"PDS3 parse error: {text}: the radix must be 2 to 16 (ODL based integer)")
+    try:
+        magnitude = int(digits, base)
+    except ValueError as error:
+        raise PDS3ParseError(f"PDS3 parse error: {text}: {digits!r} are not base-{base} digits") from error
+    value = -magnitude if sign == "-" else magnitude
+    dtype = dtype_from_pds3_sample(sample_type, sample_bits)
+    if dtype.kind == "f":
+        if not 0 <= value < 2 ** (8 * dtype.itemsize):
+            raise PDS3ParseError(
+                f"PDS3 parse error: {text} is not a {8 * dtype.itemsize}-bit pattern for SAMPLE_TYPE {sample_type}"
+            )
+        word = np.array([value], dtype=f"u{dtype.itemsize}")
+        return float(word.view(f"f{dtype.itemsize}")[0])
+    limits = np.iinfo(dtype)
+    if not limits.min <= value <= limits.max:
+        raise PDS3ParseError(
+            f"PDS3 parse error: {text} = {value} is outside {sample_type} {sample_bits}-bit "
+            f"({limits.min}..{limits.max})"
+        )
+    return float(value)
+
+
 @lru_cache(maxsize=128)
 def parse_pds3_cyl_label(label_path: PathLike) -> PDS3RasterInfo:
     """
@@ -1145,14 +1234,20 @@ def parse_pds3_cyl_label(label_path: PathLike) -> PDS3RasterInfo:
     scaling_factor = _re_find_one(r"\bSCALING_FACTOR\s*=\s*([0-9.+-Ee]+)", txt, float)
     offset = _re_find_one(r"\bOFFSET\s*=\s*([0-9.+-Ee]+)", txt, float)
 
-    # Optional missing constant (often present in derived maps)
-    # Robust numeric pattern (supports sign + scientific notation)
-    missing_constant = _re_find_optional(
-        r"\bMISSING_CONSTANT\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[Ee][+-]?\d+)?)",
-        txt,
-        float,
-        default=float("nan"),
-    )
+    # Optional missing constant (often present in derived maps): a based
+    # integer (16#FF7FFFFB#) or a decimal number (sign + scientific notation).
+    based = _RE_MISSING_BASED.search(txt)
+    if based is not None:
+        missing_constant = _based_missing_constant(
+            based.group(1), based.group(2), based.group(3), sample_type, sample_bits,
+        )
+    else:
+        missing_constant = _re_find_optional(
+            r"\bMISSING_CONSTANT\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[Ee][+-]?\d+)?)",
+            txt,
+            float,
+            default=float("nan"),
+        )
 
     # Map projection block
     map_projection_type = _re_find_one(r"\bMAP_PROJECTION_TYPE\s*=\s*\"([^\"]+)\"", txt, str)
@@ -1221,9 +1316,14 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
 
     Selection policy
     ----------------
-    - If `root` is a file, it is treated as the label.
-    - If `ppd` is provided, the product whose MAP_RESOLUTION is *closest* to `ppd`
-      is selected (ties resolved by higher resolution, then path sort).
+    - Only labels that identify as a lunar LDEM product are candidates (see
+      :func:`_ldem_identity_problem`): PRODUCT_ID or file name is LDEM/SLDEM,
+      not LDAM/DGDR, TARGET_NAME (when present) is MOON, and the label parses
+      with a length UNIT.
+    - If `root` is a file, it is treated as the label and must pass that check.
+    - If `ppd` is provided, only a product whose MAP_RESOLUTION equals `ppd` is
+      accepted (ties resolved by path sort); a different resolution is an error,
+      not a silent substitute.
     - If `ppd` is not provided, the highest-resolution valid product is selected.
 
     Returns
@@ -1238,6 +1338,9 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
     p = Path(root)
 
     if p.is_file():
+        problem = _ldem_identity_problem(p)
+        if problem is not None:
+            raise FileNotFoundError(f"Not a lunar LDEM topography label ({problem}): {p}")
         img, _ = _resolve_img_from_label(p)
         return p, img
 
@@ -1249,8 +1352,11 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
         raise FileNotFoundError(f"No .lbl/.txt labels found in: {p}")
 
     desired = float(ppd) if ppd is not None else None
-    scored: list[tuple[float, float, Path]] = []
+    scored: list[tuple[float, Path]] = []
+    available: list[float] = []
     for lbl in labels:
+        if _ldem_identity_problem(lbl) is not None:
+            continue
         try:
             info = parse_ldem_label(lbl)
             img, _ = _resolve_img_from_label(lbl)
@@ -1258,20 +1364,49 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
             continue
 
         res = float(info.map_resolution_ppd)
-        # score = (distance to desired, -resolution)
-        dist = abs(res - desired) if desired is not None else 0.0
-        scored.append((dist, -res, lbl))
+        available.append(res)
+        if desired is not None and not math.isclose(res, desired, rel_tol=1e-9, abs_tol=1e-9):
+            continue
+        scored.append((-res, lbl))
 
     if not scored:
         msg = f"No valid LDEM product found in: {p}"
         if ppd is not None:
-            msg += f" (requested ~{ppd} ppd)"
+            msg += f" (requested {ppd} ppd; available ppd: {sorted(set(available)) or 'none'})"
         raise FileNotFoundError(msg)
 
     scored.sort()
-    best_lbl = scored[0][2]
+    best_lbl = scored[0][1]
     best_img, _ = _resolve_img_from_label(best_lbl)
     return best_lbl, best_img
+
+
+def _ldem_identity_problem(label_path: Path) -> str | None:
+    """Return why a label is not a lunar LDEM topography product, or ``None``.
+
+    Cylindrical PDS3 rasters (LOLA LDAM albedo, Diviner DGDR) carry the same map
+    keywords as an LDEM, so "the label parses" is not an identity check: an LDAM
+    label would otherwise be read as heights. Identity is the product name, the
+    target body and a length ``UNIT`` (enforced by :func:`parse_ldem_label`).
+    """
+    try:
+        txt = _strip_pds_comments(_read_text(label_path))
+    except OSError as exc:
+        return f"unreadable label: {exc}"
+    pid_m = _RE_PRODUCT_ID.search(txt)
+    identity = f"{label_path.name}\n{pid_m.group(1) if pid_m else ''}"
+    if _RE_LDAM_PRODUCT.search(identity) or _RE_DGDR_PRODUCT.search(identity):
+        return "LDAM/DGDR raster, not an LDEM"
+    if not _RE_LDEM_PRODUCT.search(identity):
+        return "PRODUCT_ID / file name is not an LDEM or SLDEM product"
+    tgt_m = _RE_TARGET_NAME.search(txt)
+    if tgt_m is not None and tgt_m.group(1).strip().upper() != "MOON":
+        return f"TARGET_NAME = {tgt_m.group(1).strip()!r}, expected MOON"
+    try:
+        parse_ldem_label(label_path)
+    except PDS3ParseError as exc:
+        return str(exc)
+    return None
 
 
 
@@ -1432,11 +1567,16 @@ def _topo_radius_envelope(
         if arr.size == 0:
             return default_m, default_m
         if np.isfinite(missing_dn):
-            valid = arr[arr != missing_dn]
-            if valid.size == 0:
+            arr = arr[arr != missing_dn]
+            if arr.size == 0:
                 return default_m, default_m
-            dn_min = float(valid.min())
-            dn_max = float(valid.max())
+        if arr.dtype.kind == "f":
+            # NaN voids of a floating-point raster are excluded: a plain min/max
+            # returns NaN and collapsed the envelope to the mean sphere, so no
+            # summit above it was ever terrain-checked. fmin/fmax skip NaN and,
+            # unlike nanmin on a memmap, copy nothing.
+            dn_min = float(np.fmin.reduce(arr, axis=None))
+            dn_max = float(np.fmax.reduce(arr, axis=None))
         else:
             dn_min = float(arr.min())
             dn_max = float(arr.max())
@@ -1875,7 +2015,10 @@ def parse_pds3_label(lbl_path: str | Path) -> PDS3MapInfo | PDS3RasterInfo:
 
     txt = _strip_pds_comments(_read_text(lbl_path))
 
-    is_ldem = (
+    # LDAM/DGDR rasters carry LINE/SAMPLE_PROJECTION_OFFSET too; they are never LDEMs.
+    pid_m = _RE_PRODUCT_ID.search(txt)
+    identity = f"{lbl_path.name}\n{pid_m.group(1) if pid_m else ''}"
+    is_ldem = not (_RE_LDAM_PRODUCT.search(identity) or _RE_DGDR_PRODUCT.search(identity)) and (
         re.search(r"\bA_AXIS_RADIUS\b", txt) is not None
         or re.search(r"\bB_AXIS_RADIUS\b", txt) is not None
         or re.search(r"\bC_AXIS_RADIUS\b", txt) is not None

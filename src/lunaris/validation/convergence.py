@@ -66,11 +66,16 @@ def observed_order_from_solutions(
     ``p = log_r(|u_c - u_m| / |u_m - u_f|)`` with refinement ratio ``r``. Used
     when no exact solution is available. Returns ``inf`` when the finer
     difference underflows to zero (already at round-off — treat as converged).
+    Returns ``nan`` when *both* differences are zero: the solution did not move
+    across the sweep (e.g. a solver that ignores ``dt``), which is 0/0 and must
+    not be reported as converged.
     """
     if refinement <= 1.0:
         raise ValueError(f"refinement must be > 1, got {refinement!r}")
     d_coarse = _norm(np.asarray(u_coarse, np.float64) - np.asarray(u_medium, np.float64))
     d_fine = _norm(np.asarray(u_medium, np.float64) - np.asarray(u_fine, np.float64))
+    if d_coarse == 0.0 and d_fine == 0.0:
+        return math.nan
     if d_fine == 0.0:
         return math.inf
     if d_coarse == 0.0:
@@ -86,12 +91,15 @@ def observed_order_from_errors(
 ) -> float:
     """Observed order from two errors against a known reference.
 
-    ``p = log_r(e_c / e_m)``. Returns ``inf`` when the finer error underflows.
+    ``p = log_r(e_c / e_m)``. Returns ``inf`` when the finer error underflows,
+    and ``nan`` when both errors are zero (0/0, not a demonstrated order).
     """
     if refinement <= 1.0:
         raise ValueError(f"refinement must be > 1, got {refinement!r}")
     e_c = abs(float(error_coarse))
     e_m = abs(float(error_medium))
+    if e_c == 0.0 and e_m == 0.0:
+        return math.nan
     if e_m == 0.0:
         return math.inf
     if e_c == 0.0:
@@ -166,17 +174,18 @@ def evaluate_convergence(
 ) -> ConvergenceGateResult:
     """Judge an observed order against an expected-order tolerance band.
 
-    The gate passes when ``|observed - expected| <= order_tol`` (an observed
-    order *above* expected is fine — superconvergence — but a large positive
-    deviation usually means the error is at the round-off floor, which the caller
-    can inspect via the Richardson estimate). ``inf`` observed order (finest
-    difference at round-off) passes: the scheme has converged to machine
-    precision.
+    The gate is one-sided: it passes when ``observed >= expected - order_tol``.
+    An observed order *above* expected is fine (superconvergence), though a
+    large positive deviation usually means the error is at the round-off floor,
+    which the caller can inspect via the Richardson estimate. ``inf`` observed
+    order (finest difference at round-off) passes: the scheme has converged to
+    machine precision. ``nan`` (0/0, e.g. a solver that ignores ``dt``) fails.
     """
     if math.isinf(observed_order):
-        passed = True
+        passed = observed_order > 0.0
     else:
-        passed = abs(observed_order - expected_order) <= order_tol
+        # False for nan, so an undetermined order never passes.
+        passed = (observed_order - expected_order) >= -order_tol
     return ConvergenceGateResult(
         expected_order=float(expected_order),
         observed_order=float(observed_order),
@@ -243,7 +252,9 @@ def run_convergence_gate(
         e_c = _norm(np.asarray(u_c, np.float64) - ref)
         e_m = _norm(np.asarray(u_m, np.float64) - ref)
         e_f = _norm(np.asarray(u_f, np.float64) - ref)
-        order = observed_order_from_errors(e_c, e_m, refinement=refinement)
+        # The finest pair (medium, fine): a sequence that has stalled at the
+        # finest step would otherwise read a plausible order off the coarse pair.
+        order = observed_order_from_errors(e_m, e_f, refinement=refinement)
         rich = richardson_error_estimate(u_m, u_f, order, refinement=refinement)
         diagnostics = {"error_coarse": e_c, "error_medium": e_m, "error_fine": e_f}
     else:

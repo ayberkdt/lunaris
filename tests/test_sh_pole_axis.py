@@ -115,9 +115,9 @@ def test_axis_value_is_approach_limit(model, lam_lon):
 
 def test_continuity_across_pole_safe_cutoff(model):
     """The analytic branch (rho below the pole-safe cutoff) must join the
-    regular evaluation path smoothly. The residual difference is the known
-    EPS_1E24 softening of the longitudinal projection (~1e-8 relative at
-    rho = 1e-8 m), not a physical discontinuity."""
+    regular evaluation path smoothly. The residual difference is the O(theta)
+    geometric tilt of the axial field at rho = 1e-8 m, not a physical
+    discontinuity."""
     r = R_REF + 100e3
     a_axis = model.accel_fixed(np.array([0.0, 0.0, r]))
     rho = 1e-8  # metres: regular path
@@ -164,3 +164,54 @@ def test_torch_matches_numba_on_axis_and_off_axis(model):
     a_torch = evaluator.acceleration(torch.tensor(points, dtype=torch.float64)).numpy()
     a_numba = np.array([model.accel_fixed(p) for p in points])
     np.testing.assert_allclose(a_torch, a_numba, rtol=1e-12, atol=1e-16)
+
+
+@pytest.mark.parametrize("rho", [1.01e-12, 2e-12, 1e-11, 1e-9])
+@pytest.mark.parametrize("north", [True, False])
+def test_just_off_axis_transverse_equals_axis_limit(model, rho, north):
+    """Within nanometres of the axis the transverse field equals the analytic
+    axis limit (the O(theta) correction is ~1e-15 relative here). Previously
+    the numba/torch kernels softened 1/rho^2 to 1/(rho^2 + 1e-24), which
+    halved the longitudinal term at rho ~ 1e-12 m (up to 49% transverse error,
+    measured against a finite difference of the potential), and the batch
+    potential kernel dropped the whole transverse field for
+    1e-14 < rho <= 1e-14 r (100% error)."""
+    from lunaris.physics.spherical_harmonics import sh_potential_accel_fixed
+
+    r = R_REF + 100e3
+    zs = 1.0 if north else -1.0
+    ax_exp, ay_exp = _axis_transverse_expected(model, r, north=north)
+    scale = math.hypot(ax_exp, ay_exp)
+    for lon in (0.3, 2.2):
+        pos = np.array([rho * math.cos(lon), rho * math.sin(lon), zs * math.sqrt(r * r - rho * rho)])
+        mono = -MU * pos / float(np.linalg.norm(pos)) ** 3
+        a_serial = model.accel_fixed(pos) - mono
+        _, a_batch = sh_potential_accel_fixed(
+            pos[None, :], model.Cnm, model.Snm, MU, R_REF, DEGREE
+        )
+        a_batch = a_batch[0] - mono
+        for a in (a_serial, a_batch):
+            assert math.hypot(a[0] - ax_exp, a[1] - ay_exp) < 1e-9 * scale
+
+
+def test_torch_matches_numba_just_off_axis(model):
+    torch = pytest.importorskip("torch")
+    from lunaris.physics.torch_spherical_harmonics import TorchSHGravityEvaluator
+
+    evaluator = TorchSHGravityEvaluator(model, degree=DEGREE, device="cpu", dtype=torch.float64)
+    r = R_REF + 100e3
+    points = np.array(
+        [[rho * math.cos(0.7), rho * math.sin(0.7), r] for rho in (1.01e-12, 2e-12, 1e-11, 1e-9, 1.3e-4)]
+    )
+    a_torch = evaluator.acceleration(torch.tensor(points, dtype=torch.float64)).numpy()
+    a_numba = np.array([model.accel_fixed(p) for p in points])
+    np.testing.assert_allclose(a_torch, a_numba, rtol=1e-12, atol=1e-16)
+
+
+def test_exact_inverse_is_bit_identical_to_softened_form_above_013_mm():
+    """Off-axis parity of the 1/rho^2 change: for rho^2 >= 2**-26 m^2
+    (rho >= 0.13 mm) adding 1e-24 is below half an ulp, so the old softened
+    inverse and the exact one are the same double."""
+    rho2 = np.concatenate([2.0**-26 * (1.0 + np.linspace(0.0, 1.0, 1001)), np.logspace(-7.8, 13.0, 4001)])
+    assert np.array_equal(1.0 / (rho2 + 1e-24), 1.0 / rho2)
+    assert 1.0 / (2.0**-27 + 1e-24) != 1.0 / 2.0**-27  # and not below the bound

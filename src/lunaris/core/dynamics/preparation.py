@@ -58,7 +58,16 @@ from lunaris.physics.lunar_albedo import (
     ALBEDO_SOURCE_GRID,
     normalize_albedo_mode,
 )
-from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig
+from lunaris.physics.surface_effects import (
+    SURFACE_INTEGRATION_QUADRATURE,
+    AlbedoConfig,
+    ThermalConfig,
+)
+from lunaris.physics.surface_radiation_quadrature import (
+    DEFAULT_AZIMUTH_NODES,
+    DEFAULT_RADIAL_NODES,
+    gauss_legendre_unit_interval,
+)
 from lunaris.physics.thermal_ir import (
     THERMAL_MODE_CONSTANT,
     THERMAL_MODE_TEMPERATURE_GRID,
@@ -354,9 +363,16 @@ def prepare_adaptive_gravity_policy(
     if adaptive is None or not bool(getattr(adaptive, "enabled", False)) or int(nmax) <= 0:
         return disabled
 
-    min_degree = max(0, min(int(nmax), int(getattr(adaptive, "min_degree", 4) or 4)))
+    # Defaults apply only to a missing/None attribute: min_degree=0 is a valid
+    # floor (the point-mass term), and power must be > 0, so 0 is refused
+    # rather than replaced.
+    raw_min_degree = getattr(adaptive, "min_degree", None)
+    min_degree = max(0, min(int(nmax), 4 if raw_min_degree is None else int(raw_min_degree)))
     quant_step = max(1, int(getattr(adaptive, "quantization_step", 10) or 10))
-    power = float(getattr(adaptive, "power", 2.5) or 2.5)
+    raw_power = getattr(adaptive, "power", None)
+    power = 2.5 if raw_power is None else float(raw_power)
+    if not (math.isfinite(power) and power > 0.0):
+        raise ValueError(f"Adaptive SH degree power must be finite and > 0, got {raw_power!r}.")
 
     raw_table = getattr(adaptive, "altitude_table", None)
     if raw_table:
@@ -637,6 +653,26 @@ def resolve_effective_requirements(
     return req
 
 
+def _quadrature_fields(cfg: Any) -> dict[str, Any]:
+    """Pack fields for the surface integration an albedo/thermal config selects."""
+    integration = str(getattr(cfg, "surface_integration", SURFACE_INTEGRATION_QUADRATURE))
+    if integration != SURFACE_INTEGRATION_QUADRATURE:
+        return {"integration": 0}
+    nodes, weights = gauss_legendre_unit_interval(
+        int(getattr(cfg, "quadrature_radial_nodes", DEFAULT_RADIAL_NODES))
+    )
+    return {
+        "integration": 1,
+        # The facets are built on the same sphere, so both integrations see one Moon.
+        "surface_radius_m": float(R_MOON),
+        "cell_lat_count": 0,
+        "cell_lon_count": 0,
+        "quadrature_nodes": nodes,
+        "quadrature_weights": weights,
+        "quadrature_azimuth_nodes": int(getattr(cfg, "quadrature_azimuth_nodes", DEFAULT_AZIMUTH_NODES)),
+    }
+
+
 def prepare_albedo(
     req: DynamicsRequirements,
     *,
@@ -675,10 +711,17 @@ def prepare_albedo(
         facet_albedo = _sample_facet_albedo_from_provider(surf, source, lat_c, lon_c, fallback)
 
     np.clip(facet_albedo, 0.0, 1.0, out=facet_albedo)
+    quadrature = _quadrature_fields(cfg)
+    if quadrature["integration"] == 1 and source != ALBEDO_SOURCE_CONSTANT:
+        # A mapped albedo is read per quadrature node from the facet cells.
+        quadrature["cell_lat_count"] = lat_count
+        quadrature["cell_lon_count"] = lon_count
 
     return _AlbedoPack(
         backend=1,
         mode=2,
+        alb_const=fallback,
+        **quadrature,
         facet_pos_m=pos,
         facet_normals=normals,
         facet_areas_m2=areas,
@@ -698,12 +741,16 @@ def _prepare_albedo_simple(cfg: AlbedoConfig, surface_provider: Any) -> _AlbedoP
 
     Reproduces the historical albedo behavior (single sub-satellite albedo
     sample, Sun->spacecraft push, SRP coefficient ``cr``). Works without a
-    provider using a constant albedo from the config.
+    provider using a constant albedo from the config. ``enable_eclipse`` gates
+    the kernel's Moon-shadow test, as in ``surface_effects.albedo_accel``.
     """
     const = float(getattr(cfg, "albedo_const", 0.12))
     klamb = float(getattr(cfg, "k_lambert", 1.0))
+    eclipse = bool(getattr(cfg, "enable_eclipse", True))
     if surface_provider is None:
-        return _AlbedoPack(backend=0, mode=2, alb_const=const, alb_scale=1.0, k_lambert=klamb)
+        return _AlbedoPack(
+            backend=0, mode=2, alb_const=const, alb_scale=1.0, k_lambert=klamb, enable_eclipse=eclipse
+        )
 
     surf = extract_surface_provider_strict(surface_provider)
     alb_const = float(surf.get("albedo_const", const))
@@ -717,6 +764,7 @@ def _prepare_albedo_simple(cfg: AlbedoConfig, surface_provider: Any) -> _AlbedoP
             alb_const=alb_const,
             alb_scale=alb_scale,
             k_lambert=k_lambert,
+            enable_eclipse=eclipse,
             grid_alb=surf["albedo_grid"],
             n_lines=int(surf["n_lines"]),
             n_samples=int(surf["n_samples"]),
@@ -731,6 +779,7 @@ def _prepare_albedo_simple(cfg: AlbedoConfig, surface_provider: Any) -> _AlbedoP
             alb_const=alb_const,
             alb_scale=alb_scale,
             k_lambert=k_lambert,
+            enable_eclipse=eclipse,
             dn=surf["dn"],
             n_lines=int(surf["n_lines"]),
             n_samples=int(surf["n_samples"]),
@@ -745,7 +794,8 @@ def _prepare_albedo_simple(cfg: AlbedoConfig, surface_provider: Any) -> _AlbedoP
             latmax=float(surf.get("lat_max_deg", 90.0)),
         )
     return _AlbedoPack(
-        backend=0, mode=2, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert
+        backend=0, mode=2, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert,
+        enable_eclipse=eclipse,
     )
 
 
@@ -954,7 +1004,14 @@ def prepare_thermal(
             )
         temps = np.ascontiguousarray(arr, dtype=np.float64)
 
+    quadrature = _quadrature_fields(cfg)
+    if quadrature["integration"] == 1 and mode == THERMAL_MODE_TEMPERATURE_GRID:
+        # Prescribed temperatures are read per quadrature node from the facet cells.
+        quadrature["cell_lat_count"] = lat_count
+        quadrature["cell_lon_count"] = lon_count
+
     return _ThermalPack(
+        **quadrature,
         mode=int(mode),
         surface_emissivity=float(getattr(cfg, "surface_emissivity", 0.95)),
         surface_albedo=float(getattr(cfg, "surface_albedo", 0.12)),

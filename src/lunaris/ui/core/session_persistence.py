@@ -19,6 +19,8 @@ Design goals
 from __future__ import annotations
 
 import dataclasses
+import json
+import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -138,18 +140,23 @@ def _prefer_dedicated_albedo_root(project_root: Path, state: DataFilesState) -> 
     return state
 
 
-def _safe_call(default: Any, fn: Callable[[], Any]) -> Any:
+def _safe_call(
+    default: Any, fn: Callable[[], Any], failures: list[str] | None = None, section: str = ""
+) -> Any:
     """
     Execute a small page/config accessor without letting restore/save fail hard.
 
-    Persistence should be resilient. If one page is not fully initialized yet,
-    the caller still deserves the best-effort snapshot instead of a fatal
-    exception.
+    A page that cannot be read yields ``default`` so the caller still gets a
+    snapshot, and the failure is appended to ``failures``; the snapshot names it
+    in ``meta.unreadable_sections`` so a save can refuse to write a blank
+    section over a good session. Cosmetic restores pass no ``failures`` list.
     """
 
     try:
         return fn()
-    except Exception:
+    except Exception as exc:
+        if failures is not None:
+            failures.append(f"{section}: {type(exc).__name__}: {exc}")
         return default
 
 
@@ -177,6 +184,7 @@ def collect_session_snapshot(
     runs them through :func:`migrate_session_payload` first.
     """
 
+    failures: list[str] = []
     orbit_payload = _safe_call(
         {
             "mode": "hp_ha",
@@ -191,23 +199,35 @@ def collect_session_snapshot(
             "ta_deg": "",
         },
         lambda: orbit_page.get_data() or {},
+        failures, "orbit",
     )
 
-    propagation_payload = _safe_call({"timeline": {}, "integrator": {}}, lambda: propagation_page.to_dict() or {})
-    forces_payload = _safe_call({}, lambda: force_page.get_data() or {})
+    propagation_payload = _safe_call(
+        {"timeline": {}, "integrator": {}}, lambda: propagation_page.to_dict() or {},
+        failures, "propagation",
+    )
+    forces_payload = _safe_call({}, lambda: force_page.get_data() or {}, failures, "forces")
     output_state = _safe_call(
         OutputPageState(output_dir="", generate_3d_plots=False, downsample_3d=1, report_preset="standard"),
         lambda: output_page.get_state(),
+        failures, "output",
     )
-    data_state = _safe_call(DataFilesState(), lambda: data_page.get_state())
+    data_state = _safe_call(DataFilesState(), lambda: data_page.get_state(), failures, "data")
+    batch_payload = (
+        _safe_call({}, lambda: batch_page.get_data(), failures, "batch")
+        if batch_page is not None else {}
+    )
+    meta: dict[str, Any] = {
+        "schema_version": SESSION_SCHEMA_VERSION,
+        "app": SESSION_APP_NAME,
+        "version": app_version,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    if failures:
+        meta["unreadable_sections"] = failures
 
     return {
-        "meta": {
-            "schema_version": SESSION_SCHEMA_VERSION,
-            "app": SESSION_APP_NAME,
-            "version": app_version,
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-        },
+        "meta": meta,
         "orbit": {
             "mode": orbit_payload.get("mode", "hp_ha"),
             "hp_km": str(orbit_payload.get("hp_km", "")),
@@ -249,7 +269,7 @@ def collect_session_snapshot(
         # older consumers ignore the nested forces payload.
         "gravity_config": gravity_cfg.to_dict(),
         # Batch propagation configuration (absent when batch_page is not wired in)
-        "batch_propagation": _safe_call({}, lambda: batch_page.get_data()) if batch_page is not None else {},
+        "batch_propagation": batch_payload,
         # Visual workspace state — absent in old sessions; restore tolerates absence.
         "visual_state": {},   # populated via collect_visual_state() if caller fills it
     }
@@ -600,3 +620,55 @@ def autodetect_data_state(project_root: Path, current_state: DataFilesState) -> 
         ),
         messages,
     )
+
+
+# ---------------------------------------------------------------------------
+# Session file I/O
+# ---------------------------------------------------------------------------
+
+
+class SessionFileUnreadable(ValueError):
+    """A session file exists but is not readable JSON (typo, truncation, encoding)."""
+
+
+def read_session_file(path: Path) -> Any:
+    """Parse a session file; a UTF-8 BOM is accepted.
+
+    Raises ``SessionFileUnreadable`` when the bytes are not JSON, so the caller
+    can quarantine the file instead of letting the next save overwrite it with
+    defaults. ``OSError`` (missing, locked) propagates unchanged.
+    """
+    raw = Path(path).read_bytes()
+    try:
+        return json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SessionFileUnreadable(f"{Path(path).name}: {exc}") from exc
+
+
+def quarantine_session_file(path: Path) -> Path:
+    """Move an unreadable session file aside (``<name>.bak``, then ``.bak.<n>``) and return the new path."""
+    path = Path(path)
+    target = path.with_name(path.name + ".bak")
+    n = 1
+    while target.exists():
+        target = path.with_name(f"{path.name}.bak.{n}")
+        n += 1
+    os.replace(path, target)
+    return target
+
+
+def write_session_file(path: Path, data: Any) -> None:
+    """Write a session file atomically (temporary file in the same folder, then ``os.replace``).
+
+    An exception while serializing or writing leaves the previous file intact
+    instead of a truncated one.
+    """
+    path = Path(path)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()

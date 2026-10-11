@@ -61,7 +61,31 @@ def _topography_requested(surface_provider: Any, topo_grid: Any) -> bool:
     topography-dependent ephemeris for albedo-only provider plumbing.
     """
 
-    return bool(topo_grid is not None or _surface_provider_topography_grid(surface_provider) is not None)
+    return bool(
+        topo_grid is not None
+        or _surface_provider_topography_grid(surface_provider) is not None
+        or _surface_provider_topo_payload_has_grid(surface_provider)
+    )
+
+
+def _surface_provider_topo_payload_has_grid(surface_provider: Any) -> bool:
+    """True when the provider's terrain payload carries a DN grid.
+
+    ``InMemorySurfaceProvider.grids()`` is empty (not file-backed) while its
+    ``topo_payload()`` still hands an injected grid to the terrain impact
+    kernels (``BatchPropagationEngine._resolve_topo_payload``); planning must see
+    that grid so the Moon-fixed rotation table is built.
+    """
+    if not _surface_provider_present(surface_provider):
+        return False
+    payload_fn = getattr(surface_provider, "topo_payload", None)
+    if not callable(payload_fn):
+        return False
+    try:
+        payload = payload_fn()
+    except Exception:
+        return False
+    return isinstance(payload, dict) and payload.get("dn", None) is not None
 
 
 def _surface_force_provider_requested(cfg: Any) -> bool:

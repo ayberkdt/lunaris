@@ -15,8 +15,14 @@ Responsibilities
 1) Kernel lifecycle (initialization-time only)
    - Resolves/normalizes kernel paths and optionally auto-fixes common path issues.
    - Loads the requested SPICE kernels (LSK/SPK/PCK/BPC/FK/TF).
-   - Optionally starts from a clean SPICE state (`clean_kernels_before=True`).
-   - Optionally clears the SPICE kernel pool after table generation (`clear_kernels_after=True`).
+   - By default (`clean_kernels_before=False`/`clear_kernels_after=False`) it
+     furnishes only its own resolved kernels and unloads exactly those
+     (`spice.unload`) afterwards, so kernels another caller furnished survive.
+     Passing either flag `True` opts into a `spice.kclear()` of the *entire*
+     kernel pool before/after -- only safe when the caller owns the whole
+     process's SPICE state.
+   - Every build holds a process-wide lock (`_SPICE_LOCK`): CSPICE is not
+     thread-safe and the desktop app builds tables from worker threads.
 
    Notes on kernel paths:
    - Some distributions ship text-wrapped kernels (e.g., `.tls.txt`, `.tf.txt`, `.bpc.txt`).
@@ -142,6 +148,8 @@ Typical usage
 from __future__ import annotations
 
 import json
+import re
+import threading
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -161,6 +169,7 @@ from lunaris.common.math_utils import (
     quat_conj,
     quat_rotate_vec,
 )
+from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
 from lunaris.common.type_defs import F64Array, TimeConfig
 from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_kernel_paths
 
@@ -171,6 +180,11 @@ from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_ke
 DEFAULT_INERTIAL_FRAME = "J2000"
 DEFAULT_FIXED_FRAME = "MOON_PA"
 DEFAULT_OBSERVER = "MOON"
+
+# CSPICE keeps global state (kernel pool, error status) and is not thread-safe.
+# Every SPICE call in this module runs under this process-wide lock; re-entrant
+# so a locked caller may call a locked helper.
+_SPICE_LOCK = threading.RLock()
 
 
 # Fallback GM values (m^3/s^2) if the SPICE kernel pool is missing data.
@@ -205,7 +219,11 @@ class SpiceBuildConfig:
     observer: str = DEFAULT_OBSERVER
 
     include_third_body: bool = True
-    clear_kernels_after: bool = True
+    #: ``False`` (default) unloads exactly the kernels this build furnished
+    #: (``spice.unload``). ``True`` opts into ``spice.kclear()`` of the
+    #: *entire* kernel pool -- only safe when the caller owns the whole
+    #: process's SPICE state.
+    clear_kernels_after: bool = False
 
     earth_target: str = "EARTH"
     sun_target: str = "SUN"
@@ -449,7 +467,8 @@ def get_body_gm_m3s2(
         effective_fallback = _FALLBACK_GM_M3S2.get(body)
 
     try:
-        dim, values = spice.bodvrd(body, "GM", 1)
+        with _SPICE_LOCK:
+            dim, values = spice.bodvrd(body, "GM", 1)
         if int(dim) != 1 or values is None or len(values) < 1:
             raise SpiceyError("GM returned with unexpected dimension/values.")
         gm_km3s2 = float(values[0])
@@ -575,6 +594,47 @@ def _classify_kernel(path: str) -> str:
     return _KERNEL_KIND_BY_SUFFIX.get(suffix, "UNKNOWN")
 
 
+_RE_NON_UTC_TIME_SYSTEM = re.compile(r"\b(TDB|TDT|TT)\b", flags=re.IGNORECASE)
+
+
+def _require_utc_after_1972(start: str, et0: float, str2et: Any) -> None:
+    """Refuse a UTC start epoch before 1972-01-01.
+
+    The leapseconds kernel models UTC only from 1972 (integer TAI-UTC). For an
+    earlier UTC string ``str2et`` silently applies TAI-UTC = 9 s, while the real
+    (rubber-second) offset was 7.57 s on 1969-07-20 and ~1.4 s in 1960, so the
+    epoch, and every Sun/Earth/attitude sample, is off by seconds. A TDB or TT
+    epoch string (``"1969-07-20T20:17:40 TDB"``) has no such ambiguity.
+    """
+    if _RE_NON_UTC_TIME_SYSTEM.search(start):
+        return
+    if et0 < float(str2et("1972-01-01T00:00:00")):
+        raise ValueError(
+            f"start epoch {start!r} is UTC before 1972-01-01, where the leapseconds kernel has "
+            "no UTC model (SPICE would apply TAI-UTC = 9 s instead of the historical value). "
+            "Give the epoch in TDB or TT instead, e.g. '1969-07-20T20:17:40 TDB'."
+        )
+
+
+def spice_provenance_fields(ephem: Any) -> dict[str, Any]:
+    """Manifest fields for an ephemeris manager's SPICE provenance chain.
+
+    Returns ``{"spice_kernels": ...}`` or, when capture fails,
+    ``{"spice_kernels_unavailable_reason": "<Type>: <message>"}`` plus a
+    ``RuntimeWarning``. Provenance capture must not abort a completed run, but a
+    failure must leave a trace in the archive instead of silently removing the
+    kernel list. ``{}`` when there is no ephemeris manager.
+    """
+    if ephem is None or not hasattr(ephem, "kernel_provenance"):
+        return {}
+    try:
+        return {"spice_kernels": ephem.kernel_provenance()}
+    except Exception as exc:  # recorded and warned, never swallowed
+        reason = f"{type(exc).__name__}: {exc}"
+        warnings.warn(f"SPICE kernel provenance unavailable: {reason}", RuntimeWarning, stacklevel=2)
+        return {"spice_kernels_unavailable_reason": reason}
+
+
 def _capture_kernel_provenance(kernels: Sequence[str]) -> tuple[Mapping[str, Any], ...]:
     """Hash and classify each resolved kernel for the run manifest chain.
 
@@ -599,20 +659,32 @@ def _capture_kernel_provenance(kernels: Sequence[str]) -> tuple[Mapping[str, Any
 def _spice_kernels_loaded(
     kernels: Sequence[str],
     *,
-    clean_before: bool = True,
-    clear_after: bool = True,
+    clean_before: bool = False,
+    clear_after: bool = False,
 ) -> Iterator[None]:
-    """Loads kernels into a predictable SPICE state and guarantees cleanup."""
+    """Furnishes *kernels* and guarantees they -- and only they -- are removed.
+
+    By default this never touches kernels another caller furnished: it
+    furnishes exactly *kernels* and, on exit, unloads exactly those paths with
+    ``spice.unload`` (which removes only the most recent load of a path, so a
+    kernel the caller had already loaded stays loaded). ``clean_before`` /
+    ``clear_after`` opt into ``spice.kclear()`` of the *entire* pool.
+    """
     if clean_before:
         spice.kclear()
 
+    furnished: list[str] = []
     try:
         for k in kernels:
             spice.furnsh(str(k))
+            furnished.append(str(k))
         yield
     finally:
         if clear_after:
             spice.kclear()
+        else:
+            for k in reversed(furnished):
+                spice.unload(k)
 
 
 def build_tables(
@@ -625,14 +697,18 @@ def build_tables(
     fixed_frame: str = DEFAULT_FIXED_FRAME,
     observer: str = DEFAULT_OBSERVER,
     include_third_body: bool = True,
-    clear_kernels_after: bool = True,
-    clean_kernels_before: bool = True,
+    clear_kernels_after: bool = False,
+    clean_kernels_before: bool = False,
     earth_target: str = "EARTH",
     sun_target: str = "SUN",
     auto_fix_kernel_paths: bool = True,
     need_moon_fixed_rotation: bool = True,
 ) -> EphemerisTables:
-    """Core builder: samples SPICE at uniform output_dt_s to build ephemeris tables."""
+    """Core builder: samples SPICE at uniform output_dt_s to build ephemeris tables.
+
+    Holds ``_SPICE_LOCK`` for the whole build. By default only this build's
+    own kernels are furnished and unloaded again; see ``_spice_kernels_loaded``.
+    """
 
     dt = _require_positive("output_dt_s", output_dt_s)
     _require_positive("duration_s", duration_s)
@@ -684,7 +760,7 @@ def build_tables(
     except Exception:  # pragma: no cover
         SpiceyError = Exception
 
-    with _spice_kernels_loaded(
+    with _SPICE_LOCK, _spice_kernels_loaded(
         k_list,
         clean_before=bool(clean_kernels_before),
         clear_after=bool(clear_kernels_after),
@@ -693,6 +769,7 @@ def build_tables(
             et0 = float(spice.str2et(str(start_utc)))
         except SpiceyError as e:
             raise ValueError(f"SPICE failed to parse start_utc={start_utc!r}") from e
+        _require_utc_after_1972(str(start_utc), et0, spice.str2et)
 
         # Uniform ET grid
         et_tab = et0 + t_tab
@@ -827,7 +904,14 @@ def build_spice_tables(
     """High-level public builder: merges TimeConfig + SpiceBuildConfig."""
 
     sd = time_cfg.start_date
-    start_utc = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
+    # SPICE str2et rejects explicit UTC offsets ("+03:00", also the output of a
+    # timezone-aware datetime.isoformat()); normalise ISO inputs to a UTC "Z"
+    # string as the CLI does, and pass anything that is not ISO (SPICE
+    # calendar formats, "... TDB") through unchanged.
+    try:
+        start_utc = normalize_iso_datetime_to_utc_string(sd, precision=6).replace(".000000Z", "Z")
+    except (TypeError, ValueError):
+        start_utc = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
 
     dt = time_cfg.output_dt_s
     if dt is None:
@@ -836,9 +920,18 @@ def build_spice_tables(
             "Set output_dt_s (e.g., 60.0) for SPICE sampling."
         )
 
+    # Table t=0 is start_date and the propagator samples at absolute solver time
+    # t in [t0_s, t0_s + duration_s], so the grid must cover that whole window.
+    t0_s = float(getattr(time_cfg, "t0_s", 0.0) or 0.0)
+    if t0_s < 0.0:
+        raise ValueError(
+            f"TimeConfig.t0_s={t0_s!r} precedes start_date; SPICE tables start at t=0 "
+            "(start_date). Move start_date earlier instead of using a negative t0_s."
+        )
+
     return build_tables(
         start_utc=start_utc,
-        duration_s=_require_positive("duration_s", time_cfg.duration_s),
+        duration_s=t0_s + _require_positive("duration_s", time_cfg.duration_s),
         output_dt_s=_require_positive("output_dt_s", dt),
         kernels=spice_cfg.kernels,
         inertial_frame=str(spice_cfg.inertial_frame),
@@ -928,7 +1021,16 @@ class EphemerisManager:
         t = self.tables
         et0 = float(t.et0)
         et_end = et0 + float(t.t_tab_s[-1]) if t.t_tab_s.size else et0
+        out: dict[str, Any] = {}
+        if not t.kernel_provenance:
+            # An empty list must not read as "built from no kernels": tables
+            # loaded from an archive without kernel_provenance_json carry none.
+            out["kernels_unavailable_reason"] = (
+                "the ephemeris tables carry no kernel provenance (for example, "
+                "loaded from an archive without kernel_provenance_json)"
+            )
         return {
+            **out,
             "kernels": [dict(k) for k in t.kernel_provenance],
             "time_scale_note": t.time_scale_note,
             "et_start": et0,
@@ -980,14 +1082,16 @@ class EphemerisManager:
             out[:] = tab[0]
             return out
 
+        # Same sampling as the RHS (get_ephem_state_with_velocity), incl. the
+        # one-interval edge continuation.
         x, y, z = interp_vec3_hermite(
-            float(t_s), float(self.tables.dt_s), tab, velocity_tab
+            float(t_s), float(self.tables.dt_s), tab, velocity_tab, True
         )
         return self._write_vec3(out, x, y, z)
 
     def _interp_quat_i2f(self, t_s: float) -> tuple[float, float, float, float]:
-        # interp_quat_slerp -> (w,x,y,z)
-        return interp_quat_slerp(float(t_s), float(self.tables.dt_s), self.tables.q_i2f_tab)
+        # Same sampler as the RHS (get_ephem_state_with_velocity) -> (w,x,y,z)
+        return interp_quat_safe(float(t_s), float(self.tables.dt_s), self.tables.q_i2f_tab, True)
 
     # --- Interpolation: public --------------------------------------------
 
@@ -1112,6 +1216,61 @@ def _clamp_u_to_index_and_frac(u: float, n: int) -> tuple[int, float]:
 
 
 @njit(cache=True, nogil=True, inline="always")
+def _extrap_u_to_index_and_frac(u: float, n: int) -> tuple[int, float]:
+    """Like :func:`_clamp_u_to_index_and_frac`, but extrapolate one interval past each end.
+
+    For ``u`` in ``[-1, 0)`` returns ``(0, u)`` and for ``u`` in ``(n-1, n]``
+    returns ``(n-2, u-(n-2))``: the edge segment's cubic is continued instead of
+    holding the end row. Yoshida compositions evaluate the force up to
+    0.92 steps before ``t0`` / after ``tf`` (``stage_time_overhang``); holding the
+    end row there froze the Moon attitude and Sun/Earth for that stage. Beyond
+    one interval it clamps exactly as before; inside the table it is identical.
+    """
+    if u < 0.0:
+        if u >= -1.0:
+            return 0, u
+        return 0, 0.0
+    umax = float(n - 1)
+    if u > umax:
+        if u <= umax + 1.0:
+            return n - 2, u - float(n - 2)
+        return n - 2, 1.0
+    return _clamp_u_to_index_and_frac(u, n)
+
+
+@njit(cache=True, nogil=True)
+def _quat_geodesic(
+    a0: float, a1: float, a2: float, a3: float,
+    b0: float, b1: float, b2: float, b3: float,
+    f: float,
+) -> tuple[float, float, float, float]:
+    """Point at fraction ``f`` on the shortest great arc through unit quaternions a, b.
+
+    Unlike the table SLERP (which clamps ``f`` to [0, 1]) this continues the arc
+    for ``f`` outside [0, 1]: constant-rate rotation, used for the one-interval
+    extrapolation band of :func:`interp_quat_safe`.
+    """
+    dot = a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3
+    if dot < 0.0:
+        b0, b1, b2, b3, dot = -b0, -b1, -b2, -b3, -dot
+    if dot > 0.9995:
+        wa = 1.0 - f
+        wb = f
+    else:
+        dot = min(dot, 1.0)
+        th = np.arccos(dot)
+        s = np.sin(th)
+        wa = np.sin((1.0 - f) * th) / s
+        wb = np.sin(f * th) / s
+    q0 = wa * a0 + wb * b0
+    q1 = wa * a1 + wb * b1
+    q2 = wa * a2 + wb * b2
+    q3 = wa * a3 + wb * b3
+    nrm = np.sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3)
+    return q0 / nrm, q1 / nrm, q2 / nrm, q3 / nrm
+
+
+@njit(cache=True, nogil=True, inline="always")
 def _lerp(a: float, b: float, f: float) -> float:
     return a + (b - a) * f
 
@@ -1122,13 +1281,22 @@ def interp_vec3_hermite(
     dt_s: float,
     position_tab: np.ndarray,
     velocity_tab: np.ndarray,
+    extrapolate: bool = False,
 ) -> tuple[float, float, float]:
-    """Cubic Hermite position interpolation on a uniform SI state table."""
+    """Cubic Hermite position interpolation on a uniform SI state table.
+
+    Outside the table it holds the end row, matching the GPU samplers. With
+    ``extrapolate=True`` (the CPU RHS samplers) it continues the edge cubic for
+    up to one interval (:func:`_extrap_u_to_index_and_frac`), then holds.
+    """
     n = int(position_tab.shape[0])
     if n <= 1 or dt_s <= 0.0:
         return _row3(position_tab, 0)
     u = t_s / dt_s
-    i, f = _clamp_u_to_index_and_frac(u, n)
+    if extrapolate:
+        i, f = _extrap_u_to_index_and_frac(u, n)
+    else:
+        i, f = _clamp_u_to_index_and_frac(u, n)
     p0x, p0y, p0z = _row3(position_tab, i)
     p1x, p1y, p1z = _row3(position_tab, i + 1)
     v0x, v0y, v0z = _row3(velocity_tab, i)
@@ -1152,13 +1320,17 @@ def interp_vec3_hermite_derivative(
     dt_s: float,
     position_tab: np.ndarray,
     velocity_tab: np.ndarray,
+    extrapolate: bool = False,
 ) -> tuple[float, float, float]:
-    """Analytic time derivative of :func:`interp_vec3_hermite`."""
+    """Analytic time derivative of :func:`interp_vec3_hermite` (same ``extrapolate``)."""
     n = int(position_tab.shape[0])
     if n <= 1 or dt_s <= 0.0:
         return _row3(velocity_tab, 0) if velocity_tab.shape[0] else (0.0, 0.0, 0.0)
     u = t_s / dt_s
-    i, f = _clamp_u_to_index_and_frac(u, n)
+    if extrapolate:
+        i, f = _extrap_u_to_index_and_frac(u, n)
+    else:
+        i, f = _clamp_u_to_index_and_frac(u, n)
     p0x, p0y, p0z = _row3(position_tab, i)
     p1x, p1y, p1z = _row3(position_tab, i + 1)
     v0x, v0y, v0z = _row3(velocity_tab, i)
@@ -1276,15 +1448,35 @@ def interp_vec3_derivative_safe(
 
 
 @njit(cache=True, nogil=True)
-def interp_quat_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, float, float, float]:
+def interp_quat_safe(
+    t_s: float, dt_s: float, tab: np.ndarray, extrapolate: bool = False
+) -> tuple[float, float, float, float]:
     """
     Safe quaternion interpolation:
       - n<=1 or dt<=0 : constant tab[0]
-      - else          : SLERP (via interp_quat_slerp)
+      - ``extrapolate=True`` (CPU RHS samplers) and within one interval outside
+        the table: the edge arc continued at constant rate (Yoshida stage
+        overhang, see ``_extrap_u_to_index_and_frac``)
+      - else          : SLERP (via interp_quat_slerp; holds the end rows outside)
     """
     n = int(tab.shape[0])
     if n <= 1 or dt_s <= 0.0:
         return _row4(tab, 0)
+    if not extrapolate:
+        return interp_quat_slerp(t_s, dt_s, tab)
+    tmax = dt_s * float(n - 1)
+    if -dt_s <= t_s < 0.0:
+        return _quat_geodesic(
+            tab[0, 0], tab[0, 1], tab[0, 2], tab[0, 3],
+            tab[1, 0], tab[1, 1], tab[1, 2], tab[1, 3],
+            t_s / dt_s,
+        )
+    if tmax < t_s <= tmax + dt_s:
+        return _quat_geodesic(
+            tab[n - 2, 0], tab[n - 2, 1], tab[n - 2, 2], tab[n - 2, 3],
+            tab[n - 1, 0], tab[n - 1, 1], tab[n - 1, 2], tab[n - 1, 3],
+            1.0 + (t_s - tmax) / dt_s,
+        )
     return interp_quat_slerp(t_s, dt_s, tab)
 
 
@@ -1320,16 +1512,18 @@ def get_ephem_state_with_velocity(
     use_hermite: bool,
 ) -> tuple[float, float, float, float, float, float, float, float, float, float]:
     """Sample position/attitude using the schema-v2 position+velocity contract."""
+    # The RHS sampler continues the edge segment one interval past the table:
+    # Yoshida stages evaluate the force before t0 / after tf (stage_time_overhang).
     if use_hermite:
-        sx, sy, sz = interp_vec3_hermite(t_s, dt_s, sun_tab_m, sun_velocity_tab_m_s)
-        ex, ey, ez = interp_vec3_hermite(t_s, dt_s, earth_tab_m, earth_velocity_tab_m_s)
+        sx, sy, sz = interp_vec3_hermite(t_s, dt_s, sun_tab_m, sun_velocity_tab_m_s, True)
+        ex, ey, ez = interp_vec3_hermite(t_s, dt_s, earth_tab_m, earth_velocity_tab_m_s, True)
     else:
         # Compatibility path for explicit in-memory providers without velocity
         # tables. Serialized ephemeris artifacts are schema v2 and never enter
         # this branch.
         sx, sy, sz = interp_vec3_safe(t_s, dt_s, sun_tab_m)
         ex, ey, ez = interp_vec3_safe(t_s, dt_s, earth_tab_m)
-    qw, qx, qy, qz = interp_quat_safe(t_s, dt_s, q_i2f_tab)
+    qw, qx, qy, qz = interp_quat_safe(t_s, dt_s, q_i2f_tab, True)
     return sx, sy, sz, ex, ey, ez, qw, qx, qy, qz
 
 
@@ -1341,9 +1535,12 @@ def interp_vec3_state_derivative(
     velocity_tab: np.ndarray,
     use_hermite: bool,
 ) -> tuple[float, float, float]:
-    """Differentiate the canonical state interpolant or its legacy fallback."""
+    """Differentiate the canonical state interpolant or its legacy fallback.
+
+    RHS sampler: extrapolates like :func:`get_ephem_state_with_velocity`.
+    """
     if use_hermite:
-        return interp_vec3_hermite_derivative(t_s, dt_s, position_tab, velocity_tab)
+        return interp_vec3_hermite_derivative(t_s, dt_s, position_tab, velocity_tab, True)
     return interp_vec3_derivative_safe(t_s, dt_s, position_tab)
 
 

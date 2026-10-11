@@ -45,6 +45,37 @@ SPLIT_KIND = {
     "spatial_plus_altitude_stratified": "spatial_generalization",
 }
 
+
+def label_split_kind(policy: str, training_split_policy: str | None) -> tuple[str, str | None]:
+    """Label the generalization kind a split ACTUALLY measures for this model.
+
+    ``SPLIT_KIND`` names what a split policy isolates geometrically, but that is
+    genuine spatial/altitude generalization only when the model was TRAINED with
+    the same policy. If training used e.g. ``seeded_random`` (dense, uniform
+    coverage) and evaluation re-splits with ``spatial_block``, the held-out
+    block's rows are still surrounded by training rows once the leakage guard
+    drops the exact training rows: that is interpolation on a geographically
+    clustered subset. Returns ``(kind, reason)``; ``reason`` is ``None`` unless
+    the native label was downgraded to ``"interpolation"``.
+    """
+    native_kind = SPLIT_KIND.get(policy, "unknown")
+    if native_kind == "interpolation":
+        return native_kind, None
+    if training_split_policy is not None and training_split_policy == policy:
+        return native_kind, None
+    reason = (
+        f"evaluation split policy {policy!r} nominally measures {native_kind!r}, but the "
+        + (
+            f"model was trained with split_policy={training_split_policy!r} (not {policy!r}); "
+            if training_split_policy is not None
+            else "model's training split_policy is unknown (leakage guard could not establish it); "
+        )
+        + "held-out filtering only excludes exact training rows, not systematic spatial/altitude "
+        "overlap with a differently-trained model, so this is downgraded to interpolation"
+    )
+    return "interpolation", reason
+
+
 DEFAULT_FIELD_POLICIES = (
     "seeded_random",
     "altitude_stratified",
@@ -55,9 +86,21 @@ DEFAULT_FIELD_POLICIES = (
 
 
 def _rms(values: np.ndarray) -> float:
+    """Root-mean-square that propagates NaN/Inf.
+
+    Non-finite entries are deliberately kept: a prediction set with a few NaN
+    rows must report a NaN RMSE, not a clean number over the finite remainder.
+    """
     arr = np.asarray(values, dtype=np.float64).reshape(-1)
-    arr = arr[np.isfinite(arr)]
     return float(np.sqrt(np.mean(arr * arr))) if arr.size else float("nan")
+
+
+def _worst_tail(sorted_err: np.ndarray, fraction: float) -> np.ndarray:
+    """Largest ``ceil(fraction * n)`` entries (at least one) of an ascending array."""
+    if sorted_err.size == 0:
+        return sorted_err
+    count = max(1, int(np.ceil(float(fraction) * sorted_err.size)))
+    return sorted_err[sorted_err.size - count :]
 
 
 def _binned_error(
@@ -142,29 +185,41 @@ def compute_field_metrics(
     # Non-finite predictions (counted before any percentile reduction).
     non_finite_rows = ~np.isfinite(u_pred) | np.any(~np.isfinite(a_pred), axis=1)
     non_finite_count = int(np.sum(non_finite_rows))
+    has_non_finite = non_finite_count > 0
+
+    def _nan_gate(value: float | None) -> float | None:
+        """NaN when any prediction in this split is non-finite (a 50 %-NaN set
+        must not read as a clean statistic of the finite remainder)."""
+        return float("nan") if (has_non_finite and value is not None) else value
 
     finite_err = err_norm[np.isfinite(err_norm)]
     sorted_err = np.sort(finite_err)
-    worst_1 = sorted_err[max(0, int(np.ceil(0.99 * sorted_err.size)) - 1) :] if sorted_err.size else sorted_err
-    worst_5 = sorted_err[max(0, int(np.ceil(0.95 * sorted_err.size)) - 1) :] if sorted_err.size else sorted_err
+    worst_1 = _worst_tail(sorted_err, 0.01)
+    worst_5 = _worst_tail(sorted_err, 0.05)
 
     return {
         "count": int(n),
-        "residual_potential_rmse_m2_s2": _rms(u_pred - u_true),
-        "residual_accel_rmse_m_s2": _rms(err_norm),
-        "residual_accel_mae_m_s2": float(np.mean(finite_err)) if finite_err.size else None,
-        "relative_accel_error_pct_median": float(np.nanmedian(rel_pct)) if np.any(valid_rel) else None,
-        "relative_accel_error_pct_mean": float(np.nanmean(rel_pct)) if np.any(valid_rel) else None,
-        "angular_accel_error_deg_median": float(np.median(angular_deg)) if angular_deg.size else None,
-        "angular_accel_error_deg_mean": float(np.mean(angular_deg)) if angular_deg.size else None,
-        "radial_error_rms_m_s2": _rms(radial_err),
-        "cross_radial_error_rms_m_s2": _rms(cross_err),
-        "accel_error_p50_m_s2": float(np.percentile(finite_err, 50)) if finite_err.size else None,
-        "accel_error_p90_m_s2": float(np.percentile(finite_err, 90)) if finite_err.size else None,
-        "accel_error_p95_m_s2": float(np.percentile(finite_err, 95)) if finite_err.size else None,
-        "accel_error_p99_m_s2": float(np.percentile(finite_err, 99)) if finite_err.size else None,
-        "accel_error_worst_1pct_mean_m_s2": float(np.mean(worst_1)) if worst_1.size else None,
-        "accel_error_worst_5pct_mean_m_s2": float(np.mean(worst_5)) if worst_5.size else None,
+        "residual_potential_rmse_m2_s2": _nan_gate(_rms(u_pred - u_true)),
+        "residual_accel_rmse_m_s2": _nan_gate(_rms(err_norm)),
+        "residual_accel_mae_m_s2": _nan_gate(float(np.mean(finite_err))) if finite_err.size else None,
+        "relative_accel_error_pct_median": (
+            _nan_gate(float(np.nanmedian(rel_pct))) if np.any(valid_rel) else None
+        ),
+        "relative_accel_error_pct_mean": (
+            _nan_gate(float(np.nanmean(rel_pct))) if np.any(valid_rel) else None
+        ),
+        "angular_accel_error_deg_median": (
+            _nan_gate(float(np.median(angular_deg))) if angular_deg.size else None
+        ),
+        "angular_accel_error_deg_mean": _nan_gate(float(np.mean(angular_deg))) if angular_deg.size else None,
+        "radial_error_rms_m_s2": _nan_gate(_rms(radial_err)),
+        "cross_radial_error_rms_m_s2": _nan_gate(_rms(cross_err)),
+        "accel_error_p50_m_s2": _nan_gate(float(np.percentile(finite_err, 50))) if finite_err.size else None,
+        "accel_error_p90_m_s2": _nan_gate(float(np.percentile(finite_err, 90))) if finite_err.size else None,
+        "accel_error_p95_m_s2": _nan_gate(float(np.percentile(finite_err, 95))) if finite_err.size else None,
+        "accel_error_p99_m_s2": _nan_gate(float(np.percentile(finite_err, 99))) if finite_err.size else None,
+        "accel_error_worst_1pct_mean_m_s2": _nan_gate(float(np.mean(worst_1))) if worst_1.size else None,
+        "accel_error_worst_5pct_mean_m_s2": _nan_gate(float(np.mean(worst_5))) if worst_5.size else None,
         "non_finite_prediction_count": non_finite_count,
         "radius_domain_warning_count": 0,
         "altitude_binned_error": _binned_error(
@@ -245,11 +300,16 @@ def _resolve_training_heldout_guard(
       ``train_index_array`` lets evaluation exclude every training row regardless
       of the evaluation re-split seed. ``method`` is ``"persisted_indices"`` or
       ``"reconstructed"``; ``dataset_identity`` is ``"verified"``/``"unknown"``.
-    * ``"independent_files"`` — training used dedicated train/val files; the
-      single-dataset re-split leakage check does not apply.
+    * ``"independent_files"`` — training used dedicated train/val files AND the
+      evaluation dataset's content hash differs from the recorded training-file
+      hash (split manifest ``train_file_sha256``/``dataset_content_sha256``, else
+      the train-only scaler's ``provenance.dataset_content_sha256``).
+    * ``"unknown"`` — independent train/val files but no training-file hash is
+      recorded, so evaluating on the training file cannot be ruled out.
     * ``"manifest_missing"`` / ``"unverified"`` — the held-out set could not be
-      established (no manifest, dataset mismatch, row-count drift, or hash
-      disagreement). The caller must NOT silently claim clean metrics.
+      established (no manifest, dataset mismatch, row-count drift, hash
+      disagreement, or an independent-files evaluation dataset that hashes the
+      same as the training file). The caller must NOT silently claim clean metrics.
     """
     try:
         from lunaris.surrogate.st_lrps.artifacts.manager import (
@@ -262,7 +322,8 @@ def _resolve_training_heldout_guard(
         )
 
         run_dir = resolve_run_dir(model_dir)
-        provenance_dir = make_run_layout(run_dir).provenance_dir
+        run_layout = make_run_layout(run_dir)
+        provenance_dir = run_layout.provenance_dir
         manifest_path = provenance_dir / "split_manifest.json"
         if not manifest_path.exists():
             return {
@@ -275,10 +336,59 @@ def _resolve_training_heldout_guard(
 
     policy = str(manifest.get("split_policy", "")).strip().lower()
     if policy in ("independent_files", "independent"):
+        # The in-file re-split check does not apply, but that is not automatically
+        # clean: evaluation could be pointed at the very file the model trained on.
+        train_file_sha = manifest.get("train_file_sha256") or manifest.get("dataset_content_sha256")
+        if not train_file_sha:
+            # Older manifests record no file hash; the train-only scaler is fit on
+            # the training file and records that file's content hash.
+            try:
+                scaler_payload = json.loads(run_layout.scaler_json.read_text(encoding="utf-8-sig"))
+                train_file_sha = (scaler_payload.get("provenance") or {}).get("dataset_content_sha256")
+            except (OSError, ValueError, AttributeError):
+                train_file_sha = None
+        if not train_file_sha:
+            return {
+                "status": "unknown",
+                "training_split_policy": policy,
+                "reason": (
+                    "training used independent train/val files but neither split_manifest.json nor "
+                    "scaler.json provenance records the training file's content hash; evaluating this "
+                    "dataset cannot be confirmed disjoint from the training file"
+                ),
+            }
+        actual_sha = _dataset_content_sha(dataset_path, dataset_name)
+        if actual_sha is None:
+            return {
+                "status": "unverified",
+                "training_split_policy": policy,
+                "train_hash_expected": train_file_sha,
+                "reason": (
+                    "training used independent train/val files, but the evaluation dataset's content "
+                    "hash could not be computed to compare against the recorded training file hash "
+                    f"({str(train_file_sha)[:12]}...)"
+                ),
+            }
+        if str(actual_sha) == str(train_file_sha):
+            return {
+                "status": "unverified",
+                "training_split_policy": policy,
+                "dataset_identity": "training_file",
+                "train_hash_expected": train_file_sha,
+                "reason": (
+                    "evaluation dataset content hash matches the recorded TRAINING file hash "
+                    f"({str(train_file_sha)[:12]}...); this evaluation runs on the training file itself"
+                ),
+            }
         return {
             "status": "independent_files",
             "training_split_policy": policy,
-            "reason": "training used independent train/val files; single-dataset re-split leakage check is not applicable",
+            "dataset_identity": "verified",
+            "train_hash_expected": train_file_sha,
+            "reason": (
+                "training used independent train/val files; the evaluation dataset content hash "
+                "differs from the recorded training file hash"
+            ),
         }
 
     seed = manifest.get("split_seed")
@@ -508,6 +618,10 @@ def run_field_validation(
             )
         logger.warning(msg)
 
+    # The label a split gets (interpolation vs spatial/altitude generalization)
+    # depends on how the model was TRAINED, not on the evaluation re-split alone.
+    training_split_policy = guard.get("training_split_policy")
+
     results: dict[str, Any] = {}
     for policy in policies:
         try:
@@ -533,9 +647,11 @@ def run_field_validation(
                     "evaluated": kept,
                 }
                 idx = idx[keep]
+            kind, kind_reason = label_split_kind(policy, training_split_policy)
             if idx.size == 0:
                 results[policy] = {
-                    "kind": SPLIT_KIND.get(policy, "unknown"),
+                    "kind": kind,
+                    "kind_reason": kind_reason,
                     "leakage_guard_status": guard.get("status"),
                     "error": (
                         "empty validation split after held-out filtering"
@@ -550,7 +666,8 @@ def run_field_validation(
             metrics = compute_field_metrics(
                 r_fixed, u_true[idx], a_true[idx], u_pred, a_pred, r_ref_m=r_ref
             )
-            metrics["kind"] = SPLIT_KIND.get(policy, "unknown")
+            metrics["kind"] = kind
+            metrics["kind_reason"] = kind_reason
             metrics["split_geometry"] = info
             metrics["radius_domain_warning_count"] = _count_domain_warnings(fm, r_fixed, r_ref)
             metrics["leakage_guard_status"] = guard.get("status")
@@ -559,7 +676,8 @@ def run_field_validation(
             results[policy] = metrics
         except Exception as exc:  # keep going so one bad policy does not sink the report
             logger.warning("field validation policy %s failed: %s", policy, exc)
-            results[policy] = {"kind": SPLIT_KIND.get(policy, "unknown"), "error": str(exc)}
+            kind, kind_reason = label_split_kind(policy, training_split_policy)
+            results[policy] = {"kind": kind, "kind_reason": kind_reason, "error": str(exc)}
 
     runtime_kind = str(getattr(fm, "runtime_model_kind", "potential_autograd"))
     # Only the conservative potential_autograd surrogate is loadable on main;
@@ -821,6 +939,7 @@ __all__ = [
     "SPLIT_KIND",
     "attach_orbit_validation",
     "compute_field_metrics",
+    "label_split_kind",
     "run_field_validation",
     "write_field_validation_csvs",
     "write_validation_report",

@@ -21,12 +21,15 @@ from scipy.integrate import solve_ivp
 from lunaris.common.constants import R_MOON
 from lunaris.common.math_utils import nyquist_max_step_s, specific_energy_drift_stats
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
-from lunaris.core.dynamics import DynamicsEngine
+from lunaris.core.dynamics import DynamicsEngine, extract_ephem_tables_strict
 from lunaris.core.propagation.checkpoint import _checkpoint_metadata
 from lunaris.core.propagation.diagnostics import build_propagation_diagnostics
 from lunaris.core.propagation.events import (
     EventOutcome,
-    _build_r_i_to_bf_from_rot_table,
+    _build_r_i_to_bf_from_rot_table,  # noqa: F401 - private import path kept for callers/tests
+    _build_r_i_to_surface_map,
+    _get_detect_impact,
+    _get_impact_alt_km,
     _wrap_event_first6,
     build_events,
     event_outcome_from_solver_events,
@@ -36,6 +39,7 @@ from lunaris.core.propagation.integrators.fixed_step import (
     _integrate_fixed_step,
     _is_fixed_step_method,
     accel_form_velocity_dependence_violations,
+    fixed_step_stage_overhang,
     symplectic_breaks_separability,
     symplectic_discontinuous_gravity,
     symplectic_impulsive_maneuver_violations,
@@ -97,6 +101,70 @@ def _rhs_path_for_diagnostics(dynamics: Any) -> str:
     return "unknown"
 
 
+def _require_ephemeris_coverage(
+    dynamics: Any, t0_s: float, tf_s: float, *, stage_overhang_s: float = 0.0
+) -> None:
+    """Reject a solver window outside the sampled ephemeris table.
+
+    The table interpolators clamp to the end rows outside their grid, so an
+    uncovered window would silently freeze the Sun/Earth vectors and the Moon
+    attitude instead of failing. The table spans ``[0, (N - 1) dt]`` seconds
+    from its start epoch (``start_date``), the same clock as solver time.
+    Dynamics without an ephemeris manager, and constant (single-row) tables,
+    have no window to check.
+
+    ``stage_overhang_s`` is how far a Yoshida composition samples the force
+    before ``t0`` / after ``tf`` (``stage_time_overhang * h``). The Hermite and
+    attitude samplers continue the edge segment for one table interval, so those
+    stage times must lie in ``[-dt, (N - 1) dt + dt]``.
+    """
+    ephem = getattr(dynamics, "ephem", None)
+    if ephem is None or not hasattr(ephem, "get_data_provider"):
+        return
+    dt_s, _sun, _earth, q_tab = extract_ephem_tables_strict(ephem)
+    n_rows = int(q_tab.shape[0])
+    if n_rows < 2 or not dt_s > 0.0:
+        return
+    hi = float(n_rows - 1) * float(dt_s)
+    tol = 1.0e-9 * max(1.0, hi)
+    if float(t0_s) < -tol or float(tf_s) > hi + tol:
+        raise ValueError(
+            f"Propagation window [{float(t0_s)}, {float(tf_s)}] s lies outside the "
+            f"ephemeris table [0, {hi}] s (t measured from start_date). Rebuild the "
+            "tables over t0_s + duration_s."
+        )
+    ov = float(stage_overhang_s)
+    if ov > 0.0 and (float(t0_s) - ov < -float(dt_s) - tol or float(tf_s) + ov > hi + float(dt_s) + tol):
+        raise ValueError(
+            f"The integrator samples the force {ov:g} s outside [{float(t0_s)}, {float(tf_s)}] s, "
+            f"beyond the one-interval ({float(dt_s):g} s) extrapolation band of the ephemeris "
+            f"table [0, {hi}] s. Use a smaller step or output_dt_s, start later than "
+            "start_date (t0_s), or a method whose stages stay inside the step (PEFRL, RK4, RK8)."
+        )
+
+
+def _require_start_above_impact_sphere(y0: np.ndarray, cfg: Any, impact_radius_m: float) -> None:
+    """Refuse a start below the impact sphere when impact detection is on.
+
+    The impact event fires on a downward crossing of ``impact_radius_m +
+    impact_alt_km``; a trajectory that starts below it never crosses it
+    downward, so the run would integrate through the Moon and report no
+    impact. A start exactly on the sphere stays allowed: a descending one
+    stops at once.
+    """
+    if not _get_detect_impact(cfg):
+        return
+    floor_m = float(impact_radius_m) + 1000.0 * float(_get_impact_alt_km(cfg))
+    r0 = float(np.linalg.norm(y0[:3]))
+    if not r0 >= floor_m:
+        raise ValueError(
+            f"The initial position is {r0:.3f} m from the centre, below the impact sphere "
+            f"of radius {floor_m:.3f} m (reference radius plus impact_alt_km) that impact "
+            "detection watches; the run would pass through the Moon unnoticed. Start "
+            "above it or set events.detect_impact=False."
+        )
+
+
 def propagate(
     dynamics: DynamicsEngine,
     y0: Any,
@@ -106,6 +174,7 @@ def propagate(
     topo_grid: Any = None,
     extra_events: Sequence[Callable[[float, np.ndarray], float]] | None = None,
     maneuver_plan: ManeuverPlan | None = None,
+    _t_eval_override: np.ndarray | None = None,
 ) -> PropagationResult:
     """
     Propagate the trajectory for a configured duration and output sampling grid.
@@ -120,6 +189,10 @@ def propagate(
     -----
     - t0 (start epoch in seconds) is owned by TimeConfig when provided (time_cfg.t0_s).
     - max_points_cap / verbosity / integration tolerances remain in PropagatorConfig unless also provided in TimeConfig.
+    - ``_t_eval_override`` is a private hook used only by
+      ``_propagate_with_maneuvers`` to hand a segment its exact slice of one
+      output grid aligned to the run's t0 (instead of each segment re-spacing
+      its own burn-shifted duration). Not part of the public contract.
     """
     y0_arr = _as_state_array(y0)
 
@@ -167,7 +240,9 @@ def propagate(
     tf = time_plan.tf
     dur_s = time_plan.duration_s
     dt_out = time_plan.realized_output_dt_s
-    t_eval = time_plan.t_eval
+    t_eval = time_plan.t_eval if _t_eval_override is None else np.ascontiguousarray(
+        _t_eval_override, dtype=np.float64
+    )
 
     # The propagator owns the invariant that the solver state dimension is
     # fixed for an integration. Use the trusted hot-path callable; external
@@ -176,6 +251,11 @@ def propagate(
     rhs = trusted_builder() if callable(trusted_builder) else dynamics.build_rhs()
     rhs_path = _rhs_path_for_diagnostics(dynamics)
     R_ref_m, mu_m3s2 = get_ref_radius_and_mu(dynamics)
+    # With a terrain grid the impact event follows the local surface, which can
+    # lie below the reference sphere; only the sphere-only event is checked.
+    if topo_grid is None:
+        _require_start_above_impact_sphere(y0_arr, cfg, float(R_ref_m))
+    _require_ephemeris_coverage(dynamics, float(t0), float(tf))
 
     # Terrain-aware telemetry is optional. The actual hybrid impact event uses a
     # similar capability deeper in the propagator, but surfacing the sampled
@@ -185,7 +265,7 @@ def propagate(
     telem_surface_radius_m: Callable[[float, float], float] | None = None
     if topo_grid is not None:
         try:
-            telem_r_i_to_bf = _build_r_i_to_bf_from_rot_table(dynamics)
+            telem_r_i_to_bf = _build_r_i_to_surface_map(dynamics)
             if telem_r_i_to_bf is not None:
                 telem_surface_radius_m = _build_surface_radius_sampler(topo_grid)
         except (AttributeError, KeyError, IndexError, TypeError, ValueError):
@@ -289,6 +369,16 @@ def propagate(
                 "solve_ivp itself has no hard cap on accepted steps, so the "
                 "actual step count during integration is not limited by "
                 "max_internal_steps. Increase the limit or use a larger max_step."
+            )
+    if integration_plan.backend != "scipy":
+        _overhang = fixed_step_stage_overhang(integration_plan.method)
+        if _overhang > 0.0:
+            # Fixed-step h never exceeds max_step nor one output interval.
+            _h_bound = float(max_step)
+            if t_eval.size >= 2:
+                _h_bound = min(_h_bound, float(np.max(np.diff(t_eval))))
+            _require_ephemeris_coverage(
+                dynamics, float(t0), float(tf), stage_overhang_s=_overhang * _h_bound
             )
     checkpoint_meta = _checkpoint_metadata(method=integration_plan.method, config=cfg)
 
@@ -529,6 +619,25 @@ def _propagate_with_maneuvers(
         telemetry_sink_path="",
     )
 
+    # Build the full output grid once, aligned to t0/output_dt_s exactly as a
+    # run without burns would produce it, plus every burn epoch. Each segment
+    # gets an exact slice of it; re-spacing each segment's own burn-shifted
+    # duration silently changed the requested spacing and its alignment to t0
+    # (and, without output_dt_s, re-derived it from each post-burn period).
+    master_plan = resolve_time_grid_plan(
+        dynamics=dynamics, y0=y0, cfg=cfg, time_cfg=time_cfg, verbose=bool(getattr(cfg, "verbose", False)),
+    )
+    burn_epochs = np.asarray([float(m.t_burn_s) for m in maneuver_plan.maneuvers], dtype=np.float64)
+    master_grid = np.union1d(np.asarray(master_plan.t_eval, dtype=np.float64), burn_epochs)
+
+    def segment_grid(lo: float, hi: float) -> np.ndarray:
+        sel = master_grid[(master_grid >= lo) & (master_grid <= hi)]
+        if sel.size == 0 or sel[0] != lo:
+            sel = np.concatenate(([lo], sel))
+        if sel[-1] != hi:
+            sel = np.concatenate((sel, [hi]))
+        return np.ascontiguousarray(sel, dtype=np.float64)
+
     t_rows: list[float] = []
     y_rows: list[np.ndarray] = []
     event_t_parts: list[list[np.ndarray]] = []
@@ -577,6 +686,7 @@ def _propagate_with_maneuvers(
                 time_cfg=segment_time,
                 topo_grid=topo_grid,
                 extra_events=extra_events,
+                _t_eval_override=segment_grid(current_t, burn_t),
             )
             append_segment(segment)
             current_t = float(segment.t[-1])
@@ -597,6 +707,7 @@ def _propagate_with_maneuvers(
             time_cfg=segment_time,
             topo_grid=topo_grid,
             extra_events=extra_events,
+            _t_eval_override=segment_grid(current_t, tf),
         )
         append_segment(segment)
 

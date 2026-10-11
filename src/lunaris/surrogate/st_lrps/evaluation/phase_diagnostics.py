@@ -188,6 +188,54 @@ def hermite_resample(
     return r_query, valid
 
 
+def hermite_resample_state(
+    t_s: F64Array,
+    r_m: F64Array,
+    v_ms: F64Array,
+    t_query_s: F64Array,
+) -> tuple[F64Array, F64Array, F64Array]:
+    """
+    Cubic-Hermite position AND velocity resampling at arbitrary query times.
+
+    Position is the spline of :func:`hermite_resample` (error O(h^4)); velocity
+    is its analytic time derivative (error O(h^3)), so the returned state is
+    one consistent C1 curve rather than two independent interpolations. A query
+    equal to a grid time reproduces that grid state exactly: the derivative is
+    written as ``dh00 * (r0 - r1) / h + dh10 * v0 + dh11 * v1`` (``dh01 = -dh00``),
+    which avoids the ``v * h / h`` round trip at the knots.
+
+    Returns
+    -------
+    (r_query, v_query, valid) : positions (Q, 3), velocities (Q, 3) and a
+    boolean mask (Q,) of queries inside ``[t_s[0], t_s[-1]]``. Queries outside
+    are evaluated on the end interval's polynomial (an extrapolation); callers
+    must exclude or refuse them, never treat them as measured.
+    """
+    t = np.asarray(t_s, dtype=np.float64)
+    tq = np.asarray(t_query_s, dtype=np.float64)
+    valid = (tq >= t[0]) & (tq <= t[-1])
+
+    idx = np.clip(np.searchsorted(t, tq, side="right") - 1, 0, t.size - 2)
+    h = (t[idx + 1] - t[idx])[:, None]
+    s = (tq - t[idx])[:, None] / h
+    r0, r1 = r_m[idx], r_m[idx + 1]
+    v0, v1 = v_ms[idx], v_ms[idx + 1]
+
+    s2 = s * s
+    s3 = s2 * s
+    h00 = 2.0 * s3 - 3.0 * s2 + 1.0
+    h10 = s3 - 2.0 * s2 + s
+    h01 = -2.0 * s3 + 3.0 * s2
+    h11 = s3 - s2
+    r_query = h00 * r0 + h10 * (v0 * h) + h01 * r1 + h11 * (v1 * h)
+
+    dh00 = 6.0 * s2 - 6.0 * s
+    dh10 = 3.0 * s2 - 4.0 * s + 1.0
+    dh11 = 3.0 * s2 - 2.0 * s
+    v_query = dh00 * (r0 - r1) / h + dh10 * v0 + dh11 * v1
+    return r_query, v_query, valid
+
+
 # =============================================================================
 # 2.              LAYER 1 — RIC ERROR DECOMPOSITION
 # =============================================================================
@@ -322,7 +370,7 @@ class PhaseCorrectedErrors:
     pointwise_detrended_rms_m: float
     aligned_rms_m:        float
     aligned_valid_fraction: float
-    phase_explained_fraction: float   # 1 - aligned_ms / raw_ms, clipped to [0, 1]
+    phase_explained_fraction: float   # 1 - aligned_ms / raw_ms over the aligned-valid epochs, clipped to [0, 1]
     e_aligned_m:          F64Array    # (T, 3); invalid epochs hold NaN
     ric_rms_before_m:     F64Array    # (3,)
     ric_rms_after_m:      F64Array    # (3,) over valid epochs
@@ -366,6 +414,10 @@ def compute_phase_corrected_errors(
     if n_valid == 0:
         raise ValueError("phase alignment left no valid epochs; time grid too short")
     aligned_ms = float(np.mean(np.einsum("ij,ij->i", e_aligned[valid], e_aligned[valid])))
+    # The explained fraction compares aligned and raw error over the SAME epochs.
+    # The shifted resample drops the end epochs (t + tau outside the grid), which
+    # carry the largest secular error; a raw mean over all epochs inflated it.
+    raw_ms_valid = float(np.mean(np.einsum("ij,ij->i", e[valid], e[valid])))
 
     basis = _ric_basis(r_gt, v_gt)
     e_aligned_ric = np.einsum("tij,tj->ti", basis[valid], e_aligned[valid])
@@ -377,8 +429,8 @@ def compute_phase_corrected_errors(
         pointwise_detrended_rms_m=pointwise_rms,
         aligned_rms_m=float(np.sqrt(aligned_ms)),
         aligned_valid_fraction=n_valid / t.size,
-        phase_explained_fraction=float(np.clip(1.0 - aligned_ms / raw_ms, 0.0, 1.0))
-        if raw_ms > 0.0
+        phase_explained_fraction=float(np.clip(1.0 - aligned_ms / raw_ms_valid, 0.0, 1.0))
+        if raw_ms_valid > 0.0
         else 0.0,
         e_aligned_m=e_aligned,
         ric_rms_before_m=ric.rms_ric_m,

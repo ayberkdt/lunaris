@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path, PureWindowsPath
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from lunaris.common.paths import data_dir_from_root, find_project_root
 from lunaris.common.provenance import sha256_file as _sha256_file
@@ -365,14 +365,28 @@ def download_entry(
             print(f"          {entry['notes']}")
         return "manual"
 
-    if target.exists() and not overwrite:
-        print(f"[skip] {name}: already present at {target} (use --overwrite to refetch)")
-        return "present"
-
-    if dry_run:
+    # Same resolution as ``verify``: the canonical name, then the aliases.
+    present = resolve_dataset_path(data_root, entry)
+    if present is not None and not overwrite:
+        print(f"[skip] {name}: already present at {present} (use --overwrite to refetch)")
+        status = "present"
+    elif dry_run:
         print(f"[dry-run] {name}: would download {url} -> {target}")
         return "dry-run"
+    else:
+        status = _fetch_verified(name, str(url), target, entry.get("sha256") if verify else None)
+        if status != "ok":
+            return status
+    # Detached labels and metadata: `verify --strict` checks them, so a
+    # download must fetch them too.
+    companion_status = _download_companions(
+        entry, data_root, str(url), overwrite=overwrite, verify=verify, dry_run=dry_run,
+    )
+    return companion_status or status
 
+
+def _fetch_verified(label: str, url: str, target: Path, expected: str | None) -> str:
+    """Stream ``url`` to ``target`` via a ``.part`` file; check ``expected`` sha256 if given."""
     target.parent.mkdir(parents=True, exist_ok=True)
     part = target.with_name(target.name + ".part")
     try:
@@ -380,20 +394,51 @@ def download_entry(
     except (urllib.error.URLError, ValueError, OSError) as exc:
         if part.exists():
             part.unlink()
-        print(f"[error] {name}: download failed: {exc}")
+        print(f"[error] {label}: download failed: {exc}")
         return "error"
 
-    expected = entry.get("sha256")
-    if verify and expected:
+    if expected:
         actual = sha256_file(part)
         if actual.lower() != str(expected).lower():
             part.unlink()
-            print(f"[error] {name}: sha256 mismatch (expected {expected}, got {actual})")
+            print(f"[error] {label}: sha256 mismatch (expected {expected}, got {actual})")
             return "hash_mismatch"
 
     part.replace(target)  # atomic rename on the same filesystem
-    print(f"[ok] {name}: installed -> {target}")
+    print(f"[ok] {label}: installed -> {target}")
     return "ok"
+
+
+def _download_companions(
+    entry: dict[str, Any],
+    data_root: Path,
+    url: str,
+    *,
+    overwrite: bool,
+    verify: bool,
+    dry_run: bool,
+) -> str | None:
+    """Fetch an entry's missing companion files (detached labels, metadata).
+
+    A companion comes from its own ``url`` when the manifest gives one, else
+    from the main file's directory on the same server (how PDS archives keep
+    a ``.lbl`` next to its table). Returns the first failure status of a
+    required companion, or ``None`` when nothing required failed.
+    """
+    failure: str | None = None
+    for spec in _companion_specs(entry):
+        paths = _companion_target_paths(data_root, entry, spec)
+        if any(path.exists() for path in paths) and not overwrite:
+            continue
+        companion_url = str(spec.get("url") or urljoin(url, str(spec["filename"])))
+        label = f"{entry.get('name', '<unnamed>')} companion {spec['filename']}"
+        if dry_run:
+            print(f"[dry-run] {label}: would download {companion_url} -> {paths[0]}")
+            continue
+        status = _fetch_verified(label, companion_url, paths[0], spec.get("sha256") if verify else None)
+        if status != "ok" and bool(spec.get("required", True)) and failure is None:
+            failure = status
+    return failure
 
 
 # --------------------------------------------------------------------------- #

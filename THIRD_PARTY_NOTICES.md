@@ -58,7 +58,7 @@ The desktop UI depends on PySide6, used under the **LGPL-3.0** option:
   Qt licensing documentation reachable: <https://doc.qt.io/qt-6/licensing.html>.
 
 Headless deployments can avoid the LGPL surface entirely by installing without
-the `ui` extra (`pip install lunaris[hpc]`).
+the `ui` extra (`pip install ".[hpc]"` from a Lunaris checkout).
 
 ### MPL notice — tqdm
 

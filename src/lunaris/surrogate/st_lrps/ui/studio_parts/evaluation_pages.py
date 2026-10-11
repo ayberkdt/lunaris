@@ -272,10 +272,14 @@ class STLRPSEvalTab(QWidget):
         self.batch_size = QSpinBox()
         self.batch_size.setRange(1, 10_000_000)
         self.batch_size.setValue(8192)
-        self.a_sign = QDoubleSpinBox()
-        self.a_sign.setDecimals(1)
-        self.a_sign.setRange(-10.0, 10.0)
-        self.a_sign.setValue(1.0)
+        # A sign convention (U vs -U), not a scale: the evaluator refuses
+        # anything but +1 / -1, so the control offers only those two.
+        self.a_sign = QComboBox()
+        self.a_sign.addItem("+1 (geodesy)", 1.0)
+        self.a_sign.addItem("-1 (Newton)", -1.0)
+        self.a_sign.setToolTip(
+            "Fallback acceleration sign when config.json has no resolved_a_sign."
+        )
         form_hw.addRow("Device", self.device)
         form_hw.addRow("Batch Size", self.batch_size)
         form_hw.addRow("Acceleration Sign", self.a_sign)
@@ -446,7 +450,7 @@ class STLRPSEvalTab(QWidget):
         s.setValue("out_dir", self.out_dir.text())
         s.setValue("device", self.device.currentText())
         s.setValue("batch_size", self.batch_size.value())
-        s.setValue("a_sign", self.a_sign.value())
+        s.setValue("a_sign", float(self.a_sign.currentData()))
         s.setValue("r_ref_m", self.r_ref_m.text())
         s.setValue("alt_bin_km", self.alt_bin_km.value())
         s.setValue("start", self.start.value())
@@ -477,7 +481,13 @@ class STLRPSEvalTab(QWidget):
         if s.contains("batch_size"):
             self.batch_size.setValue(int(s.value("batch_size", 8192)))
         if s.contains("a_sign"):
-            self.a_sign.setValue(float(s.value("a_sign", 1.0)))
+            # An older save may hold any value of the former -10..10 spin box;
+            # only an exact -1 selects Newton, anything else keeps +1.
+            try:
+                saved_sign = float(s.value("a_sign", 1.0))
+            except (TypeError, ValueError):
+                saved_sign = 1.0
+            self.a_sign.setCurrentIndex(self.a_sign.findData(-1.0 if saved_sign == -1.0 else 1.0))
         if s.contains("r_ref_m"):
             self.r_ref_m.setText(str(s.value("r_ref_m", "")))
         if s.contains("alt_bin_km"):
@@ -528,7 +538,7 @@ class STLRPSEvalTab(QWidget):
             "--batch-size",
             str(self.batch_size.value()),
             "--a-sign",
-            str(self.a_sign.value()),
+            str(float(self.a_sign.currentData())),
             "--alt-bin-km",
             str(self.alt_bin_km.value()),
             "--start",
@@ -558,7 +568,7 @@ class STLRPSEvalTab(QWidget):
             return
         out_dir = self._effective_out_dir
         if not out_dir or not Path(out_dir).is_dir():
-            text = self.runner.log.toPlainText()
+            text = self.runner.output_text()
             for pat in [
                 r"(?:out_dir|Output dir|Saving to|Results saved to)\s*[:=]\s*(.+)",
                 r"Plots saved to\s*[:=]?\s*(.+)",

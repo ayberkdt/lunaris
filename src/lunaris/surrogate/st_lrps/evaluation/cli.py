@@ -71,6 +71,19 @@ nn = _LazyModule("torch.nn", "ST-LRPS evaluation")
 plt = _LazyModule("matplotlib.pyplot", "ST-LRPS evaluation plotting")
 
 
+def _nan_propagating_max(current: float, candidate: float) -> float:
+    """Running maximum that keeps a NaN visible.
+
+    The builtin ``max(a, b)`` returns ``a`` whenever ``b > a`` is False, and every
+    comparison with NaN is False, so ``max(0.0, nan)`` is ``0.0``: a batch of NaN
+    predictions read as a clean L-inf. Once either side is NaN the result stays
+    NaN; +Inf is an ordered value and propagates through the plain comparison.
+    """
+    if math.isnan(candidate) or math.isnan(current):
+        return float("nan")
+    return candidate if candidate > current else current
+
+
 class _StreamingMetrics:
     """
     Online metric accumulators for large-dataset evaluation.
@@ -108,6 +121,11 @@ class _StreamingMetrics:
         self.alt_bin_sum_abs_a_vec = np.zeros(n_alt_bins, dtype=np.float64)
         self.alt_bin_sum_sq_a_mag = np.zeros(n_alt_bins, dtype=np.float64)
         self.alt_bin_sum_abs_a_mag = np.zeros(n_alt_bins, dtype=np.float64)
+        # Points outside [alt_min_km, alt_max_km] still land in the edge bin of
+        # the binned table, but are counted here so a bin range that does not
+        # span the data cannot hide them.
+        self.alt_underflow_count = 0
+        self.alt_overflow_count = 0
 
     def _alt_bin(self, alt_km: float) -> int:
         span = max(self.alt_max_km - self.alt_min_km, 1e-6)
@@ -132,17 +150,17 @@ class _StreamingMetrics:
 
         self.sum_abs_a_vec += float(a_vec_err_norm.sum())
         self.sum_sq_a_vec += float((a_vec_err_norm ** 2).sum())
-        self.max_abs_a_vec = max(self.max_abs_a_vec, float(a_vec_err_norm.max()))
+        self.max_abs_a_vec = _nan_propagating_max(self.max_abs_a_vec, float(a_vec_err_norm.max()))
         self.sum_abs_a_mag += float(a_mag_err.sum())
         self.sum_sq_a_mag += float((a_mag_err ** 2).sum())
-        self.max_abs_a_mag = max(self.max_abs_a_mag, float(a_mag_err.max()))
+        self.max_abs_a_mag = _nan_propagating_max(self.max_abs_a_mag, float(a_mag_err.max()))
 
         u_err = u_pred - u_true
         u_abs_err = np.abs(u_err)
         self.sum_abs_u += float(u_abs_err.sum())
         self.sum_sq_u += float((u_err ** 2).sum())
         # Task 4: U L∞ and per-point relative error
-        self.max_abs_u = max(self.max_abs_u, float(u_abs_err.max()))
+        self.max_abs_u = _nan_propagating_max(self.max_abs_u, float(u_abs_err.max()))
         u_true_abs = np.abs(u_true).clip(1e-30)
         self.sum_u_rel_num += float(u_abs_err.sum())
         self.sum_u_rel_den += float(u_true_abs.sum())
@@ -162,6 +180,8 @@ class _StreamingMetrics:
         # Altitude bins
         r_norm = np.linalg.norm(x, axis=1)
         alt_km = (r_norm - r_ref_m) / 1000.0
+        self.alt_underflow_count += int(np.sum(alt_km < self.alt_min_km))
+        self.alt_overflow_count += int(np.sum(alt_km > self.alt_max_km))
         for i in range(N):
             b = self._alt_bin(float(alt_km[i]))
             self.alt_bin_count[b] += 1
@@ -220,6 +240,9 @@ class _StreamingMetrics:
             "robust_rel_err": self.sum_rel_num / max(self.sum_rel_den, 1e-30),
             "robust_rel_err_mag": self.sum_rel_mag_num / max(self.sum_rel_den, 1e-30),
             "alt_bin_count": self.alt_bin_count.tolist(),
+            "alt_bin_range_km": [self.alt_min_km, self.alt_max_km],
+            "alt_underflow_count": self.alt_underflow_count,
+            "alt_overflow_count": self.alt_overflow_count,
             # Altitude-binned: vector error by default + magnitude-only alongside.
             "alt_bin_rmse_a": alt_bin_rmse_a_vec,
             "alt_bin_mae_a": alt_bin_mae_a_vec,
@@ -422,6 +445,74 @@ def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> dict[str,
                     value = value.decode("utf-8")
             out[key] = value
     return out
+
+
+def _read_split_manifest(provenance_dir: Path) -> Mapping[str, Any] | None:
+    """The run's ``provenance/split_manifest.json``, or ``None`` if absent/unreadable."""
+    manifest_path = provenance_dir / "split_manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    return manifest if isinstance(manifest, Mapping) else None
+
+
+def _is_independent_split(manifest: Mapping[str, Any]) -> bool:
+    return str(manifest.get("split_policy", "")).strip().lower() in ("independent_files", "independent")
+
+
+def _auto_train_exclusion_path(provenance_dir: Path, ds_meta: Mapping[str, Any]) -> Path | None:
+    """Return the run's ``split_indices.npz`` when the evaluation file is its in-file training dataset.
+
+    Compares the evaluation file's stamped ``content_sha256`` with the
+    ``dataset_content_sha256`` recorded in ``provenance/split_manifest.json``. No
+    stamp, no manifest, an independent-files run or a different hash means the
+    rows cannot be the in-file training rows (``None``). A match without the
+    persisted indices cannot be filtered, so it fails closed.
+    """
+    eval_sha = str(ds_meta.get("content_sha256") or "").strip()
+    manifest = _read_split_manifest(provenance_dir)
+    if not eval_sha or manifest is None or _is_independent_split(manifest):
+        return None
+    if str(manifest.get("dataset_content_sha256") or "") != eval_sha:
+        return None
+    split_path = provenance_dir / "split_indices.npz"
+    if not split_path.is_file():
+        raise ValueError(
+            "The evaluation dataset is the dataset this model trained on (content_sha256 "
+            f"{eval_sha[:12]}...) but {split_path} is missing, so training rows cannot be "
+            "excluded. Pass --exclude-train-indices or evaluate a held-out file."
+        )
+    return split_path
+
+
+def _unexcluded_eval_scope(provenance_dir: Path, scaler_json: Path, ds_meta: Mapping[str, Any]) -> str:
+    """Scope of an evaluation that excluded no rows: what the report may claim.
+
+    ``"heldout_file"`` only when the evaluation file's stamped content hash is
+    known and differs from the training-data hash the run recorded;
+    ``"training_file"`` when it equals the training file of an independent
+    train/val run (every row was trained on); ``"unverified"`` when either hash
+    is unavailable. The training-file hash is the split manifest's
+    ``train_file_sha256``/``dataset_content_sha256`` or, for runs whose manifest
+    carries neither, the train-only scaler's ``provenance.dataset_content_sha256``
+    (the engine fits the scaler on the training file).
+    """
+    eval_sha = str(ds_meta.get("content_sha256") or "").strip()
+    manifest = _read_split_manifest(provenance_dir) or {}
+    train_sha = str(manifest.get("train_file_sha256") or manifest.get("dataset_content_sha256") or "").strip()
+    if not train_sha and scaler_json.is_file():
+        with contextlib.suppress(OSError, ValueError):
+            scaler_payload = json.loads(scaler_json.read_text(encoding="utf-8-sig"))
+            if isinstance(scaler_payload, Mapping):
+                prov = scaler_payload.get("provenance") or {}
+                if isinstance(prov, Mapping):
+                    train_sha = str(prov.get("dataset_content_sha256") or "").strip()
+    if not eval_sha or not train_sha:
+        return "unverified"
+    return "training_file" if eval_sha == train_sha else "heldout_file"
 
 
 def load_checkpoint_state(path: Path, device: torch.device) -> dict[str, Any]:
@@ -1933,7 +2024,7 @@ def evaluate(
     _dm_top = cfg.get("degree_min")
     _dm_meta = (cfg.get("dataset_meta") or {}).get("degree_min")
     degree_min = int(_dm_top if _dm_top is not None else (_dm_meta if _dm_meta is not None else -1))
-    a_sign_resolved = float(cfg.get("resolved_a_sign", a_sign))
+    a_sign_resolved = _require_unit_a_sign(cfg.get("resolved_a_sign", a_sign), "a_sign")
     if a_sign_resolved != a_sign:
         print(f"[INFO] Overriding CLI a_sign={a_sign} with config.json resolved_a_sign={a_sign_resolved}")
         a_sign = a_sign_resolved
@@ -2082,6 +2173,10 @@ def evaluate(
     model.eval()
 
     excluded_train_rows: np.ndarray | None = None
+    if exclude_train_indices is None:
+        exclude_train_indices = _auto_train_exclusion_path(layout.provenance_dir, ds_meta)
+        if exclude_train_indices is not None:
+            print("[eval] evaluation dataset is the training dataset; excluding its train rows automatically")
     if exclude_train_indices is not None:
         split_path = Path(exclude_train_indices).expanduser().resolve()
         if not split_path.is_file():
@@ -2096,6 +2191,17 @@ def evaluate(
             f"[eval] excluding {excluded_train_rows.size:,} train rows from periodic/held-out evaluation "
             f"using {split_path}"
         )
+
+    if excluded_train_rows is not None:
+        eval_scope = "same_file_train_rows_excluded"
+    else:
+        eval_scope = _unexcluded_eval_scope(layout.provenance_dir, layout.scaler_json, ds_meta)
+        if eval_scope == "training_file":
+            print(
+                "[eval] WARNING: the evaluation dataset is this run's training file; every row was "
+                "trained on, so these metrics are training error, not held-out error."
+            )
+    n_excluded_train_rows = int(excluded_train_rows.size) if excluded_train_rows is not None else 0
 
     suffix = data_path.suffix.lower()
     # When train rows are excluded, ``max_samples`` must count retained
@@ -2141,8 +2247,24 @@ def evaluate(
     _sm: _StreamingMetrics | None = None
     _tk: _TopKErrors | None = None
     if streaming:
-        _alt_span_km = max(1.0, float(alt_bin_km) * 20)  # rough estimate for bins
-        _sm = _StreamingMetrics(n_alt_bins=20, alt_min_km=0.0, alt_max_km=_alt_span_km)
+        # Span the dataset's recorded altitude envelope. The old fixed range
+        # [0, 20 * alt_bin_km] ignored the data (alt_bin_km=50 gave 0-1000 km),
+        # so every point above it was clamped into the last bin unreported.
+        _ds_alt_min_km = _as_optional_float(ds_meta.get("alt_min_km"))
+        _ds_alt_max_km = _as_optional_float(ds_meta.get("alt_max_km"))
+        if (
+            _ds_alt_min_km is not None
+            and _ds_alt_max_km is not None
+            and math.isfinite(_ds_alt_min_km)
+            and math.isfinite(_ds_alt_max_km)
+            and _ds_alt_max_km > _ds_alt_min_km
+        ):
+            _alt_lo_km, _alt_hi_km = _ds_alt_min_km, _ds_alt_max_km
+        else:
+            # No recorded envelope: keep the old estimate; the under/overflow
+            # counters in the report show whether it actually covered the data.
+            _alt_lo_km, _alt_hi_km = 0.0, max(1.0, float(alt_bin_km) * 20)
+        _sm = _StreamingMetrics(n_alt_bins=20, alt_min_km=_alt_lo_km, alt_max_km=_alt_hi_km)
     _effective_topk = int(topk_errors) if int(topk_errors) > 0 else 100
     _tk = _TopKErrors(_effective_topk)
 
@@ -2276,19 +2398,25 @@ def evaluate(
                 "full scatter plots skipped",
                 "exact full-dataset percentiles skipped"
             ],
+            "altitude_bin_range_km": _sm_res["alt_bin_range_km"],
+            "altitude_underflow_count": _sm_res["alt_underflow_count"],
+            "altitude_overflow_count": _sm_res["alt_overflow_count"],
             "U": {
                 "mae": _sm_res["mae_u"],
                 "rmse": _sm_res["rmse_u"],
                 # Task 4: real L∞ and relative error (previously stub 0.0)
                 "linf": _sm_res["max_abs_u"],
-                "rel_mean_pct": _sm_res["robust_rel_err_u"] * 100.0,
+                # Ratio of sums (sum|err| / sum|true|): NOT the per-point mean
+                # that in-memory mode reports as "rel_mean_pct", so it has its
+                # own key and the two statistics are never mixed downstream.
+                "rel_ratio_of_sums_pct": _sm_res["robust_rel_err_u"] * 100.0,
             },
             "|a|": {
                 # Backward-compatible block: now VECTOR error (not magnitude-only).
                 "mae": _sm_res["mae_a"],
                 "rmse": _sm_res["rmse_a"],
                 "linf": _sm_res["max_abs_a"],
-                "rel_mean_pct": _sm_res["robust_rel_err"] * 100.0,
+                "rel_ratio_of_sums_pct": _sm_res["robust_rel_err"] * 100.0,
                 "error_kind": "vector",
             },
             # Explicit, unambiguous metric blocks so a directionally-wrong model
@@ -2297,14 +2425,14 @@ def evaluate(
                 "mae": _sm_res["mae_a_vec"],
                 "rmse": _sm_res["rmse_a_vec"],
                 "linf": _sm_res["max_abs_a_vec"],
-                "rel_mean_pct": _sm_res["robust_rel_err"] * 100.0,
+                "rel_ratio_of_sums_pct": _sm_res["robust_rel_err"] * 100.0,
                 "description": "norm(a_pred - a_true): captures magnitude AND direction.",
             },
             "residual_magnitude_metrics": {
                 "mae": _sm_res["mae_a_mag"],
                 "rmse": _sm_res["rmse_a_mag"],
                 "linf": _sm_res["max_abs_a_mag"],
-                "rel_mean_pct": _sm_res["robust_rel_err_mag"] * 100.0,
+                "rel_ratio_of_sums_pct": _sm_res["robust_rel_err_mag"] * 100.0,
                 "description": "abs(|a_pred| - |a_true|): direction-blind diagnostic only.",
             },
             "residual_angular_metrics": {
@@ -2354,6 +2482,8 @@ def evaluate(
             "checkpoint_hash": _recon_report.get("checkpoint_hash"),
             "target_mode": str(cfg.get("target_mode") or ("residual" if degree_min >= 0 else "full")),
             "w0_bands": _recon_report.get("w0_bands"),
+            "eval_scope": eval_scope,
+            "excluded_train_rows": n_excluded_train_rows,
             "topk_export_path": str(_topk_export_path) if _topk_export_path else None,
         }
         metrics["warnings"] = _build_eval_warnings(_sm_res, _recon_report)
@@ -2697,6 +2827,9 @@ def evaluate(
             "mae": _vec_mae,
             "rmse": _vec_rmse,
             "linf": float(np.max(a_vec_err_norm_np)),
+            # Per-point mean of norm(err)/norm(a_true) (unfloored); summary
+            # mean_relative_a_error reads this key. Streaming mode reports the
+            # different ratio-of-sums statistic as rel_ratio_of_sums_pct.
             "rel_mean_pct": 100.0 * float(np.mean(_rel_a_err)),
             "rel_median": float(np.median(_rel_a_err)),
             "percentiles": _a_err_percentiles,
@@ -2756,6 +2889,8 @@ def evaluate(
         "scaler_hash": _recon_report.get("scaler_hash"),
         "checkpoint_hash": _recon_report.get("checkpoint_hash"),
         "w0_bands": _recon_report.get("w0_bands"),
+        "eval_scope": eval_scope,
+        "excluded_train_rows": n_excluded_train_rows,
     }
     metrics["warnings"] = _build_eval_warnings(
         {
@@ -2876,6 +3011,25 @@ def evaluate(
 # -----------------------------
 # CLI
 # -----------------------------
+def _require_unit_a_sign(value: Any, source: str) -> float:
+    """Return ``value`` as +1.0 / -1.0 or raise.
+
+    ``a_sign`` is a sign convention (U vs -U), not a scale: any other value
+    rescales both the base potential and the residual acceleration.
+    """
+    sign = float(value)
+    if sign not in (1.0, -1.0):
+        raise ValueError(f"{source} must be +1 or -1 (sign convention), got {value!r}")
+    return sign
+
+
+def _a_sign_arg(text: str) -> float:
+    try:
+        return _require_unit_a_sign(text, "--a-sign")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-dir", "--run-dir", dest="model_dir", default=None, help="Directory containing config.json, scaler.json, and checkpoints/ckpt_best.pt or ckpt_last.pt. If omitted, auto-detects the newest lunar-compatible run near this script or via env ST_LRPS_MODEL_DIR.")
@@ -2891,7 +3045,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--out", "--output-dir", dest="out", default=None, help="Output directory (default: <run-dir>/evals/eval_<dataset>_<timestamp>).")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     ap.add_argument("--batch-size", type=int, default=8192)
-    ap.add_argument("--a-sign", type=float, default=1.0, help="Fallback a_sign if config.json lacks resolved_a_sign. +1 for geodesy, -1 for physics.")
+    ap.add_argument("--a-sign", type=_a_sign_arg, default=1.0, help="Fallback a_sign if config.json lacks resolved_a_sign. +1 for geodesy, -1 for physics.")
     ap.add_argument("--r-ref-m", type=float, default=None, help="Reference radius for altitude (meters). If omitted, auto-infer from dataset metadata and fall back to the lunar reference radius.")
     ap.add_argument("--alt-bin-km", type=float, default=50.0, help="Altitude bin size for spatial RMSE breakdown (km).")
     ap.add_argument("--start", type=int, default=0, help="Start row for evaluation.")
@@ -3022,6 +3176,7 @@ def _summary_row_from_report(split: str, report_path: Path, alt_bin_km: float) -
         "device": metrics.get("device"),
         "dtype": metrics.get("dtype"),
         "report_path": str(report_path),
+        "eval_scope": metrics.get("eval_scope"),
     }
     return row
 
@@ -3150,7 +3305,7 @@ def _write_publication_eval_suite(
         "angular_p90_deg", "angular_p95_deg", "radial_rmse", "cross_rmse",
         "radial_mae", "cross_mae", "altitude_min_km", "altitude_max_km",
         "altitude_bin_width_km", "inference_samples_per_sec", "inference_time_s",
-        "device", "dtype", "report_path",
+        "device", "dtype", "report_path", "eval_scope",
     ]
     _write_rows_csv(out_root / "summary_metrics.csv", summary_rows, summary_fields)
     (out_root / "summary_metrics.json").write_text(json.dumps(summary_rows, indent=2), encoding="utf-8")
@@ -3275,11 +3430,11 @@ def main() -> None:
     requested_max_samples = (
         int(args.max_samples) if getattr(args, "max_samples", None) is not None else None
     )
+    # evaluate() counts --max-samples as retained rows, so it keeps scanning past
+    # train rows (explicit or auto-excluded) until N held-out rows are collected.
+    # Turning --max-samples into a raw end offset here would cap the scan before
+    # evaluate() can discover that the file is the training dataset.
     resolved_end: int | None = int(args.end) if args.end is not None else None
-    # For a held-out in-file view, scan past train rows until the requested
-    # number of retained validation rows has been collected.
-    if resolved_end is None and requested_max_samples is not None and exclude_train_indices_path is None:
-        resolved_end = int(args.start) + requested_max_samples
 
     eval_timestamp = time.strftime("%Y%m%d_%H%M%S")
     def _job_out(label: str, path: Path, *, primary: bool = False) -> Path:

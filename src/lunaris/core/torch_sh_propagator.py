@@ -53,7 +53,6 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
-from lunaris.common.constants import R_MOON
 from lunaris.common.frame_policy import (
     FRAME_MODE_IDENTITY_DIAGNOSTIC,
     FRAME_MODE_MOON_FIXED_EPHEMERIS,
@@ -69,6 +68,7 @@ from lunaris.core.batched_fixed_step import (
     rk4_step,
     run_batched_fixed_step,
 )
+from lunaris.core.propagation.time_grid import get_ref_radius_and_mu
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
@@ -192,7 +192,9 @@ class TorchSHBatchPropagator:
 
         self._dt = float(getattr(batch_cfg, "dt_s", 60.0))
         self._impact_alt_m = float(getattr(batch_cfg, "impact_alt_km", 0.0)) * 1_000.0
-        self._impact_r = float(R_MOON) + self._impact_alt_m
+        # Same impact sphere as the CPU path: the gravity model's reference radius
+        # (R_MOON only without a gravity model), see get_ref_radius_and_mu.
+        self._impact_r = float(get_ref_radius_and_mu(dynamics_engine)[0]) + self._impact_alt_m
         self._detect_impact = bool(getattr(batch_cfg, "impact_detection_enabled", True))
         self._terrain_requested = self._detect_impact and (
             str(getattr(batch_cfg, "impact_surface_mode", "sphere")) == "terrain"

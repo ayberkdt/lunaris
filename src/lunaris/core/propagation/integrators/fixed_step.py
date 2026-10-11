@@ -20,6 +20,7 @@ from lunaris.core.propagation.integrators.symplectic import (
     _y4_step,
     _y6_step,
     _y8_step,
+    stage_time_overhang,
 )
 from lunaris.core.propagation.time_grid import _norm_method
 
@@ -41,6 +42,11 @@ _RHS_METHODS: dict[str, str] = {"RK4": "RK4", "RK8": "RK8"}
 
 if set(_ACCEL_METHODS) | set(_RHS_METHODS) != set(FIXED_STEP_METHOD_ALIASES):
     raise RuntimeError("Fixed-step method registry drifted from lunaris.common.integrator_methods.")
+
+def fixed_step_stage_overhang(method: str) -> float:
+    """Stage-time overhang (in steps) of a fixed-step method name or alias; 0 if none."""
+    return stage_time_overhang(_ACCEL_METHODS.get(_norm_method(method), ""))
+
 
 def _is_symplectic_method(method: str) -> bool:
     """True for the structure-preserving fixed-step methods (Verlet/PEFRL/Yoshida)."""

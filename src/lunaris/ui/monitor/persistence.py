@@ -137,7 +137,13 @@ def save_layout(path: Path | str, layout: MonitorLayout) -> None:
 
 def load_layout(path: Path | str) -> MonitorLayout:
     """Strict load; raises OSError / LayoutError."""
-    raw = Path(path).read_text(encoding="utf-8-sig")
+    try:
+        raw = Path(path).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        # Not text in UTF-8: as unusable as invalid JSON, and it must be
+        # quarantined rather than escape to a caller that keeps going and
+        # overwrites it at close.
+        raise LayoutError(f"layout file is not UTF-8 text: {exc}") from exc
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:

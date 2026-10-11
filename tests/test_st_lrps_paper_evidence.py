@@ -300,6 +300,15 @@ def _make_hygiene_run(tmp_path, *, fit_scope="train_only", with_split_manifest=T
     scaler.setdefault("provenance", {})["fit_scope"] = fit_scope
     scaler["provenance"]["split_policy"] = "spatial_block"
     (run_dir / "scaler.json").write_text(json.dumps(scaler), encoding="utf-8")
+    # A real run embeds the same scaler in its checkpoint; a strict contract
+    # read refuses a scaler.json that disagrees with it.
+    from lunaris.surrogate.st_lrps.artifacts.manager import compute_payload_sha256
+
+    ckpt_path = run_dir / "checkpoints" / "ckpt_best.pt"
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    ckpt["scaler"] = scaler
+    ckpt["scaler_hash"] = compute_payload_sha256(scaler)
+    torch.save(ckpt, ckpt_path)
     if with_split_manifest:
         prov = run_dir / "provenance"
         prov.mkdir(parents=True, exist_ok=True)

@@ -226,3 +226,33 @@ def test_cli_override_changes_only_intended_fields(tmp_path):
     assert loaded["propagation"]["dtype"] == "float32"
     assert loaded["surrogate"]["model_dir"] == str((tmp_path / "model").resolve())
     assert loaded["outputs"]["out_dir"] == str((tmp_path / "override_out").resolve())
+
+
+def test_yaml_config_without_pyyaml_is_a_clear_error(tmp_path, monkeypatch):
+    # A hand-written subset parser used to stand in for PyYAML, so the same
+    # file parsed differently per machine (e.g. ``rtol: 1e-10`` was a float
+    # there and a string under PyYAML; ``n: 5  # five`` kept the comment).
+    import lunaris.surrogate.st_lrps.evaluation.benchmark_config as bc
+
+    real_import = bc.import_module
+
+    def _no_yaml(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("No module named 'yaml'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(bc, "import_module", _no_yaml)
+    path = tmp_path / "benchmark.yaml"
+    path.write_text("schema_version: 1\nname: x\n", encoding="utf-8")
+    with pytest.raises(BenchmarkConfigError, match="PyYAML"):
+        load_benchmark_config(path)
+
+
+def test_yaml_config_is_parsed_by_pyyaml(tmp_path):
+    yaml = pytest.importorskip("yaml")
+    payload = _config()
+    path = tmp_path / "benchmark.yaml"
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    loaded = load_benchmark_config(path)
+    assert loaded["name"] == "fixture_benchmark"
+    assert loaded["truth"]["rtol"] == payload["truth"]["rtol"]

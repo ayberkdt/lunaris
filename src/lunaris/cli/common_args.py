@@ -292,7 +292,14 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
     elif args.hours is not None:
         cfg = replace(cfg, time=replace(cfg.time, duration_s=float(args.hours) * 3600.0))
 
+    spp_given = getattr(args, "samples_per_period", None) is not None
+    if spp_given and getattr(args, "output_dt_s", None) is not None:
+        raise ValueError("Give either --output-dt-s or --samples-per-period, not both.")
     cfg = replace(cfg, time=patch_dataclass(cfg.time, args, _TIME_PATCHES))
+    if spp_given:
+        # The grid is derived from samples_per_period only when output_dt_s is
+        # None; the default config's fixed spacing would otherwise win.
+        cfg = replace(cfg, time=replace(cfg.time, output_dt_s=None))
 
     # --- Spacecraft ---
     cfg = replace(cfg, spacecraft=patch_dataclass(cfg.spacecraft, args, _SPACECRAFT_PATCHES))

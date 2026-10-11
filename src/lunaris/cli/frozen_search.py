@@ -16,6 +16,7 @@ off. Statuses obey the R21 rule: only classical SH validation can produce
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import sys
 from pathlib import Path
@@ -254,6 +255,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     hp_km: tuple[float, float] | None = tuple(args.hp_km) if args.hp_km is not None else None
     if hp_km is not None:
+        if not all(0.0 <= float(v) < 1.0 for v in args.e):
+            print("[FATAL] --e bounds must satisfy 0 <= e < 1", file=sys.stderr)
+            return 2
         r_ref_km = 1_737.4
         a_bounds = (
             (r_ref_km + hp_km[0]) / (1.0 - float(args.e[0])),
@@ -261,12 +265,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         a_bounds = tuple(args.a_km)
-    bounds = ElementBounds(
-        a_km=a_bounds,
-        e=tuple(args.e),
-        i_deg=tuple(args.i_deg),
-        argp_deg=argp_bounds,
-    )
+    try:
+        bounds = ElementBounds(
+            a_km=a_bounds,
+            e=tuple(args.e),
+            i_deg=tuple(args.i_deg),
+            argp_deg=argp_bounds,
+        )
+    except ValueError as exc:
+        print(f"[FATAL] {exc}", file=sys.stderr)
+        return 2
     guard = FrozenSearchDomainGuard(
         altitude_min_km=float(args.domain_alt_min_km),
         altitude_max_km=float(args.domain_alt_max_km),
@@ -285,30 +293,34 @@ def main(argv: list[str] | None = None) -> int:
             max_iterations=int(args.refine_max_iterations),
             seed=int(args.seed),
         )
-    config = FrozenSearchConfig(
-        bounds=bounds,
-        n_samples=int(args.n_samples),
-        seed=int(args.seed),
-        sampling_method=str(args.sampling_method),
-        hp_km=hp_km,
-        argp_choices=argp_choices,
-        screening_score=str(args.screening_score),
-        screening_duration_s=float(args.screening_days) * 86_400.0,
-        screening_output_dt_s=float(args.screening_output_dt_s),
-        screening_output_mode=str(args.screening_output_mode),
-        screening_summary_batch_size=int(args.screening_summary_batch_size),
-        stage1_history_top_k=args.stage1_history_top_k,
-        screening_checkpoint_interval_s=float(args.screening_checkpoint_minutes) * 60.0,
-        top_k=int(args.top_k),
-        validation_duration_s=float(args.validation_days) * 86_400.0,
-        validation_output_dt_s=float(args.validation_output_dt_s),
-        guard=guard,
-        perilune_safety_min_m=float(args.perilune_safety_km) * 1_000.0,
-        refine_top_n=int(args.refine_top_n),
-        refinement=refinement,
-        paper_safe=bool(args.paper_safe),
-        strict_frame=bool(args.strict_frame),
-    )
+    try:
+        config = FrozenSearchConfig(
+            bounds=bounds,
+            n_samples=int(args.n_samples),
+            seed=int(args.seed),
+            sampling_method=str(args.sampling_method),
+            hp_km=hp_km,
+            argp_choices=argp_choices,
+            screening_score=str(args.screening_score),
+            screening_duration_s=float(args.screening_days) * 86_400.0,
+            screening_output_dt_s=float(args.screening_output_dt_s),
+            screening_output_mode=str(args.screening_output_mode),
+            screening_summary_batch_size=int(args.screening_summary_batch_size),
+            stage1_history_top_k=args.stage1_history_top_k,
+            screening_checkpoint_interval_s=float(args.screening_checkpoint_minutes) * 60.0,
+            top_k=int(args.top_k),
+            validation_duration_s=float(args.validation_days) * 86_400.0,
+            validation_output_dt_s=float(args.validation_output_dt_s),
+            guard=guard,
+            perilune_safety_min_m=float(args.perilune_safety_km) * 1_000.0,
+            refine_top_n=int(args.refine_top_n),
+            refinement=refinement,
+            paper_safe=bool(args.paper_safe),
+            strict_frame=bool(args.strict_frame),
+        )
+    except ValueError as exc:
+        print(f"[FATAL] {exc}", file=sys.stderr)
+        return 2
 
     # Paper-safe / strict-frame requires the rotating Moon-fixed frame on every
     # backend, so an ephemeris must be built even when no third-body is active.
@@ -378,7 +390,14 @@ def main(argv: list[str] | None = None) -> int:
     # Validation runs in the rotating frame when third-body is active OR under
     # paper-safe/strict-frame, so a "rotating Moon-fixed SH only, no third-body"
     # paper-safe run no longer has to enable third-body just to pass the guard.
-    validation_needs_ephem = bool(validation_third_body) or strict_frame_required
+    # ST-LRPS screening always flies the rotating Moon-fixed field, so its
+    # candidates must be validated in that frame too; an identity-frame
+    # validation would judge a different orbit.
+    validation_needs_ephem = (
+        bool(validation_third_body)
+        or strict_frame_required
+        or screening_backend == "st-lrps"
+    )
     try:
         validation = ClassicalSHValidationPropagator(
             degree=int(args.validation_degree),
@@ -410,6 +429,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
 
+    # Element <-> state conversions use the validation field's own GM rather
+    # than a hard-coded lunar constant.
+    if validation.gravity_mu_m3s2 is not None:
+        config = dataclasses.replace(config, mu_m3s2=float(validation.gravity_mu_m3s2))
     pipeline = FrozenSearchPipeline(
         config,
         screening=screening,

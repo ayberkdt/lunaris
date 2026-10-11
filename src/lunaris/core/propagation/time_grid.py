@@ -40,6 +40,10 @@ def _clamp_output_dt(t0: float, tf: float, dt_out: float, cap: int, verbose: boo
     n = int(math.ceil((tf - t0) / dt)) + 1
     if n > int(cap):
         dt = (tf - t0) / max(2, int(cap) - 1)
+        # (tf - t0) / dt can round up past cap - 1; nudge dt until the grid
+        # build_output_time_grid makes (ceil(D/dt) + 1 points) fits the cap.
+        while math.ceil((tf - t0) / dt) + 1 > max(3, int(cap)):
+            dt = math.nextafter(dt, math.inf)
         if verbose:
             logger.info("[OUT] max_points_cap exceeded -> increasing output_dt_s to %g s", dt)
     return dt

@@ -81,6 +81,135 @@ def line_sphere_alpha(p_prev: Any, p_curr: Any, r_impact: Any) -> Any:
     return alpha
 
 
+#: Cubic-Hermite sub-samples per fixed step for batched impact detection. The
+#: straight chord of a whole step sits radially below the true arc by up to
+#: ``g * dt**2 / 8`` (``g = mu / r**2``): 183 m for a low lunar orbit at
+#: ``dt = 30 s``, so a chord test flags orbits that pass that close above the
+#: surface. Between two neighbouring sub-samples the residual sag is
+#: ``g * (dt / K)**2 / 8``: 0.18 m at ``dt = 30 s`` and 0.71 m at ``dt = 60 s``
+#: for ``K = 32``. The Hermite curve itself matches the arc to
+#: ``dt**4 * |d4r/dt4| / 384`` (about 3 mm for the same orbit and step).
+IMPACT_HERMITE_SUBSTEPS: int = 32
+
+
+def _hermite_coeffs(
+    p0: Any, v0: Any, p1: Any, v1: Any, dt_s: float
+) -> tuple[Any, Any, Any, Any]:
+    """Power-basis coefficients of one step's cubic Hermite position curve.
+
+    ``p(s) = c0 + c1 s + c2 s**2 + c3 s**3`` on ``s in [0, 1]`` with ``p(0) = p0``,
+    ``p(1) = p1``, ``dp/ds(0) = dt v0`` and ``dp/ds(1) = dt v1`` -- the standard
+    endpoint-value/endpoint-derivative Hermite basis regrouped by powers of
+    ``s``. ``c0 = p0`` carries the large magnitude and the higher coefficients
+    are step-sized, so Horner evaluation adds a small correction to ``p0``.
+    """
+    dt = float(dt_s)
+    dp = p1 - p0
+    a0 = dt * v0
+    a1 = dt * v1
+    return p0, a0, 3.0 * dp - 2.0 * a0 - a1, a0 + a1 - 2.0 * dp
+
+
+def _hermite_points(coeffs: tuple[Any, Any, Any, Any], s: Any) -> Any:
+    """Hermite positions ``[N, M, 3]`` at the step fractions ``s`` ``[M]``."""
+    c0, c1, c2, c3 = (c.unsqueeze(1) for c in coeffs)
+    s = s.view(1, -1, 1)
+    return c0 + s * (c1 + s * (c2 + s * c3))
+
+
+def _hermite_point_tangent(coeffs: tuple[Any, Any, Any, Any], s: Any) -> tuple[Any, Any]:
+    """Hermite position ``[N, 3]`` and ``dp/ds`` ``[N, 3]`` at per-row fractions ``s`` ``[N]``."""
+    c0, c1, c2, c3 = coeffs
+    s = s.unsqueeze(1)
+    p = c0 + s * (c1 + s * (c2 + s * c3))
+    dp_ds = c1 + s * (2.0 * c2 + s * (3.0 * c3))
+    return p, dp_ds
+
+
+def hermite_state(prev_state: Any, curr_state: Any, dt_s: float, alpha: Any) -> Any:
+    """``[N, 6]`` state on the cubic Hermite curve of one step at fraction ``alpha``.
+
+    Built from the two step-end states (position and velocity) of the fixed-step
+    integrator; the velocity is the curve's derivative ``dp/ds / dt``. At
+    ``alpha = 0`` and ``alpha = 1`` it reproduces the endpoint states.
+    """
+    import torch
+
+    coeffs = _hermite_coeffs(
+        prev_state[:, :3], prev_state[:, 3:6], curr_state[:, :3], curr_state[:, 3:6], dt_s
+    )
+    p, dp_ds = _hermite_point_tangent(coeffs, alpha)
+    return torch.cat((p, dp_ds / float(dt_s)), dim=1)
+
+
+def hermite_sphere_intersection(
+    prev_state: Any,
+    curr_state: Any,
+    dt_s: float,
+    r_impact: Any,
+    *,
+    n_sub: int = IMPACT_HERMITE_SUBSTEPS,
+    newton_iters: int = 3,
+) -> tuple[Any, Any]:
+    """Per-row hit mask and entering fraction of one step's arc into a sphere.
+
+    Same ``(hit, alpha)`` contract as :func:`line_sphere_intersection`, but the
+    step is the cubic Hermite curve through both step-end positions and
+    velocities instead of their straight chord:
+
+    1. **Gate.** The whole-step chord lies radially below a gravity-bent arc, so
+       a row whose chord misses the sphere cannot hit; such rows keep
+       ``hit = False`` exactly as before.
+    2. **Sub-chords.** The curve is sampled at ``n_sub + 1`` fractions and the
+       first sub-chord that enters the sphere is taken (residual sag
+       ``g (dt / n_sub)**2 / 8``, see :data:`IMPACT_HERMITE_SUBSTEPS`). A
+       sub-chord crossing still catches a step whose endpoints both lie
+       outside while its middle dips inside.
+    3. **Refine.** When the sub-interval ends inside the sphere, a few Newton
+       steps on ``||p(s)|| - r`` (clamped to the sub-interval) move the
+       sub-chord root onto the Hermite curve.
+    """
+    import torch
+
+    p0 = prev_state[:, :3]
+    p1 = curr_state[:, :3]
+    n = int(p0.shape[0])
+    k_sub = int(n_sub)
+
+    gate, _ = line_sphere_intersection(p0, p1, r_impact)
+
+    coeffs = _hermite_coeffs(p0, prev_state[:, 3:6], p1, curr_state[:, 3:6], dt_s)
+    s_grid = torch.linspace(0.0, 1.0, k_sub + 1, dtype=p0.dtype, device=p0.device)
+    q = _hermite_points(coeffs, s_grid)
+    sub_hit, sub_alpha = line_sphere_intersection(
+        q[:, :-1, :].reshape(-1, 3), q[:, 1:, :].reshape(-1, 3), r_impact
+    )
+    sub_hit = sub_hit.view(n, k_sub)
+    sub_alpha = sub_alpha.view(n, k_sub)
+    hit = gate & sub_hit.any(dim=1)
+
+    k_first = sub_hit.to(torch.int32).argmax(dim=1)
+    a_k = sub_alpha.gather(1, k_first.unsqueeze(1)).squeeze(1)
+    k_f = k_first.to(p0.dtype)
+    s_lo = k_f / k_sub
+    s_hi = (k_f + 1.0) / k_sub
+    s = s_lo + a_k / k_sub
+
+    r_end = torch.linalg.norm(q, dim=2).gather(1, (k_first + 1).unsqueeze(1)).squeeze(1)
+    bracketed = r_end <= r_impact
+    for _ in range(int(newton_iters)):
+        p, dp_ds = _hermite_point_tangent(coeffs, s)
+        r = torch.linalg.norm(p, dim=1).clamp_min(EPS_1E30)
+        f = r - r_impact
+        fp = (p * dp_ds).sum(dim=1) / r
+        descending = fp < 0.0
+        step = f / fp.where(descending, fp.new_ones(()))
+        s = torch.where(bracketed & descending, torch.minimum(torch.maximum(s - step, s_lo), s_hi), s)
+
+    alpha = s.clamp(0.0, 1.0).where(hit, p0.new_ones(()))
+    return hit, alpha
+
+
 def sample_topo_radius_torch(topo: dict[str, Any], lat_deg: Any, lon_deg: Any) -> Any:
     """Vectorised terrain-radius sampler for a ``loaders.grid_topo_payload``.
 
@@ -159,7 +288,30 @@ def topo_payload_to_torch(
     out["dn"] = torch.as_tensor(
         np.asarray(payload["dn"], dtype=np.float64), device=device, dtype=dtype
     )
+    if payload.get("map_rotation") is not None:
+        out["map_rotation"] = torch.as_tensor(
+            np.asarray(payload["map_rotation"], dtype=np.float64).reshape(3, 3),
+            device=device,
+            dtype=dtype,
+        )
     return out
+
+
+def topo_latlon_deg(topo: dict[str, Any], p_bf: Any, r_safe: Any) -> tuple[Any, Any]:
+    """Map latitude/longitude [deg] of ``[N, 3]`` body-fixed positions.
+
+    Applies the payload's body-fixed -> map-frame rotation (``map_rotation``,
+    present when the propagation frame is MOON_PA and the map is on mean-Earth
+    axes, see :mod:`lunaris.common.lunar_map_frame`) before the angles are
+    taken; the rotation preserves ``r_safe``.
+    """
+    import torch
+
+    rotation = topo.get("map_rotation")
+    p_map = p_bf if rotation is None else p_bf @ rotation.T
+    lat = torch.rad2deg(torch.asin((p_map[:, 2] / r_safe).clamp(-1.0, 1.0)))
+    lon = torch.rad2deg(torch.atan2(p_map[:, 1], p_map[:, 0]))
+    return lat, lon
 
 
 def terrain_segment_intersection(
@@ -171,70 +323,105 @@ def terrain_segment_intersection(
     frame: Any,
     topo: dict[str, Any],
     impact_alt_m: float,
-    bisection_iters: int = 32,
+    bisection_iters: int = 27,
+    v_prev: Any = None,
+    v_curr: Any = None,
+    n_sub: int = IMPACT_HERMITE_SUBSTEPS,
 ) -> tuple[Any, Any]:
-    """Terrain-aware analogue of :func:`line_sphere_intersection`.
+    """Terrain-aware analogue of :func:`hermite_sphere_intersection`.
 
-    Two stages, fully vectorised:
+    The step is the cubic Hermite curve through the step-end positions and
+    velocities ``v_prev`` / ``v_curr`` (when they are omitted both tangents are
+    the chord direction and the curve *is* the straight chord). Three stages,
+    fully vectorised:
 
-    1. **Outer envelope.** A segment can only touch terrain if it reaches the
+    1. **Outer envelope.** A step can only touch terrain if it reaches the
        bounding sphere ``r_terrain_max + impact_alt`` (max terrain height plus the
-       altitude threshold). Rows that miss this sphere cannot impact.
-    2. **Terrain bisection.** On ``[alpha_enter, 1]`` solve the downward crossing
-       of ``f(alpha) = ||p(alpha)|| - terrain_radius(lat, lon) - impact_alt``. The
-       sub-point latitude/longitude come from the body-fixed position; the
-       inertial→fixed rotation is evaluated once per segment at its midpoint
-       (Moon rotation over a single step is negligible relative to terrain relief),
-       keeping the SLERP-frame provenance.
+       altitude threshold). The whole-step chord lies below the arc, so rows
+       whose chord misses this sphere cannot impact. A row that already starts
+       inside the envelope (a descent lasting several steps) is examined too.
+    2. **Hermite samples.** ``f(s) = ||p(s)|| - terrain_radius(lat, lon) -
+       impact_alt`` is evaluated at ``n_sub + 1`` fractions; the first sample at
+       or below the terrain marks the impact (a row starting at/below it enters
+       at ``alpha = 0``). Sampling the curve rather than only the step end also
+       catches a dip below the terrain between the step ends.
+    3. **Terrain bisection** of ``f`` on the Hermite curve inside the bracketing
+       sub-interval (width ``1 / n_sub``; the default 27 halvings resolve
+       ``2**-32`` of the step, as the former 32 halvings of ``[0, 1]`` did).
+
+    The sub-point latitude/longitude come from the body-fixed position; the
+    inertial→fixed rotation is evaluated once per step at its midpoint (Moon
+    rotation over a single step is negligible relative to terrain relief),
+    keeping the SLERP-frame provenance.
 
     Returns ``(hit, alpha)`` with the same contract as
     :func:`line_sphere_intersection`: non-hit rows get ``alpha = 1``. The caller
-    forms the crossing state by linear interpolation at ``alpha`` exactly as for
-    the sphere path, so position **and** velocity freeze on the terrain surface.
+    forms the crossing state on the same Hermite curve (:func:`hermite_state`),
+    so position **and** velocity freeze on the terrain surface.
+
+    Limitations: terrain relief narrower than the sample spacing (``v dt /
+    n_sub`` along track, about 1.6 km for a low lunar orbit at ``dt = 30 s``) can
+    still be crossed between two samples without being detected.
     """
     import torch
 
     dp = p_curr - p_prev
+    if v_prev is None:
+        v_prev = dp / float(dt_s)
+    if v_curr is None:
+        v_curr = dp / float(dt_s)
     impact_alt = float(impact_alt_m)
     r_outer = float(topo.get("r_terrain_max_m", topo.get("radius_const_m", 0.0))) + impact_alt
-    hit_outer, alpha_enter = line_sphere_intersection(p_prev, p_curr, r_outer)
+    hit_outer, _ = line_sphere_intersection(p_prev, p_curr, r_outer)
+    # A step that starts inside the envelope has its entering root at
+    # alpha <= 0, outside line_sphere_intersection's [0, 1] hit window, so a
+    # descent lasting several steps never bracketed the ground.
+    starts_inside = torch.linalg.norm(p_prev, dim=1) <= r_outer
+    hit_outer = hit_outer | starts_inside
 
     t_rep = float(t_prev_s) + 0.5 * float(dt_s)
     use_rot = frame is not None and bool(getattr(frame, "uses_rotation", False))
 
-    def _f(alpha: Any) -> Any:
-        p = p_prev + alpha.unsqueeze(1) * dp
+    def _f_at(p: Any) -> Any:
         r = torch.linalg.norm(p, dim=1)
         p_bf = frame.inertial_to_fixed(t_rep, p) if use_rot else p
         r_safe = r.clamp_min(EPS_1E30)
-        lat = torch.rad2deg(torch.asin((p_bf[:, 2] / r_safe).clamp(-1.0, 1.0)))
-        lon = torch.rad2deg(torch.atan2(p_bf[:, 1], p_bf[:, 0]))
+        lat, lon = topo_latlon_deg(topo, p_bf, r_safe)
         terrain_r = sample_topo_radius_torch(topo, lat, lon)
         return r - terrain_r - impact_alt
 
-    one = p_prev.new_ones(p_prev.shape[0])
-    lo = alpha_enter
-    hi = one
-    f_lo = _f(lo)
-    f_hi = _f(hi)
+    coeffs = _hermite_coeffs(p_prev, v_prev, p_curr, v_curr, dt_s)
+    c0, c1, c2, c3 = coeffs
 
-    # Impact iff the envelope is entered and the step endpoint is at/below terrain.
-    # (A transient dip-and-recover within one step is below this scheme's
-    # resolution and is intentionally treated as no-impact, mirroring the
-    # entry-only sphere logic.)
-    bracket = hit_outer & (f_hi <= 0.0)
+    def _f(alpha: Any) -> Any:
+        s = alpha.unsqueeze(1)
+        return _f_at(c0 + s * (c1 + s * (c2 + s * c3)))
 
-    # Where the segment is already below terrain at envelope entry, freeze at entry.
-    already = bracket & (f_lo <= 0.0)
+    n = int(p_prev.shape[0])
+    k_sub = int(n_sub)
+    s_grid = torch.linspace(0.0, 1.0, k_sub + 1, dtype=p_prev.dtype, device=p_prev.device)
+    q = _hermite_points(coeffs, s_grid)
+    below = (_f_at(q.reshape(-1, 3)) <= 0.0).view(n, k_sub + 1)
 
+    # Impact iff the envelope is reached and some Hermite sample is at/below
+    # the terrain; the first such sample closes the bracket.
+    bracket = hit_outer & below.any(dim=1)
+    k_first = below.to(torch.int32).argmax(dim=1)
+    # A step that already starts at/below the terrain freezes at its start.
+    already = bracket & (k_first == 0)
+
+    k_f = k_first.to(p_prev.dtype)
+    lo = (k_f - 1.0).clamp_min(0.0) / k_sub
+    hi = k_f / k_sub
     for _ in range(int(bisection_iters)):
         mid = 0.5 * (lo + hi)
         go_right = _f(mid) > 0.0
         lo = torch.where(go_right, mid, lo)
         hi = torch.where(go_right, hi, mid)
 
+    one = p_prev.new_ones(n)
     alpha = torch.where(bracket, 0.5 * (lo + hi), one)
-    alpha = torch.where(already, alpha_enter, alpha)
+    alpha = torch.where(already, torch.zeros_like(alpha), alpha)
     return bracket, alpha
 
 
@@ -395,14 +582,18 @@ class TorchMoonFrame:
 
 
 __all__ = [
+    "IMPACT_HERMITE_SUBSTEPS",
     "TorchFrameCache",
     "TorchFrameError",
     "TorchMoonFrame",
+    "hermite_sphere_intersection",
+    "hermite_state",
     "line_sphere_alpha",
     "line_sphere_intersection",
     "quat_conjugate_torch",
     "quat_rotate_torch",
     "sample_topo_radius_torch",
     "terrain_segment_intersection",
+    "topo_latlon_deg",
     "topo_payload_to_torch",
 ]

@@ -25,6 +25,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.paper_evidence.config_validation import (
     PaperConfigError,
@@ -76,9 +78,14 @@ def default_evidence_root() -> Path:
 
 def _run_key(config: Mapping[str, Any]) -> str:
     name = str(config.get("name") or "").strip()
-    if name:
-        return name
     seed = config.get("seed")
+    if name:
+        # A fixed name reused across a --seed sweep must not collapse every
+        # candidate onto one evidence dir / manifest key. A name that already
+        # spells out its seed ("st_lrps_paper_full_seed42") is kept as is.
+        if seed is not None and f"seed{seed}" not in name:
+            return f"{name}_seed{seed}"
+        return name
     return f"seed{seed}" if seed is not None else "run"
 
 
@@ -115,7 +122,7 @@ def verify_paper_run_artifacts(run_dir: str | Path) -> dict[str, Path]:
     if not split_manifest_path.exists():
         raise PaperEvidenceError(f"missing split_manifest.json under {run_dir}/provenance")
     split_manifest = json.loads(split_manifest_path.read_text(encoding="utf-8"))
-    _verify_split_disjointness(split_manifest)
+    _verify_split_disjointness(split_manifest, provenance_dir=layout.provenance_dir)
 
     # 3. Artifact contract must be readable (i.e. it was written).
     try:
@@ -139,13 +146,15 @@ def verify_paper_run_artifacts(run_dir: str | Path) -> dict[str, Path]:
     }
 
 
-def _verify_split_disjointness(split_manifest: Mapping[str, Any]) -> None:
-    """Sanity-check split separation from the manifest.
+def _verify_split_disjointness(split_manifest: Mapping[str, Any], *, provenance_dir: Path | None = None) -> None:
+    """Verify split separation from the manifest and, when present, the actual indices.
 
-    The split system guarantees disjoint indices by construction (and is unit
-    tested). Persisted manifests carry only per-split index hashes, so here we
-    assert those hashes are pairwise distinct for non-empty splits — identical
-    hashes would mean the same indices were reused across splits (a leak).
+    Distinct index hashes are a weak check: two different index sets that merely
+    overlap (train=[0..99], val=[50..59]) have distinct hashes. When
+    ``provenance_dir`` holds ``split_indices.npz`` each array is hash-verified
+    against ``index_hashes`` and the non-empty splits are intersected pairwise.
+    Independent-file splits have no in-file indices; they must record distinct
+    ``train_file_sha256`` / ``val_file_sha256`` content hashes instead.
     """
     hashes = split_manifest.get("index_hashes")
     counts = {
@@ -154,15 +163,25 @@ def _verify_split_disjointness(split_manifest: Mapping[str, Any]) -> None:
         "test": split_manifest.get("test_count", 0),
         "ood": split_manifest.get("ood_count", 0),
     }
+    if str(split_manifest.get("split_policy")) == "independent_files":
+        train_hash = split_manifest.get("train_file_sha256")
+        val_hash = split_manifest.get("val_file_sha256")
+        if not train_hash or not val_hash:
+            raise PaperEvidenceError(
+                "split_manifest.json has split_policy='independent_files' but is missing "
+                "train_file_sha256/val_file_sha256 (cannot verify the files are actually distinct)."
+            )
+        if train_hash == val_hash:
+            raise PaperEvidenceError(
+                "split_manifest.json split_policy='independent_files' but train_file_sha256 == "
+                "val_file_sha256 (train and val are the same file)."
+            )
+        return
     if not isinstance(hashes, Mapping):
-        # Independent-file splits legitimately omit index hashes.
-        if str(split_manifest.get("split_policy")) == "independent_files":
-            return
         raise PaperEvidenceError("split_manifest.json is missing index_hashes")
+    non_empty = [name for name, count in counts.items() if int(count or 0) > 0]
     seen: dict[str, str] = {}
-    for name, count in counts.items():
-        if int(count or 0) <= 0:
-            continue
+    for name in non_empty:
         digest = hashes.get(name)
         if not digest:
             raise PaperEvidenceError(f"split_manifest.json missing index hash for non-empty split {name!r}")
@@ -172,6 +191,34 @@ def _verify_split_disjointness(split_manifest: Mapping[str, Any]) -> None:
                 "(train/val/test/OOD splits overlap)."
             )
         seen[digest] = name
+
+    if provenance_dir is None:
+        return
+    indices_path = Path(provenance_dir) / "split_indices.npz"
+    if not indices_path.exists():
+        return  # older run without the sidecar: only the hash check above applies
+    from lunaris.surrogate.st_lrps.data.splits import hash_indices
+
+    try:
+        with np.load(indices_path, allow_pickle=False) as data:
+            arrays = {str(k): np.asarray(data[k], dtype=np.int64).reshape(-1) for k in data.files}
+    except Exception as exc:  # noqa: BLE001 - an unreadable sidecar must not pass as "older run"
+        raise PaperEvidenceError(f"split_indices.npz exists but cannot be read: {exc}") from exc
+    for name, arr in arrays.items():
+        expected = hashes.get(name)
+        if expected and hash_indices(arr) != str(expected):
+            raise PaperEvidenceError(
+                f"split_indices.npz[{name!r}] does not match the split manifest's index hash"
+            )
+    present = sorted(name for name in non_empty if name in arrays)
+    for i, a_name in enumerate(present):
+        for b_name in present[i + 1 :]:
+            overlap = np.intersect1d(arrays[a_name], arrays[b_name])
+            if overlap.size:
+                raise PaperEvidenceError(
+                    f"split index overlap: {a_name!r} and {b_name!r} share {overlap.size} row "
+                    "index(es) (train/val/test/OOD splits overlap)."
+                )
 
 
 def mark_run_pre_hygiene(run_dir: str | Path, *, reason: str = "trained before the validation-hygiene refactor") -> Path:
@@ -426,7 +473,9 @@ def _write_manifest(manifest_path, run_key, config, config_path, run_out_dir, co
         artifacts={k: (str(v) if not isinstance(v, str | Path) else v) for k, v in artifacts.items()},
         command=[str(c) for c in command],
         dry_run=dry_run,
-        extra=extra,
+        # The manifest's config record holds only path/hashes, so the seed is
+        # recorded here for the multi-seed stage to pair this candidate.
+        extra={**(extra or {}), "seed": config.get("seed")},
     )
     write_evidence_manifest(manifest_path, run_key=run_key, entry=entry)
 
@@ -523,6 +572,7 @@ def run_field_validation_stage(
     config_path: str | Path,
     *,
     model_dir: str | Path | None = None,
+    seed: int | None = None,
     evidence_root: Path,
     dry_run: bool = False,
 ) -> int:
@@ -542,7 +592,7 @@ def run_field_validation_stage(
         print(f"  out dir:  {out_dir}")
         if placeholders:
             print(f"  WARNING: unfilled placeholders: {placeholders}")
-        _record_stage(evidence_root, "field-validation", "field_validation",
+        _record_stage(evidence_root, "field-validation", f"field_validation:{model_name}",
                       config_path=config_path, config=cfg, out_dir=out_dir, dry_run=True,
                       extra={"unfilled_placeholders": placeholders})
         return 0
@@ -569,9 +619,10 @@ def run_field_validation_stage(
     )
     paths = write_field_validation_csvs(report, out_dir)
     artifacts = {"field_metrics_csv": paths.get("metrics"), **_model_artifacts(model)}
-    _record_stage(evidence_root, "field-validation", "field_validation",
+    _record_stage(evidence_root, "field-validation", f"field_validation:{model_name}",
                   config_path=config_path, config=cfg, out_dir=out_dir, artifacts=artifacts,
                   extra={
+                      "seed": seed,
                       "policies": list(report.get("field_validation", {}).keys()),
                       "leakage_guard_status": (report.get("leakage_guard") or {}).get("status"),
                       "runtime_model_kind": report.get("runtime_model_kind"),
@@ -726,6 +777,31 @@ def run_ablation_stage(
 # Stage: multi-seed summary
 # ---------------------------------------------------------------------------
 
+def _find_field_validation_csv(
+    runs: Mapping[str, Any], *, seed: int, checkpoint_sha256: str | None
+) -> Path | None:
+    """Field-metrics CSV the evidence manifest recorded for one training candidate.
+
+    Matches a completed ``field-validation`` entry by its recorded
+    ``extra.seed`` or by the sha256 of the checkpoint it evaluated, and returns
+    the CSV path that entry recorded.
+    """
+    for rec in runs.values():
+        if rec.get("stage") != "field-validation" or rec.get("dry_run"):
+            continue
+        artifacts = rec.get("artifacts") or {}
+        csv_path = (artifacts.get("field_metrics_csv") or {}).get("path")
+        if not csv_path:
+            continue
+        rec_seed = (rec.get("extra") or {}).get("seed")
+        rec_sha = (artifacts.get("model_checkpoint") or {}).get("sha256")
+        if (rec_seed is not None and int(rec_seed) == int(seed)) or (
+            checkpoint_sha256 and rec_sha == checkpoint_sha256
+        ):
+            return Path(csv_path)
+    return None
+
+
 def run_multi_seed_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
     from lunaris.surrogate.st_lrps.paper_evidence.multi_seed import (
         aggregate_multi_seed,
@@ -744,21 +820,31 @@ def run_multi_seed_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
     entries: list[dict[str, Any]] = []
     if manifest_path.exists():
         manifest = _load_json(manifest_path)
-        for _run_key, rec in (manifest.get("runs", {}) or {}).items():
-            if rec.get("stage") != "train":
-                continue
-            seed = (rec.get("config", {}) or {}).get("seed")
-            if seed is None:
-                continue
+        runs = manifest.get("runs", {}) or {}
+        # The train entry records its seed under ``extra`` (the ``config``
+        # record holds only path and hashes).
+        train_runs = [
+            rec for rec in runs.values()
+            if rec.get("stage") == "train" and (rec.get("extra", {}) or {}).get("seed") is not None
+        ]
+        single_seed = len(train_runs) <= 1
+        for rec in train_runs:
+            seed = int(rec["extra"]["seed"])
             checkpoint = (rec.get("artifacts", {}).get("checkpoint", {}) or {}).get("sha256")
-            field_csv = evidence_root / "field_validation" / f"seed{seed}" / "field_validation_metrics.csv"
-            field_csv = field_csv if field_csv.exists() else (evidence_root / "field_validation" / "field_validation_metrics.csv")
+            # Pair by what the manifest recorded (seed / evaluated checkpoint),
+            # not by a directory-name convention. Shared outputs that name no
+            # candidate are borrowed only when there is a single seed: with
+            # several, every seed would get the same numbers (std 0).
+            field_csv = _find_field_validation_csv(runs, seed=seed, checkpoint_sha256=checkpoint)
+            if field_csv is None and single_seed:
+                field_csv = evidence_root / "field_validation" / "field_validation_metrics.csv"
             bench = {}
-            for case, sub in (("1day", "benchmark_1day_high_degree"), ("5day", "benchmark_5day_general")):
-                p = evidence_root / "orbit_benchmarks" / sub / "metrics_summary.csv"
-                if p.exists():
-                    bench[case] = p
-            entries.append(collect_seed_entry(int(seed), field_metrics_csv=field_csv if field_csv.exists() else None,
+            if single_seed:
+                for case, sub in (("1day", "benchmark_1day_high_degree"), ("5day", "benchmark_5day_general")):
+                    p = evidence_root / "orbit_benchmarks" / sub / "metrics_summary.csv"
+                    if p.exists():
+                        bench[case] = p
+            entries.append(collect_seed_entry(seed, field_metrics_csv=field_csv if field_csv and field_csv.exists() else None,
                                                benchmark_metrics=bench or None, artifact_hash=checkpoint))
     summary = aggregate_multi_seed(entries) if entries else aggregate_multi_seed([])
     paths = write_multi_seed_outputs(summary, out_dir)
@@ -845,7 +931,7 @@ def _dispatch_stage(stage: str, args, evidence_root: Path) -> int:
 
     if stage == "field-validation":
         cfg = _resolve_config(stage, args.config)
-        return run_field_validation_stage(cfg, model_dir=args.model_dir, evidence_root=evidence_root,
+        return run_field_validation_stage(cfg, model_dir=args.model_dir, seed=args.seed, evidence_root=evidence_root,
                                           dry_run=bool(args.dry_run))
     if stage == "orbit-benchmark":
         configs = args.benchmark_config or [

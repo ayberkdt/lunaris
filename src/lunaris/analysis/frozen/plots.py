@@ -18,6 +18,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_FRAME_INERTIAL = "inertial (identity frame)"
+_FRAME_LUNAR_EQUATOR = "lunar equator of epoch (q_i2f at t = 0)"
 _FOOTER_KW = {"fontsize": 7, "color": "0.45", "ha": "left", "va": "bottom"}
 
 
@@ -30,7 +32,7 @@ def _mpl():
     return plt
 
 
-def _footer(fig: Any, source: str, frame: str = "inertial (identity frame)") -> None:
+def _footer(fig: Any, source: str, frame: str = _FRAME_INERTIAL) -> None:
     fig.text(0.01, 0.005, f"data: {source} | frame: {frame} | linear scale", **_FOOTER_KW)
 
 
@@ -54,6 +56,7 @@ def plot_element_histories(
     out_dir: Path,
     *,
     source: str,
+    frame: str = _FRAME_INERTIAL,
 ) -> list[Path]:
     """e(t), h_peri(t), omega(t) for the top validated candidates.
 
@@ -94,7 +97,7 @@ def plot_element_histories(
         ax.set_title(question)
         if len(histories) <= 10:
             ax.legend(fontsize=7, ncol=2)
-        _footer(fig, source)
+        _footer(fig, source, frame)
         written.append(_save(fig, out_dir, filename))
     return written
 
@@ -104,6 +107,7 @@ def plot_hk_portrait(
     out_dir: Path,
     *,
     source: str,
+    frame: str = _FRAME_INERTIAL,
 ) -> Path | None:
     """h-k phase portrait (h = e sin(omega), k = e cos(omega)) per candidate.
 
@@ -123,7 +127,7 @@ def plot_hk_portrait(
     ax.set_aspect("equal", adjustable="datalim")
     if len(histories) <= 10:
         ax.legend(fontsize=7)
-    _footer(fig, source)
+    _footer(fig, source, frame)
     return _save(fig, out_dir, "hk_phase_portrait.png")
 
 
@@ -132,6 +136,7 @@ def plot_score_histogram(
     out_dir: Path,
     *,
     source: str,
+    frame: str = _FRAME_INERTIAL,
     score_definition: str,
 ) -> Path | None:
     """Distribution of finite screening scores (lower = more frozen)."""
@@ -145,7 +150,7 @@ def plot_score_histogram(
     ax.set_ylabel("sample count")
     ax.set_title("How selective is the screening score across the Sobol set?")
     fig.text(0.01, 0.03, score_definition, fontsize=6, color="0.4", wrap=True)
-    _footer(fig, source)
+    _footer(fig, source, frame)
     return _save(fig, out_dir, "score_histogram.png")
 
 
@@ -155,6 +160,7 @@ def plot_ae_score_map(
     out_dir: Path,
     *,
     source: str,
+    frame: str = _FRAME_INERTIAL,
 ) -> Path | None:
     """a-e map colored by screening score (finite scores only)."""
     el = np.asarray(elements, dtype=np.float64)
@@ -169,7 +175,7 @@ def plot_ae_score_map(
     ax.set_ylabel("eccentricity e [-]")
     ax.set_title("Where in (a, e) space do low frozen scores concentrate?")
     fig.colorbar(im, ax=ax, label="screening score [-]")
-    _footer(fig, source)
+    _footer(fig, source, frame)
     return _save(fig, out_dir, "ae_score_map.png")
 
 
@@ -179,6 +185,7 @@ def plot_i_omega_map(
     out_dir: Path,
     *,
     source: str,
+    frame: str = _FRAME_INERTIAL,
 ) -> Path | None:
     """i-omega stability map colored by screening score."""
     el = np.asarray(elements, dtype=np.float64)
@@ -193,7 +200,7 @@ def plot_i_omega_map(
     ax.set_ylabel("argument of periapsis omega [deg]")
     ax.set_title("Which (i, omega) combinations screen as stable?")
     fig.colorbar(im, ax=ax, label="screening score [-]")
-    _footer(fig, source)
+    _footer(fig, source, frame)
     return _save(fig, out_dir, "i_omega_stability_map.png")
 
 
@@ -202,6 +209,7 @@ def plot_perilune_safety(
     out_dir: Path,
     *,
     source: str,
+    frame: str = _FRAME_INERTIAL,
     safety_floor_km: float,
 ) -> Path | None:
     """Minimum perilune altitude vs score for the candidate set."""
@@ -219,7 +227,7 @@ def plot_perilune_safety(
     ax.set_ylabel("minimum perilune altitude [km]")
     ax.set_title("Do the top candidates keep a safe perilune margin?")
     ax.legend(fontsize=8)
-    _footer(fig, source)
+    _footer(fig, source, frame)
     return _save(fig, out_dir, "perilune_safety_map.png")
 
 
@@ -228,6 +236,7 @@ def plot_screening_vs_validation(
     out_dir: Path,
     *,
     source: str,
+    frame: str = _FRAME_INERTIAL,
 ) -> Path | None:
     """Screening score vs classical-SH validation score per candidate.
 
@@ -250,7 +259,7 @@ def plot_screening_vs_validation(
     ax.set_xlabel("screening score [-] (screening backend)")
     ax.set_ylabel("validation score [-] (classical SH)")
     ax.set_title("Does the screening ranking survive classical SH validation?")
-    _footer(fig, source)
+    _footer(fig, source, frame)
     return _save(fig, out_dir, "screening_vs_validation_score.png")
 
 
@@ -275,10 +284,12 @@ def generate_frozen_report_figures(
     from lunaris.batch.summary import SCORE_DEFINITION, summarize_ensemble
 
     from .search import (
+        ELEMENT_FRAME_LUNAR_EQUATOR,
         STAGE0_SAMPLES,
         STAGE1_SCREENING,
         STAGE2_CANDIDATES,
         STAGE3_VALIDATION,
+        rotate_states_element_frame,
     )
 
     run_path = Path(run_dir)
@@ -293,6 +304,13 @@ def generate_frozen_report_figures(
     )
     mu = float(manifest.get("config", {}).get("mu_m3s2", 4.9028001224453001e12))
     r_ref = float(manifest.get("config", {}).get("reference_radius_m", 1.7374e6))
+    # Stored states are inertial; the run measured elements in its element frame.
+    lunar_frame = manifest.get("element_frame") == ELEMENT_FRAME_LUNAR_EQUATOR
+    frame = _FRAME_LUNAR_EQUATOR if lunar_frame else _FRAME_INERTIAL
+    frame_rotation = manifest.get("element_frame_rotation")
+    frame_unknown = lunar_frame and frame_rotation is None
+    if frame_unknown:
+        logger.warning("manifest has no element_frame_rotation; element figures skipped")
 
     samples_path = run_path / STAGE0_SAMPLES
     screening_path = run_path / STAGE1_SCREENING
@@ -301,10 +319,10 @@ def generate_frozen_report_figures(
             elements = np.asarray(data["elements"], dtype=np.float64)
         with np.load(screening_path, allow_pickle=False) as data:
             t_out = np.asarray(data["t_out"], dtype=np.float64)
-            if "Y_out" in data.files:
+            if "Y_out" in data.files and not frame_unknown:
                 summary = summarize_ensemble(
                     data["t_out"],
-                    data["Y_out"],
+                    rotate_states_element_frame(data["Y_out"], frame_rotation),
                     data["impact_flags"],
                     data["t_impact"],
                     mu_m3s2=mu,
@@ -320,11 +338,13 @@ def generate_frozen_report_figures(
 
     if elements is not None and scores is not None:
         for fn in (plot_score_histogram,):
-            path = fn(scores, out_dir, source=source, score_definition=SCORE_DEFINITION)
+            path = fn(
+                scores, out_dir, source=source, frame=frame, score_definition=SCORE_DEFINITION
+            )
             if path:
                 written.append(path)
         for fn in (plot_ae_score_map, plot_i_omega_map):
-            path = fn(elements, scores, out_dir, source=source)
+            path = fn(elements, scores, out_dir, source=source, frame=frame)
             if path:
                 written.append(path)
 
@@ -336,6 +356,7 @@ def generate_frozen_report_figures(
             candidates,
             out_dir,
             source=source,
+            frame=frame,
             safety_floor_km=float(manifest.get("config", {}).get("perilune_safety_min_m", 0.0))
             / 1_000.0,
         )
@@ -344,7 +365,12 @@ def generate_frozen_report_figures(
 
     # Element histories for the top candidates, recomputed from the screening
     # block (histories are not persisted per-sample; the screening npz is).
-    if candidates and elements is not None and (Y_out is not None or topk_Y_out is not None):
+    if (
+        candidates
+        and elements is not None
+        and not frame_unknown
+        and (Y_out is not None or topk_Y_out is not None)
+    ):
         from lunaris.common.math_utils import screening_orbital_elements_vec
 
         histories: list[dict[str, Any]] = []
@@ -361,6 +387,7 @@ def generate_frozen_report_figures(
                 y = topk_Y_out[:, topk_lookup[j], :]
             else:
                 continue
+            y = rotate_states_element_frame(y, frame_rotation)
             a_m, e, _inc, argp = screening_orbital_elements_vec(
                 y[:, :3], y[:, 3:], mu
             )
@@ -373,15 +400,15 @@ def generate_frozen_report_figures(
                     "label": f"#{j}",
                 }
             )
-        written.extend(plot_element_histories(histories, out_dir, source=source))
-        path = plot_hk_portrait(histories, out_dir, source=source)
+        written.extend(plot_element_histories(histories, out_dir, source=source, frame=frame))
+        path = plot_hk_portrait(histories, out_dir, source=source, frame=frame)
         if path:
             written.append(path)
 
     validation_path = run_path / STAGE3_VALIDATION
     if validation_path.exists():
         validated = json.loads(validation_path.read_text(encoding="utf-8"))["candidates"]
-        path = plot_screening_vs_validation(validated, out_dir, source=source)
+        path = plot_screening_vs_validation(validated, out_dir, source=source, frame=frame)
         if path:
             written.append(path)
 

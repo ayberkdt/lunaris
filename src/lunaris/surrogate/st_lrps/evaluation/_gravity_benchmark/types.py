@@ -23,6 +23,7 @@ from lunaris.surrogate.runtime import (
     SurrogateGravityModel,
     find_checkpoint_for_st_lrps_run,
 )
+from lunaris.surrogate.st_lrps.evaluation.phase_diagnostics import hermite_resample_state
 
 # =============================================================================
 # Dataclasses
@@ -224,12 +225,38 @@ def interpolate_state_to_times(
     tgt_t: np.ndarray,
     tol: float = 1e-3,
 ) -> np.ndarray:
-    """Interpolate state (N_src, 6) to target times (N_tgt,). Returns (N_tgt, 6)."""
+    """Interpolate state (N_src, 6) to target times (N_tgt,). Returns (N_tgt, 6).
+
+    Same grid (within ``tol`` seconds): ``src_y`` is returned unchanged.
+    Otherwise position and velocity come from the cubic Hermite spline through
+    the source positions with the source velocities as tangents
+    (:func:`~lunaris.surrogate.st_lrps.evaluation.phase_diagnostics.hermite_resample_state`):
+    position error O(h^4) and velocity error O(h^3) in the source step ``h``,
+    against O(h^2) for the per-component linear interpolation used before. Target
+    times that coincide with source times reproduce the source state exactly.
+
+    Raises ``ValueError`` when a target time lies more than ``tol`` outside
+    ``[src_t[0], src_t[-1]]``. ``np.interp`` silently held the end state there,
+    so a trajectory that stopped early was compared as if it had frozen in place.
+    """
+    src_t = np.asarray(src_t, dtype=np.float64)
+    src_y = np.asarray(src_y, dtype=np.float64)
+    tgt_t = np.asarray(tgt_t, dtype=np.float64)
     if len(src_t) == len(tgt_t) and np.max(np.abs(src_t - tgt_t)) < tol:
         return src_y
+    if src_t.size < 2:
+        raise ValueError("interpolate_state_to_times needs at least two source epochs")
+    outside = (tgt_t < src_t[0] - tol) | (tgt_t > src_t[-1] + tol)
+    if np.any(outside):
+        raise ValueError(
+            f"interpolate_state_to_times: {int(np.count_nonzero(outside))} of {tgt_t.size} target "
+            f"time(s) fall outside the source time range [{src_t[0]:.6g}, {src_t[-1]:.6g}] s "
+            f"(target range [{tgt_t.min():.6g}, {tgt_t.max():.6g}] s); refusing to extrapolate"
+        )
+    r_query, v_query, _valid = hermite_resample_state(src_t, src_y[:, 0:3], src_y[:, 3:6], tgt_t)
     result = np.empty((len(tgt_t), 6), dtype=np.float64)
-    for k in range(6):
-        result[:, k] = np.interp(tgt_t, src_t, src_y[:, k])
+    result[:, 0:3] = r_query
+    result[:, 3:6] = v_query
     return result
 
 

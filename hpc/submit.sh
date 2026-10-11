@@ -84,6 +84,9 @@ partition="${LUNARIS_PARTITION:-}"
 [[ -n "${LUNARIS_MEM:-}"            ]] && sbatch_flags+=("--mem=${LUNARIS_MEM}")
 [[ -n "${LUNARIS_TIME:-}"           ]] && sbatch_flags+=("--time=${LUNARIS_TIME}")
 [[ -n "${LUNARIS_SIGNAL:-}"         ]] && sbatch_flags+=("--signal=${LUNARIS_SIGNAL}")
+# The templates source hpc/env_template.sh, but Slurm runs them from its spool
+# folder, so hand them this folder explicitly.
+sbatch_flags+=("--export=ALL,LUNARIS_HPC_DIR=${_HPC_DIR}")
 # User-supplied sbatch flags come last so they can override cluster.env defaults.
 # Guard empty-array expansion for bash < 4.4 under `set -u`.
 sbatch_flags+=(${sbatch_extra[@]+"${sbatch_extra[@]}"})

@@ -43,7 +43,19 @@ from lunaris.common.constants import (
 from lunaris.common.type_defs import SpacecraftProps, Vec3
 from lunaris.physics.lunar_albedo import calc_albedo_accel, normalize_albedo_mode
 from lunaris.physics.solar_effects import moon_shadow_factor_conical
-from lunaris.physics.thermal_ir import build_latlon_facets, calc_thermal_ir_accel
+from lunaris.physics.surface_radiation_quadrature import (
+    DEFAULT_AZIMUTH_NODES,
+    DEFAULT_RADIAL_NODES,
+    accel_albedo_quadrature_numba,
+    accel_thermal_ir_quadrature_numba,
+    gauss_legendre_unit_interval,
+)
+from lunaris.physics.thermal_ir import (
+    THERMAL_MODE_TEMPERATURE_GRID,
+    build_latlon_facets,
+    calc_thermal_ir_accel,
+    normalize_thermal_mode,
+)
 
 # =============================================================================
 # 1) Config bundles
@@ -63,6 +75,39 @@ def _require_ge0(name: str, x: float) -> float:
     if not math.isfinite(v) or v < 0.0:
         raise ValueError(f"{name} must be >= 0, got {v}.")
     return v
+
+
+#: Surface-integration choices shared by the albedo and thermal-IR models.
+SURFACE_INTEGRATION_QUADRATURE = "visible_disk_quadrature"
+SURFACE_INTEGRATION_FACETS = "facets"
+_MAX_QUADRATURE_NODES = 512
+
+
+def _normalize_surface_integration(owner: str, value: str) -> str:
+    key = str(value).strip().lower()
+    if key in {"visible_disk_quadrature", "quadrature", "disk_quadrature"}:
+        return SURFACE_INTEGRATION_QUADRATURE
+    if key in {"facets", "facet_sum", "lat_lon_facets"}:
+        return SURFACE_INTEGRATION_FACETS
+    raise ValueError(
+        f"{owner}.surface_integration must be 'visible_disk_quadrature' or 'facets'. Got {value!r}."
+    )
+
+
+def _require_node_count(name: str, x: int) -> int:
+    v = int(x)
+    if not (1 <= v <= _MAX_QUADRATURE_NODES):
+        raise ValueError(f"{name} must be in [1, {_MAX_QUADRATURE_NODES}], got {x!r}.")
+    return v
+
+
+def _validate_surface_integration(owner: str, cfg: AlbedoConfig | ThermalConfig) -> None:
+    """Normalise ``surface_integration`` and the quadrature node counts in place."""
+    object.__setattr__(
+        cfg, "surface_integration", _normalize_surface_integration(owner, cfg.surface_integration)
+    )
+    for field in ("quadrature_radial_nodes", "quadrature_azimuth_nodes"):
+        object.__setattr__(cfg, field, _require_node_count(f"{owner}.{field}", getattr(cfg, field)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +143,23 @@ class AlbedoConfig:
 
     Grid modes require a surface provider; ``require_surface_provider`` forces a
     hard error if one is missing.
+
+    ``surface_integration`` decides how ``lambert_facets`` integrates the
+    Lambertian surface:
+
+    ``visible_disk_quadrature`` (default)
+        Quadrature over the Moon's apparent disk in the spacecraft's solid
+        angle (:mod:`lunaris.physics.surface_radiation_quadrature`) with
+        ``quadrature_radial_nodes`` x ``quadrature_azimuth_nodes`` directions.
+        Its accuracy does not depend on altitude; the facet grid then only sets
+        the resolution of a mapped albedo (``albedo_grid``/``scaled_dn_grid``).
+    ``facets``
+        The fixed latitude-longitude point-facet sum (the former default,
+        kept so older results can be reproduced). It needs facets much smaller
+        than the altitude: on a sunlit disk the 18 x 36 grid is within ~1 % at
+        1000 km but 0.39x-1.25x of the converged value at 100 km and
+        0.04x-1.05x at 30 km, depending on where the spacecraft sits over the
+        grid.
     """
 
     # --- Legacy / simple-backend fields (kept for backward compatibility) ---
@@ -123,7 +185,13 @@ class AlbedoConfig:
     require_surface_provider: bool = False
     use_existing_surface_grid: bool = False
 
+    # --- Surface integration (lambert_facets backend) ---
+    surface_integration: str = SURFACE_INTEGRATION_QUADRATURE
+    quadrature_radial_nodes: int = DEFAULT_RADIAL_NODES
+    quadrature_azimuth_nodes: int = DEFAULT_AZIMUTH_NODES
+
     def __post_init__(self) -> None:
+        _validate_surface_integration("AlbedoConfig", self)
         model = str(self.albedo_model).strip().lower()
         if model in {"facet", "facets", "lambert", "lambert_facets"}:
             model = "lambert_facets"
@@ -140,13 +208,16 @@ class AlbedoConfig:
         mode = {0: "constant_albedo", 1: "albedo_grid", 2: "scaled_dn_grid"}[mode_code]
 
         # ``albedo_const`` is the canonical constant-albedo field; ``A_moon`` is a
-        # legacy alias. Mirror whichever the caller set away from the shared
-        # default so both backends honor a single intent.
+        # legacy alias that always mirrors it. Only a caller that left
+        # ``albedo_const`` at its default and set ``A_moon`` (legacy usage) has
+        # ``A_moon`` adopted; otherwise ``albedo_const`` wins. This also covers
+        # ``dataclasses.replace(cfg, albedo_const=x)`` on a config whose alias
+        # already holds the previous value.
         albedo_const = float(self.albedo_const)
         a_moon = float(self.A_moon)
         if albedo_const == 0.12 and a_moon != 0.12:
             albedo_const = a_moon
-        elif a_moon == 0.12 and albedo_const != 0.12:
+        else:
             a_moon = albedo_const
 
         object.__setattr__(self, "albedo_model", model)
@@ -189,6 +260,14 @@ class ThermalConfig:
     Defaults are configurable engineering values, not a full lunar thermal
     environment. ``k_thermal`` is retained as a compatibility alias for the
     pressure coefficient used by older callers.
+
+    ``surface_integration`` and the quadrature node counts have the same
+    meaning as in :class:`AlbedoConfig`: ``visible_disk_quadrature`` (default)
+    integrates over the apparent disk, ``facets`` selects the historical
+    latitude-longitude point-facet sum (reproduces older results; 0.39x-1.25x
+    of the analytic uniform-sphere value at 100 km on the 18 x 36 grid). In
+    ``temperature_grid`` mode the facet grid remains the resolution of the
+    supplied temperature cells.
     """
 
     thermal_mode: str = "constant_temperature"
@@ -212,6 +291,11 @@ class ThermalConfig:
     # treat eclipses consistently.
     enable_eclipse: bool = True
 
+    # Surface integration (see the class docstring).
+    surface_integration: str = SURFACE_INTEGRATION_QUADRATURE
+    quadrature_radial_nodes: int = DEFAULT_RADIAL_NODES
+    quadrature_azimuth_nodes: int = DEFAULT_AZIMUTH_NODES
+
     # Compatibility with the former simple thermal wrapper.
     k_thermal: float | None = None
 
@@ -220,6 +304,7 @@ class ThermalConfig:
     AU_m: float = AU
 
     def __post_init__(self) -> None:
+        _validate_surface_integration("ThermalConfig", self)
         mode = str(self.thermal_mode).strip().lower()
         if mode not in {"constant_temperature", "constant", "equilibrium_temperature", "equilibrium", "temperature_grid", "grid"}:
             raise ValueError(
@@ -350,13 +435,39 @@ def albedo_accel(
     coefficient ``cr``; ``"lambert_facets"`` builds a constant-albedo facet
     sphere from the config and uses ``config.albedo_pressure_coefficient``.
     ``r_earth`` is optional and only needed when lunar-eclipse dimming is
-    requested for the Lambertian facet backend.
+    requested for the Lambertian facet backend. ``config.surface_integration``
+    picks the visible-disk quadrature (default) or the point-facet sum.
     """
     r_sc_v = _as_vec3(r_sc, "r_sc")
     r_sun_v = _as_vec3(r_sun, "r_sun")
     r_earth_v = None if r_earth is None else _as_vec3(r_earth, "r_earth")
 
     selected = str(model if model is not None else config.albedo_model).strip().lower()
+
+    if selected in {"lambert_facets", "facet", "facets", "lambert"} and (
+        config.surface_integration == SURFACE_INTEGRATION_QUADRATURE
+    ):
+        nodes, weights = gauss_legendre_unit_interval(int(config.quadrature_radial_nodes))
+        e = np.zeros(3, dtype=np.float64) if r_earth_v is None else r_earth_v
+        ax, ay, az = accel_albedo_quadrature_numba(
+            float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
+            float(r_sun_v[0]), float(r_sun_v[1]), float(r_sun_v[2]),
+            float(e[0]), float(e[1]), float(e[2]),
+            float(R_moon),
+            np.zeros(1, dtype=np.float64), 0, 0,
+            float(config.albedo_const),
+            float(config.albedo_pressure_coefficient),
+            float(sc_props.area_m2),
+            float(sc_props.mass_kg),
+            float(config.solar_flux_1au_W_m2),
+            float(config.AU_m),
+            float(config.c_light_m_s),
+            float(R_EARTH_MEAN),
+            bool(config.include_sun_distance_scaling),
+            bool(enable_eclipse and config.enable_eclipse),
+            nodes, weights, int(config.quadrature_azimuth_nodes),
+        )
+        return np.array((ax, ay, az), dtype=np.float64)
 
     if selected in {"lambert_facets", "facet", "facets", "lambert"}:
         facet_pos, facet_normals, facet_areas, _, _ = build_latlon_facets(
@@ -389,7 +500,8 @@ def albedo_accel(
             f"Unsupported albedo model: {model!r}. Supported: 'lambert_facets', 'simple'."
         )
 
-    eclipse_flag = 1 if enable_eclipse else 0
+    # Same gating as the facet backend: both the call flag and the config.
+    eclipse_flag = 1 if (enable_eclipse and config.enable_eclipse) else 0
 
     ax, ay, az = accel_albedo_simple(
         float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
@@ -397,7 +509,7 @@ def albedo_accel(
         float(R_moon),
         float(config.AU_m),
         float(config.P0),
-        float(config.A_moon),
+        float(config.albedo_const),
         float(config.k_lambert),
         float(sc_props.cr),
         float(sc_props.area_m2),
@@ -423,11 +535,48 @@ def thermal_accel(
     :mod:`lunaris.physics.thermal_ir`. ``r_earth`` is an optional Moon-centered
     Earth vector in the same frame as ``r_sc`` and ``r_sun``; when supplied with
     ``enable_eclipse=True``, equilibrium-mode solar input is dimmed by the
-    Earth's umbra.
+    Earth's umbra. ``config.surface_integration`` picks the visible-disk
+    quadrature (default) or the point-facet sum.
     """
     r_sc_v = _as_vec3(r_sc, "r_sc")
     r_sun_v = _as_vec3(r_sun, "r_sun")
     r_earth_v = None if r_earth is None else _as_vec3(r_earth, "r_earth")
+
+    if config.surface_integration == SURFACE_INTEGRATION_QUADRATURE:
+        mode_id = normalize_thermal_mode(config.thermal_mode)
+        if mode_id == THERMAL_MODE_TEMPERATURE_GRID:
+            raise ValueError(
+                "thermal_accel: mode 'temperature_grid' needs facet_temperatures_K (one temperature "
+                "[K] per facet cell), which this wrapper does not take; use the dynamics engine "
+                "with a surface provider."
+            )
+        nodes, weights = gauss_legendre_unit_interval(int(config.quadrature_radial_nodes))
+        e = np.zeros(3, dtype=np.float64) if r_earth_v is None else r_earth_v
+        ax, ay, az = accel_thermal_ir_quadrature_numba(
+            float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
+            float(r_sun_v[0]), float(r_sun_v[1]), float(r_sun_v[2]),
+            float(e[0]), float(e[1]), float(e[2]),
+            float(R_moon),
+            np.zeros(1, dtype=np.float64), 0, 0,
+            mode_id,
+            float(config.surface_emissivity),
+            float(config.surface_albedo),
+            float(config.temperature_K),
+            float(config.night_temperature_K),
+            float(config.thermal_floor_flux_W_m2),
+            float(config.ir_pressure_coefficient),
+            float(sc_props.area_m2),
+            float(sc_props.mass_kg),
+            float(config.solar_flux_1au_W_m2),
+            float(config.AU_m),
+            float(config.c_light_m_s),
+            float(config.sigma_sb),
+            bool(config.include_sun_distance_scaling),
+            float(R_EARTH_MEAN),
+            bool(enable_eclipse and config.enable_eclipse),
+            nodes, weights, int(config.quadrature_azimuth_nodes),
+        )
+        return np.array((ax, ay, az), dtype=np.float64)
 
     facet_pos, facet_normals, facet_areas, _, _ = build_latlon_facets(
         int(config.facet_lat_count),
@@ -462,6 +611,8 @@ __all__ = (
     # Config bundles
     "AlbedoConfig",
     "ThermalConfig",
+    "SURFACE_INTEGRATION_FACETS",
+    "SURFACE_INTEGRATION_QUADRATURE",
     # Numba kernels (legacy cannonball albedo backend)
     "accel_albedo_simple",
     # High-level wrappers

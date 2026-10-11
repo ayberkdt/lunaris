@@ -281,7 +281,10 @@ def test_stage_dry_runs_record_manifest(tmp_path):
         rc = R.main(["--stage", stage, "--evidence-root", str(tmp_path), "--dry-run"])
         assert rc == 0
     manifest = json.loads((tmp_path / "manifests" / "evidence_manifest.json").read_text(encoding="utf-8"))
-    assert {"field_validation", "worst_case", "multi_seed", "tables"}.issubset(set(manifest["runs"].keys()))
+    keys = set(manifest["runs"].keys())
+    assert {"worst_case", "multi_seed", "tables"}.issubset(keys)
+    # Field-validation entries are keyed per model so several seeds coexist.
+    assert any(key.startswith("field_validation:") for key in keys)
 
 
 # ---------------------------------------------------------------------------

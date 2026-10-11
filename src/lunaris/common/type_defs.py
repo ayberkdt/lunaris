@@ -40,6 +40,7 @@ layer that parses them. This module stores configuration only; it does not defin
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias
 
@@ -438,8 +439,8 @@ class TimeConfig:
 
         # Strict safety: if output_dt_s is explicit, enforce the cap at config time.
         if self.output_dt_s is not None:
-            # +1 to include both endpoints if you build t_eval as [t0, t0+dt, ..., t0+duration]
-            est_points = int(self.duration_s / self.output_dt_s) + 1
+            # Same count as build_output_time_grid: ceil(D / dt) snapshots + t0.
+            est_points = max(1, math.ceil(self.duration_s / self.output_dt_s)) + 1
             if est_points > self.max_points_cap:
                 raise ValueError(
                     f"Requested output grid has ~{est_points} points, exceeds max_points_cap={self.max_points_cap}. "

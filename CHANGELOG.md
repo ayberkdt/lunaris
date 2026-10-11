@@ -2,6 +2,355 @@
 
 ## Unreleased
 
+- **Fixed: the ST-LRPS Studio evaluation tab could send an `a_sign` other than +1 or -1.** The control was a -10 to 10 spin box. `a_sign` is a sign convention (U vs -U), not a scale, and the evaluation CLI now refuses any other value. The control is now a two-option combo, "+1 (geodesy)" or "-1 (Newton)". A value saved by the old spin box restores as +1 unless it was exactly -1.
+
+- **Fixed: stderr lines were misclassified.** Each line was judged on its own: "warning" anywhere in it meant a warning, anything else an error. So the indented source line under every Python `warnings.warn` record showed as an error. Traceback frames in `warnings.py`, and a final `RuntimeWarning:` raised under `-W error`, showed as warnings in the middle of a crash. Batch stderr, tracebacks included, was always shown as warnings. The new `log_stream.StderrClassifier` handles both the main and the batch stream. A traceback is an error from its header through its exception line, and an indented line continues the previous line's severity. Otherwise the old keyword rule applies. A bare `logger.warning` message, which Python's last-resort handler prints without a level name, still shows as an error. That needs the backend to configure logging.
+
+- **Fixed: the ST-LRPS Studio theme leaked into Mission Studio.** The launcher runs both workspaces in one process. Opening the Studio applied its application-wide style (Fusion), font, palette and stylesheet, and nothing undid them. The launcher, and a Mission Studio opened afterwards, inherited the Studio look wherever their own window stylesheet does not reach, such as parentless dialogs and menus. The launcher now keeps the look the Studio replaces and restores it when the Studio closes or fails to build. The process-global pyqtgraph foreground the Studio sets at import is not restored.
+
+- **Fixed: OpenGL contexts were not shared between 3D views.** pyqtgraph compiles each shader program once and keeps its id on a module-level object. A `GLViewWidget` in a second, unshared context therefore binds an id that does not exist there and draws only its labels. That happens to a floated Mission Monitor dock or a view in another top-level window. The same helper now sets `AA_ShareOpenGLContexts` before `QApplication` is created; Qt WebEngine also requires this. The rendering itself could not be checked here, because offscreen GL draws blank.
+
+- **Fixed: number spin boxes followed the system locale.** On a Turkish desktop a `QDoubleSpinBox` showed `10,000` for ten, and typing `0.5` gave 5.0, because `.` is that locale's group separator. All line edits, logs and config files use `.`. Mission Studio, the launcher and the ST-LRPS Studio now call `lunaris.ui_foundation.qt_setup.prepare_qt_application()` before creating `QApplication`, which sets the C locale for numbers.
+
+- **Fixed: the ST-LRPS Studio process log grew without limit.** Every stdout line of training, evaluation, benchmark and data runs went into an uncapped `QPlainTextEdit`. The pane now keeps the newest 20,000 lines, and so does the dataset-analysis log. The first 200 lines are kept aside, and the training, evaluation and suite pages search `ProcessPane.output_text()`. A capped view alone would have lost the output folder a run prints at start.
+
+- **Fixed: Stop froze Mission Studio for 2-3 s.** `_stop_process` blocked the GUI thread in `waitForFinished(2000)` and then `waitForFinished(1000)`. On Windows `terminate()` posts WM_CLOSE, which a console Python child ignores, so the full wait was spent on every Stop (measured 2.0 s). Stop now returns at once. It disables the Stop button and schedules the force-kill 2 s later on a timer bound to the process. The window returns to idle through the process's `finished` signal.
+
+- **Fixed: pre-flight logged a warning on every Mission Studio run.** The gravity and albedo checks returned a success note ("Using default gravity model", "Gravity file size: 190.4 MB", "Using constant albedo model"), and the worker sent every non-empty message as `validation_warning`. Gravity is on by default, so every run lit the log's warning badge. Success notes now go to the `[Validation]` progress line. A gravity file over 500 MB, swapped apsides and every other real concern still warn.
+
+- **Fixed: deferred UI callbacks ran on destroyed widgets.** `QTimer.singleShot(ms, callable)` has no receiver, so PySide6 ran lambdas and local closures after their widget was deleted: the Studio force-kill check, the launcher's open step, the orbit camera refit and the launch-button fit. A pending bound-method shot also ran after a synchronous delete. The Studio launch strip's `_refresh_layout` then read a deleted child and raised. All 33 single shots in the UI packages now pass their widget as the receiver. A scan test keeps it that way.
+
+- **Fixed: the test suite read and wrote the developer's real Qt settings.** `QSettings(organization, application)` opens the Windows registry, which `QSettings.setPath` cannot redirect. UI tests wrote window geometry and the density and motion keys there. An autouse fixture also cleared the real ST-LRPS Studio store on every run. Both apps now open their stores through `lunaris.ui_foundation.settings.persistent_settings`, which uses an .ini file under `LUNARIS_APP_DATA_DIR` when that is set. `tests/conftest.py` sets it to a fresh temporary folder for the whole session, which also isolates the session and layout files.
+
+- **Fixed: an ST-LRPS Studio post-run hook failed silently.** `ProcessPane` ran a page's finished hook under `contextlib.suppress(Exception)`. That hook chains the results refresh, train-then-evaluate and the training queue, so an exception stopped those follow-ups while the pane still read "Done". The failure is now written to the pane log, shown in the status line and logged with its traceback.
+
+- **Fixed: the batch page ran with defaults in place of unusable numbers.** Six numeric fields (GPU device, SH degree, threads per block, torch chunk, VRAM budget, impact altitude) were never validated. `get_data` replaced unparsable text with a hard-coded default. `nan`, `inf` and fractional sample counts or seeds passed the existing range checks. Every numeric field now shows one validation error when its text is empty, unparsable, non-finite, or not a whole number where one is required. The run is refused even if the button state is stale.
+
+- **Fixed: a batch run lost its last stdout line.** When the final line had no trailing newline it stayed in the buffer, so a closing `[BATCH_METRICS]` payload was dropped and the run reported `?/?` impacts. Batch stdout and stderr now each use a line assembler with an incremental UTF-8 decoder, and both are flushed before the metrics are read. Stderr lines split across reads, and multi-byte characters split across reads, are no longer broken.
+
+- **Fixed: the Mission Monitor doubled every panel when it restored a saved dashboard.** `clear_docks` scheduled the old docks with `deleteLater`, and `restoreState` matched them by object name before they were gone. Removed docks now lose their object name and are hidden first.
+
+- **Fixed: a Mission Studio session save could write a page blank.** A page whose state could not be read was saved with empty defaults, and the 30 s auto-save replaced the last good session with it. The snapshot now lists such pages in `meta.unreadable_sections`, and both the auto-save and Save Profile refuse to write it, log a warning and keep the previous file.
+- **Fixed: GPU batch impact detection flagged orbits that pass close above the surface.** The torch loop (`batched_fixed_step`) and the numba_cuda_sh kernel intersected the straight chord between two RK4 step ends with the impact sphere or terrain. The chord sags `g dt^2 / 8` below the arc (183 m for a low lunar orbit at dt = 30 s), so circular orbits 5-150 m above the sphere were reported as impacts, and real crossings were placed early: 11.5 s for a shallow descent 2 km under the sphere, 116 s for a 20 m graze, 22.8 s for a shallow terrain descent (point-mass Moon, against SciPy DOP853 events). Both backends now decide on the cubic Hermite curve through the two step-end positions and velocities, sampled at 32 sub-steps (residual sag 0.18 m at dt = 30 s). Sphere crossings get clamped Newton refinement; terrain crossings get bisection along the curve. The crossing state, velocity included, comes from the same curve. The same cases now agree with SciPy to 8e-4 s, 1.5e-2 s and 1.7e-3 s, limited by the RK4 step (the error falls about 16x when dt is halved). The multi-step terrain descent now matches the true event to 2.9e-7 s instead of 0.073 s. The terrain path also detects a dip below the ground between two step ends; before, it needed the step end itself below the terrain. Non-impacting trajectories are bit-identical. **Default results change** for impacted samples (impact flag, time, position and frozen state) and for orbits that were falsely flagged.
+
+- **Fixed: batch planning missed a terrain grid injected through `InMemorySurfaceProvider`.** `_topography_requested` looked only at `grids().topo`, which that provider leaves empty, while its `topo_payload()` grid still reached the terrain impact kernels. A point-mass + terrain run was therefore planned without the Moon-fixed rotation table. Planning now also counts a provider whose `topo_payload()` carries a DN grid.
+
+- **Fixed: ST-LRPS evaluation accepted any `a_sign`.** `--a-sign` was `type=float` and `resolved_a_sign` from config.json was used as-is, so values such as 0.5 or 0 rescaled the evaluated base potential and residual acceleration. Both now must be +1 or -1. The Studio spin box that allows other values is UI code and is not changed here.
+
+- **Fixed: orbit analysis labelled every start epoch UTC.** `build_orbit_analysis` hard-coded `time_system = "UTC"`, but `TimeConfig.start_date` may be a SPICE `"... TDB"` or `"... TT"` string, which reaches `str2et` unchanged. The label now follows the epoch string: `TDB`, `TT` (also for `TDT`), else `UTC`.
+
+- **Fixed: a UTC start epoch before 1972 was converted silently with the wrong TAI-UTC.** The leapseconds kernel has no pre-1972 UTC model; `str2et` applied TAI-UTC = 9 s, measured with naif0012.tls. The historical value on 1969-07-20 was 7.5746 s, so that epoch was off by 1.43 s. `build_spice_tables` now refuses a pre-1972 UTC epoch and asks for a TDB or TT epoch string. TDB/TT strings and post-1972 UTC are unchanged.
+
+- **Fixed: the output-point cap could be exceeded by one point.** The output grid has `ceil(D/dt) + 1` points, but `TimeConfig` estimated `floor(D/dt) + 1`, so a config one point over `max_points_cap` passed the config-time check. `_clamp_output_dt` chose `dt = D/(cap-1)`, which floating-point rounding could turn into `cap + 1` points (seen for caps 8 and 14 among others). Both now count points exactly as `build_output_time_grid` does. A config exactly one point over the cap is now rejected at construction.
+
+- **Fixed: `lunaris-data download` ignored a dataset present under an alias.** `verify` resolves the canonical filename and then the manifest `aliases`, but `download_entry` checked only the canonical path and fetched the product again. It now uses the same resolution (`resolve_dataset_path`); `--overwrite` still refetches. No shipped manifest entry declares aliases today, so current downloads are unchanged.
+
+- **Fixed: a singular (PSD) sampling covariance passed validation and then crashed sampling.** `StateUncertainty` accepts any positive-semidefinite `covariance_6x6`, but `cholesky_factor()` raised `LinAlgError` for a rank-deficient one (perfectly correlated components). It now falls back to the eigen-decomposition square root, so `L @ L.T = P` still holds; positive-definite covariances keep the bit-identical Cholesky factor.
+
+- **Fixed: canonical ST-LRPS datasets declared SI units in their contract.** `spatial_cloud_generator --canonical` stores r/DU, U/VU² and a/(DU/TU²), but the dataset contract and `units` attr always said m, m²/s², m/s², and `DatasetContract.validate()` refused anything else. New canonical datasets now declare `CANONICAL_UNITS` (`DU`, `VU^2`, `DU/TU^2`); the contract accepts exactly the SI or the canonical block. Existing datasets load unchanged: a canonical dataset written earlier still carries the SI claim, and its top-level `unit_system` attr (what the loaders read) stays authoritative for it.
+
+- **Fixed: Yoshida stages read a frozen ephemeris before t0 and after tf.** Y4/Y6/Y8 evaluate the force up to 0.351/0.649/0.916 steps outside each step, so the first step of every run sampled the Moon attitude and Sun/Earth before the table start, where the samplers held the first row. Measured on the real tables (100 km, 60° orbit, output_dt 60 s, reference run with the table origin 600 s earlier): 0.49 m (Y4) and 1.15 m (Y8) final-position error after one day, against 1.1e-7 m for RK4. The CPU RHS samplers and the `EphemerisManager` getters now continue the edge Hermite segment and attitude arc for one table interval (0.45 µm / 3.0 µm after the fix); the generic samplers still hold the end rows, matching the GPU kernels. The coverage check accounts for the overhang (`stage_time_overhang`) instead of failing t0 = 0 runs. **Default results change** for Y4/Y6/Y8 runs (sub-metre per day); other methods are unaffected.
+
+- **Fixed: batch config flags that could not be set, and a paper-safe overclaim.** `CPUBatchPropagator` read `allow_sample_failures` from the batch config, but `BatchPropagationConfig` (frozen, slots) had no such field, so the NaN-fill branch was unreachable. It is now a field (default `False`). `paper_safe` / `strict_backend` / `benchmark_mode` exist on no shipped config or CLI; `docs/PAPER_SAFE_POLICY.md` row 3 and the `backend_policy` docstrings now say that a batch run forbids backend fallback only under `sh_fallback_policy='error'`.
+
+- **Fixed: the capability matrix named a trainer command that does not exist.** It said `lunaris-train-st-lrps`; the installed console script is `lunaris-train`. Fixed in `shared/capabilities.py` and the generated `docs/ST_LRPS_CAPABILITY_MATRIX.md`.
+
+- **Fixed: SPICE kernel provenance could vanish without a trace.** The batch archive and single-run diagnostics wrapped `kernel_provenance()` in `contextlib.suppress(Exception)`, so a failure removed `spice_kernels` silently. Both now go through `physics.ephemeris.spice_provenance_fields`, which records `spice_kernels_unavailable_reason` and warns. Tables with no kernel provenance (an archive without `kernel_provenance_json`) now say so (`kernels_unavailable_reason`) instead of reporting an empty kernel list.
+
+- **Fixed: batch/GPU impact sphere differed from the CPU path.** The numba_cuda_sh, torch classic-SH and torch ST-LRPS propagators (and the engine's hit-index fallback) used `R_MOON` for the impact sphere; the CPU path uses the loaded gravity model's reference radius (`get_ref_radius_and_mu`). They now use the same radius. With the shipped SHADR model (reference radius 1738.0 km = `R_MOON`) results are bit-identical; runs with another model radius or an ST-LRPS artifact with its own `R_ref_m` now detect impacts on the CPU path's sphere.
+
+- **Fixed: LDEM product selection had no identity check.** `find_ldem_product` accepted any label that parsed, so a LOLA LDAM albedo or Diviner DGDR raster, or a product for another body, could be loaded as topography, and an explicit `ppd` was silently replaced by the closest resolution. Candidates must now be an LDEM/SLDEM product (PRODUCT_ID or file name), have `TARGET_NAME = MOON` when the label names a target, and parse with a length unit. An explicit `ppd` must match exactly. `parse_pds3_label` no longer routes LDAM/DGDR labels to the LDEM parser.
+
+- **Fixed: the PDS3 LDEM `UNIT` was ignored.** Every topography consumer assumed `SCALING_FACTOR` and `OFFSET` were in km, so a `UNIT = METER` label (the LOLA integer-LDEM convention) gave radii 1000 times too large. `parse_ldem_label` now normalises both to km from `UNIT` (KILOMETER or METER spellings) and refuses any other unit. The shipped `LDEM_64_FLOAT` label is `UNIT = KILOMETER`, so its results are unchanged. The terrain-freeze test fixture declared `UNIT = METER` while holding km values; it now says `KILOMETER`.
+
+- **Fixed: install hints pointed at an unrelated PyPI package.**
+  - **The defect.** `pip install lunaris[hpc]` / `pip install lunaris[ml]` resolve on PyPI to "Lunaris — agent memory engine". That is a different project, verified on pypi.org on 2026-10-11.
+  - **The fix.** The deployment guide, the torch-missing error and the third-party notice now install from a Lunaris checkout or a locally built wheel.
+
+- **Fixed: `LUNARIS_DATA_DIR` set after import was ignored.**
+  - The kernel and gravity resolvers read import-time module constants.
+  - They now resolve the environment override at call time when it changed since import. Otherwise they keep the module constants, which callers and tests replace on purpose.
+- **Fixed: the gravity benchmark module exited the importing process (`sys.exit(1)`) when an in-package import failed.** It now raises.
+
+- **Fixed: the gravity benchmark swallowed a failed surrogate degree override.**
+  - `propagate_for_scenario` lowered and restored the surrogate's `degree_max` inside `contextlib.suppress(Exception)`: a refused assignment benchmarked the model at another degree than recorded, and a failed restore left the cached model altered for later scenarios. Both assignments now raise. The shipped providers use plain attributes, so their runs are unchanged. Ported from Sidera.
+
+- **Fixed: the result auditor skipped HDF5 archives it could not read.**
+  - Without h5py, or with an unreadable `.h5`, the archive was silently left out and the audit looked clean. Such a file is now listed as invalid with the reason. Ported from Sidera (64d48728).
+
+- **Fixed: `lunaris-frozen-search` printed tracebacks for impossible bounds.**
+  - Crossed bounds (`--e 0.5 0.1`) or `--n-samples 1` raised a ValueError traceback, and `--hp-km` with an eccentricity bound of 1 raised ZeroDivisionError. They now print one `[FATAL]` line and exit 2. Ported from Sidera.
+
+- **Fixed: the batch command silently replaced invalid solver text and rounded solver values.**
+  - Invalid max step / rtol / atol text on the Propagation page was replaced by defaults without a warning (the single-run builder warns); it now warns the same way.
+  - The values were written with `:g`, six significant digits (a max step of 123.4567891 s became 123.457); they now round-trip exactly. Ported from Sidera.
+
+- **Fixed: the Mission Studio orbit page disagreed with the run by 0.6 km.**
+  - The page converted altitudes with the mean radius (1737.4 km); the runner converts `--hp-km/--ha-km/--alt-km` with `R_MOON` = 1738.0 km. The preview's semi-major axis was 0.6 km below the launched one, and in a/e mode the periselene/aposelene the page showed were 0.6 km above what the run used. The page now uses the runner's radius. Ported from Sidera.
+
+- **Fixed: PDS3 `^IMAGE` pointers with a `<BYTES>` unit.**
+  - `^IMAGE = 2049 <BYTES>` was read as record 2049 (offset `RECORD_BYTES * 2048`, silently wrong) and `("F.IMG", 2049 <BYTES>)` was refused as a missing pointer. A `<BYTES>` pointer is now a 1-based byte position. Record pointers are unchanged. Ported from Sidera.
+
+- **Fixed: a Mission Monitor layout file that is not UTF-8 was overwritten instead of kept.**
+  - `load_layout` let `UnicodeDecodeError` escape (it is not an `OSError` or `LayoutError`), the caller swallowed it, no `.bak` was made, and the layout was overwritten at close. It now raises `LayoutError`, so the file is quarantined like invalid JSON. Ported from Sidera.
+
+- **Fixed: Mission Studio run and batch children could die on a non-ASCII print (Windows).**
+  - A Python child whose stdout is a pipe encodes with the ANSI code page; the first character outside cp1252 (for example an arrow) raised `UnicodeEncodeError` and killed the run (reproduced on this machine). The children now run with `PYTHONIOENCODING=utf-8`, matching the UI's UTF-8 decoding. Ported from Sidera (64d48728).
+
+- **Fixed: an impulsive-manoeuvre run re-spaced its output grid per segment (output times change).**
+  - Each segment between burns built its own evenly spaced grid over its burn-shifted duration: `output_dt_s = 60` with a burn at 1000 s gave 58.82 s spacing before the burn and 59.09 s after, neither 60 s nor aligned to t0 (without `output_dt_s`, each segment re-derived it from its own post-burn period).
+  - The output is now the grid a run without burns would produce, plus each burn epoch; each segment integrates its exact slice. Trajectories are unchanged; only the sample times move. Ported from Sidera.
+
+- **Fixed: `lunaris-data download` never fetched companion files.**
+  - Only the entry's main URL was downloaded; the detached labels listed under `companion_files` (the `.lbl` each LOLA, GRAIL and Diviner product needs) were not, so `lunaris-data verify --strict` failed right after a fresh download. Missing companions are now fetched from their own `url` or the main file's folder, hash-checked; a required companion's failure is the entry's status. Ported from Sidera.
+
+- **Fixed: PDS3 `IEEE_REAL` / `REAL` rasters were read as little-endian.**
+  - `dtype_from_pds3_sample` mapped them to `<f4/<f8` like `PC_REAL`; PDS3 (Standards Reference, Appendix C) defines them, and `MAC_REAL` / `SUN_REAL`, as big-endian. They now map to `>f4/>f8`. `PC_REAL` (the LOLA products shipped here) is unchanged. Ported from Sidera.
+
+- **Fixed: the ST-LRPS paper-evidence multi-seed stage aggregated no seeds.**
+  - It read each train entry's seed from the manifest's `config` record, which holds only path and hashes, so every candidate was skipped and the summary reported 0 seeds. Train entries now record `extra.seed`.
+  - Field-validation entries were all written under the manifest key `field_validation` (a second model overwrote the first), and the multi-seed lookup used a `seed{N}` folder the stage never writes. Entries are keyed `field_validation:<model>`, record `--seed`, and are paired by seed or by the evaluated checkpoint's sha256.
+  - Shared field and orbit-benchmark CSVs that name no candidate are borrowed only when there is a single seed; with several, every seed got the same numbers (std 0).
+  - A `--seed` sweep of one named config collapsed onto one manifest entry and evidence folder; the run key now appends `_seed<N>` unless the name already contains it.
+  - Ported from Sidera (64d48728), with a stricter seed-in-name check.
+
+- **Fixed: the ST-LRPS Studio relaunched an interrupted queue job from scratch.**
+  - A job that was running when the Studio died was restored as Pending; Start Queue relaunched it without `--resume-from`, and the trainer started a new history in the same output folder, deleting the run's history and checkpoints. It is now restored as Interrupted and the queue skips it. Ported from Sidera (64d48728).
+
+- **Fixed: Mission Studio overwrote an unreadable session file with defaults.**
+  - A `studio_session.json` with one typo, a truncation or a UTF-8 BOM failed to load, the defaults stayed, and the next auto-save (30 s) or the close wrote them over the user's profile.
+  - A BOM is now accepted; a file that is not JSON is moved to `studio_session.json.bak` (then `.bak.1`, ...) and the console names it.
+  - Session saves (auto-save, Save Profile, the legacy migration) write atomically, so a failure mid-write leaves the previous file intact. The migration reports "Migrated" only when the forward copy succeeded.
+  - Ported from Sidera (64d48728, desktop-UI fixes).
+
+- **Fixed: `tools/gpu_qualification.py` reported PASS when every GPU test was skipped.**
+  - The verdict was pytest's exit code, which is 0 when no CUDA is visible and every `requires_cuda` test skips. The tool now reads a JUnit report and fails unless at least one test passed. `--help` prints usage instead of running the suite. Ported from Sidera (64d48728).
+
+- **Fixed: surface and eclipse event factories faked or lost crossings near the start (default behaviour changes).**
+  - Terminator, node, target-flyover, occultation, stability and solar-eclipse events returned a constant for absolute `t < 1 s`. A start on the other side of the surface reported a fake crossing at t = 1 s (a run starting in shadow got a false eclipse entry), a real crossing in the first second was lost, and a run whose t0 is an epoch never got the window.
+  - `t_guard_s` now defaults to 0 and, when positive, is start-relative and returns NaN (never a crossing), like the apsis and longitude events; a negative or non-finite value raises.
+  - `make_max_eclipse_duration_event` returned the same stale value at both ends of a root bracket, so plain `solve_ivp` raised "f(a) and f(b) must have different signs" (through the step-consistent wrapper it reported 171 s for a 150 s limit). It now records the eclipse entry time from monotone calls and returns `max_duration_s - (t - entry_t)`, linear inside a step.
+  - No production path builds these events; they are public API. Ported from Sidera (66237c40, 64d48728); Sidera's start-on-surface rule is not ported (the SciPy step-consistent wrapper already covers that case).
+
+- **Fixed: Mission Studio impact watchdog and live telemetry around `rhs_probe` samples.**
+  - An `rhs_probe` sample (a solver evaluation that may belong to a rejected adaptive step) reached the impact watchdog, so one probe below the surface could stop a run. Probes no longer count as impact evidence; output states still do (the engine's own impact events are unchanged).
+  - The output states the engine emits from t0 after the integration were drawn after the live probe trace (the orbit twice, with a line back to t0) and ran the progress bar from ~100 % back to 0. The first output state now replaces the probe trace, and progress follows the probes only.
+  - The watchdog latched once per window: after one impact, later runs were never warned. It is re-armed when a run starts.
+  - Ported from Sidera (64d48728, library audit); the progress fix is Lunaris-specific.
+
+- **Fixed: replay step-back from a paused cursor skipped a sample.**
+  - With the cursor between two samples, one step back landed two samples back. Backward steps now count from the last sample strictly before the cursor, forward steps from the first strictly after. Ported from Sidera (66237c40).
+
+- **Fixed: the Results page Duration KPI was missing for every real run.**
+  - It read `time.duration_days`, a `TimeConfig` property that `asdict()` never writes to `run_config.json`. It now reads `time.duration_s` (a hand-written `duration_days` still works). Ported from Sidera (66237c40).
+
+- **Fixed: a PDS3 `MISSING_CONSTANT` written as a based integer was read as its radix.**
+  - `parse_pds3_cyl_label` matched `16#FF7FFFFB#` with a decimal pattern and stored `16.0`, so a DN of 16 was masked as missing and the real null was not.
+  - ODL based integers (`radix#[sign]digits#`, radix 2-16) are now decoded: as the integer for integer samples (range-checked), as the IEEE bit pattern of the sample word for real samples (`16#FF7FFFFB#` = float32 -3.4028226550889045e38). Malformed constants raise `PDS3ParseError`. Decimal constants are unchanged; no repository data label uses the based form. Ported from Sidera (66237c40).
+
+- **Fixed: the frozen-orbit search recorded the working directory's git commit.**
+  - `git rev-parse HEAD` ran in the process's cwd, so a search started inside another repository wrote that repository's commit into its manifest. It now runs in the installed package's directory. Ported from Sidera.
+
+- **Fixed: Mission Studio tide values and absolute tolerance reach the run.**
+  - k3 tides with a blank k3 field built a command the runner refused (`--tides-kind k3 requires an explicit --tide-k3 value`, exit 2); the engine has no default k3. The UI now refuses to build it and names the field.
+  - A Love number of 0 (accepted by the CLI, `>= 0`) was dropped as invalid; it is now sent. Non-finite values are skipped with a warning; the reference radius must still be positive.
+  - The Propagation page's absolute tolerance never reached single runs, batch runs or the pre-flight check (they read `solver_cfg.atol`); the page value now wins and `solver_cfg.atol` fills a blank field.
+  - Ported from Sidera (66237c40).
+
+- **Fixed: SciPy event root-finding crash on circular orbits.**
+  - **The crash.** On an exactly circular orbit, RK45, Radau and LSODA raised `ValueError: f(a) and f(b) must have different signs` from inside `solve_ivp`. This was reproduced on a 100 km lunar orbit.
+  - **Cause.** The apsis event `r . v` sits at rounding level there. SciPy detects a crossing from the solver states, but `brentq` re-evaluates the step interpolant, whose end values can have the other sign.
+  - **The fix.** Events are now wrapped so a root search sees the step-end signs SciPy detected, and an event that starts on its surface stays silent until it leaves the rounding band.
+  - **Results.** Runs without the inconsistency are bit-identical, tested on an eccentric orbit for RK45 and DOP853.
+  - Ported from Sidera (7e3deea4).
+
+- **Changed: albedo and thermal IR are integrated over the visible disk by default (default results change).**
+  - **The defect.** The 18 x 36 point-facet sum (facets up to ~300 km across) gave 0.39x-1.25x of the converged acceleration at 100 km and 0.04x-1.05x at 30 km on a sunlit disk. The reference was a brute-force cap integral plus the exact uniform-exitance limit `C A/(m c) M (R/r)^2`.
+  - **The fix.** `AlbedoConfig` / `ThermalConfig` gain `surface_integration` (default `"visible_disk_quadrature"`), `quadrature_radial_nodes` (16) and `quadrature_azimuth_nodes` (32). The new `lunaris.physics.surface_radiation_quadrature` is ported from the Sidera fork and re-verified independently. It integrates in the spacecraft's solid angle: exact for uniform exitance, and within 2e-4 of the full-Sun magnitude where the terminator crosses the disk. An azimuth recurrence replaces per-node trig, so the kernel costs about as much as the old sum.
+  - **Scope.** The cached RHS kernel, the surrogate-gravity RHS, `get_acceleration_vector_breakdown` and the `albedo_accel` / `thermal_accel` wrappers all use it. Batch manifests record `albedo_surface_integration` / `thermal_ir_surface_integration`.
+  - **Reproducing old results.** `surface_integration="facets"` restores the former path bit-for-bit (the 18 recorded RHS golden scenarios are unchanged).
+  - **Impact.** 1 day at 100 km, polar: at most 5.7 mm for A/m = 0.002 m^2/kg and 57 mm for 0.02 m^2/kg, mostly in-track and from thermal IR.
+  - **Registry.** Registered as `LUNARIS-MODEL-RAD-002/003` plus `LUNARIS-ALG-NUM-001` (Gauss-Legendre via NumPy).
+
+- **Fixed: the engine's `simple` albedo kernel ignored `AlbedoConfig.enable_eclipse`.**
+  - The cached RHS kernel, the surrogate RHS and the acceleration breakdown hard-coded the Moon-shadow test on.
+  - They now follow `enable_eclipse`, as `surface_effects.albedo_accel` already did. The default (`True`) is unchanged.
+
+- **Fixed: the strict solid-tide kernel depended on numba compile order.**
+  - `solid_tides.accel_solid_tides_numba` and `solid_tide_accel_degree_numba` did not pin `fastmath`. When the fastmath wrapper `third_body_effects.accel_solid_tide` compiled first, the strict RHS inherited fastmath through the on-disk cache: 8913 of 12000 components changed, by up to 2.7e-15 relative.
+  - Both kernels now pin `fastmath=False`. Output is bit-identical in every compile order.
+  - A package-wide test fails if any unpinned non-inline helper compiles under a fastmath caller.
+
+- **Fixed: the numba CUDA SRP shadow matches the CPU again.**
+  - The device shadow factor still used the old smoothstep penumbra; the CPU now uses the exact visible-disk (lens-overlap) fraction. The GPU penumbra differed by up to 2.6% of full-sun SRP.
+  - `_shadow_factor_conical_cuda` now mirrors the CPU kernel branch for branch. Under the CUDA simulator the shadow factor is bit-identical in full sun, penumbra, umbra and annular geometry for both the Moon and the Earth. SRP acceleration agrees to 2.8e-16 of full-sun SRP.
+  - The CUDA SH longitudinal term uses the exact `1/rho^2` above the polar cutoff, as the CPU does. It is bit-identical for rho >= 0.13 mm and now agrees on and near the axis.
+  - GPU SRP results change inside penumbrae only. Non-SRP GPU runs are bit-identical off the polar axis.
+
+- **Fixed: worst-tail field statistics took one entry too many.**
+  - The worst-1%/5% means sliced from `ceil(0.99*n) - 1`, which averaged 2 of 100 errors instead of 1.
+  - They now take exactly `max(1, ceil(fraction*n))` entries.
+  - The paper does not use these keys.
+
+- **Fixed: frozen-search orbital elements are measured against the lunar equator.**
+  - **The defect.** With a rotating Moon-fixed field (ST-LRPS screening, `--strict-frame`, `--paper-safe`, third-body validation), `elements_to_states` and the element histories used the J2000 integration frame. Inclination, node and argument of perilune, the `--i-deg` / `--argp-choices` sampling and every inclination/ω criterion were therefore measured from the Earth's equator, which is tilted about 23.5 deg from the lunar one.
+  - **The fix.** Elements now live in the lunar equator of epoch, `R = q_i2f(t=0)` from the run's ephemeris. Stored states stay inertial. Identity-frame runs are bit-identical. The manifest records `element_frame`, its source and the matrix. Resuming a run written in another element frame is refused. Figures rotate the same way.
+  - **Verification.** On DE440 the resulting lunar pole is RA 271.23 deg, Dec 67.98 deg at 2026-01-01, within 0.03 deg of the IAU 2015 model including its 18.6-year terms.
+  - **Impact on existing runs.** Campaigns run before this fix (`v2_*`, `v3_*`, `v4_*`) report J2000 elements. For example, the v4 shortlist's J2000 inclinations of 42–136 deg are 52–64 deg and 113–124 deg against the lunar equator.
+  - **Related fixes.**
+    - ST-LRPS candidates are now always validated in the Moon-fixed frame.
+    - The element <-> state GM comes from the validation gravity file header instead of a hard-coded constant.
+    - `ElementBounds` rejects e >= 1.
+    - A `strict_frozen`/`quasi_frozen` label now requires the validation history to cover the configured mission duration.
+
+- **Fixed: the ST-LRPS CPU provider path honours `strict_domain` and no longer computes a discarded potential.** `SurrogateGravityModel.from_model_dir` now forwards `strict_domain` (and a new `paper_safe` flag) to the canonical runtime loader, so a strict provider raises on the CPU `acceleration_fixed*` path below the training envelope instead of only warning; non-strict loads still warn. A `paper_safe` load never falls back to the legacy local path. `acceleration_fixed` / `acceleration_fixed_batch` return the same acceleration bit for bit without the potential pass (planD_dirfix model, SH25 baseline, CPU: 3.2x per single call, 10x for N=2000). A `mu_override` more than 20% from the artifact's `resolved_mu_si` raises instead of being ignored. Empty `(0, 3)` batches pass the CPU and tensor domain guards. `import lunaris.surrogate.runtime` no longer imports torch. Tests are in `tests/test_surrogate_runtime_provider_fixes.py`.
+- **Fixed: ST-LRPS `--resume-from` failed every time.** A new scaler recorded `dataset_content_sha256 = None` when the dataset contract did not embed the hash, while the reuse check computed it from the file. `training_config_hash`, which changes with `--epochs` and `--resume-from`, was also a critical config field. A checkpoint from before the output envelope also differed from its rebuilt config on `output_envelope_power`, because the field was absent on one side. The scaler now records the hash it is checked against, the config hash is no longer critical, and a missing `output_envelope_power` compares as `0.0` (envelope off). The end-to-end resume test now fails on a non-zero exit instead of skipping.
+- **Fixed: ST-LRPS epoch losses were means of per-batch means.** The validation loader keeps its last, smaller batch, so that batch was over-weighted in `val_total_loss`, which picks the best checkpoint. All epoch statistics, including `loss_rel`, `rel_a_mean` and `wtz_frac`, are now sample-weighted. When the last validation batch is smaller than the others, reported losses and best-epoch selection can differ from earlier runs.
+- **Fixed: ST-LRPS training-loop robustness.** The changes are:
+  - A NaN/Inf validation loss writes `failure_manifest.json` and marks the run failed. Before, it raised from checkpoint scoring and left the run marked "running".
+  - Resuming from an older snapshot drops the history rows and periodic-eval records of the epochs it re-trains.
+  - Each run attaches and removes its own `train.log` handler. Before, `logging.basicConfig` wrote no log for a second run in the same process.
+  - A training split smaller than one batch is refused. Before, it trained zero batches per epoch.
+  - An independent `--val-data` file is validated like the train file.
+  - Independent-file split manifests record `train_file_sha256` and `val_file_sha256`.
+- **Fixed: ST-LRPS artifact checks.** `load_scaler_for_run` now checks a checkpoint's pinned `scaler_hash` when the checkpoint has no embedded scaler. `read_artifact_contract(strict=True)` now raises `ArtifactContractError` for an unreadable `config.json` or an unloadable or mismatched scaler, where it used to fall back silently. Existing runs load unchanged.
+- **Fixed: GradNorm `update_interval=1` updated only on the first step.** It now updates every step, and `update_interval < 1` is rejected. Intervals of 2 or more behave as before.
+- **Fixed: a malformed `w0_bands_tensor` checkpoint buffer was swallowed on load.** A buffer with the wrong type, shape or length, or with non-finite values, now raises `ValueError`. Checkpoints with a valid buffer, or with none, load as before.
+- **Fixed: GPU terrain batches missed impacts in multi-step descents.** The torch and Numba CUDA terrain check bracketed each step against the terrain envelope sphere and skipped steps that started inside it, so a descent spanning several steps flew through the ground. A step that starts inside the envelope now enters at `alpha = 0`. Tests: `tests/test_terrain_multistep_descent.py` (torch CPU/CUDA, Numba CUDASIM, against a SciPy event reference).
+- **Fixed: Numba CUDA t = 0 impact in terrain mode used the mean sphere.** The host mask now evaluates `|r| <= terrain_radius + impact_alt` with the device terrain sampler, as the torch backend does.
+- **Fixed: terrain maps were sampled in MOON_PA axes.** LOLA topography is on mean-Earth/polar axes (DE421). `lunaris.common.lunar_map_frame` builds the DE440 PA->ME rotation (103.9 arcsec, about 875 m on the surface; matches SPICE `pxform` to 5e-20). The CPU impact event and telemetry, the torch samplers and the CUDA kernel apply it; the CUDA topo meta grows from 13 to 22 slots. Terrain impact times and points change for MOON_PA runs. Tests: `tests/test_lunar_map_frame.py`.
+- **Fixed: Numba CUDA SRP shadow.** The cylinder test measured its projection from the Sun, so SRP was also off on the sunlit side behind the lunar disk: 2.0x the CPU eclipse time on a beta = 0 orbit. It had no Earth eclipse, no penumbra, and used `R_MOON` = 1738 km. The kernel now mirrors the CPU conical shadow factor with the `SRPConfig` radii, eclipse switches, AU and P0. GPU SRP results change. Diagnostics report the CPU shadow labels.
+- **Fixed: Numba CUDA SH near the polar axis.** The kernel used the CPU's 1e-12 m longitude cutoff instead of 1e-6 m. Inside the `rho^2 < 1e-24` cutoff it now uses the analytic m = 1 transverse limit, as the CPU does. Results off the axis are bit-identical.
+- **Fixed: Numba CUDA quaternion SLERP extrapolated past the attitude table end.** It now holds the end rows like the CPU interpolator.
+- **Fixed: chunked SciPy runs restart from the chunk end.** A chunk whose end was off the output grid restarted from the last output sample, so the span was integrated twice and events in it were logged twice; a chunk without events also crashed the event concatenation. Chunk ends are now always sampled, only grid samples are kept and boundary events are de-duplicated. A stop file present before the start now stops an unchunked SciPy run at t0, and the between-chunk stop-file poll no longer depends on `stop_event_in_scipy`. Tests: `tests/test_scipy_chunked_restart.py`.
+- **Fixed: no fake apoapsis at t ~ 1 s.** The periapsis/apoapsis events returned +1 while the absolute time was below 1 s, so a run starting with r·v < 0 logged an apoapsis at ~1 s and a real apsis in the first second was hidden (and the guard did nothing for t0_s > 1 s). The guard is now start-relative (NaN, default 0 s) and a start on an apsis is not an event. Event times match Kepler for DOP853 and RK4. Tests: `tests/test_apsis_event_start_rule.py`.
+- **Fixed: a longitude-crossing event fires once per revolution.** `wrap_pi(lon - lon0)` jumps at the antipode, which solvers logged as a second crossing; the root function is now `sin(lon - lon0)` on the near half and NaN elsewhere, with a start-relative NaN guard (default 0 s). Tests: `tests/test_longitude_crossing_once_per_rev.py`.
+- **Fixed: SPICE tables cover `[0, t0_s + duration_s]`.** They covered `duration_s`, so with `t0_s > 0` the Sun/Earth vectors and the attitude froze for the last `t0_s` seconds; a negative `t0_s` is refused. Table builds now furnish and unload only their own kernels (`spice.unload`) instead of `kclear`-ing the whole pool by default (`SpiceBuildConfig.clear_kernels_after` now defaults to False), hold a process-wide SPICE lock, and normalise a timezone-aware `start_date` to UTC. `propagate` refuses a window outside the ephemeris table and a start below the impact sphere when impact detection is on. Tests: `tests/test_ephemeris_build_window.py`, `tests/test_propagator_start_guards.py`.
+- **Fixed: batch runs refuse `time.t0_s != 0`.** The GPU/torch loops start at t = 0 and the CPU path resampled a `t0_s`-offset solution onto the 0-based archive axis. summary_only mode no longer runs one sample per sub-batch (its host budget was 0); the summary is identical. Tests: `tests/test_batch_engine_time_origin_and_summary_cap.py`.
+- **Fixed: batch archive writers.** `output_path_resolved` now carries the format suffix (an npz run at `*.h5` broke the `.part` rename), part files carry the PID so concurrent runs on one path cannot delete each other's work, and `BatchPropagationConfig.overwrite_output` (default True, replacement now logged) refuses an existing archive when False. HDF5 epoch-block reads decompress each chunk once (bit-identical, 6-9x faster in a 1000x5000 benchmark). Tests: `tests/test_batch_archive_writer_paths.py`, `tests/test_hdf5_epoch_block_reads.py`.
+- **Fixed: adaptive-degree `min_degree=0` is honoured** (it was replaced by 4) and a non-positive `power` raises instead of becoming 2.5. Tests: `tests/test_adaptive_degree_explicit_defaults.py`.
+- **Fixed: a NaN void in a float LDEM no longer collapses the terrain envelope to the mean sphere.** Tests: `tests/test_topo_envelope_nan_voids.py`.
+- **Fixed: Slurm templates.** They sourced `env_template.sh` next to the spooled script copy and died at the first line; they now use `LUNARIS_HPC_DIR` (exported by `hpc/submit.sh`) or `$SLURM_SUBMIT_DIR/hpc`. The training templates `exec` their program and the scenario launcher relays SIGTERM/SIGUSR1/SIGINT to the trainer, so `--signal=B:TERM@600` reaches it. The batch array template refuses unscrambled `sobol`. Tests: `tests/test_hpc_signal_relay_and_templates.py`.
+- **Performance: the CPU lunar RHS compiles once per process and is cached on disk.**
+  The numba RHS kernels were closures over the run's arrays and settings, which
+  numba freezes as constants, so every `DynamicsEngine` (each CPU batch sample,
+  each validation run) recompiled them: 1.6-2.5 s per engine for GL1800F
+  degree 50/200, SH-only and SH + Sun/Earth. They are now module-level
+  `cache=True` kernels that read one `_RhsPack` (a numba StructRef). Results are
+  bit-identical (`np.array_equal`) on 27 force configurations: 1000 RHS states
+  and a 1-day DOP853 trajectory each. The surrogate (Python) RHS is unchanged.
+  Numba checks a cached kernel only against `engine.py`; a stamp next to the
+  cache hashes the 11 callee modules (and the constants numba freezes into
+  them), and on import a mismatch removes engine.py's cache files so the
+  kernels recompile against the current force code.
+- **Fixed: YAML benchmark configs are parsed by PyYAML only.** A hand-written subset parser stood in when PyYAML was missing, so the same file parsed differently per machine. Under the subset parser, `rtol: 1e-10` was a float (a string under PyYAML), `n: 5  # five` kept its comment, and `seed: 010` was 10 (8 under PyYAML). Without PyYAML, a YAML config now raises `BenchmarkConfigError`. JSON configs still need nothing extra.
+- **Fixed: honest ST-LRPS and third-body tests.**
+  - `tests/test_st_lrps.py` had 35 `except ImportError: print("[SKIP]"); return` guards, which let a broken in-repo import pass as green. The in-repo imports are now unguarded. Optional `h5py` uses `pytest.importorskip`.
+  - Four `_test_*` functions that pytest never collected (scaler round-trip, chain rule, direction mask, artifact resolver) are renamed to `test_*`, and all four pass.
+  - `tests/test_third_body_effects.py` dropped its local constant fallback, whose `MU_SUN` (1.32712440018e20) disagreed with the SSOT (1.32712440042e20).
+- **Fixed: the perturbation-budget summary labels its geometry honestly.** Sampling always uses synthetic Sun/Earth geometry, but the summary printed `ephemeris_requested` whenever the synthetic *gravity* fallback was off. The summary now always reads `synthetic_geometry`. `use_ephemeris=True`, which was silently ignored, now raises `NotImplementedError`. The config field that gates synthetic gravity coefficients is renamed from `use_synthetic_geometry_fallback` to `use_synthetic_gravity_fallback`. The CLI flag `--synthetic-fallback` is unchanged.
+- **Fixed: report history extractors read the state layout from the time grid and stop guessing units.** Two bugs are fixed in `extract_rv_vectors` / `extract_elements`:
+  - A row-major `(N, 6)` state with `N >= 6` was read as `(6, N)`. Now, when both axes could hold the state, the time grid decides. The canonical `(6, N)` layout wins for a square state, and a shape that matches neither axis raises.
+  - Magnitude-based unit guesses (`_maybe_km`, `_maybe_r_m`, `_maybe_v_mps`) are removed. Histories are SI by contract, and canonical `*_km` / `*_kmps` keys are kept as stored. Before, an `r_norm_km` above 1e5 km was divided by 1000 again.
+- **Fixed: the step-size convergence gate (`lunaris.validation.convergence`).** Three changes:
+  - It is now one-sided (`observed >= expected - order_tol`), as its docstring always said. Superconvergence no longer fails.
+  - The reference-based order comes from the finest (medium, fine) error pair instead of the coarse pair, which could hide a stalled sequence.
+  - 0/0, a solution that does not move across the sweep, now gives order `nan` and fails instead of passing as "converged".
+
+  Checked against RK4 (order 4.0) and Euler (order 1.0) on `y' = y`.
+- **Fixed: `lunaris-batch` exits 2 when the run produced no usable result.** If every sample failed or the metrics could not be built, the runner used to print `[BATCH][WARN]` and exit 0. It now prints `[BATCH][FATAL]` and exits 2.
+- **Fixed: the `lunaris` single run no longer reports success when the integration fails.** A failed SciPy integration returns a partial trajectory instead of raising. The runner used to print `[OK] Finished.` and exit 0 for it. It now keeps `run_config.json` / `run_diagnostics.json`, skips the report, prints `[FAIL] Integration failed at t = ...`, and exits 1. A requested SH degree above the gravity file's maximum was silently evaluated at the file maximum while the requested degree was recorded. The runner now warns and records the effective degree in the run config, report meta and telemetry, plus `requested_sh_degree` / `effective_sh_degree` in the run diagnostics.
+- **Fixed: `--samples-per-period` now sets the output grid.** The default config's `output_dt_s = 60 s` used to win, so the flag was recorded and ignored. On `lunaris` (single run), the flag now clears `output_dt_s` and the time-grid plan derives the spacing from the osculating period. `lunaris-batch` applies the same rule in the runner, because the batch engine would otherwise fall back to `10 * batch_dt_s`. The flag can no longer be combined with `--output-dt-s` on either command.
+- **Fixed: `compute_ensemble_statistics(use_survived_only=True)` no longer overwrites `result.valid_mask`.** It used `&=` on the array that `valid_sample_mask()` returns, which is the stored mask itself. Impacted samples then stayed marked invalid for every later analysis of the same result.
+- **Fixed: gravity-reference hash pins on Windows checkouts.** `.gitattributes` now pins `validation/gravity_reference/generators/**/*.py` to LF, so the rotating-validation runner hashes match the evidence matrix on a CRLF checkout. The `synthetic_degree4` and `grail_degree32` manifests carried stale `generator.script_sha256` values. Rerunning both generators reproduced their data and coefficient files byte-for-byte, so their regenerated manifests are committed. The only change is the script hash. `tests/test_gravity_reference_generator_hashes.py` gates every manifest.
+- **Fixed: ST-LRPS evaluation leakage scope.** `evaluate()` now excludes the training rows automatically when the evaluation file's `content_sha256` matches the run's in-file training dataset, and fails closed when `split_indices.npz` is missing. `--max-samples` counts retained rows. Reports and `summary_metrics.csv` carry `eval_scope` (`same_file_train_rows_excluded`, `heldout_file`, `training_file` or `unverified`) and `excluded_train_rows`.
+- **Fixed: streaming evaluation statistics.** The streaming L-inf keeps NaN visible instead of returning 0.0. The altitude bins span the dataset's recorded altitude range, and under/overflow counts are reported. The streaming ratio-of-sums relative error is now `rel_ratio_of_sums_pct`; `rel_mean_pct` (in-memory per-point mean, read by `mean_relative_a_error`) keeps its meaning.
+- **Fixed: benchmark trajectory interpolation.** `interpolate_state_to_times` uses cubic Hermite position and velocity (O(h^4)/O(h^3) instead of linear O(h^2)) and refuses to extrapolate. A model trajectory that does not cover the truth grid becomes a `failed_time_coverage` / `time_coverage` row instead of a held end state.
+- **Fixed: field-validation and paper-evidence hygiene.** Field metrics are NaN when any prediction is non-finite. Split kinds are downgraded to interpolation unless the model was trained with the same split policy. Independent-file runs are hash-checked against the training file. The paper-evidence gate intersects the persisted split indices. The multi-seed `std` is the sample stdev (`None` for one seed). An unreadable evidence manifest is refused instead of being reset, and the manifest is written atomically. String booleans such as `"false"` are parsed in the training argv.
+- **Fixed: dataset generator seeding and validation.** Chunk seeds come from `numpy.random.SeedSequence` (`chunk_rng_version=seed_sequence_v2`). Previously chunk *i* of seed *s* was chunk *i-1* of seed *s+1*. Single-cloud datasets therefore differ bit for bit from earlier ones; suite datasets are unchanged. All writers write `<name>.partial` and rename it when done. `validate_dataset_file` recomputes `content_sha256` and derives the label recompute tolerance from the storage dtype.
+- **Fixed: benchmark output honesty.** Missing scenario statistics are left blank instead of being copied from other statistics. Cold, warm and JIT timings that were never measured are reported as `""` with `timing_protocol=not_measured`, and the validator accepts that. Cached runtime rows count only scenarios with a measured runtime. The phase-explained fraction compares variances over the same epochs. Provenance no longer records the first `*.pt` it finds as the model checkpoint.
+- **Fixed: post-processing GM, radius and eclipse timing.**
+  - GM and radius: `process_simulation_results` and `build_orbit_analysis`
+    read `mu_m3s2` / `R_body_m` attributes that the dynamics engine does not
+    have. They therefore always used a hard-coded 4.902801e12 m^3/s^2 and
+    1737.4 km, or `MU_MOON`. They now use the run's gravity model
+    (`engine.grav.GM_m3s2` / `R_ref_m`), the same source the propagator uses,
+    and fall back to `MU_MOON` / `R_MOON`. Altitudes and elements in reports
+    of SH runs change accordingly (GL1800F: altitude reference 1738.0 km
+    instead of 1737.4 km).
+  - Eclipse mask: it now interpolates the Sun/Earth ephemeris at each sample
+    time. Before, it used the next table row. Its Moon radius is the SRP
+    occulter radius when the engine has one.
+  - The ephemeris index helper now returns the nearest-left row, as its
+    docstring states. The ground track uses this helper.
+
+  Tests are in `tests/test_analysis_gm_radius.py`.
+- **Fixed: rv-to-COE edge cases.**
+  - Inclination: `acos(hz/|h|)` lost precision near 0 and 180 deg (1e-6 rad
+    came back 4e-5 relative off; below about 1.5e-8 rad it came back as 0).
+    `atan2(|h_xy|, hz)` is now used for |cos i| >= 0.5.
+  - Retrograde equatorial orbits: the longitude of periapsis and the true
+    longitude are now measured in the direction of motion, so rv -> COE -> rv
+    round-trips. Before, the round trip mirrored the orbit in y.
+  - `wrap_angle_2pi` no longer returns exactly 2*pi for tiny negative angles.
+
+  On 20,000 lunar orbits (i 40-140 deg, e 0.005-0.1), only the inclination
+  output of `rv_to_coe_select` and `batch_y_to_elements` changes. It changes
+  in 2,120 samples, all outside 60-120 deg, by at most 4.4e-16 rad (3 ulp).
+  The frozen-search `screening_orbital_elements_vec` is a separate code path
+  and is bit-identical. Tests are in `tests/test_math_utils.py`.
+- **Fixed: albedo and thermal-IR wrapper inputs.** The simple backend of
+  `albedo_accel` now honours `AlbedoConfig.enable_eclipse` like the facet
+  backend and reads the canonical `albedo_const`. `AlbedoConfig` keeps its
+  legacy alias `A_moon` equal to `albedo_const`, also after
+  `dataclasses.replace(cfg, albedo_const=...)`. Before, the alias kept the
+  previous value. In `temperature_grid` mode, `calc_thermal_ir_accel` (and
+  `thermal_accel`) now raises `ValueError` when the per-facet temperature grid
+  is missing or has the wrong length. Before, it returned a silent zero.
+  Default results are unchanged. Tests are in `tests/test_surface_effects.py`
+  and `tests/test_thermal_ir.py`.
+- **Fixed: strict SHADR loading.** In strict mode every numeric field must now
+  be a complete literal. Before, a regex fallback read `1.0-08` as the two
+  numbers 1.0 and -8.0 and accepted `-9.0E-05junk`. Fortran `D` exponents
+  parse as one number. A non-integral degree/order index or normalization
+  state (`1.7`, `1.5`, `nan`) is rejected instead of truncated or skipped, in
+  both `load_shadr_ascii` and `read_gravity_model_header`. ICGEM `.gfc` files
+  are refused with a clear error instead of reaching the binary SHBDR parser,
+  and `--gravity-file-path` no longer offers `.gfc`. The GL1800F table loads
+  bit-identically (SHA-256 of the coefficient arrays at degree 1800, 660 and
+  50 unchanged). Tests are in `tests/test_io_gravity.py`.
+- **Fixed: SH acceleration within nanometres of the polar axis.** The numba and
+  torch kernels softened the longitudinal projection to `1/(rho^2 + 1e-24)`,
+  which halved it at `rho = 1e-12 m` (up to 49% transverse error against a
+  finite difference of the potential); they now use the exact `1/rho^2` above
+  the axis cutoff, and the longitude fallback uses the same `rho^2 >= 1e-24`
+  test as the cutoff. The batch potential kernel dropped the whole transverse
+  field for `1e-14 m < rho <= 1e-14 r` and now applies the analytic axis limit
+  there. Off-axis results (`rho >= 0.13 mm`) are bit-identical (measured on
+  205 points for the serial, parallel, batch and torch paths). Tests are in
+  `tests/test_sh_pole_axis.py`.
+- **Fixed: strict SH helpers no longer inherit `fastmath`.** Numba compiles a
+  helper with the flags of whichever caller compiles it first and caches that
+  build on disk. The helpers shared by the strict serial SH kernel and the
+  fastmath kernels (`_compute_sh_acceleration_parallel`,
+  `sh_potential_accel_batch_serial`), including `_kahan_sum_step` and
+  `common.math_utils.clamp`, now set `fastmath=False` explicitly. Measured on a
+  degree-200 field: before, the serial acceleration moved by up to 11 ulp
+  (1.1e-15 relative) when a fastmath kernel compiled first, and the drift
+  persisted through the cache; after, it is bit-identical in every compile
+  order. Results compiled in the strict order are unchanged. Tests are in
+  `tests/test_sh_fastmath_isolation.py`.
+- **Fixed: SRP eclipse geometry.** The conical shadow factor is now the
+  visible solar-disk fraction (lens area of the apparent solar and occulter
+  disks, Montenbruck & Gill 2000, sec. 3.4) instead of a smoothstep across the
+  penumbra cones. Against an exact spherical-cap integral it is within 3e-4 in
+  `nu` (the smoothstep was up to 0.046 off near the Moon and returned ~0 in the
+  annular region beyond the umbra apex). Full-sun and umbra limits stay exactly
+  1 and 0. `SRPConfig.enable_earth_eclipse` now defaults to `True`, so SRP is
+  dimmed during lunar eclipses like albedo and thermal IR; a zero Earth vector
+  (no ephemeris) is ignored. Default SRP, albedo-eclipse and thermal-IR-eclipse
+  results change inside penumbrae and Earth shadows. Tests are in
+  `tests/test_srp_eclipse.py`.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.

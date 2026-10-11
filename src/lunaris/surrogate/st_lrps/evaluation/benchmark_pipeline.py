@@ -604,12 +604,16 @@ def _standardize_scenario_rows(
     source = "synthetic_smoke" if synthetic else "not_evaluated"
     for row in rows:
         item = dict(row)
+        # trajectory_rms_km is the standardized name of the same measured
+        # statistic as rms_pos_err_km, so aliasing it is a rename. final/max/p95
+        # position error and rms/final velocity error are DIFFERENT statistics;
+        # copying one into another fabricated numbers that were never computed.
         item.setdefault("trajectory_rms_km", item.get("rms_pos_err_km", ""))
-        item.setdefault("final_pos_err_km", item.get("rms_pos_err_km", ""))
-        item.setdefault("max_pos_err_km", item.get("rms_pos_err_km", ""))
-        item.setdefault("p95_pos_err_km", item.get("rms_pos_err_km", ""))
-        item.setdefault("rms_vel_err_ms", item.get("final_vel_err_ms", ""))
-        item.setdefault("final_vel_err_ms", item.get("rms_vel_err_ms", ""))
+        item.setdefault("final_pos_err_km", "")
+        item.setdefault("max_pos_err_km", "")
+        item.setdefault("p95_pos_err_km", "")
+        item.setdefault("rms_vel_err_ms", "")
+        item.setdefault("final_vel_err_ms", "")
         item.setdefault("energy_drift_rel", "" if not synthetic else 0.0)
         item.setdefault("accel_max_error_m_s2", "" if not synthetic else 0.0)
         item.setdefault("potential_error_m2_s2", "" if not synthetic else 0.0)
@@ -637,9 +641,15 @@ def _standardize_runtime_rows(
         cold = _float_or_default(item.get("cold_time_s"), warm + jit)
         steps = _float_or_default(item.get("n_steps"), 0.0)
         n_scenarios = _float_or_default(item.get("n_scenarios"), scenario_count)
-        item.setdefault("cold_time_s", cold)
-        item.setdefault("warm_time_s", warm)
-        item.setdefault("jit_compile_time_s", jit)
+        if synthetic:
+            item.setdefault("cold_time_s", cold)
+            item.setdefault("warm_time_s", warm)
+            item.setdefault("jit_compile_time_s", jit)
+        else:
+            # A measured row that lacks separate cold/warm/JIT timings did not
+            # measure them; "" (not measured) instead of warm = total, jit = 0.
+            for _timing_key in ("cold_time_s", "warm_time_s", "jit_compile_time_s"):
+                item.setdefault(_timing_key, "")
         item.setdefault("propagation_time_s", _float_or_default(item.get("propagation_time_s"), warm))
         item.setdefault(
             "acceleration_evaluations_per_second",

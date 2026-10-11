@@ -222,14 +222,23 @@ class StateUncertainty:
 
     def cholesky_factor(self) -> F64Array:
         """
-        Lower-triangular Cholesky factor L such that P = L @ L.T.
+        Square-root factor L such that P = L @ L.T.
 
         Used for efficient Gaussian sampling: x = mean + L @ z,  z ~ N(0,I).
+        For a positive-definite P this is the lower-triangular Cholesky factor.
+        A singular PSD P (accepted by ``__post_init__``; e.g. perfectly
+        correlated components) has no Cholesky factor in floating point, so the
+        symmetric eigen-decomposition factor ``V diag(sqrt(max(w, 0)))`` is used.
         """
         P = self.to_covariance()
-        # Regularise very small diagonal entries to avoid near-singular Cholesky.
-        P = P + np.eye(6, dtype=np.float64) * 1e-30
-        return np.asarray(np.linalg.cholesky(P), dtype=np.float64)
+        try:
+            # Regularise very small diagonal entries to avoid near-singular Cholesky.
+            return np.asarray(
+                np.linalg.cholesky(P + np.eye(6, dtype=np.float64) * 1e-30), dtype=np.float64
+            )
+        except np.linalg.LinAlgError:
+            w, V = np.linalg.eigh(P)
+            return np.ascontiguousarray(V * np.sqrt(np.clip(w, 0.0, None)), dtype=np.float64)
 
     @property
     def sigma_summary(self) -> str:
@@ -382,6 +391,8 @@ class BatchPropagationConfig:
     # Output
     output_format: OutputFormat = "hdf5"     # "hdf5" or "npz"
     output_path: str = "outputs/ensemble/batch_output.h5"
+    # Replace an existing archive at output_path (logged); False refuses it.
+    overwrite_output: bool = True
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
     result_storage_mode: ResultStorageMode = "auto"  # "auto", "memory", or "disk"
     max_result_memory_gb: float = 1.0
@@ -398,6 +409,10 @@ class BatchPropagationConfig:
     impact_alt_km: float = 0.0      # Impact detection threshold [km]
     impact_surface_mode: ImpactSurfaceMode = "sphere"  # "sphere" or "terrain"
     sigma_levels: tuple[float, ...] = (1.0, 2.0, 3.0)
+
+    # CPU backend only: a sample whose propagation raises is NaN-filled (with a
+    # RuntimeWarning and valid_mask=False) instead of aborting the whole run.
+    allow_sample_failures: bool = False
 
     def __post_init__(self) -> None:
         if self.n_samples < 2:
@@ -493,7 +508,22 @@ class BatchPropagationConfig:
 
     @property
     def output_path_resolved(self) -> Path:
-        return Path(self.output_path).expanduser().resolve()
+        """The archive file a run writes: ``output_path`` expanded and resolved.
+
+        The suffix follows ``output_format``, because the archive loader picks
+        its reader by suffix: an ``npz`` run whose path does not end in
+        ``.npz`` writes ``<stem>.npz`` (numpy appends the suffix anyway), and
+        an ``hdf5`` run whose path ends in neither ``.h5`` nor ``.hdf5``
+        writes ``<stem>.h5``. Every record of the archive location uses this
+        path, so it always names the file that was written.
+        """
+        path = Path(self.output_path).expanduser().resolve()
+        suffix = path.suffix.lower()
+        if self.output_format == "npz" and suffix != ".npz":
+            return path.with_suffix(".npz")
+        if self.output_format == "hdf5" and suffix not in (".h5", ".hdf5"):
+            return path.with_suffix(".h5")
+        return path
 
     def effective_max_batch(self, state_bytes_per_sample: int = 96) -> int:
         """

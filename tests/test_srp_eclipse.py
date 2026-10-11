@@ -124,3 +124,96 @@ def test_python_wrapper_matches_kernel() -> None:
     sc = SpacecraftProps(mass_kg=_MASS, area_m2=_AREA, cr=_CR)
     a_wrap = compute_srp_accel(r, _SUN, _NO_EARTH, sc, cfg)
     np.testing.assert_allclose(a_wrap, _srp(r), rtol=1e-12, atol=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Penumbra = visible solar-disk fraction; Earth eclipse on by default
+# ---------------------------------------------------------------------------
+
+
+def _exact_visible_fraction(r: np.ndarray, sun: np.ndarray, radius: float, n: int = 20000) -> float:
+    """Independent reference: solid-angle fraction of the solar cap (radius a
+    about the Sun direction) outside the occulter cap (radius b about the body
+    centre), integrated ring by ring with the exact azimuth fraction. Uniform
+    solar radiance, spherical geometry - no planar approximation."""
+    from lunaris.common.constants import R_SUN_MEAN
+
+    d = sun - r
+    a = np.arcsin(R_SUN_MEAN / np.linalg.norm(d))
+    b = np.arcsin(min(1.0, radius / np.linalg.norm(r)))
+    u_sun = d / np.linalg.norm(d)
+    u_occ = -r / np.linalg.norm(r)
+    c = np.arctan2(np.linalg.norm(np.cross(u_sun, u_occ)), float(np.dot(u_sun, u_occ)))
+    th = (np.arange(n) + 0.5) * (a / n)
+    w = np.sin(th)
+    val = (np.cos(b) - np.cos(th) * np.cos(c)) / (np.sin(th) * np.sin(c))
+    frac = np.arccos(np.clip(val, -1.0, 1.0)) / np.pi
+    return float(1.0 - np.sum(w * frac) / np.sum(w))
+
+
+@pytest.mark.parametrize(
+    ("radius", "x_behind"),
+    [
+        (R_MOON_MEAN, 100e3),
+        (R_MOON_MEAN, 1.0e7),
+        (R_MOON_MEAN, 3.0e8),
+        (R_EARTH_MEAN, 1.0e6),
+        (R_EARTH_MEAN, 3.84e8),  # Earth's shadow at the Moon's distance
+    ],
+)
+def test_penumbra_equals_exact_disk_overlap(radius: float, x_behind: float) -> None:
+    """Across the whole penumbra band the shadow factor is the visible solar-disk
+    fraction. The planar lens area (Montenbruck & Gill 2000, sec. 3.4) agrees with the
+    exact spherical-cap integral to 3e-4 (measured; the planar approximation of
+    the occulter limb dominates); 5e-4 is the budget. The former smoothstep was
+    up to 0.046 off here."""
+    from lunaris.common.constants import R_SUN_MEAN
+
+    s = float(np.linalg.norm(_SUN))
+    r_u = radius * (1.0 - x_behind / (radius * s / (R_SUN_MEAN - radius)))
+    r_p = radius * (1.0 + x_behind / (radius * s / (R_SUN_MEAN + radius)))
+    for rho in np.linspace(max(r_u, 0.0) * 1.0000001, r_p * 0.9999999, 41):
+        r = np.array([-x_behind, rho, 0.0])
+        nu = moon_shadow_factor_conical(r[0], r[1], r[2], _SUN[0], _SUN[1], _SUN[2], radius)
+        assert abs(nu - _exact_visible_fraction(r, _SUN, radius)) < 5e-4
+
+
+def test_annular_beyond_umbra_apex_is_closed_form() -> None:
+    """Behind the lunar umbra apex (~3.7e8 m) on the shadow axis the Moon is a
+    disk inside the solar disk: nu = 1 - b^2/a^2 with apparent radii a, b. The
+    smoothstep returned ~0 (total eclipse) here."""
+    from lunaris.common.constants import R_SUN_MEAN
+
+    r = np.array([-1.0e9, 0.0, 0.0])
+    a = np.arcsin(R_SUN_MEAN / np.linalg.norm(_SUN - r))
+    b = np.arcsin(R_MOON_MEAN / 1.0e9)
+    nu = moon_shadow_factor_conical(r[0], r[1], r[2], _SUN[0], _SUN[1], _SUN[2], R_MOON_MEAN)
+    assert nu == pytest.approx(1.0 - (b / a) ** 2, rel=0.0, abs=1e-12)
+    assert abs(nu - _exact_visible_fraction(r + np.array([0.0, 1.0, 0.0]), _SUN, R_MOON_MEAN)) < 5e-4
+
+
+def test_srp_config_enables_earth_eclipse_by_default() -> None:
+    assert SRPConfig().enable_earth_eclipse is True
+
+
+def test_default_srp_is_zero_in_lunar_eclipse() -> None:
+    """Earth between Sun and Moon (total lunar eclipse): a spacecraft on the
+    Moon's sunward side is lit as far as the Moon is concerned but sits in the
+    Earth's umbra, so the default SRP must vanish - as albedo/thermal IR do."""
+    earth = np.array([3.844e8, 0.0, 0.0])
+    sun = earth + np.array([1.496e11, 0.0, 0.0])
+    r = np.array([R_MOON_MEAN + 100e3, 0.0, 0.0])  # Moon day side
+    sc = SpacecraftProps(mass_kg=_MASS, area_m2=_AREA, cr=_CR)
+    assert np.linalg.norm(compute_srp_accel(r, sun, earth, sc, SRPConfig())) == 0.0
+    off = SRPConfig(enable_earth_eclipse=False)
+    assert np.linalg.norm(compute_srp_accel(r, sun, earth, sc, off)) > 0.0
+
+
+def test_zero_earth_vector_is_ignored_by_earth_eclipse() -> None:
+    """Without an Earth ephemeris the Earth vector is zero; the Earth eclipse
+    must then be skipped instead of putting the Earth at the Moon's centre
+    (which would half-shadow a spacecraft on the terminator)."""
+    r = np.array([0.0, R_MOON_MEAN + 100e3, 0.0])  # terminator, Moon eclipse off
+    lit = _srp(r, moon_ecl=False, earth_ecl=False)
+    gated = _srp(r, earth=_NO_EARTH, moon_ecl=False, earth_ecl=True)
+    np.testing.assert_array_equal(gated, lit)

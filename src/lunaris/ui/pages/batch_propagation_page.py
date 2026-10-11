@@ -1334,6 +1334,11 @@ class BatchPropagationPage(QtWidgets.QWidget):
         return gb
 
     def _on_run_clicked(self) -> None:
+        if not self.validate_page_inputs()[0]:
+            # The button state can be stale (a field changed without a signal,
+            # or the slot was reached another way); never run on bad input.
+            self._update_validation()
+            return
         self._set_running(True)
         self.clear_results()
         self.txt_progress.clear()
@@ -1815,19 +1820,69 @@ class BatchPropagationPage(QtWidgets.QWidget):
         except Exception:
             return default
 
+    def _numeric_field_specs(self) -> tuple[tuple[QtWidgets.QLineEdit, str, bool], ...]:
+        """Every numeric text field ``get_data`` parses: (widget, label, whole number)."""
+        return (
+            (self.ent_n_samples, "Sample count", True),
+            (self.ent_seed, "Sampling seed", True),
+            (self.ent_sigma_r, "Injection position dispersion (σ_r)", False),
+            (self.ent_sigma_v, "Injection velocity dispersion (σ_v)", False),
+            (self.ent_sigma_mass, "Mass dispersion", False),
+            (self.ent_sigma_area, "Area dispersion", False),
+            (self.ent_sigma_cd, "Cd dispersion", False),
+            (self.ent_sigma_cr, "Cr dispersion", False),
+            (self.ent_gpu_dev, "GPU device id", True),
+            (self.ent_sh_degree, "SH degree", True),
+            (self.ent_tpb, "GPU threads per block", True),
+            (self.ent_torch_chunk, "Torch SH chunk size", True),
+            (self.ent_dt, "Integration step size (dt)", False),
+            (self.ent_vram, "VRAM budget", False),
+            (self.ent_impact_alt, "Impact altitude", False),
+        )
+
+    def _numeric_text_errors(self, errors: list[str]) -> set[QtWidgets.QLineEdit]:
+        """Append one error per field whose text is not a usable number.
+
+        ``get_data`` would replace such text with a default the field does not
+        show; text restored from a session is never re-committed by the widget,
+        so the page refuses it here. Returns the offending widgets so the range
+        checks below do not report the same field twice.
+        """
+        bad: set[QtWidgets.QLineEdit] = set()
+        for widget, label, whole in self._numeric_field_specs():
+            text = widget.text().strip()
+            try:
+                value = float(text)
+            except ValueError:
+                problem = "is empty" if not text else f"is not a number: '{text}'"
+            else:
+                if not math.isfinite(value):
+                    problem = f"must be a finite number, not '{text}'"
+                elif whole and not value.is_integer():
+                    problem = f"must be a whole number, not '{text}'"
+                else:
+                    continue
+            errors.append(f"{label} {problem}.")
+            bad.add(widget)
+        return bad
+
     def validate_page_inputs(self) -> tuple[bool, list[str], list[str]]:
         ok = True
         errors: list[str] = []
         warnings: list[str] = []
 
+        bad = self._numeric_text_errors(errors)
+        if bad:
+            ok = False
+
         # 1. Ensemble
         n_samples = self._parse_int(self.ent_n_samples.text(), 0)
         seed = self._parse_int(self.ent_seed.text(), -1)
 
-        if n_samples < 2:
+        if self.ent_n_samples not in bad and n_samples < 2:
             errors.append("Ensemble must have at least 2 samples.")
             ok = False
-        if seed < 0:
+        if self.ent_seed not in bad and seed < 0:
             errors.append("Sampling seed must be non-negative.")
             ok = False
 
@@ -1835,10 +1890,10 @@ class BatchPropagationPage(QtWidgets.QWidget):
         sigma_r = self._parse_float(self.ent_sigma_r.text(), -1.0)
         sigma_v = self._parse_float(self.ent_sigma_v.text(), -1.0)
 
-        if sigma_r < 0:
+        if self.ent_sigma_r not in bad and sigma_r < 0:
             errors.append("Injection position dispersion (σ_r) must be non-negative.")
             ok = False
-        if sigma_v < 0:
+        if self.ent_sigma_v not in bad and sigma_v < 0:
             errors.append("Injection velocity dispersion (σ_v) must be non-negative.")
             ok = False
 
@@ -1848,7 +1903,13 @@ class BatchPropagationPage(QtWidgets.QWidget):
         sigma_cd = self._parse_float(self.ent_sigma_cd.text(), -1.0)
         sigma_cr = self._parse_float(self.ent_sigma_cr.text(), -1.0)
 
-        if any(v < 0 for v in (sigma_mass, sigma_area, sigma_cd, sigma_cr)):
+        if any(
+            w not in bad and v < 0
+            for w, v in (
+                (self.ent_sigma_mass, sigma_mass), (self.ent_sigma_area, sigma_area),
+                (self.ent_sigma_cd, sigma_cd), (self.ent_sigma_cr, sigma_cr),
+            )
+        ):
             errors.append("Spacecraft property dispersions must be non-negative.")
             ok = False
 
@@ -1884,7 +1945,9 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         # 5. Integration
         dt_s = self._parse_float(self.ent_dt.text(), 0.0)
-        if dt_s <= 0:
+        if self.ent_dt in bad:
+            pass
+        elif dt_s <= 0:
             errors.append("Integration step size (dt) must be positive.")
             ok = False
         elif dt_s > 300:
@@ -1930,6 +1993,11 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_batch_backend.currentIndexChanged.connect(trigger)
         self.ent_batch_st_lrps_model_dir.textChanged.connect(trigger)
         self.ent_sh_degree.textChanged.connect(trigger)
+        self.ent_gpu_dev.textChanged.connect(trigger)
+        self.ent_tpb.textChanged.connect(trigger)
+        self.ent_torch_chunk.textChanged.connect(trigger)
+        self.ent_vram.textChanged.connect(trigger)
+        self.ent_impact_alt.textChanged.connect(trigger)
         self.ent_dt.textChanged.connect(trigger)
         self.ent_output.textChanged.connect(trigger)
         self.cb_format.currentIndexChanged.connect(trigger)

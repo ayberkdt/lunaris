@@ -148,6 +148,12 @@ class GradNormWeights:
     last_n_grad_u: int = 0
     last_n_grad_a: int = 0
 
+    def __post_init__(self) -> None:
+        if int(self.update_interval) < 1:
+            raise ValueError(
+                f"GradNormWeights.update_interval must be >= 1, got {self.update_interval!r}."
+            )
+
     def _effective_mode(self) -> str:
         """Return the active loss-weighting mode."""
         return self.mode
@@ -296,7 +302,11 @@ class GradNormWeights:
 
         # mode == "dynamic": EMA GradNorm (ablation only)
         self._step_counter += 1
-        if self._step_counter % self.update_interval != 1 and self._step_counter > 1:
+        # Update on step 1, then every ``update_interval`` steps (1, 1+N, 1+2N,
+        # ...). The former test ``counter % interval != 1`` is the same for
+        # N >= 2, but for N = 1 ``counter % 1`` is always 0, so every step after
+        # the first was skipped instead of updating every step.
+        if (self._step_counter - 1) % self.update_interval != 0:
             return self.w_u, self.w_a
         raw = self._compute_grad_norm_ratio(loss_u, loss_a, shared_params)
         if self.last_gradnorm_status != "ok":

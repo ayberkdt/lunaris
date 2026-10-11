@@ -25,7 +25,7 @@ from lunaris.analysis.contracts import (
     OrbitAnalysisResult,
     OrbitSeries,
 )
-from lunaris.analysis.postprocess import compute_history
+from lunaris.analysis.postprocess import _run_gm_and_radius, compute_history
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.hashing import canonical_json_sha256
 from lunaris.common.provenance import sha256_file, utc_now_iso
@@ -164,6 +164,21 @@ def _extract_state(result: Any) -> tuple[np.ndarray, np.ndarray]:
     if np.any(np.diff(t) < 0.0):
         raise ValueError("time history must be monotonic")
     return t, state
+
+
+_RE_EPOCH_TIME_SYSTEM = re.compile(r"\b(TDB|TDT|TT)\b", flags=re.IGNORECASE)
+
+
+def _start_epoch_time_system(start_text: str | None) -> str:
+    """Time system of a ``TimeConfig.start_date`` string as SPICE ``str2et`` reads it.
+
+    A trailing ``TDB`` / ``TT`` (``TDT``) label selects that scale; anything
+    else (ISO strings, SPICE calendar strings) is UTC.
+    """
+    m = _RE_EPOCH_TIME_SYSTEM.search(str(start_text or ""))
+    if m is None:
+        return "UTC"
+    return "TDB" if m.group(1).upper() == "TDB" else "TT"
 
 
 def _epoch_at(start_text: str | None, elapsed_s: float) -> str | None:
@@ -812,14 +827,17 @@ def build_orbit_analysis(
     t_s, state = _extract_state(result)
     diagnostics = dict(getattr(result, "diagnostics", None) or {})
     meta_map = dict(meta or {})
+    # GM and radius of the run's gravity model (the propagator's SSOT; see
+    # postprocess._run_gm_and_radius), constants only as the last fallback.
+    ctx_mu, ctx_radius_m = _run_gm_and_radius(ctx)
     mu = _finite_float(meta_map.get("mu_m3s2"))
     if mu is None:
-        mu = _finite_float(getattr(ctx, "mu_m3s2", None) if ctx is not None else None)
+        mu = ctx_mu
     if mu is None:
         mu = _finite_float(_get(config, "gravity", "mu_m3s2", default=None))
     if mu is None:
         mu = float(MU_MOON)
-    radius_m = _finite_float(getattr(ctx, "R_body_m", None) if ctx is not None else None)
+    radius_m = ctx_radius_m
     if radius_m is None:
         radius_m = _finite_float(meta_map.get("body_radius_m"))
     if radius_m is None:
@@ -888,7 +906,7 @@ def build_orbit_analysis(
         or "J2000"
     )
     start_epoch = str(_get(config, "time", "start_date", default="")) or None
-    time_system = "UTC"
+    time_system = _start_epoch_time_system(start_epoch)
     termination_reason, termination_status = _termination(result)
 
     event_map = history.get("events", {})

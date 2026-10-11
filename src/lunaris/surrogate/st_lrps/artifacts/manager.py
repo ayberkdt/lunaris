@@ -49,6 +49,11 @@ ST_LRPS_PROVENANCE_VERSION = "st_lrps_run_provenance_v1"
 CHECKPOINTS_MANIFEST_SCHEMA_VERSION = "st_lrps_checkpoints_manifest_v1"
 EVAL_MANIFEST_SCHEMA_VERSION = "st_lrps_eval_manifest_v1"
 
+# Fields a checkpoint and the run config must agree on: the architecture, the
+# dataset and the scaling the weights were trained against. The whole-config
+# identity ``training_config_hash`` is deliberately absent: it covers the epoch
+# target and the resume source too, so it changes on every resume, and listing
+# it made a strict resume refuse its own checkpoint.
 CRITICAL_CONFIG_FIELDS: tuple[str, ...] = (
     "activation",
     "hidden",
@@ -91,9 +96,22 @@ CRITICAL_CONFIG_FIELDS: tuple[str, ...] = (
     "resolved_a_sign",
     "artifact_contract",
     "dataset_contract",
-    "training_config_hash",
     "output_envelope_power",
 )
+
+# Critical fields added after artifacts already existed. A config written
+# before the field existed omits it; that absence means the field's default
+# (here: no output envelope), so it compares as that default instead of as a
+# mismatch. An explicitly stored value is always compared as stored.
+_CRITICAL_FIELD_ABSENT_DEFAULTS: dict[str, Any] = {
+    "output_envelope_power": 0.0,
+}
+
+
+def _critical_field_value(payload: Mapping[str, Any], key: str) -> Any:
+    if key not in payload and key in _CRITICAL_FIELD_ABSENT_DEFAULTS:
+        return _CRITICAL_FIELD_ABSENT_DEFAULTS[key]
+    return payload.get(key)
 
 
 @dataclass
@@ -1141,6 +1159,16 @@ def load_scaler_for_run(
         payload = file_payload
         source = str(layout.scaler_json)
         hash_value = _compute_payload_sha256(file_payload)
+        # A checkpoint without an embedded scaler payload can still pin the
+        # scaler it was trained with through scaler_hash. Honour it like the
+        # both-present branch above, or a scaler.json from another run would
+        # be accepted silently.
+        pinned_hash = _coerce_str_or_none(ckpt.get("scaler_hash"))
+        if pinned_hash is not None and pinned_hash != hash_value:
+            raise RuntimeError(
+                "checkpoint['scaler_hash'] and scaler.json disagree (the checkpoint has no embedded "
+                f"scaler payload). checkpoint scaler_hash={pinned_hash}, scaler.json hash={hash_value}."
+            )
     else:
         payload = ckpt_payload or {}
         source = "checkpoint_embedded"
@@ -1385,20 +1413,32 @@ def read_artifact_contract(
     device: torch.device | None = None,
     strict: bool = True,
 ) -> ArtifactContract:
-    """Load the preferred checkpoint for a run and return its artifact contract."""
+    """Load the preferred checkpoint for a run and return its artifact contract.
+
+    With ``strict`` an unreadable ``config.json`` or a scaler that cannot be
+    loaded (missing, or a ``scaler.json`` that disagrees with the checkpoint)
+    raises :class:`ArtifactContractError`; without it the checkpoint's own
+    copies are used and the fallback is logged.
+    """
 
     layout = make_run_layout(resolve_run_dir(run_dir))
     _, ckpt = load_best_or_last(layout, prefer=prefer, device=device or torch.device("cpu"))
     cfg = dict(ckpt.get("config") or {})
     if layout.config_json.exists():
-        with contextlib.suppress(Exception):
+        try:
             cfg = json.loads(layout.config_json.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            if strict:
+                raise ArtifactContractError(f"{layout.config_json} is unreadable: {exc}") from exc
+            logger.warning("%s is unreadable (%s); using the checkpoint's config.", layout.config_json, exc)
     scaler_payload = None
     try:
         scaler, _ = load_scaler_for_run(layout, ckpt, device=device or torch.device("cpu"))
         scaler_payload = canonical_scaler_payload(scaler)
-    except Exception:
-        scaler_payload = None
+    except Exception as exc:
+        if strict:
+            raise ArtifactContractError(f"the run's scaler could not be loaded: {exc}") from exc
+        logger.warning("The run's scaler could not be loaded (%s); using the checkpoint's scaler.", exc)
     report = validate_checkpoint_contract(
         ckpt,
         cfg=cfg,
@@ -1457,8 +1497,10 @@ def verify_critical_config_fields_match(config_payload: Mapping[str, Any], ckpt_
     for key in CRITICAL_CONFIG_FIELDS:
         if key not in config_payload and key not in ckpt_config:
             continue
-        if _json_safe(config_payload.get(key)) != _json_safe(ckpt_config.get(key)):
-            mismatches.append((key, config_payload.get(key), ckpt_config.get(key)))
+        left = _critical_field_value(config_payload, key)
+        right = _critical_field_value(ckpt_config, key)
+        if _json_safe(left) != _json_safe(right):
+            mismatches.append((key, left, right))
     if mismatches:
         details = ", ".join(f"{key}={left!r}!={right!r}" for key, left, right in mismatches)
         raise RuntimeError(
@@ -1742,8 +1784,10 @@ def reload_model_from_run_dir(
 def _critical_config_mismatches(config_payload: Mapping[str, Any], ckpt_config: Mapping[str, Any]) -> dict[str, tuple[Any, Any]]:
     mismatches: dict[str, tuple[Any, Any]] = {}
     for key in CRITICAL_CONFIG_FIELDS:
-        if _json_safe(config_payload.get(key)) != _json_safe(ckpt_config.get(key)):
-            mismatches[key] = (config_payload.get(key), ckpt_config.get(key))
+        left = _critical_field_value(config_payload, key)
+        right = _critical_field_value(ckpt_config, key)
+        if _json_safe(left) != _json_safe(right):
+            mismatches[key] = (left, right)
     return mismatches
 
 

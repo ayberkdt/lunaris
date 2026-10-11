@@ -182,6 +182,7 @@ class SurrogateGravityModel:
         r_ref_override: float | None = None,
         device_preference: str = "cpu",
         strict_domain: bool = False,
+        paper_safe: bool = False,
     ) -> SurrogateGravityModel:
         """
         Load a surrogate gravity provider from a trained run directory.
@@ -193,10 +194,19 @@ class SurrogateGravityModel:
             (or ``ckpt_last.pt`` for in-progress runs, loaded with a warning).
         mu_override / r_ref_override:
             Optional mission-side overrides used when the artifact does not carry
-            explicit central-body metadata.
+            explicit central-body metadata. When the artifact does carry
+            ``resolved_mu_si``, the artifact value is used and a ``mu_override``
+            more than 20% away from it raises ``ValueError``.
         device_preference:
             ``"cpu"``, ``"cuda"``, or ``"auto"``. The desktop app defaults to
             CPU because solver RHS calls are fine-grained and frequent.
+        strict_domain:
+            Hard-fail instead of warn-and-extrapolate outside the training
+            altitude envelope, on both the CPU path (forwarded to the canonical
+            runtime loader) and the torch tensor path.
+        paper_safe:
+            Forwarded to the canonical runtime loader: require every paper-safe
+            artifact-metadata field or raise.
         """
 
         if torch is None:  # pragma: no cover - depends on machine setup
@@ -256,6 +266,18 @@ class SurrogateGravityModel:
         mu_guess = config.get("resolved_mu_si")
         if mu_guess is None:
             mu_guess = mu_override if mu_override is not None else MU_MOON
+        elif mu_override is not None:
+            # The artifact's own GM wins, so _validate_body_compatibility (which
+            # compares resolved_mu_si with GM_m3s2 == resolved_mu_si) can never
+            # fire; the caller's expected body GM must be checked here instead.
+            rel_err = abs(float(mu_guess) - float(mu_override)) / max(abs(float(mu_override)), 1.0)
+            if rel_err > 0.20:
+                raise ValueError(
+                    "mu_override does not match the surrogate artifact's resolved "
+                    f"central-body GM: artifact resolved_mu_si={float(mu_guess):.6e} m^3/s^2, "
+                    f"mu_override={float(mu_override):.6e} m^3/s^2 (relative difference "
+                    f"{rel_err:.3f} > 0.20). Run dir: {run_dir}"
+                )
 
         r_ref_guess = config.get("resolved_r_ref_m")
         if r_ref_guess is None:
@@ -284,6 +306,8 @@ class SurrogateGravityModel:
                 run_dir,
                 device=str(device),
                 chunk_size=8192,
+                strict_domain=strict_domain,
+                paper_safe=paper_safe,
             )
             model = force_runtime.model
             logger.info(
@@ -306,6 +330,13 @@ class SurrogateGravityModel:
             # artifact that *declares* a versioned contract must load through the
             # canonical runtime or fail loudly, never degrade to an unvalidated
             # model.
+            if paper_safe:
+                # The legacy path has no paper-safe metadata gate at all.
+                raise RuntimeError(
+                    "paper_safe=True: the ST-LRPS artifact could not be loaded through "
+                    "the canonical runtime, and the legacy local runtime path cannot "
+                    f"back a paper-safe result. Original error: {exc}"
+                ) from exc
             contract_era = bool(
                 config.get("artifact_contract")
                 or config.get("target_contract")
@@ -647,13 +678,62 @@ class SurrogateGravityModel:
         a_np = accel.detach().cpu().numpy().astype(np.float64, copy=False)
         return u_np, a_np
 
+    def _acceleration_only_fixed(
+        self,
+        positions_m: np.ndarray | Sequence[Sequence[float]] | Sequence[float],
+    ) -> np.ndarray:
+        """
+        Body-fixed acceleration ``(N, 3)``, without computing the potential.
+
+        Same operations, in the same order and dtype, as the acceleration half of
+        :meth:`predict_potential_and_acceleration_fixed`, so the result is bit
+        identical. It skips the discarded potential work: on the canonical path a
+        second (forward-only) model call with its own domain check, and for
+        residual models with an SH baseline a per-row Python potential loop.
+        """
+        if torch is None:  # pragma: no cover - depends on machine setup
+            raise RuntimeError("PyTorch is not available.")
+
+        pos = np.asarray(positions_m, dtype=np.float64)
+        if pos.ndim == 1:
+            pos = pos.reshape(1, 3)
+        if pos.ndim != 2 or pos.shape[1] != 3:
+            raise ValueError(f"positions_m must be shape (3,) or (N,3), got {pos.shape}")
+
+        x_phys = torch.as_tensor(pos, device=self.device, dtype=self._torch_dtype)
+        if self._force_runtime is not None:
+            delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
+            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
+            if self.training_mode == "residual_potential":
+                accel = accel + self._base_acceleration(x_phys)
+            return accel.detach().cpu().numpy().astype(np.float64, copy=False)
+        with torch.enable_grad():
+            x_scaled = self._scale_x(x_phys).requires_grad_(True)
+            u_scaled = self.model(x_scaled)
+            grad_u_scaled = torch.autograd.grad(
+                outputs=u_scaled,
+                inputs=x_scaled,
+                grad_outputs=torch.ones_like(u_scaled),
+                create_graph=False,
+                retain_graph=False,
+                only_inputs=True,
+            )[0]
+
+            grad_u_phys = grad_u_scaled * (self._u_scale / self._x_scale)
+            accel = self.a_sign * grad_u_phys
+
+            if self.training_mode == "residual_potential":
+                accel = accel + self._base_acceleration(x_phys)
+
+        return accel.detach().cpu().numpy().astype(np.float64, copy=False)
+
     def acceleration_fixed(
         self,
         x_m: Sequence[float] | np.ndarray,
     ) -> np.ndarray:
         """Return one body-fixed acceleration vector ``(3,)`` in ``m/s²``."""
 
-        _u, a = self.predict_potential_and_acceleration_fixed(x_m)
+        a = self._acceleration_only_fixed(x_m)
         return np.asarray(a[0], dtype=np.float64)
 
     def acceleration_fixed_batch(
@@ -662,8 +742,7 @@ class SurrogateGravityModel:
     ) -> np.ndarray:
         """Return body-fixed acceleration vectors ``(N, 3)`` in ``m/s²``."""
 
-        _u, a = self.predict_potential_and_acceleration_fixed(positions_m)
-        return np.asarray(a, dtype=np.float64)
+        return np.asarray(self._acceleration_only_fixed(positions_m), dtype=np.float64)
 
     # ------------------------------------------------------------------
     # Batched GPU inference — torch tensor I/O

@@ -33,10 +33,12 @@ entrypoint command, so the same data/epoch flags apply to every array task.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -522,13 +524,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_provenance(run_dir, scenario, cmd, scenario_file, index)
         print(f"[scenario] provenance written -> {run_dir}")
     print(f"[scenario] launching {scenario['entrypoint']} ...")
-    result = subprocess.run(cmd, cwd=str(_repo_root()))
-    if result.returncode != 0:
+    returncode = run_forwarding_signals(cmd, cwd=str(_repo_root()))
+    if returncode != 0:
         print(
-            f"[scenario] FAILED {name} (exit {result.returncode}).",
+            f"[scenario] FAILED {name} (exit {returncode}).",
             file=sys.stderr,
         )
-    return int(result.returncode)
+    return int(returncode)
+
+
+_FORWARDED_SIGNALS = tuple(
+    sig
+    for sig in (
+        getattr(signal, "SIGTERM", None),
+        getattr(signal, "SIGUSR1", None),
+        getattr(signal, "SIGINT", None),
+    )
+    if sig is not None
+)
+
+
+def run_forwarding_signals(cmd: Sequence[str], *, cwd: str) -> int:
+    """Run ``cmd`` and forward SIGTERM/SIGUSR1/SIGINT to it while it runs.
+
+    Slurm's ``--signal=B:TERM@600`` reaches only this launcher (the batch
+    shell ``exec``s it); the trainer must receive the same signal to save
+    ``ckpt_last`` before the walltime kill, so the launcher relays it instead
+    of exiting and leaving the child to be killed with the job.
+    """
+    proc = subprocess.Popen(cmd, cwd=cwd)
+
+    def _relay(signum: int, _frame: Any) -> None:
+        with contextlib.suppress(OSError):
+            proc.send_signal(signum)
+
+    previous = {sig: signal.signal(sig, _relay) for sig in _FORWARDED_SIGNALS}
+    try:
+        return int(proc.wait())
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 if __name__ == "__main__":

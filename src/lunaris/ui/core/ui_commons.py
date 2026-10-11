@@ -443,6 +443,13 @@ def path_validity_badge(parent=None) -> StatusBadge:
 # 5.                        CUSTOM UI PRIMITIVES
 # =============================================================================
 
+def mission_studio_settings() -> QtCore.QSettings:
+    """Mission Studio's persistent settings (an .ini under ``LUNARIS_APP_DATA_DIR`` when set)."""
+    from lunaris.ui_foundation.settings import persistent_settings
+
+    return persistent_settings("Lunaris", "MissionStudio", "mission_studio_settings.ini")
+
+
 def prefers_reduced_motion() -> bool:
     """True when the user has asked to minimize non-essential UI animation.
 
@@ -451,7 +458,7 @@ def prefers_reduced_motion() -> bool:
     static busy state. Failures default to ``False`` (animations on).
     """
     try:
-        settings = QtCore.QSettings("Lunaris", "MissionStudio")
+        settings = mission_studio_settings()
         return str(settings.value("ui/reduce_motion", "false")).strip().lower() in (
             "1",
             "true",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
+import os
 import warnings
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -26,6 +28,21 @@ from lunaris.common.contracts.batch_archive import (
     REQUIRED_ARCHIVE_V2_ARRAYS,
     REQUIRED_ARCHIVE_V2_FIELDS,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _host_memory_budget_bytes(
+    batch_cfg: BatchPropagationConfig,
+    *,
+    available_host_memory_bytes: Callable[[], int | None] | None = None,
+) -> int:
+    """Host budget [bytes]: ``max_result_memory_gb``, bounded by the free-RAM safety fraction."""
+    memory_limit_bytes = int(float(batch_cfg.max_result_memory_gb) * (1024.0 ** 3))
+    available = (available_host_memory_bytes or _available_host_memory_bytes)()
+    if available is None:
+        return memory_limit_bytes
+    return min(memory_limit_bytes, int(available * _HOST_MEMORY_SAFETY_FACTOR))
 
 
 def _resolve_result_storage(
@@ -148,8 +165,26 @@ class HDF5TrajectoryView:
 
         with h5py.File(str(self.path), "r") as f:
             dataset = f[self.dataset]
-            for epoch in range(self.shape[0]):
-                yield np.asarray(dataset[epoch, indices, :], dtype=np.float64)
+            n_epochs, n_total = self.shape[0], self.shape[1]
+            # Read chunk-aligned tiles once and select samples in memory: a
+            # point selection per epoch re-decompresses every chunk it touches
+            # once per epoch in the chunk. Only the chunk columns that hold a
+            # selected sample are read, so memory stays O(epochs-per-chunk x
+            # selected samples) for a disk-backed ensemble.
+            chunks = getattr(dataset, "chunks", None) or (1, max(n_total, 1))
+            chunk_epochs, chunk_samples = int(chunks[0]), int(chunks[1])
+            column = indices // chunk_samples
+            columns = [
+                (int(c), np.flatnonzero(column == c)) for c in np.unique(column)
+            ]
+            for e0 in range(0, n_epochs, chunk_epochs):
+                e1 = min(n_epochs, e0 + chunk_epochs)
+                block = np.empty((e1 - e0, indices.size) + tuple(self.shape[2:]), dtype=np.float64)
+                for c, positions in columns:
+                    s0 = c * chunk_samples
+                    tile = np.asarray(dataset[e0:e1, s0 : s0 + chunk_samples], dtype=np.float64)
+                    block[:, positions] = tile[:, indices[positions] - s0]
+                yield from block
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
         import h5py
@@ -161,6 +196,18 @@ class HDF5TrajectoryView:
         return arr
 
 
+def _check_existing_archive(path: Path, overwrite: bool) -> None:
+    """Refuse an existing archive unless ``overwrite``; otherwise say it will be replaced."""
+    if not path.exists():
+        return
+    if not overwrite:
+        raise FileExistsError(
+            f"Batch archive {path} already exists. Choose another output path, or set "
+            "BatchPropagationConfig.overwrite_output=True to replace it."
+        )
+    logger.warning("[BATCH] Existing archive %s will be replaced when this run finishes.", path)
+
+
 class _HDF5Writer:
     """Atomic HDF5 writer with sample-axis batch streaming."""
 
@@ -170,6 +217,8 @@ class _HDF5Writer:
         n_samples: int,
         t_grid: np.ndarray,
         n_state: int = 6,
+        *,
+        overwrite: bool = True,
     ) -> None:
         try:
             import h5py
@@ -180,9 +229,11 @@ class _HDF5Writer:
                 "Install via:  pip install h5py"
             ) from None
 
+        _check_existing_archive(path, overwrite)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
-        self._part_path = Path(f"{path}.part")
+        # Per-process part name: concurrent runs never share (or delete) a part file.
+        self._part_path = Path(f"{path}.{os.getpid()}.part")
         if self._part_path.exists():
             self._part_path.unlink()
         self._f = h5py.File(str(self._part_path), "w")
@@ -338,10 +389,16 @@ class _NPZWriter:
         n_samples: int,
         t_grid: np.ndarray,
         n_state: int = 6,
+        *,
+        overwrite: bool = True,
     ) -> None:
+        _check_existing_archive(path, overwrite)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
-        self._part_path = path.with_name(f"{path.stem}.part{path.suffix or '.npz'}")
+        # Per-process part name ending in ".npz": numpy appends ".npz" to any
+        # other name, which would leave finalize() renaming a file that does
+        # not exist.
+        self._part_path = path.with_name(f"{path.stem}.{os.getpid()}.part.npz")
         if self._part_path.exists():
             self._part_path.unlink()
         self._t = np.ascontiguousarray(t_grid, dtype=np.float64)
@@ -429,11 +486,17 @@ def _make_writer(
     n_samples: int,
     t_grid: np.ndarray,
 ) -> Any:
-    """Factory: return the appropriate writer based on output_format."""
+    """Factory: return the appropriate writer based on output_format.
+
+    ``output_path_resolved`` carries the format's suffix. An existing archive
+    there is replaced (with a logged warning) unless
+    ``batch_cfg.overwrite_output`` is False, which refuses it.
+    """
     p = batch_cfg.output_path_resolved
+    overwrite = bool(getattr(batch_cfg, "overwrite_output", True))
     if batch_cfg.output_format == "hdf5":
-        return _HDF5Writer(p, n_samples, t_grid)
-    return _NPZWriter(p, n_samples, t_grid)
+        return _HDF5Writer(p, n_samples, t_grid, overwrite=overwrite)
+    return _NPZWriter(p, n_samples, t_grid, overwrite=overwrite)
 
 
 def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:

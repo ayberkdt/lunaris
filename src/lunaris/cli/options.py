@@ -43,9 +43,22 @@ def _add_time_args(parser: argparse.ArgumentParser) -> None:
     dur.add_argument("--days", type=float, help="Simulation duration [days]")
     dur.add_argument("--hours", type=float, help="Simulation duration [hours]")
 
-    # aligned with TimeConfig.output_dt_s
-    g_time.add_argument("--output-dt-s", type=float, help="Fixed output spacing [s] (omit to keep config default)")
-    g_time.add_argument("--samples-per-period", type=int, help="Used when output_dt_s is None")
+    # aligned with TimeConfig.output_dt_s / TimeConfig.samples_per_period; the
+    # two are alternative ways to set the output grid, so give at most one.
+    out_grid = g_time.add_mutually_exclusive_group()
+    out_grid.add_argument(
+        "--output-dt-s",
+        type=float,
+        help="Fixed output spacing [s] (omit both this and --samples-per-period to keep the config default)",
+    )
+    out_grid.add_argument(
+        "--samples-per-period",
+        type=int,
+        help=(
+            "Output samples per orbital period, the period taken from the initial "
+            "osculating orbit; replaces the fixed output spacing (not with --output-dt-s)"
+        ),
+    )
 
 
 def _add_orbit_args(parser: argparse.ArgumentParser) -> None:
@@ -125,7 +138,7 @@ def _add_gravity_args(parser: argparse.ArgumentParser) -> None:
         choices=("classic_sh", "st_lrps"),
         help="Central gravity backend: classical spherical harmonics or ST-LRPS surrogate.",
     )
-    g_grav.add_argument("--gravity-file-path", type=str, help="Gravity model file path (.tab/.gfc/.shbdr)")
+    g_grav.add_argument("--gravity-file-path", type=str, help="Gravity model file path (SHADR .tab/.sha/.txt or binary .shbdr)")
     g_grav.add_argument(
         "--surrogate-gravity-model-dir",
         type=str,

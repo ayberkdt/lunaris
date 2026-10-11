@@ -74,6 +74,58 @@ class LineAssembler:
         self._buffer = ""
 
 
+class StderrClassifier:
+    """Give each complete stderr line the severity of the message it belongs to.
+
+    Classifying lines one by one ("warning" in it -> warning, else error) got
+    multi-line messages wrong: the indented source line under a
+    ``warnings.warn`` record became an error, and traceback frames in
+    ``warnings.py`` (or a final ``RuntimeWarning:`` raised under ``-W error``)
+    became warnings in the middle of a crash. Rules, in order:
+
+    * ``Traceback (most recent call last):`` starts an error block that runs
+      through the indented frames up to and including the exception line;
+    * an indented line continues the previous line's severity;
+    * otherwise "warning" in the line (and no traceback / fatal marker) is a
+      warning and anything else an error.
+
+    One instance per stream; :meth:`reset` at the start of each run.
+    """
+
+    __slots__ = ("_in_traceback", "_last")
+
+    def __init__(self) -> None:
+        self._in_traceback = False
+        self._last: str | None = None
+
+    def reset(self) -> None:
+        self._in_traceback = False
+        self._last = None
+
+    def classify(self, line: str) -> str:
+        indented = line[:1] in (" ", "\t")
+        if line.startswith("Traceback (most recent call last)"):
+            self._in_traceback = True
+            self._last = "error"
+            return "error"
+        if self._in_traceback:
+            if not indented:  # the exception line closes the traceback
+                self._in_traceback = False
+            self._last = "error"
+            return "error"
+        if indented and self._last is not None:
+            return self._last
+        lowered = line.lower()
+        is_warning = (
+            "warning" in lowered
+            and "traceback" not in lowered
+            and "[fatal]" not in lowered
+            and "fatal error" not in lowered
+        )
+        self._last = "warning" if is_warning else "error"
+        return self._last
+
+
 def is_near_bottom(value: int, maximum: int, slack: int = DEFAULT_SCROLL_SLACK) -> bool:
     """Return ``True`` when a scrollbar at *value* is within *slack* of *maximum*.
 

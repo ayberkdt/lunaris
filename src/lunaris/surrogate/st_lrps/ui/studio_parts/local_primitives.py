@@ -507,7 +507,7 @@ class ResponsiveColumns(QtWidgets.QWidget):
         self._layout.addWidget(first, 1)
         self._layout.addWidget(second, 1)
         self._stacked: bool | None = None
-        QtCore.QTimer.singleShot(0, self._refresh_direction)
+        QtCore.QTimer.singleShot(0, self, self._refresh_direction)
 
     @property
     def stacked(self) -> bool:
@@ -524,7 +524,7 @@ class ResponsiveColumns(QtWidgets.QWidget):
             QtCore.QEvent.Type.PolishRequest,
             QtCore.QEvent.Type.Show,
         ):
-            QtCore.QTimer.singleShot(0, self._refresh_direction)
+            QtCore.QTimer.singleShot(0, self, self._refresh_direction)
         return handled
 
     def _refresh_direction(self) -> None:

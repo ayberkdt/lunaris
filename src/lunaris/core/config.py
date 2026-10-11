@@ -29,6 +29,7 @@ Design Philosophy
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -66,6 +67,24 @@ BASE_DIR = project_root_from_file(__file__)
 DATA_DIR = data_dir_from_root(BASE_DIR)
 KERNEL_DIR = DATA_DIR / "ephemeris_models"
 GRAV_DIR = DATA_DIR / "gravity_models"
+
+_DATA_DIR_ENV_NAMES = ("LUNARIS_DATA_DIR", "STLRPS_DATA_DIR")
+_DATA_DIR_ENV_AT_IMPORT = tuple(os.environ.get(n, "").strip() for n in _DATA_DIR_ENV_NAMES)
+
+
+def _asset_dir(module_default: Path, subdir: str) -> Path:
+    """Asset folder for a resolver called without an explicit directory.
+
+    The module constants are fixed at import, so a data-dir environment
+    override set afterwards (a notebook, a test, a launcher that exports it
+    late) was silently ignored. When the override differs from its value at
+    import, resolve it now; otherwise keep the module constant, which callers
+    and tests may have replaced on purpose.
+    """
+    now = tuple(os.environ.get(n, "").strip() for n in _DATA_DIR_ENV_NAMES)
+    if now != _DATA_DIR_ENV_AT_IMPORT and any(now):
+        return data_dir_from_root(BASE_DIR, _DATA_DIR_ENV_NAMES) / subdir
+    return module_default
 
 # Kernel filename candidates (in priority order).
 # We support both raw kernels and "text-wrapped" variants some repos ship (*.tls.txt, *.tpc.txt, *.bpc.txt).
@@ -126,7 +145,7 @@ def _resolve_default_kernel_paths(kernel_dir: Path | str | None = None) -> tuple
     kernel location is honored *before* asset resolution, not after the factory
     has already failed.
     """
-    base = Path(kernel_dir).expanduser().resolve() if kernel_dir is not None else KERNEL_DIR
+    base = Path(kernel_dir).expanduser().resolve() if kernel_dir is not None else _asset_dir(KERNEL_DIR, "ephemeris_models")
     if not base.exists():
         raise FileNotFoundError(
             f"CRITICAL: Lunaris SPICE kernel directory not found: {base}\n"
@@ -165,7 +184,7 @@ def _resolve_default_gravity_path(
                 f"CRITICAL: Lunaris gravity model file not found: {p}"
             )
         return p
-    base = Path(grav_dir).expanduser().resolve() if grav_dir is not None else GRAV_DIR
+    base = Path(grav_dir).expanduser().resolve() if grav_dir is not None else _asset_dir(GRAV_DIR, "gravity_models")
     if not base.exists():
         raise FileNotFoundError(
             f"CRITICAL: Lunaris gravity model directory not found: {base}\n"

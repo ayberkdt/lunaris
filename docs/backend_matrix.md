@@ -18,9 +18,9 @@ recurring cadence, not just once. Two mechanisms:
   PRs.
 - **Local (`tools/gpu_qualification.py`)** runs the same suite on the local
   device and writes a timestamped, commit-stamped log under the git-ignored
-  `outputs/gpu_qualification/`. It exits non-zero on failure and uses `pytest -rs`
-  so a run that merely *skipped* (no CUDA visible) is distinguishable from one
-  that truly validated the GPU.
+  `outputs/gpu_qualification/`. It exits non-zero on failure, and also when no
+  `requires_cuda` test passed (pytest exits 0 when every test is skipped because
+  no CUDA is visible), so a skipped run is never reported as a pass.
 
   Schedule it weekly with Windows Task Scheduler:
 
@@ -47,7 +47,7 @@ behavior.
 | Backend | Family | Device | Integrator | SH degree limit | Dtypes | Supported force models | Notes |
 |---|---|---|---|---|---|---|---|
 | `cpu_sh` | classic SH | CPU | adaptive DOP853 | coefficient file / memory | float64 | SH, third-body Sun/Earth, Earth J2, SRP, albedo, thermal IR, solid tides, selected 1PN corrections | Complete supported-force CPU route and default non-GPU route. “Complete” means every currently implemented force flag is routable; surface-radiation/eclipse models remain disclosed engineering approximations in `force_model_fidelity`. |
-| `numba_cuda_sh` | classic SH | CUDA | fixed-step RK4 | 24 | float64 | SH, third-body Sun/Earth, Earth J2, SRP, selected 1PN corrections | Low-degree screening backend. The degree-24 ceiling is a CUDA workspace limit, not a physical limit. SRP uses a cannonball Cr*A/m area model; shadowing is reduced-fidelity on this path: cylindrical Moon umbra, no Earth eclipse. Archives disclose this as `srp_force_model` and `srp_shadow_model`. |
+| `numba_cuda_sh` | classic SH | CUDA | fixed-step RK4 | 24 | float64 | SH, third-body Sun/Earth, Earth J2, SRP, selected 1PN corrections | Low-degree screening backend. The degree-24 ceiling is a CUDA workspace limit, not a physical limit. SRP uses a cannonball Cr*A/m area model with the CPU conical Moon/Earth shadow factor (device mirror, same `SRPConfig` radii and eclipse switches). Archives disclose this as `srp_force_model` and `srp_shadow_model`. |
 | `torch_cuda_sh` | classic SH | CUDA | fixed-step RK4 | coefficient file / VRAM / batch | float32, float64 | SH only | High-degree GPU SH route. Any added perturbation causes an explicit recorded fallback. |
 | `torch_cpu_sh` | classic SH | CPU | fixed-step RK4 | coefficient file / memory | float32, float64 | SH only | CUDA-free validation route for the torch SH evaluator. |
 | `gpu_st_lrps_potential` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses potential-autograd runtime artifacts. Added perturbations fall back to CPU. |

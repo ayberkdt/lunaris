@@ -8,7 +8,6 @@ Canonical batch ensemble orchestration.
 
 from __future__ import annotations
 
-import contextlib
 import inspect
 import logging
 import math
@@ -41,6 +40,7 @@ from lunaris.batch.sampling import (
 from lunaris.batch.storage import (
     HDF5TrajectoryView,
     _allocate_result_buffer,
+    _host_memory_budget_bytes,
     _make_writer,
     _resolve_result_storage,
     _SummaryOnlyWriter,
@@ -101,6 +101,24 @@ def merge_archive_metadata(*blocks: Mapping[str, Any]) -> dict[str, Any]:
                 )
             merged[key] = value
     return merged
+
+
+def _require_zero_time_origin(sim_cfg: Any) -> None:
+    """Refuse ``time.t0_s != 0`` on every batch backend.
+
+    The batch archive's time axis is ``[0, duration_s]`` from ``start_date``.
+    The CUDA and torch batch loops start their clock (and the ephemeris
+    lookup) at t = 0, and the CPU batch backend integrates from ``t0_s`` but
+    resamples onto that 0-based grid, which clamps every output time before
+    ``t0_s`` to the initial state. Move ``start_date`` instead of offsetting
+    ``t0_s``.
+    """
+    t0_s = float(getattr(getattr(sim_cfg, "time", None), "t0_s", 0.0) or 0.0)
+    if t0_s != 0.0:
+        raise ValueError(
+            f"Batch propagation starts at the ephemeris start (t = 0, start_date) but "
+            f"time.t0_s = {t0_s} s. Set start_date to the run start and t0_s = 0."
+        )
 
 
 def _batch_timestep_provenance(
@@ -218,6 +236,9 @@ def _force_model_fidelity_provenance(
         meta.update(
             {
                 "albedo_radiation_model": albedo_model,
+                "albedo_surface_integration": str(
+                    getattr(albedo_cfg, "surface_integration", "visible_disk_quadrature")
+                ),
                 "albedo_model_fidelity": "engineering_approximation",
                 "albedo_eclipse_model": (
                     "moon_center_global_earth_shadow_factor"
@@ -250,6 +271,9 @@ def _force_model_fidelity_provenance(
         meta.update(
             {
                 "thermal_ir_radiation_model": "lambert_facets",
+                "thermal_ir_surface_integration": str(
+                    getattr(thermal_cfg, "surface_integration", "visible_disk_quadrature")
+                ),
                 "thermal_ir_temperature_mode": thermal_mode,
                 "thermal_ir_model_fidelity": "engineering_approximation",
                 "thermal_ir_eclipse_model": eclipse_model,
@@ -546,12 +570,29 @@ class BatchPropagationEngine:
             except Exception:
                 payload = None
             if payload is not None and payload.get("dn", None) is not None:
-                return payload
+                return self._with_map_rotation(payload)
 
         if self._topo_grid is not None:
             from lunaris.loaders.io_surface import grid_topo_payload
-            return grid_topo_payload(self._topo_grid)
+            return self._with_map_rotation(grid_topo_payload(self._topo_grid))
         return None
+
+    def _with_map_rotation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Record the body-fixed -> map-frame rotation the terrain samplers apply.
+
+        The batch kernels rotate positions into the ephemeris fixed frame
+        (MOON_PA by default) while LOLA topography is tabulated on mean-Earth
+        axes; see :mod:`lunaris.common.lunar_map_frame`. The CPU impact event
+        composes the same rotation (``_build_r_i_to_surface_map``).
+        """
+        from lunaris.common.lunar_map_frame import ephemeris_fixed_frame, surface_map_rotation
+
+        rotation = surface_map_rotation(ephemeris_fixed_frame(getattr(self._dyn, "ephem", None)))
+        if rotation is None or payload.get("dn") is None:
+            return payload
+        out = dict(payload)
+        out["map_rotation"] = rotation.tolist()
+        return out
 
     def _resolve_dem_provenance(self) -> dict[str, Any] | None:
         """DEM/datum provenance (product, resolution, datum, IMG hash) or ``None``.
@@ -827,6 +868,7 @@ class BatchPropagationEngine:
         batch_cfg = self._cfg
         cfg = self._sim_cfg
         N   = int(batch_cfg.n_samples)
+        _require_zero_time_origin(cfg)
 
         t_wall0 = time.perf_counter()
         rng = np.random.default_rng(int(batch_cfg.seed))
@@ -936,7 +978,9 @@ class BatchPropagationEngine:
         if summary_only:
             storage_mode = "summary_only"
             result_bytes = 0
-            memory_limit_bytes = 0
+            # No (T, N, 6) archive, but each sub-batch still holds a (T, b_n, 6)
+            # host buffer: bound it by the same host budget as the full mode.
+            memory_limit_bytes = _host_memory_budget_bytes(batch_cfg)
             from lunaris.batch.summary import TopKTrajectoryBuffer, summarize_ensemble
 
             writer = _SummaryOnlyWriter()
@@ -1116,9 +1160,13 @@ class BatchPropagationEngine:
                         hit_idx = int(np.argmin(np.abs(t_b - float(t_imp_b[j]))))
                     else:
                         radii = np.linalg.norm(Y_b[:, j, :3], axis=1)
+                        # Same sphere as the propagators: gravity reference radius.
+                        _r_imp_ref = float(
+                            getattr(getattr(self._dyn, "grav", None), "R_ref_m", 0.0) or R_MOON
+                        )
                         hits = np.where(
                             radii
-                            <= float(R_MOON) + float(batch_cfg.impact_alt_km) * 1_000.0
+                            <= _r_imp_ref + float(batch_cfg.impact_alt_km) * 1_000.0
                         )[0]
                         hit_idx = int(hits[0]) if hits.size else len(t_b) - 1
                         t_imp_b[j] = float(t_b[hit_idx])
@@ -1352,10 +1400,11 @@ class BatchPropagationEngine:
         # ET coverage window, so the ephemeris provenance lives in the same
         # manifest as the gravity/ST-LRPS/GPU-kernel hashes.
         _ephem = getattr(self._dyn, "ephem", None)
-        if _ephem is not None and hasattr(_ephem, "kernel_provenance"):
-            # Provenance enrichment must never abort a completed batch run.
-            with contextlib.suppress(Exception):
-                _provenance_hashes["spice_kernels"] = _ephem.kernel_provenance()
+        # Provenance enrichment must never abort a completed batch run, but a
+        # capture failure is recorded (spice_kernels_unavailable_reason), not dropped.
+        from lunaris.physics.ephemeris import spice_provenance_fields
+
+        _provenance_hashes.update(spice_provenance_fields(_ephem))
         # DEM/datum provenance for terrain-aware impact runs (None otherwise).
         _dem_prov = self._resolve_dem_provenance()
         if _dem_prov is not None:
