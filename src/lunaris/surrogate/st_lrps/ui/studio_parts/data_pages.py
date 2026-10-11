@@ -187,6 +187,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 import contextlib
 
 from .common_widgets import (
+    _LOG_MAX_BLOCKS,
     ImageGallery,
     ProcessPane,
     ValidatedPathEdit,
@@ -1102,6 +1103,8 @@ class CloudGenTab(QWidget):
         self.analysis_summary = QPlainTextEdit()
         _style_command_preview(self.analysis_summary, min_h=92, max_h=150)
         self.analysis_summary.setMaximumHeight(150)
+        # Fed raw analysis subprocess output; keep only the newest lines.
+        self.analysis_summary.setMaximumBlockCount(_LOG_MAX_BLOCKS)
         self.analysis_summary.setPlaceholderText("Analysis summary")
 
         form = QFormLayout()
@@ -1798,7 +1801,7 @@ class CloudGenTab(QWidget):
         # Try to find the suite dir from the runner output
         log_text = ""
         with contextlib.suppress(Exception):
-            log_text = self.runner.log.toPlainText()
+            log_text = self.runner.output_text()
         suite_dir: str | None = None
         for line in reversed(log_text.splitlines()):
             m = re.search(r"suite dir\s*[:\->]+\s*(.+)", line, re.IGNORECASE)

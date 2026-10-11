@@ -558,7 +558,7 @@ class STLRPSEvalTab(QWidget):
             return
         out_dir = self._effective_out_dir
         if not out_dir or not Path(out_dir).is_dir():
-            text = self.runner.log.toPlainText()
+            text = self.runner.output_text()
             for pat in [
                 r"(?:out_dir|Output dir|Saving to|Results saved to)\s*[:=]\s*(.+)",
                 r"Plots saved to\s*[:=]?\s*(.+)",

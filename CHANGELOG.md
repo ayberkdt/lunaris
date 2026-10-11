@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the ST-LRPS Studio process log grew without limit.** Every stdout line of training, evaluation, benchmark and data runs went into an uncapped `QPlainTextEdit`. The pane now keeps the newest 20,000 lines, and so does the dataset-analysis log. The first 200 lines are kept aside, and the training, evaluation and suite pages search `ProcessPane.output_text()`. A capped view alone would have lost the output folder a run prints at start.
+
 - **Fixed: Stop froze Mission Studio for 2-3 s.** `_stop_process` blocked the GUI thread in `waitForFinished(2000)` and then `waitForFinished(1000)`. On Windows `terminate()` posts WM_CLOSE, which a console Python child ignores, so the full wait was spent on every Stop (measured 2.0 s). Stop now returns at once. It disables the Stop button and schedules the force-kill 2 s later on a timer bound to the process. The window returns to idle through the process's `finished` signal.
 
 - **Fixed: pre-flight logged a warning on every Mission Studio run.** The gravity and albedo checks returned a success note ("Using default gravity model", "Gravity file size: 190.4 MB", "Using constant albedo model"), and the worker sent every non-empty message as `validation_warning`. Gravity is on by default, so every run lit the log's warning badge. Success notes now go to the `[Validation]` progress line. A gravity file over 500 MB, swapped apsides and every other real concern still warn.

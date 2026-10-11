@@ -4411,7 +4411,7 @@ class STLRPSTrainTab(QWidget):
 
         # --- Discover output dir from log if not already set ---
         if exit_status == QProcess.ExitStatus.NormalExit and not self.runner._output_dir:
-            text = self.runner.log.toPlainText()
+            text = self.runner.output_text()
             for pat in [
                 r"(?:out_dir|Output dir|Run dir|Saving to)\s*[:=]\s*(.+)",
                 r"Using default output directory:\s*(.+)",

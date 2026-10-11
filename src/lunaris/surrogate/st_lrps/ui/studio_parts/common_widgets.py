@@ -106,6 +106,12 @@ from .qt_common import (
 
 _log = logging.getLogger(__name__)
 
+#: ProcessPane log: newest lines kept on screen (Qt drops the oldest blocks).
+_LOG_MAX_BLOCKS = 20_000
+#: First shown lines kept aside, so ``ProcessPane.output_text`` still holds
+#: the output folder a run prints at start after the view has been trimmed.
+_LOG_HEAD_LINES = 200
+
 # pyqtgraph — optional, graceful fallback
 try:
     import pyqtgraph as pg
@@ -1951,6 +1957,11 @@ class ProcessPane(QWidget):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setFont(_mono_font())
+        self.log.setMaximumBlockCount(_LOG_MAX_BLOCKS)
+        self._log_head: list[str] = []
+        self._log_line_count = 0
+        # Pages clear the log directly (Clear buttons); forget the head then.
+        self.log.textChanged.connect(self._forget_head_if_cleared)
         self._highlighter = LogHighlighter(self.log.document())
 
         self._auto_scroll = QCheckBox("Auto-scroll")
@@ -2087,13 +2098,35 @@ class ProcessPane(QWidget):
             except Exception:
                 show = True  # fail-open: never hide on filter error
         if show:
-            self.log.appendPlainText(text.rstrip("\n"))
+            shown = text.rstrip("\n")
+            lines = shown.split("\n")
+            if len(self._log_head) < _LOG_HEAD_LINES:
+                self._log_head.extend(lines[: _LOG_HEAD_LINES - len(self._log_head)])
+            self._log_line_count += len(lines)
+            self.log.appendPlainText(shown)
             if self._auto_scroll.isChecked():
                 sb = self.log.verticalScrollBar()
                 sb.setValue(sb.maximum())
         if self._on_parse_progress:
             with contextlib.suppress(Exception):
                 self._on_parse_progress(text)
+
+    def _forget_head_if_cleared(self) -> None:
+        if self.log.document().isEmpty():
+            self._log_head = []
+            self._log_line_count = 0
+
+    def output_text(self) -> str:
+        """The run's shown output for post-run parsing (output folder etc.).
+
+        The view keeps only the newest ``_LOG_MAX_BLOCKS`` lines; once it has
+        dropped lines, the first ``_LOG_HEAD_LINES`` are put back in front so
+        a folder printed at start is still found.
+        """
+        text = self.log.toPlainText()
+        if self._log_line_count <= self.log.document().blockCount():
+            return text
+        return "\n".join(self._log_head) + "\n[... lines trimmed from the view ...]\n" + text
 
     def start(
         self, program: str, args: list[str], workdir: str | None = None
