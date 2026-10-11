@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the output-point cap could be exceeded by one point.** The output grid has `ceil(D/dt) + 1` points, but `TimeConfig` estimated `floor(D/dt) + 1`, so a config one point over `max_points_cap` passed the config-time check. `_clamp_output_dt` chose `dt = D/(cap-1)`, which floating-point rounding could turn into `cap + 1` points (seen for caps 8 and 14 among others). Both now count points exactly as `build_output_time_grid` does. A config exactly one point over the cap is now rejected at construction.
+
 - **Fixed: `lunaris-data download` ignored a dataset present under an alias.** `verify` resolves the canonical filename and then the manifest `aliases`, but `download_entry` checked only the canonical path and fetched the product again. It now uses the same resolution (`resolve_dataset_path`); `--overwrite` still refetches. No shipped manifest entry declares aliases today, so current downloads are unchanged.
 
 - **Fixed: a singular (PSD) sampling covariance passed validation and then crashed sampling.** `StateUncertainty` accepts any positive-semidefinite `covariance_6x6`, but `cholesky_factor()` raised `LinAlgError` for a rank-deficient one (perfectly correlated components). It now falls back to the eigen-decomposition square root, so `L @ L.T = P` still holds; positive-definite covariances keep the bit-identical Cholesky factor.
