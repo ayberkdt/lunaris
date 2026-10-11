@@ -197,6 +197,24 @@ _RE_FILE_NAME = re.compile(r'\bFILE_NAME\s*=\s*"([^"]+)"', flags=re.IGNORECASE |
 _RE_RECORD_BYTES = re.compile(r"\bRECORD_BYTES\s*=\s*(\d+)", flags=re.IGNORECASE | re.MULTILINE)
 _RE_LDAM_PRODUCT = re.compile(r"(?<![A-Z0-9])LDAM(?:_[A-Z0-9]+)*(?![A-Z0-9])", flags=re.IGNORECASE)
 _RE_DGDR_PRODUCT = re.compile(r"(?<![A-Z0-9])DGDR(?:_[A-Z0-9]+)*(?![A-Z0-9])", flags=re.IGNORECASE)
+# LOLA LDEM and the LOLA/Kaguya merged SLDEM2015 products.
+_RE_LDEM_PRODUCT = re.compile(r"(?<![A-Z0-9])S?LDEM(?:[_0-9][A-Z0-9_]*)?(?![A-Z0-9])", flags=re.IGNORECASE)
+_RE_PRODUCT_ID = re.compile(r'\bPRODUCT_ID\s*=\s*"?([^"\r\n]+?)"?\s*$', flags=re.IGNORECASE | re.MULTILINE)
+_RE_TARGET_NAME = re.compile(r'\bTARGET_NAME\s*=\s*"?([A-Z0-9_ ]+?)"?\s*$', flags=re.IGNORECASE | re.MULTILINE)
+
+# PDS3 length units accepted on an LDEM label, as km per label unit.
+_LDEM_LENGTH_UNIT_KM: dict[str, float] = {
+    "KILOMETER": 1.0,
+    "KILOMETERS": 1.0,
+    "KILOMETRE": 1.0,
+    "KILOMETRES": 1.0,
+    "KM": 1.0,
+    "METER": 1.0e-3,
+    "METERS": 1.0e-3,
+    "METRE": 1.0e-3,
+    "METRES": 1.0e-3,
+    "M": 1.0e-3,
+}
 
 
 def _read_text(path: str | Path) -> str:
@@ -465,7 +483,8 @@ class PDS3MapInfo:
     - `sample_type` + `sample_bits` define the binary dtype.
     - `scaling_factor` and `offset_km` convert stored samples to physical values:
         value_km = stored * scaling_factor + offset_km
-      (the exact convention is product-dependent; keep this as parsed metadata).
+      Both are normalised to km at parse time from the label's `UNIT`
+      (KILOMETER or METER); `unit` keeps the label's raw string.
     - Longitudes are interpreted using `positive_lon_direction` together with the
       provided west/east extents.
     """
@@ -522,9 +541,17 @@ def parse_ldem_label(label_path: str | Path) -> PDS3MapInfo:
     sample_bits = _re_find_one(r"\bSAMPLE_BITS\s*=\s*(\d+)", txt, int)
 
     # --- value scaling ---
-    unit = _re_find_one(r"\bUNIT\s*=\s*([A-Z]+)", txt, str)
-    scaling_factor = _re_find_one(r"\bSCALING_FACTOR\s*=\s*([0-9.+-Ee]+)", txt, float)
-    offset_km = _re_find_one(r"\bOFFSET\s*=\s*([0-9.+-Ee]+)", txt, float)
+    # SCALING_FACTOR and OFFSET are expressed in the label's UNIT; every consumer
+    # works in km, so normalise here and refuse anything that is not a length.
+    unit = _re_find_one(r'\bUNIT\s*=\s*"?([A-Z]+)', txt, str)
+    km_per_unit = _LDEM_LENGTH_UNIT_KM.get(unit.upper())
+    if km_per_unit is None:
+        raise PDS3ParseError(
+            f"PDS3 parse error: LDEM UNIT = {unit!r} is not a supported length unit "
+            f"(expected one of {sorted(_LDEM_LENGTH_UNIT_KM)}): {Path(label_path).name}"
+        )
+    scaling_factor = _re_find_one(r"\bSCALING_FACTOR\s*=\s*([0-9.+-Ee]+)", txt, float) * km_per_unit
+    offset_km = _re_find_one(r"\bOFFSET\s*=\s*([0-9.+-Ee]+)", txt, float) * km_per_unit
 
     # --- projection ---
     map_projection_type = _re_find_one(r'\bMAP_PROJECTION_TYPE\s*=\s*"([^"]+)"', txt, str)
@@ -1289,9 +1316,14 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
 
     Selection policy
     ----------------
-    - If `root` is a file, it is treated as the label.
-    - If `ppd` is provided, the product whose MAP_RESOLUTION is *closest* to `ppd`
-      is selected (ties resolved by higher resolution, then path sort).
+    - Only labels that identify as a lunar LDEM product are candidates (see
+      :func:`_ldem_identity_problem`): PRODUCT_ID or file name is LDEM/SLDEM,
+      not LDAM/DGDR, TARGET_NAME (when present) is MOON, and the label parses
+      with a length UNIT.
+    - If `root` is a file, it is treated as the label and must pass that check.
+    - If `ppd` is provided, only a product whose MAP_RESOLUTION equals `ppd` is
+      accepted (ties resolved by path sort); a different resolution is an error,
+      not a silent substitute.
     - If `ppd` is not provided, the highest-resolution valid product is selected.
 
     Returns
@@ -1306,6 +1338,9 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
     p = Path(root)
 
     if p.is_file():
+        problem = _ldem_identity_problem(p)
+        if problem is not None:
+            raise FileNotFoundError(f"Not a lunar LDEM topography label ({problem}): {p}")
         img, _ = _resolve_img_from_label(p)
         return p, img
 
@@ -1317,8 +1352,11 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
         raise FileNotFoundError(f"No .lbl/.txt labels found in: {p}")
 
     desired = float(ppd) if ppd is not None else None
-    scored: list[tuple[float, float, Path]] = []
+    scored: list[tuple[float, Path]] = []
+    available: list[float] = []
     for lbl in labels:
+        if _ldem_identity_problem(lbl) is not None:
+            continue
         try:
             info = parse_ldem_label(lbl)
             img, _ = _resolve_img_from_label(lbl)
@@ -1326,20 +1364,49 @@ def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, 
             continue
 
         res = float(info.map_resolution_ppd)
-        # score = (distance to desired, -resolution)
-        dist = abs(res - desired) if desired is not None else 0.0
-        scored.append((dist, -res, lbl))
+        available.append(res)
+        if desired is not None and not math.isclose(res, desired, rel_tol=1e-9, abs_tol=1e-9):
+            continue
+        scored.append((-res, lbl))
 
     if not scored:
         msg = f"No valid LDEM product found in: {p}"
         if ppd is not None:
-            msg += f" (requested ~{ppd} ppd)"
+            msg += f" (requested {ppd} ppd; available ppd: {sorted(set(available)) or 'none'})"
         raise FileNotFoundError(msg)
 
     scored.sort()
-    best_lbl = scored[0][2]
+    best_lbl = scored[0][1]
     best_img, _ = _resolve_img_from_label(best_lbl)
     return best_lbl, best_img
+
+
+def _ldem_identity_problem(label_path: Path) -> str | None:
+    """Return why a label is not a lunar LDEM topography product, or ``None``.
+
+    Cylindrical PDS3 rasters (LOLA LDAM albedo, Diviner DGDR) carry the same map
+    keywords as an LDEM, so "the label parses" is not an identity check: an LDAM
+    label would otherwise be read as heights. Identity is the product name, the
+    target body and a length ``UNIT`` (enforced by :func:`parse_ldem_label`).
+    """
+    try:
+        txt = _strip_pds_comments(_read_text(label_path))
+    except OSError as exc:
+        return f"unreadable label: {exc}"
+    pid_m = _RE_PRODUCT_ID.search(txt)
+    identity = f"{label_path.name}\n{pid_m.group(1) if pid_m else ''}"
+    if _RE_LDAM_PRODUCT.search(identity) or _RE_DGDR_PRODUCT.search(identity):
+        return "LDAM/DGDR raster, not an LDEM"
+    if not _RE_LDEM_PRODUCT.search(identity):
+        return "PRODUCT_ID / file name is not an LDEM or SLDEM product"
+    tgt_m = _RE_TARGET_NAME.search(txt)
+    if tgt_m is not None and tgt_m.group(1).strip().upper() != "MOON":
+        return f"TARGET_NAME = {tgt_m.group(1).strip()!r}, expected MOON"
+    try:
+        parse_ldem_label(label_path)
+    except PDS3ParseError as exc:
+        return str(exc)
+    return None
 
 
 
@@ -1948,7 +2015,10 @@ def parse_pds3_label(lbl_path: str | Path) -> PDS3MapInfo | PDS3RasterInfo:
 
     txt = _strip_pds_comments(_read_text(lbl_path))
 
-    is_ldem = (
+    # LDAM/DGDR rasters carry LINE/SAMPLE_PROJECTION_OFFSET too; they are never LDEMs.
+    pid_m = _RE_PRODUCT_ID.search(txt)
+    identity = f"{lbl_path.name}\n{pid_m.group(1) if pid_m else ''}"
+    is_ldem = not (_RE_LDAM_PRODUCT.search(identity) or _RE_DGDR_PRODUCT.search(identity)) and (
         re.search(r"\bA_AXIS_RADIUS\b", txt) is not None
         or re.search(r"\bB_AXIS_RADIUS\b", txt) is not None
         or re.search(r"\bC_AXIS_RADIUS\b", txt) is not None

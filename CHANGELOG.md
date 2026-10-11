@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: LDEM product selection had no identity check.** `find_ldem_product` accepted any label that parsed, so a LOLA LDAM albedo or Diviner DGDR raster, or a product for another body, could be loaded as topography, and an explicit `ppd` was silently replaced by the closest resolution. Candidates must now be an LDEM/SLDEM product (PRODUCT_ID or file name), have `TARGET_NAME = MOON` when the label names a target, and parse with a length unit. An explicit `ppd` must match exactly. `parse_pds3_label` no longer routes LDAM/DGDR labels to the LDEM parser.
+
+- **Fixed: the PDS3 LDEM `UNIT` was ignored.** Every topography consumer assumed `SCALING_FACTOR` and `OFFSET` were in km, so a `UNIT = METER` label (the LOLA integer-LDEM convention) gave radii 1000 times too large. `parse_ldem_label` now normalises both to km from `UNIT` (KILOMETER or METER spellings) and refuses any other unit. The shipped `LDEM_64_FLOAT` label is `UNIT = KILOMETER`, so its results are unchanged. The terrain-freeze test fixture declared `UNIT = METER` while holding km values; it now says `KILOMETER`.
+
 - **Fixed: install hints pointed at an unrelated PyPI package.**
   - **The defect.** `pip install lunaris[hpc]` / `pip install lunaris[ml]` resolve on PyPI to "Lunaris — agent memory engine". That is a different project, verified on pypi.org on 2026-10-11.
   - **The fix.** The deployment guide, the torch-missing error and the third-party notice now install from a Lunaris checkout or a locally built wheel.
