@@ -628,9 +628,10 @@ def test_artifact_resolver() -> None:
 
 def test_laplacian_diagnostic_does_not_require_grad() -> None:
     """Diagnostic mode Laplacian loss must NOT require grad (cheap, no graph)."""
+    import torch
+
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.losses import collocation_laplacian_loss
-    import torch
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -647,9 +648,10 @@ def test_laplacian_diagnostic_does_not_require_grad() -> None:
 
 def test_laplacian_train_requires_grad() -> None:
     """Train mode Laplacian loss must require grad (gradients flow to model weights)."""
+    import torch
+
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.losses import collocation_laplacian_loss
-    import torch
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -665,9 +667,10 @@ def test_laplacian_train_requires_grad() -> None:
 
 def test_laplacian_train_backward_changes_params() -> None:
     """Train mode Laplacian backward must populate parameter gradients."""
+    import torch
+
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.losses import collocation_laplacian_loss
-    import torch
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -689,9 +692,10 @@ def test_collocation_laplacian_physical_units() -> None:
     6 (Hessian = 2I, Rademacher vᵀ(2I)v = 6), so after the chain-rule factor the
     loss must equal (6·u_scale/x_scale²)². Before the fix it was the un-scaled 6²=36,
     off by (u_scale/x_scale²)²."""
+    import torch
+
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.losses import collocation_laplacian_loss
-    import torch
 
     class _Quad(torch.nn.Module):
         def forward(self, x: torch.Tensor) -> torch.Tensor:  # U = Σ x²
@@ -719,6 +723,7 @@ def test_collocation_laplacian_physical_units() -> None:
 def test_cli_defaults_match_trainconfig_defaults() -> None:
     """Key CLI parser defaults must match TrainConfig field defaults."""
     import dataclasses
+
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
 
     tc_fields = {f.name: f.default for f in dataclasses.fields(TrainConfig)
@@ -749,10 +754,9 @@ def test_streaming_metrics_match_in_memory_on_small_dataset() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
-    from lunaris.surrogate.st_lrps.evaluation.cli import _StreamingMetrics
-
-
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.evaluation.cli import _StreamingMetrics
     rng = np.random.default_rng(42)
     N = 200
     x = rng.standard_normal((N, 3)) * 1.85e6
@@ -783,8 +787,9 @@ def test_streaming_metrics_match_in_memory_on_small_dataset() -> None:
 
 def test_topk_error_export_shape_and_columns() -> None:
     """TopKErrors heap keeps exactly K worst samples with correct shape."""
-    from lunaris.surrogate.st_lrps.evaluation.cli import _TopKErrors
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.evaluation.cli import _TopKErrors
     rng = np.random.default_rng(7)
     N = 100
     K = 10
@@ -816,10 +821,11 @@ def test_topk_error_export_shape_and_columns() -> None:
 
 def test_force_model_domain_status_inside_range() -> None:
     """domain_status should report in_range=True for positions inside training bounds."""
-    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
-    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     import numpy as np
     import torch
+
+    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -847,10 +853,11 @@ def test_force_model_domain_status_inside_range() -> None:
 
 def test_force_model_domain_status_outside_range() -> None:
     """domain_status should report in_range=False for positions far outside training bounds."""
-    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
-    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     import numpy as np
     import torch
+
+    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -877,10 +884,11 @@ def test_force_model_domain_status_outside_range() -> None:
 
 def test_force_model_rejects_bad_base_accel_shape() -> None:
     """predict_total_accel must raise ValueError when base_accel_fn returns wrong shape."""
-    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
-    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     import numpy as np
     import torch
+
+    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -902,10 +910,11 @@ def test_force_model_rejects_bad_base_accel_shape() -> None:
 
 def test_predict_residual_potential_no_grad_path() -> None:
     """predict_residual_potential should work without requiring grad (no_grad fast path)."""
-    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
-    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     import numpy as np
     import torch
+
+    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -924,8 +933,9 @@ def test_predict_residual_potential_no_grad_path() -> None:
 
 def test_model_factory_rejects_incompatible_encodings() -> None:
     """build_model_from_config must raise ValueError when both SH and radial encoding are enabled."""
-    from lunaris.surrogate.st_lrps.networks.models import build_model_from_config
     import torch
+
+    from lunaris.surrogate.st_lrps.networks.models import build_model_from_config
     cfg = {
         "hidden": 32, "depth": 2, "activation": "sine",
         "w0_first": 30.0, "w0_hidden": 30.0, "dropout": 0.0,
@@ -1040,15 +1050,15 @@ def test_x_scale_falls_back_to_streaming_when_metadata_missing() -> None:
 
 def test_active_error_point_loader() -> None:
     """_load_error_points should read a CSV of error points correctly."""
-    import tempfile
     import sys
+    import tempfile
     from pathlib import Path
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
-    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _load_error_points
-
     from pathlib import Path
+
+    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _load_error_points
     # Write a fake CSV
     header = "x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,az_pred,abs_a_error,rel_a_error,altitude_km"
     rows = [[float(j) for j in range(14)] for _ in range(20)]
@@ -1072,8 +1082,9 @@ def test_active_jitter_points_have_expected_shape() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
-    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _jitter_around_point
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _jitter_around_point
     rng = np.random.default_rng(5)
     x_src = np.array([0.0, 0.0, 1.937e6])
     pts = _jitter_around_point(x_src, n_samples=30, jitter_radial_km=10.0,
@@ -1092,14 +1103,15 @@ def test_active_component_metadata_written() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
-    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import (
-        _jitter_around_point,
-    )
     import json
     import tempfile
     from pathlib import Path
 
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import (
+        _jitter_around_point,
+    )
 
     # We test that _jitter_around_point + saving meta produces correct structure.
     # (Full _run_active_refinement would need argparse namespace.)
@@ -1136,13 +1148,13 @@ def test_collocation_laplacian_wired_in_train_mode() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
+    import torch
+    from torch.utils.data import DataLoader, TensorDataset
+
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
     from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
     from lunaris.surrogate.st_lrps.training.losses import GradNormWeights, SobolevLoss
-
-    import torch
-    from torch.utils.data import DataLoader, TensorDataset
 
     # Build a minimal trainer with laplacian_mode="train" and finite bounds
     sp = ScalerPack(
@@ -1200,13 +1212,13 @@ def test_collocation_laplacian_diagnostic_not_in_loss() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
+    import torch
+    from torch.utils.data import DataLoader, TensorDataset
+
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
     from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
     from lunaris.surrogate.st_lrps.training.losses import GradNormWeights, SobolevLoss
-
-    import torch
-    from torch.utils.data import DataLoader, TensorDataset
 
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=2e6),
@@ -1280,9 +1292,9 @@ def test_streaming_evaluator_does_not_accumulate_full_arrays() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
-    from lunaris.surrogate.st_lrps.evaluation.cli import _StreamingMetrics
-
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.evaluation.cli import _StreamingMetrics
 
     rng = np.random.default_rng(11)
     N = 500
@@ -1321,14 +1333,14 @@ def test_active_refinement_writes_labeled_h5() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
-    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _run_active_refinement
-
     import argparse
     import csv
     import gc
     import tempfile
 
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _run_active_refinement
 
     # We test only the --active-save-positions-only debug path to avoid needing a real GFC file,
     # then verify a labeled HDF5 structure manually to test the writer path.
@@ -1404,13 +1416,13 @@ def test_active_refinement_does_not_use_surrogate_labels() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
-    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _run_active_refinement
-
     import argparse
     import csv
     import tempfile
 
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _run_active_refinement
 
     with tempfile.TemporaryDirectory() as tmpd:
         tmpd_path = Path(tmpd)
@@ -1492,10 +1504,11 @@ def test_engine_uses_build_model_from_config() -> None:
 
 def test_domain_status_reads_from_dataset_meta() -> None:
     """SurrogateForceModel should read altitude bounds from cfg['dataset_meta'] when explicit fields absent."""
-    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
-    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     import numpy as np
     import torch
+
+    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=2e6),
@@ -1532,9 +1545,10 @@ def test_domain_status_reads_from_dataset_meta() -> None:
 
 def test_domain_status_reads_from_scaler_provenance() -> None:
     """SurrogateForceModel resolves altitude bounds from scaler.provenance when no cfg fields."""
+    import torch
+
     from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
-    import torch
 
     # Build a ScalerPack with a provenance dict containing alt bounds
     sp_raw = ScalerPack(
@@ -1565,10 +1579,11 @@ def test_domain_status_reads_from_scaler_provenance() -> None:
 
 def test_predict_rejects_nan_input() -> None:
     """predict_residual_accel and predict_total_accel must raise ValueError on NaN/Inf input."""
-    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
-    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     import numpy as np
     import torch
+
+    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=2e6),
@@ -1664,13 +1679,13 @@ def test_checkpoint_contains_best_val_physics_loss() -> None:
     _HERE = Path(__file__).resolve().parent
     if str(_HERE) not in sys.path:
         sys.path.insert(0, str(_HERE))
+    import torch
+    from torch.utils.data import DataLoader, TensorDataset
+
     from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
     from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
     from lunaris.surrogate.st_lrps.training.losses import GradNormWeights, SobolevLoss
-
-    import torch
-    from torch.utils.data import DataLoader, TensorDataset
 
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=2e6),
@@ -1707,8 +1722,9 @@ def test_checkpoint_contains_best_val_physics_loss() -> None:
 
 def test_topk_wired_into_evaluate_streaming() -> None:
     """_TopKErrors.to_array() must return exactly K rows when more than K samples are fed."""
-    from lunaris.surrogate.st_lrps.evaluation.cli import _TopKErrors
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.evaluation.cli import _TopKErrors
 
     K = 15
     N = 200
