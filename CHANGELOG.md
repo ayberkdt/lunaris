@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the ST-LRPS Studio theme leaked into Mission Studio.** The launcher runs both workspaces in one process. Opening the Studio applied its application-wide style (Fusion), font, palette and stylesheet, and nothing undid them. The launcher, and a Mission Studio opened afterwards, inherited the Studio look wherever their own window stylesheet does not reach, such as parentless dialogs and menus. The launcher now keeps the look the Studio replaces and restores it when the Studio closes or fails to build. The process-global pyqtgraph foreground the Studio sets at import is not restored.
+
 - **Fixed: OpenGL contexts were not shared between 3D views.** pyqtgraph compiles each shader program once and keeps its id on a module-level object. A `GLViewWidget` in a second, unshared context therefore binds an id that does not exist there and draws only its labels. That happens to a floated Mission Monitor dock or a view in another top-level window. The same helper now sets `AA_ShareOpenGLContexts` before `QApplication` is created; Qt WebEngine also requires this. The rendering itself could not be checked here, because offscreen GL draws blank.
 
 - **Fixed: number spin boxes followed the system locale.** On a Turkish desktop a `QDoubleSpinBox` showed `10,000` for ten, and typing `0.5` gave 5.0, because `.` is that locale's group separator. All line edits, logs and config files use `.`. Mission Studio, the launcher and the ST-LRPS Studio now call `lunaris.ui_foundation.qt_setup.prepare_qt_application()` before creating `QApplication`, which sets the C locale for numbers.
