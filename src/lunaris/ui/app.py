@@ -111,7 +111,7 @@ from lunaris.ui.core.command_builder import (
     build_command_preview,
     build_preflight_snapshot,
 )
-from lunaris.ui.core.log_stream import LineAssembler
+from lunaris.ui.core.log_stream import LineAssembler, StderrClassifier
 from lunaris.ui.core.preflight_validation import PreFlightWorker
 from lunaris.ui.core.session_persistence import (
     SessionFileUnreadable,
@@ -315,6 +315,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # each stream owns a dedicated assembler.
         self._stdout_assembler = LineAssembler()
         self._stderr_assembler = LineAssembler()
+        self._stderr_classifier = StderrClassifier()
         # Reset impact monitoring for this run
         self._collision_triggered = False
         self._collision_reason = ""
@@ -1149,6 +1150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._batch_stderr_assembler = LineAssembler()
         self._batch_stdout_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._batch_stderr_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._batch_stderr_classifier = StderrClassifier()
 
     def _on_batch_stdout(self) -> None:
         """
@@ -1217,7 +1219,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _log_batch_stderr_line(self, line: str) -> None:
         if line.strip():
-            self._log_message(f"[BATCH] {line.strip()}", severity="warning")
+            # Classify before stripping: indentation marks continuation lines.
+            severity = self._batch_stderr_classifier.classify(line)
+            self._log_message(f"[BATCH] {line.strip()}", severity=severity)
 
     def _on_batch_finished(self, exit_code: int, _exit_status) -> None:
         """Handle batch subprocess completion and update the page."""
@@ -2000,6 +2004,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
         self._stdout_assembler.clear()
         self._stderr_assembler.clear()
+        self._stderr_classifier.reset()
         self._run_wall_t0 = time.time()
         self._last_telem_t_s = None
         self._reset_run_watch_state()
@@ -2467,18 +2472,6 @@ class MainWindow(QtWidgets.QMainWindow):
                         eta_txt = f" | ETA {eta_s:.0f} s"
                 self.lbl_progress.setText(f"{t_days:.2f}/{T_days:.2f} d{eta_txt}")
 
-    @staticmethod
-    def _classify_stderr_line(line: str) -> str:
-        """Classify a single stderr line as 'warning' or 'error'."""
-        lowered = line.lower()
-        is_warning = (
-            "warning" in lowered
-            and "traceback" not in lowered
-            and "[fatal]" not in lowered
-            and "fatal error" not in lowered
-        )
-        return "warning" if is_warning else "error"
-
     def _handle_stderr(self):
         """Assemble complete stderr lines with warning/error classification.
 
@@ -2493,7 +2486,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for line in self._stderr_assembler.push(data):
             if line.strip():
-                self._log_message(line, severity=self._classify_stderr_line(line))
+                self._log_message(line, severity=self._stderr_classifier.classify(line))
 
     def _flush_stream_buffers(self):
         """Flush trailing partial stdout/stderr lines left without a newline.
@@ -2504,7 +2497,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         for line in self._stderr_assembler.flush():
             if line.strip():
-                self._log_message(line, severity=self._classify_stderr_line(line))
+                self._log_message(line, severity=self._stderr_classifier.classify(line))
         for line in self._stdout_assembler.flush():
             self._consume_stdout_line(line)
 
