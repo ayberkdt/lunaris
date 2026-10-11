@@ -365,8 +365,10 @@ def download_entry(
             print(f"          {entry['notes']}")
         return "manual"
 
-    if target.exists() and not overwrite:
-        print(f"[skip] {name}: already present at {target} (use --overwrite to refetch)")
+    # Same resolution as ``verify``: the canonical name, then the aliases.
+    present = resolve_dataset_path(data_root, entry)
+    if present is not None and not overwrite:
+        print(f"[skip] {name}: already present at {present} (use --overwrite to refetch)")
         status = "present"
     elif dry_run:
         print(f"[dry-run] {name}: would download {url} -> {target}")

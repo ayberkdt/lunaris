@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: `lunaris-data download` ignored a dataset present under an alias.** `verify` resolves the canonical filename and then the manifest `aliases`, but `download_entry` checked only the canonical path and fetched the product again. It now uses the same resolution (`resolve_dataset_path`); `--overwrite` still refetches. No shipped manifest entry declares aliases today, so current downloads are unchanged.
+
 - **Fixed: a singular (PSD) sampling covariance passed validation and then crashed sampling.** `StateUncertainty` accepts any positive-semidefinite `covariance_6x6`, but `cholesky_factor()` raised `LinAlgError` for a rank-deficient one (perfectly correlated components). It now falls back to the eigen-decomposition square root, so `L @ L.T = P` still holds; positive-definite covariances keep the bit-identical Cholesky factor.
 
 - **Fixed: canonical ST-LRPS datasets declared SI units in their contract.** `spatial_cloud_generator --canonical` stores r/DU, U/VU² and a/(DU/TU²), but the dataset contract and `units` attr always said m, m²/s², m/s², and `DatasetContract.validate()` refused anything else. New canonical datasets now declare `CANONICAL_UNITS` (`DU`, `VU^2`, `DU/TU^2`); the contract accepts exactly the SI or the canonical block. Existing datasets load unchanged: a canonical dataset written earlier still carries the SI claim, and its top-level `unit_system` attr (what the loaders read) stays authoritative for it.
