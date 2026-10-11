@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: batch planning missed a terrain grid injected through `InMemorySurfaceProvider`.** `_topography_requested` looked only at `grids().topo`, which that provider leaves empty, while its `topo_payload()` grid still reached the terrain impact kernels. A point-mass + terrain run was therefore planned without the Moon-fixed rotation table. Planning now also counts a provider whose `topo_payload()` carries a DN grid.
+
+- **Fixed: ST-LRPS evaluation accepted any `a_sign`.** `--a-sign` was `type=float` and `resolved_a_sign` from config.json was used as-is, so values such as 0.5 or 0 rescaled the evaluated base potential and residual acceleration. Both now must be +1 or -1. The Studio spin box that allows other values is UI code and is not changed here.
+
 - **Fixed: orbit analysis labelled every start epoch UTC.** `build_orbit_analysis` hard-coded `time_system = "UTC"`, but `TimeConfig.start_date` may be a SPICE `"... TDB"` or `"... TT"` string, which reaches `str2et` unchanged. The label now follows the epoch string: `TDB`, `TT` (also for `TDT`), else `UTC`.
 
 - **Fixed: a UTC start epoch before 1972 was converted silently with the wrong TAI-UTC.** The leapseconds kernel has no pre-1972 UTC model; `str2et` applied TAI-UTC = 9 s, measured with naif0012.tls. The historical value on 1969-07-20 was 7.5746 s, so that epoch was off by 1.43 s. `build_spice_tables` now refuses a pre-1972 UTC epoch and asks for a TDB or TT epoch string. TDB/TT strings and post-1972 UTC are unchanged.
