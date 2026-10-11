@@ -9,9 +9,10 @@ planned without the Moon-fixed rotation table the terrain sampler needs.
 
 from __future__ import annotations
 
+from tests.test_terrain_freeze import _write_synthetic_ldem
+
 from lunaris.batch.requirements import _topography_requested
 from lunaris.loaders.io_surface import InMemorySurfaceProvider
-from tests.test_terrain_freeze import _write_synthetic_ldem
 
 
 def test_inmemory_topo_grid_counts_as_topography(tmp_path) -> None:
