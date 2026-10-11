@@ -77,14 +77,8 @@ import matplotlib
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-try:
-    from lunaris.physics.ephemeris import EphemerisManager
-except ImportError as exc:
-    import sys
-
-    print(f"CRITICAL: Lunaris package import failed. Missing: {exc}", file=sys.stderr)
-    sys.exit(1)
-
+# A failed in-package import must raise to the importer, not exit its process.
+from lunaris.physics.ephemeris import EphemerisManager
 
 # --- intra-package wiring (auto-generated split) ---
 from ._gravity_benchmark import (
