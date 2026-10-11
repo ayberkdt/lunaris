@@ -21,7 +21,11 @@
 set -euo pipefail
 
 # Source the cluster-agnostic environment template (paths, threads, modules).
-source "$(dirname "$0")/env_template.sh"
+# Slurm runs a spooled copy of this script, so $0 does not point into hpc/:
+# take the folder from hpc/submit.sh (LUNARIS_HPC_DIR), else the submit directory.
+_hpc_dir="${LUNARIS_HPC_DIR:-${SLURM_SUBMIT_DIR:-.}/hpc}"
+[[ -f "${_hpc_dir}/env_template.sh" ]] || _hpc_dir="$(dirname "$0")"
+source "${_hpc_dir}/env_template.sh"
 
 # This template requests a GPU, so a silent CPU fallback (wrong CUDA module /
 # CPU-only torch wheel) must abort at preflight instead of burning walltime.
@@ -64,4 +68,6 @@ echo "===================================================================="
 cd "${LUNARIS_PROJECT_ROOT:-$PWD}"
 
 # Select and launch the scenario matching $SLURM_ARRAY_TASK_ID.
-python tools/hpc/run_training_scenario.py "$@"
+# exec: the launcher (which relays SIGTERM to the trainer) must be the
+# process that receives the walltime signal, not a child of this shell.
+exec python tools/hpc/run_training_scenario.py "$@"

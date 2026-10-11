@@ -15,8 +15,14 @@ Responsibilities
 1) Kernel lifecycle (initialization-time only)
    - Resolves/normalizes kernel paths and optionally auto-fixes common path issues.
    - Loads the requested SPICE kernels (LSK/SPK/PCK/BPC/FK/TF).
-   - Optionally starts from a clean SPICE state (`clean_kernels_before=True`).
-   - Optionally clears the SPICE kernel pool after table generation (`clear_kernels_after=True`).
+   - By default (`clean_kernels_before=False`/`clear_kernels_after=False`) it
+     furnishes only its own resolved kernels and unloads exactly those
+     (`spice.unload`) afterwards, so kernels another caller furnished survive.
+     Passing either flag `True` opts into a `spice.kclear()` of the *entire*
+     kernel pool before/after -- only safe when the caller owns the whole
+     process's SPICE state.
+   - Every build holds a process-wide lock (`_SPICE_LOCK`): CSPICE is not
+     thread-safe and the desktop app builds tables from worker threads.
 
    Notes on kernel paths:
    - Some distributions ship text-wrapped kernels (e.g., `.tls.txt`, `.tf.txt`, `.bpc.txt`).
@@ -142,6 +148,7 @@ Typical usage
 from __future__ import annotations
 
 import json
+import threading
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -161,6 +168,7 @@ from lunaris.common.math_utils import (
     quat_conj,
     quat_rotate_vec,
 )
+from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
 from lunaris.common.type_defs import F64Array, TimeConfig
 from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_kernel_paths
 
@@ -171,6 +179,11 @@ from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_ke
 DEFAULT_INERTIAL_FRAME = "J2000"
 DEFAULT_FIXED_FRAME = "MOON_PA"
 DEFAULT_OBSERVER = "MOON"
+
+# CSPICE keeps global state (kernel pool, error status) and is not thread-safe.
+# Every SPICE call in this module runs under this process-wide lock; re-entrant
+# so a locked caller may call a locked helper.
+_SPICE_LOCK = threading.RLock()
 
 
 # Fallback GM values (m^3/s^2) if the SPICE kernel pool is missing data.
@@ -205,7 +218,11 @@ class SpiceBuildConfig:
     observer: str = DEFAULT_OBSERVER
 
     include_third_body: bool = True
-    clear_kernels_after: bool = True
+    #: ``False`` (default) unloads exactly the kernels this build furnished
+    #: (``spice.unload``). ``True`` opts into ``spice.kclear()`` of the
+    #: *entire* kernel pool -- only safe when the caller owns the whole
+    #: process's SPICE state.
+    clear_kernels_after: bool = False
 
     earth_target: str = "EARTH"
     sun_target: str = "SUN"
@@ -449,7 +466,8 @@ def get_body_gm_m3s2(
         effective_fallback = _FALLBACK_GM_M3S2.get(body)
 
     try:
-        dim, values = spice.bodvrd(body, "GM", 1)
+        with _SPICE_LOCK:
+            dim, values = spice.bodvrd(body, "GM", 1)
         if int(dim) != 1 or values is None or len(values) < 1:
             raise SpiceyError("GM returned with unexpected dimension/values.")
         gm_km3s2 = float(values[0])
@@ -599,20 +617,32 @@ def _capture_kernel_provenance(kernels: Sequence[str]) -> tuple[Mapping[str, Any
 def _spice_kernels_loaded(
     kernels: Sequence[str],
     *,
-    clean_before: bool = True,
-    clear_after: bool = True,
+    clean_before: bool = False,
+    clear_after: bool = False,
 ) -> Iterator[None]:
-    """Loads kernels into a predictable SPICE state and guarantees cleanup."""
+    """Furnishes *kernels* and guarantees they -- and only they -- are removed.
+
+    By default this never touches kernels another caller furnished: it
+    furnishes exactly *kernels* and, on exit, unloads exactly those paths with
+    ``spice.unload`` (which removes only the most recent load of a path, so a
+    kernel the caller had already loaded stays loaded). ``clean_before`` /
+    ``clear_after`` opt into ``spice.kclear()`` of the *entire* pool.
+    """
     if clean_before:
         spice.kclear()
 
+    furnished: list[str] = []
     try:
         for k in kernels:
             spice.furnsh(str(k))
+            furnished.append(str(k))
         yield
     finally:
         if clear_after:
             spice.kclear()
+        else:
+            for k in reversed(furnished):
+                spice.unload(k)
 
 
 def build_tables(
@@ -625,14 +655,18 @@ def build_tables(
     fixed_frame: str = DEFAULT_FIXED_FRAME,
     observer: str = DEFAULT_OBSERVER,
     include_third_body: bool = True,
-    clear_kernels_after: bool = True,
-    clean_kernels_before: bool = True,
+    clear_kernels_after: bool = False,
+    clean_kernels_before: bool = False,
     earth_target: str = "EARTH",
     sun_target: str = "SUN",
     auto_fix_kernel_paths: bool = True,
     need_moon_fixed_rotation: bool = True,
 ) -> EphemerisTables:
-    """Core builder: samples SPICE at uniform output_dt_s to build ephemeris tables."""
+    """Core builder: samples SPICE at uniform output_dt_s to build ephemeris tables.
+
+    Holds ``_SPICE_LOCK`` for the whole build. By default only this build's
+    own kernels are furnished and unloaded again; see ``_spice_kernels_loaded``.
+    """
 
     dt = _require_positive("output_dt_s", output_dt_s)
     _require_positive("duration_s", duration_s)
@@ -684,7 +718,7 @@ def build_tables(
     except Exception:  # pragma: no cover
         SpiceyError = Exception
 
-    with _spice_kernels_loaded(
+    with _SPICE_LOCK, _spice_kernels_loaded(
         k_list,
         clean_before=bool(clean_kernels_before),
         clear_after=bool(clear_kernels_after),
@@ -827,7 +861,14 @@ def build_spice_tables(
     """High-level public builder: merges TimeConfig + SpiceBuildConfig."""
 
     sd = time_cfg.start_date
-    start_utc = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
+    # SPICE str2et rejects explicit UTC offsets ("+03:00", also the output of a
+    # timezone-aware datetime.isoformat()); normalise ISO inputs to a UTC "Z"
+    # string as the CLI does, and pass anything that is not ISO (SPICE
+    # calendar formats, "... TDB") through unchanged.
+    try:
+        start_utc = normalize_iso_datetime_to_utc_string(sd, precision=6).replace(".000000Z", "Z")
+    except (TypeError, ValueError):
+        start_utc = sd.isoformat() if hasattr(sd, "isoformat") else str(sd)
 
     dt = time_cfg.output_dt_s
     if dt is None:
@@ -836,9 +877,18 @@ def build_spice_tables(
             "Set output_dt_s (e.g., 60.0) for SPICE sampling."
         )
 
+    # Table t=0 is start_date and the propagator samples at absolute solver time
+    # t in [t0_s, t0_s + duration_s], so the grid must cover that whole window.
+    t0_s = float(getattr(time_cfg, "t0_s", 0.0) or 0.0)
+    if t0_s < 0.0:
+        raise ValueError(
+            f"TimeConfig.t0_s={t0_s!r} precedes start_date; SPICE tables start at t=0 "
+            "(start_date). Move start_date earlier instead of using a negative t0_s."
+        )
+
     return build_tables(
         start_utc=start_utc,
-        duration_s=_require_positive("duration_s", time_cfg.duration_s),
+        duration_s=t0_s + _require_positive("duration_s", time_cfg.duration_s),
         output_dt_s=_require_positive("output_dt_s", dt),
         kernels=spice_cfg.kernels,
         inertial_frame=str(spice_cfg.inertial_frame),

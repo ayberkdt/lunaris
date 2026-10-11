@@ -150,8 +150,9 @@ def test_periselene_and_aposelene_directions_and_rdot_value():
 
 def test_periselene_time_guard_suppresses_root_near_t0():
     peri = make_periselene_event(t_guard_s=5.0)
-    # Before the guard the function returns a constant +1 so no root is localized.
-    assert peri(1.0, _state(R + 100e3, vx=-1.0)) == pytest.approx(1.0)
+    # Inside the start-relative window the function returns NaN, which no
+    # solver reads as a crossing (a constant +1 faked one when r.v < 0).
+    assert np.isnan(peri(1.0, _state(R + 100e3, vx=-1.0)))
     # After the guard it reports the true r.v sign.
     assert peri(10.0, _state(R + 100e3, vx=-1.0)) < 0.0
 

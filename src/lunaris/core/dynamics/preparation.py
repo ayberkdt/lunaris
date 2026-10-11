@@ -354,9 +354,16 @@ def prepare_adaptive_gravity_policy(
     if adaptive is None or not bool(getattr(adaptive, "enabled", False)) or int(nmax) <= 0:
         return disabled
 
-    min_degree = max(0, min(int(nmax), int(getattr(adaptive, "min_degree", 4) or 4)))
+    # Defaults apply only to a missing/None attribute: min_degree=0 is a valid
+    # floor (the point-mass term), and power must be > 0, so 0 is refused
+    # rather than replaced.
+    raw_min_degree = getattr(adaptive, "min_degree", None)
+    min_degree = max(0, min(int(nmax), 4 if raw_min_degree is None else int(raw_min_degree)))
     quant_step = max(1, int(getattr(adaptive, "quantization_step", 10) or 10))
-    power = float(getattr(adaptive, "power", 2.5) or 2.5)
+    raw_power = getattr(adaptive, "power", None)
+    power = 2.5 if raw_power is None else float(raw_power)
+    if not (math.isfinite(power) and power > 0.0):
+        raise ValueError(f"Adaptive SH degree power must be finite and > 0, got {raw_power!r}.")
 
     raw_table = getattr(adaptive, "altitude_table", None)
     if raw_table:

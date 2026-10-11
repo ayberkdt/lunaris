@@ -21,13 +21,15 @@ from scipy.integrate import solve_ivp
 from lunaris.common.constants import R_MOON
 from lunaris.common.math_utils import nyquist_max_step_s, specific_energy_drift_stats
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
-from lunaris.core.dynamics import DynamicsEngine
+from lunaris.core.dynamics import DynamicsEngine, extract_ephem_tables_strict
 from lunaris.core.propagation.checkpoint import _checkpoint_metadata
 from lunaris.core.propagation.diagnostics import build_propagation_diagnostics
 from lunaris.core.propagation.events import (
     EventOutcome,
     _build_r_i_to_bf_from_rot_table,  # noqa: F401 - private import path kept for callers/tests
     _build_r_i_to_surface_map,
+    _get_detect_impact,
+    _get_impact_alt_km,
     _wrap_event_first6,
     build_events,
     event_outcome_from_solver_events,
@@ -96,6 +98,55 @@ def _rhs_path_for_diagnostics(dynamics: Any) -> str:
     if grav is None:
         return "point_mass_python"
     return "unknown"
+
+
+def _require_ephemeris_coverage(dynamics: Any, t0_s: float, tf_s: float) -> None:
+    """Reject a solver window outside the sampled ephemeris table.
+
+    The table interpolators clamp to the end rows outside their grid, so an
+    uncovered window would silently freeze the Sun/Earth vectors and the Moon
+    attitude instead of failing. The table spans ``[0, (N - 1) dt]`` seconds
+    from its start epoch (``start_date``), the same clock as solver time.
+    Dynamics without an ephemeris manager, and constant (single-row) tables,
+    have no window to check.
+    """
+    ephem = getattr(dynamics, "ephem", None)
+    if ephem is None or not hasattr(ephem, "get_data_provider"):
+        return
+    dt_s, _sun, _earth, q_tab = extract_ephem_tables_strict(ephem)
+    n_rows = int(q_tab.shape[0])
+    if n_rows < 2 or not dt_s > 0.0:
+        return
+    hi = float(n_rows - 1) * float(dt_s)
+    tol = 1.0e-9 * max(1.0, hi)
+    if float(t0_s) < -tol or float(tf_s) > hi + tol:
+        raise ValueError(
+            f"Propagation window [{float(t0_s)}, {float(tf_s)}] s lies outside the "
+            f"ephemeris table [0, {hi}] s (t measured from start_date). Rebuild the "
+            "tables over t0_s + duration_s."
+        )
+
+
+def _require_start_above_impact_sphere(y0: np.ndarray, cfg: Any, impact_radius_m: float) -> None:
+    """Refuse a start below the impact sphere when impact detection is on.
+
+    The impact event fires on a downward crossing of ``impact_radius_m +
+    impact_alt_km``; a trajectory that starts below it never crosses it
+    downward, so the run would integrate through the Moon and report no
+    impact. A start exactly on the sphere stays allowed: a descending one
+    stops at once.
+    """
+    if not _get_detect_impact(cfg):
+        return
+    floor_m = float(impact_radius_m) + 1000.0 * float(_get_impact_alt_km(cfg))
+    r0 = float(np.linalg.norm(y0[:3]))
+    if not r0 >= floor_m:
+        raise ValueError(
+            f"The initial position is {r0:.3f} m from the centre, below the impact sphere "
+            f"of radius {floor_m:.3f} m (reference radius plus impact_alt_km) that impact "
+            "detection watches; the run would pass through the Moon unnoticed. Start "
+            "above it or set events.detect_impact=False."
+        )
 
 
 def propagate(
@@ -177,6 +228,11 @@ def propagate(
     rhs = trusted_builder() if callable(trusted_builder) else dynamics.build_rhs()
     rhs_path = _rhs_path_for_diagnostics(dynamics)
     R_ref_m, mu_m3s2 = get_ref_radius_and_mu(dynamics)
+    # With a terrain grid the impact event follows the local surface, which can
+    # lie below the reference sphere; only the sphere-only event is checked.
+    if topo_grid is None:
+        _require_start_above_impact_sphere(y0_arr, cfg, float(R_ref_m))
+    _require_ephemeris_coverage(dynamics, float(t0), float(tf))
 
     # Terrain-aware telemetry is optional. The actual hybrid impact event uses a
     # similar capability deeper in the propagator, but surfacing the sampled

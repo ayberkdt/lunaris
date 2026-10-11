@@ -382,6 +382,8 @@ class BatchPropagationConfig:
     # Output
     output_format: OutputFormat = "hdf5"     # "hdf5" or "npz"
     output_path: str = "outputs/ensemble/batch_output.h5"
+    # Replace an existing archive at output_path (logged); False refuses it.
+    overwrite_output: bool = True
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
     result_storage_mode: ResultStorageMode = "auto"  # "auto", "memory", or "disk"
     max_result_memory_gb: float = 1.0
@@ -493,7 +495,22 @@ class BatchPropagationConfig:
 
     @property
     def output_path_resolved(self) -> Path:
-        return Path(self.output_path).expanduser().resolve()
+        """The archive file a run writes: ``output_path`` expanded and resolved.
+
+        The suffix follows ``output_format``, because the archive loader picks
+        its reader by suffix: an ``npz`` run whose path does not end in
+        ``.npz`` writes ``<stem>.npz`` (numpy appends the suffix anyway), and
+        an ``hdf5`` run whose path ends in neither ``.h5`` nor ``.hdf5``
+        writes ``<stem>.h5``. Every record of the archive location uses this
+        path, so it always names the file that was written.
+        """
+        path = Path(self.output_path).expanduser().resolve()
+        suffix = path.suffix.lower()
+        if self.output_format == "npz" and suffix != ".npz":
+            return path.with_suffix(".npz")
+        if self.output_format == "hdf5" and suffix not in (".h5", ".hdf5"):
+            return path.with_suffix(".h5")
+        return path
 
     def effective_max_batch(self, state_bytes_per_sample: int = 96) -> int:
         """

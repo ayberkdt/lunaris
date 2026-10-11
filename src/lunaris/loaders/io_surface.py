@@ -1432,11 +1432,16 @@ def _topo_radius_envelope(
         if arr.size == 0:
             return default_m, default_m
         if np.isfinite(missing_dn):
-            valid = arr[arr != missing_dn]
-            if valid.size == 0:
+            arr = arr[arr != missing_dn]
+            if arr.size == 0:
                 return default_m, default_m
-            dn_min = float(valid.min())
-            dn_max = float(valid.max())
+        if arr.dtype.kind == "f":
+            # NaN voids of a floating-point raster are excluded: a plain min/max
+            # returns NaN and collapsed the envelope to the mean sphere, so no
+            # summit above it was ever terrain-checked. fmin/fmax skip NaN and,
+            # unlike nanmin on a memmap, copy nothing.
+            dn_min = float(np.fmin.reduce(arr, axis=None))
+            dn_max = float(np.fmax.reduce(arr, axis=None))
         else:
             dn_min = float(arr.min())
             dn_max = float(arr.max())

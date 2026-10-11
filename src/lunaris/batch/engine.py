@@ -41,6 +41,7 @@ from lunaris.batch.sampling import (
 from lunaris.batch.storage import (
     HDF5TrajectoryView,
     _allocate_result_buffer,
+    _host_memory_budget_bytes,
     _make_writer,
     _resolve_result_storage,
     _SummaryOnlyWriter,
@@ -101,6 +102,24 @@ def merge_archive_metadata(*blocks: Mapping[str, Any]) -> dict[str, Any]:
                 )
             merged[key] = value
     return merged
+
+
+def _require_zero_time_origin(sim_cfg: Any) -> None:
+    """Refuse ``time.t0_s != 0`` on every batch backend.
+
+    The batch archive's time axis is ``[0, duration_s]`` from ``start_date``.
+    The CUDA and torch batch loops start their clock (and the ephemeris
+    lookup) at t = 0, and the CPU batch backend integrates from ``t0_s`` but
+    resamples onto that 0-based grid, which clamps every output time before
+    ``t0_s`` to the initial state. Move ``start_date`` instead of offsetting
+    ``t0_s``.
+    """
+    t0_s = float(getattr(getattr(sim_cfg, "time", None), "t0_s", 0.0) or 0.0)
+    if t0_s != 0.0:
+        raise ValueError(
+            f"Batch propagation starts at the ephemeris start (t = 0, start_date) but "
+            f"time.t0_s = {t0_s} s. Set start_date to the run start and t0_s = 0."
+        )
 
 
 def _batch_timestep_provenance(
@@ -844,6 +863,7 @@ class BatchPropagationEngine:
         batch_cfg = self._cfg
         cfg = self._sim_cfg
         N   = int(batch_cfg.n_samples)
+        _require_zero_time_origin(cfg)
 
         t_wall0 = time.perf_counter()
         rng = np.random.default_rng(int(batch_cfg.seed))
@@ -953,7 +973,9 @@ class BatchPropagationEngine:
         if summary_only:
             storage_mode = "summary_only"
             result_bytes = 0
-            memory_limit_bytes = 0
+            # No (T, N, 6) archive, but each sub-batch still holds a (T, b_n, 6)
+            # host buffer: bound it by the same host budget as the full mode.
+            memory_limit_bytes = _host_memory_budget_bytes(batch_cfg)
             from lunaris.batch.summary import TopKTrajectoryBuffer, summarize_ensemble
 
             writer = _SummaryOnlyWriter()

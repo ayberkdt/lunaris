@@ -58,7 +58,7 @@ def test_hdf5_archive_v2_batch_streaming_and_lazy_load(tmp_path) -> None:
     writer.finalize()
 
     assert path.exists()
-    assert not (tmp_path / "batch.h5.part").exists()
+    assert not writer._part_path.exists()
 
     eager = load_batch_result(str(path))
     lazy = load_batch_result(str(path), lazy=True)
@@ -89,9 +89,9 @@ def test_hdf5_writer_rejects_incomplete_or_out_of_order_stream(tmp_path) -> None
         writer.finalize()
 
     assert not path.exists()
-    assert (tmp_path / "incomplete.h5.part").exists()
+    assert writer._part_path.exists()
     writer.abort()
-    assert not (tmp_path / "incomplete.h5.part").exists()
+    assert not writer._part_path.exists()
 
 
 def test_npz_writer_rejects_out_of_order_and_bad_shape(tmp_path) -> None:
@@ -125,7 +125,7 @@ def test_hdf5_writer_does_not_swallow_metadata_errors(tmp_path) -> None:
     writer.abort()
 
     assert not path.exists()
-    assert not (tmp_path / "bad_metadata.h5.part").exists()
+    assert not writer._part_path.exists()
 
 
 def test_schema_v2_npz_requires_current_result_arrays(tmp_path) -> None:

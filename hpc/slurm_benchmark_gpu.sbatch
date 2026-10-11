@@ -8,6 +8,10 @@
 #SBATCH --time=12:00:00
 
 set -euo pipefail
-source "$(dirname "$0")/env_template.sh"
+# Slurm runs a spooled copy of this script, so $0 does not point into hpc/:
+# take the folder from hpc/submit.sh (LUNARIS_HPC_DIR), else the submit directory.
+_hpc_dir="${LUNARIS_HPC_DIR:-${SLURM_SUBMIT_DIR:-.}/hpc}"
+[[ -f "${_hpc_dir}/env_template.sh" ]] || _hpc_dir="$(dirname "$0")"
+source "${_hpc_dir}/env_template.sh"
 
 lunaris-benchmark "$@"
