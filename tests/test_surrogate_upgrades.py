@@ -416,6 +416,42 @@ def test_multiscale_siren_w0_bands_are_persisted():
         assert torch.allclose(model(x), model_bad(x), atol=1e-6)
 
 
+@pytest.mark.parametrize("multiscale_mode", ["concat_shared", "additive"])
+@pytest.mark.parametrize(
+    "bad_buffer, match",
+    [
+        (torch.tensor([10.0, 20.0]), "shape"),                      # wrong band count
+        (torch.tensor([[10.0, 20.0, 30.0]]), "shape"),              # wrong rank
+        (torch.tensor([10.0, float("nan"), 30.0]), "non-finite"),
+        ([10.0, 20.0, 30.0], "must be a tensor"),
+    ],
+)
+def test_malformed_w0_bands_buffer_fails_the_load(multiscale_mode, bad_buffer, match):
+    # The buffer was read inside contextlib.suppress(Exception): a malformed one
+    # left the construction-time spectrum in place without a word.
+    cfg = _ms_cfg(w0_bands=compute_harmonic_w0_bands(3, 20, 200), multiscale_mode=multiscale_mode)
+    model = build_model_from_config(cfg, device=torch.device("cpu"), dtype=torch.float32)
+    sd = model.state_dict()
+    key = next(k for k in sd if k.endswith("w0_bands_tensor"))
+    before = list(_inner_multiscale(model).w0_bands)
+    sd[key] = bad_buffer
+    with pytest.raises(ValueError, match=match):
+        model.load_state_dict(sd)
+    assert list(_inner_multiscale(model).w0_bands) == before
+
+
+@pytest.mark.parametrize("multiscale_mode", ["concat_shared", "additive"])
+def test_checkpoint_without_w0_bands_buffer_still_loads(multiscale_mode):
+    # Checkpoints from before the buffer existed omit it; they keep loading
+    # (the buffer is an optional key for reconstruct_model_from_artifacts).
+    cfg = _ms_cfg(w0_bands=compute_harmonic_w0_bands(3, 20, 200), multiscale_mode=multiscale_mode)
+    model = build_model_from_config(cfg, device=torch.device("cpu"), dtype=torch.float32)
+    sd = {k: v for k, v in model.state_dict().items() if not k.endswith("w0_bands_tensor")}
+    result = model.load_state_dict(sd, strict=False)
+    assert all(k.endswith("w0_bands_tensor") for k in result.missing_keys)
+    assert not result.unexpected_keys
+
+
 # ---------------------------------------------------------------------------
 # Item 9 — force-model strict_domain
 # ---------------------------------------------------------------------------

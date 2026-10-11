@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import math
 from collections.abc import Mapping
@@ -90,6 +89,26 @@ def compute_harmonic_w0_bands(
 
 # Pre-0.1.0rc2 compatibility name. Retained through at least 0.2.x.
 _compute_harmonic_w0_bands = compute_harmonic_w0_bands
+
+
+def _w0_bands_from_state(incoming: Any, *, key: str, n_bands: int) -> list[float]:
+    """Validate a checkpoint's ``w0_bands_tensor`` buffer and return it as a list.
+
+    The buffer is the authoritative band spectrum of the trained weights, so a
+    malformed one (wrong type, shape or length, non-finite values) must fail
+    the load instead of leaving the construction-time spectrum in place.
+    """
+    if not isinstance(incoming, torch.Tensor):
+        raise ValueError(f"checkpoint {key!r} must be a tensor, got {type(incoming).__name__}.")
+    if incoming.ndim != 1 or int(incoming.numel()) != int(n_bands):
+        raise ValueError(
+            f"checkpoint {key!r} has shape {tuple(incoming.shape)}, expected ({int(n_bands)},) "
+            "for this model's band count."
+        )
+    values = [float(v) for v in incoming.detach().cpu().tolist()]
+    if not all(math.isfinite(v) for v in values):
+        raise ValueError(f"checkpoint {key!r} holds non-finite band frequencies: {values}.")
+    return values
 
 
 # ---------------------------------------------------------------------------
@@ -395,8 +414,7 @@ class MultiScaleSirenMLP(nn.Module):
         key = prefix + "w0_bands_tensor"
         incoming = state_dict.get(key)
         if incoming is not None:
-            with contextlib.suppress(Exception):
-                self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
+            self.w0_bands = _w0_bands_from_state(incoming, key=key, n_bands=len(self.band_layers))
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
@@ -491,8 +509,7 @@ class AdditiveMultiBandSirenMLP(nn.Module):
         key = prefix + "w0_bands_tensor"
         incoming = state_dict.get(key)
         if incoming is not None:
-            with contextlib.suppress(Exception):
-                self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
+            self.w0_bands = _w0_bands_from_state(incoming, key=key, n_bands=len(self.bands))
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:

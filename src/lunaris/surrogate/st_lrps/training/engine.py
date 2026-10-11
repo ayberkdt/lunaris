@@ -1213,24 +1213,33 @@ class STLRPSTrainer:
         xb: torch.Tensor,
         ab: torch.Tensor,
     ) -> None:
-        """Accumulate the per-batch statistics into the epoch state."""
-        state.samples_done += int(xb.shape[0])
-        state.total_loss += float(stats["loss_ref"])
-        state.total_opt_loss += float(stats["loss_opt"])
-        state.total_u += float(stats["mse_u"])
-        state.total_a += float(stats["mse_a"])
-        state.total_dir += float(stats.get("loss_dir", 0.0))
-        state.total_cossim += float(stats.get("cossim_mean", 1.0))
-        state.total_angular_mean_deg += float(stats.get("angular_mean_deg", 0.0))
-        state.total_mask_frac += float(stats.get("mask_frac", 0.0))
-        state.total_radial += float(stats.get("loss_radial", 0.0))
-        state.total_cross += float(stats.get("loss_cross", 0.0))
-        state.total_lap += float(stats.get("loss_laplacian", 0.0))
-        state.total_rel += float(stats.get("loss_rel", 0.0))
-        state.total_rel_a_mean += float(stats.get("rel_a_mean", 0.0))
-        state.total_wtz_frac += float(stats.get("wtz_frac", 0.0))
+        """Accumulate the per-batch statistics into the epoch state.
+
+        Accumulates sample-weighted sums (each per-batch mean times its batch
+        size), so the epoch values divide by ``samples_done`` instead of
+        ``n_batches``. The validation loader keeps its last, smaller batch, and
+        a mean of per-batch means over-weights that remainder batch relative
+        to its share of the rows (``val_total_loss`` drives best-checkpoint
+        selection).
+        """
+        n_b = int(xb.shape[0])
+        state.samples_done += n_b
+        state.total_loss += float(stats["loss_ref"]) * n_b
+        state.total_opt_loss += float(stats["loss_opt"]) * n_b
+        state.total_u += float(stats["mse_u"]) * n_b
+        state.total_a += float(stats["mse_a"]) * n_b
+        state.total_dir += float(stats.get("loss_dir", 0.0)) * n_b
+        state.total_cossim += float(stats.get("cossim_mean", 1.0)) * n_b
+        state.total_angular_mean_deg += float(stats.get("angular_mean_deg", 0.0)) * n_b
+        state.total_mask_frac += float(stats.get("mask_frac", 0.0)) * n_b
+        state.total_radial += float(stats.get("loss_radial", 0.0)) * n_b
+        state.total_cross += float(stats.get("loss_cross", 0.0)) * n_b
+        state.total_lap += float(stats.get("loss_laplacian", 0.0)) * n_b
+        state.total_rel += float(stats.get("loss_rel", 0.0)) * n_b
+        state.total_rel_a_mean += float(stats.get("rel_a_mean", 0.0)) * n_b
+        state.total_wtz_frac += float(stats.get("wtz_frac", 0.0)) * n_b
         a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
-        state.total_a_norm_mean += a_norm_b
+        state.total_a_norm_mean += a_norm_b * n_b
         state.a_norm_max = max(state.a_norm_max, a_norm_b)
         state.n_batches += 1
         state.last_stats = stats
@@ -1263,6 +1272,8 @@ class STLRPSTrainer:
         sps = state.samples_done / max(elapsed, 1e-9)
         cur_lr = float(self.optimizer.param_groups[0]["lr"])
         mem_str = _cuda_memory_string(self.device)
+        # state.total_* are sample-weighted sums (see _update_metrics).
+        samples_safe = max(1, state.samples_done)
         # loss_opt = optimizer loss (uses accel_factor); loss_ref = full diagnostic loss.
         # Per-batch extras (radial/cross/lap/alt-balance) are only surfaced in the
         # end-of-phase summary via format_batch_summary's fixed field set.
@@ -1272,11 +1283,11 @@ class STLRPSTrainer:
                 epoch=epoch + 1,
                 batch=n_batches,
                 total_batches=total_batches_est,
-                loss_opt=state.total_opt_loss / n_batches,
-                loss_ref=state.total_loss / n_batches,
-                loss_u=state.total_u / n_batches,
-                loss_a=state.total_a / n_batches,
-                loss_dir=(state.total_dir / n_batches if lambda_dir_eff > 0.0 else None),
+                loss_opt=state.total_opt_loss / samples_safe,
+                loss_ref=state.total_loss / samples_safe,
+                loss_u=state.total_u / samples_safe,
+                loss_a=state.total_a / samples_safe,
+                loss_dir=(state.total_dir / samples_safe if lambda_dir_eff > 0.0 else None),
                 lr=cur_lr,
                 eta_s=eta,
                 samples_per_s=sps,
@@ -1295,23 +1306,27 @@ class STLRPSTrainer:
         phase_time: float,
     ) -> dict[str, float]:
         """End-of-phase summary log + the epoch history record (return value)."""
+        # n_safe is for per-batch quantities (ms/batch); every state.total_*
+        # accumulator is a sample-weighted sum (see _update_metrics) and divides
+        # by the sample count.
         n_safe = max(1, state.n_batches)
+        samples_safe = max(1, state.samples_done)
         dir_summary = (
-            f" dir={state.total_dir/n_safe:.3e} cossim={state.total_cossim/n_safe:.4f}"
-            f" ang={state.total_angular_mean_deg/n_safe:.2f}deg"
-            f" mask_frac={state.total_mask_frac/n_safe:.2f} lam_dir={lambda_dir_eff:.3e}"
+            f" dir={state.total_dir/samples_safe:.3e} cossim={state.total_cossim/samples_safe:.4f}"
+            f" ang={state.total_angular_mean_deg/samples_safe:.2f}deg"
+            f" mask_frac={state.total_mask_frac/samples_safe:.2f} lam_dir={lambda_dir_eff:.3e}"
             if lambda_dir_eff > 0.0 else ""
         )
         extra_summary = ""
         if bool(self.cfg.use_radial_cross_loss):
             extra_summary += (
-                f" radial={state.total_radial/n_safe:.3e} cross={state.total_cross/n_safe:.3e}"
+                f" radial={state.total_radial/samples_safe:.3e} cross={state.total_cross/samples_safe:.3e}"
             )
         if bool(self.cfg.use_laplacian_regularization):
-            extra_summary += f" lap={state.total_lap/n_safe:.3e}"
+            extra_summary += f" lap={state.total_lap/samples_safe:.3e}"
         extra_summary += (
-            f" rel={state.total_rel/n_safe:.3e} rel_a={state.total_rel_a_mean/n_safe:.3f}"
-            f" wtz={state.total_wtz_frac/n_safe:.4f}"
+            f" rel={state.total_rel/samples_safe:.3e} rel_a={state.total_rel_a_mean/samples_safe:.3f}"
+            f" wtz={state.total_wtz_frac/samples_safe:.4f}"
         )
         if bool(self.cfg.use_altitude_balanced_loss):
             extra_summary += " alt-balance=on"
@@ -1324,11 +1339,11 @@ class STLRPSTrainer:
             f"{state.samples_done:,}",
             _format_seconds(phase_time),
             phase_time / n_safe * 1000,
-            state.total_opt_loss/n_safe,
-            state.total_loss/n_safe,
-            state.total_u/n_safe,
-            state.total_a/n_safe,
-            state.total_a_norm_mean/n_safe,
+            state.total_opt_loss/samples_safe,
+            state.total_loss/samples_safe,
+            state.total_u/samples_safe,
+            state.total_a/samples_safe,
+            state.total_a_norm_mean/samples_safe,
             state.a_norm_max,
             accel_factor,
             dir_summary,
@@ -1348,25 +1363,25 @@ class STLRPSTrainer:
         physics_loss = (
             state.total_dir + state.total_radial + state.total_cross
             + state.total_lap + state.total_rel
-        ) / n_safe
+        ) / samples_safe
         physics_loss += col_lap_train_avg
         return {
-            "loss": state.total_loss / n_safe,
-            "objective_loss": state.total_opt_loss / n_safe,
-            "mse_u": state.total_u / n_safe,
-            "mse_a": state.total_a / n_safe,
-            "loss_dir": state.total_dir / n_safe,
-            "cossim_mean": state.total_cossim / n_safe,
-            "angular_mean_deg": state.total_angular_mean_deg / n_safe,
-            "mask_frac": state.total_mask_frac / n_safe,
-            "a_norm_mean": state.total_a_norm_mean / n_safe,
+            "loss": state.total_loss / samples_safe,
+            "objective_loss": state.total_opt_loss / samples_safe,
+            "mse_u": state.total_u / samples_safe,
+            "mse_a": state.total_a / samples_safe,
+            "loss_dir": state.total_dir / samples_safe,
+            "cossim_mean": state.total_cossim / samples_safe,
+            "angular_mean_deg": state.total_angular_mean_deg / samples_safe,
+            "mask_frac": state.total_mask_frac / samples_safe,
+            "a_norm_mean": state.total_a_norm_mean / samples_safe,
             "a_norm_max": state.a_norm_max,
-            "loss_radial": state.total_radial / n_safe,
-            "loss_cross": state.total_cross / n_safe,
-            "loss_laplacian": state.total_lap / n_safe,
-            "loss_rel": state.total_rel / n_safe,
-            "rel_a_mean": state.total_rel_a_mean / n_safe,
-            "wtz_frac": state.total_wtz_frac / n_safe,
+            "loss_radial": state.total_radial / samples_safe,
+            "loss_cross": state.total_cross / samples_safe,
+            "loss_laplacian": state.total_lap / samples_safe,
+            "loss_rel": state.total_rel / samples_safe,
+            "rel_a_mean": state.total_rel_a_mean / samples_safe,
+            "wtz_frac": state.total_wtz_frac / samples_safe,
             "loss_laplacian_diag": col_lap_diag_avg,
             "loss_laplacian_train": col_lap_train_avg,
             "lambda_laplacian_eff": col_lap_weight_eff,
@@ -1381,10 +1396,10 @@ class STLRPSTrainer:
             "w_a_raw": float(state.last_stats.get("w_a_raw", self.cfg.w_a)),
             "accel_factor": float(state.last_stats.get("accel_factor", accel_factor)),
             "grad_norm": state.total_grad_norm / max(1, state.optimizer_steps_done),
-            "val_base_loss": (state.total_u + state.total_a) / n_safe,  # U + accel MSE only
+            "val_base_loss": (state.total_u + state.total_a) / samples_safe,  # U + accel MSE only
             "val_physics_loss": physics_loss,
-            "val_total_loss": state.total_loss / n_safe,   # alias for "loss"
-            "train_base_loss": (state.total_u + state.total_a) / n_safe,
+            "val_total_loss": state.total_loss / samples_safe,   # alias for "loss"
+            "train_base_loss": (state.total_u + state.total_a) / samples_safe,
             "train_physics_loss": physics_loss,
             "optimizer_steps": int(state.optimizer_steps_done),
             "samples_seen": int(state.samples_done),
@@ -1856,6 +1871,7 @@ def _resolve_data_splits(
     N_train_file: int | None,
     N_val_file: int | None,
     primary_path: Path,
+    val_data_path: Path | None = None,
     dset_name: str,
     dataset_contract_obj: DatasetContract,
     validation_report: Mapping[str, Any],
@@ -1875,6 +1891,19 @@ def _resolve_data_splits(
         val_indices = None
         n_train = N_train_file
         n_val = N_val_file
+        # Independent-file splits have no in-dataset indices to hash; record the
+        # content hash of each file instead (the same row-content hash as the
+        # rest of the dataset-provenance chain, insensitive to HDF5 chunking
+        # or compression) so a train/val file identity can be audited.
+        from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
+
+        if val_data_path is None:
+            raise ValueError(
+                "_resolve_data_splits: independent_val=True requires val_data_path to compute "
+                "train_file_sha256/val_file_sha256 for the split manifest."
+            )
+        train_file_sha256 = content_sha256_for_hdf5_dataset(primary_path, dataset_name=dset_name)
+        val_file_sha256 = content_sha256_for_hdf5_dataset(val_data_path, dataset_name=dset_name)
         split_manifest = {
             "schema_version": 1,
             "dataset_id": dataset_contract_obj.dataset_id,
@@ -1887,6 +1916,8 @@ def _resolve_data_splits(
             "index_hashes": {},
             "altitude_range_per_split": {},
             "created_at_utc": validation_report.get("created_at_utc"),
+            "train_file_sha256": train_file_sha256,
+            "val_file_sha256": val_file_sha256,
         }
     else:
         # Geometry-aware policies (spatial / OOD / altitude) need positions.
@@ -2033,20 +2064,26 @@ def _fit_residual_scalers(
     """
     scaler_path = layout.scaler_json
     scaler_hash_info: dict[str, Any]
+    # The dataset identity recorded with a new scaler and expected from an
+    # existing one. Computed from the file when the dataset contract does not
+    # embed it; recording None instead made every resume refuse its own scaler.
+    # (For independent files primary_path is the train file, whose content hash
+    # the split manifest already carries.)
+    from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
+
+    _manifest = split_manifest if isinstance(split_manifest, dict) else {}
+    dataset_content_sha = (
+        getattr(dataset_contract_obj, "content_sha256", None)
+        or _manifest.get("dataset_content_sha256")
+        or (_manifest.get("train_file_sha256") if independent_val else None)
+        or content_sha256_for_hdf5_dataset(primary_path, dataset_name=dset_name)
+    )
     if scaler_path.exists():
         logger.info("Loading existing scaler from %s", scaler_path.name)
         scaler = ScalerPack.load_json(scaler_path)
         # A scaler is train data, not a generic cache.  Reusing it in a fresh
         # run is safe only when its split and dataset identity match exactly.
-        # Compute the content hash once if an older contract did not embed it.
-        from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
-
         split_index_hashes = (split_manifest.get("index_hashes", {}) if isinstance(split_manifest, dict) else {}) or {}
-        expected_content_sha = (
-            getattr(dataset_contract_obj, "content_sha256", None)
-            or (split_manifest.get("dataset_content_sha256") if isinstance(split_manifest, dict) else None)
-            or content_sha256_for_hdf5_dataset(primary_path, dataset_name=dset_name)
-        )
         expected_provenance = {
             "fit_scope": "train_only",
             "split_policy": ("independent_files" if independent_val else split_policy),
@@ -2057,7 +2094,7 @@ def _fit_residual_scalers(
             "train_index_hash": split_index_hashes.get("train"),
             "val_index_hash": split_index_hashes.get("val"),
             "test_index_hash": split_index_hashes.get("test"),
-            "dataset_content_sha256": expected_content_sha,
+            "dataset_content_sha256": dataset_content_sha,
             "dataset_contract_hash": compute_payload_sha256(dataset_contract_obj.to_dict()),
         }
         stored_provenance = dict(getattr(scaler, "provenance", {}) or {})
@@ -2091,13 +2128,9 @@ def _fit_residual_scalers(
         _split_index_hashes = (
             split_manifest.get("index_hashes", {}) if isinstance(split_manifest, dict) else {}
         ) or {}
-        try:
-            _dataset_contract_hash = compute_payload_sha256(dataset_contract_obj.to_dict())
-        except Exception:
-            _dataset_contract_hash = None
-        _dataset_content_sha256 = getattr(dataset_contract_obj, "content_sha256", None) or (
-            split_manifest.get("dataset_content_sha256") if isinstance(split_manifest, dict) else None
-        )
+        # A failure here is a bug in the contract, not a reason to record no hash
+        # (the reuse check above would then refuse this scaler on resume).
+        _dataset_contract_hash = compute_payload_sha256(dataset_contract_obj.to_dict())
         scaler_split_provenance = {
             "fit_scope": "train_only",
             "split_policy": ("independent_files" if independent_val else split_policy),
@@ -2108,7 +2141,7 @@ def _fit_residual_scalers(
             "train_index_hash": _split_index_hashes.get("train"),
             "val_index_hash": _split_index_hashes.get("val"),
             "test_index_hash": _split_index_hashes.get("test"),
-            "dataset_content_sha256": _dataset_content_sha256,
+            "dataset_content_sha256": dataset_content_sha,
             "dataset_contract_hash": _dataset_contract_hash,
         }
         scaler = fit_scaler_streaming(
@@ -2333,6 +2366,14 @@ def _build_dataloaders(
         train_loader = DataLoader(train_ds, **_tr_kw)
         val_loader   = DataLoader(val_ds,   **_va_kw)
 
+    # The train loader drops its last partial batch, so a split smaller than one
+    # batch yields no batch at all: every epoch would "finish" with zero loss.
+    if len(train_loader) == 0:
+        raise ValueError(
+            f"Training split has n_train={len(train_ds)} rows but batch_size={cfg.batch_size} "
+            "with drop_last=True yields no batch; lower batch_size or enlarge the split."
+        )
+
     return _LoaderResult(
         train_loader=train_loader,
         val_loader=val_loader,
@@ -2495,6 +2536,19 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
             "Dataset validation failed before training: "
             + "; ".join(str(item) for item in validation_report.get("errors", []))
         )
+    if independent_val and val_data_path is not None:
+        # The val file drives best-checkpoint selection; gate it like the train file.
+        val_report = validate_dataset_file(
+            val_data_path,
+            dataset_name=dset_name,
+            n_check=min(1024, int(N_val_file or 1)),
+            seed=int(cfg.split_seed if cfg.split_seed is not None else cfg.seed),
+        )
+        if not val_report.get("passed") and not bool(getattr(cfg, "allow_dataset_validation_fail", False)):
+            raise ValueError(
+                "Validation dataset failed validation before training: "
+                + "; ".join(str(item) for item in val_report.get("errors", []))
+            )
     return _DatasetContext(
         data_path=data_path,
         independent_val=independent_val,
@@ -2787,6 +2841,39 @@ def _build_model_and_optim(
     )
 
 
+_RUN_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+
+
+def _attach_run_log(path: str | Path) -> None:
+    """Send log records to this run's ``train.log`` until ``_detach_run_logs``.
+
+    ``logging.basicConfig`` (used here before) is a no-op once the root logger
+    has handlers, so a second training run in the same process (a notebook, a
+    test session, a sweep driver) wrote no train.log at all. A console handler
+    is still added only when nothing is configured, as basicConfig did.
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        console = logging.StreamHandler()
+        console.setFormatter(logging.Formatter(_RUN_LOG_FORMAT))
+        root.addHandler(console)
+    if root.getEffectiveLevel() > logging.INFO:
+        root.setLevel(logging.INFO)
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter(_RUN_LOG_FORMAT))
+    handler._lunaris_run_log = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+
+
+def _detach_run_logs() -> None:
+    """Close and remove every handler ``_attach_run_log`` added."""
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if getattr(handler, "_lunaris_run_log", False):
+            root.removeHandler(handler)
+            handler.close()
+
+
 @dataclass
 class _TrainingSession:
     """Everything ``build_training_session`` (setup phases 1-10) produces that the
@@ -2860,11 +2947,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     outdir = layout.run_dir
     run_created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler(layout.train_log)]
-    )
+    _attach_run_log(layout.train_log)
 
     if device.type == "cuda":
         try:
@@ -3142,6 +3225,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         N_train_file=N_train_file if independent_val else None,
         N_val_file=N_val_file if independent_val else None,
         primary_path=primary_path,
+        val_data_path=val_data_path if independent_val else None,
         dset_name=dset_name,
         dataset_contract_obj=dataset_contract_obj,
         validation_report=validation_report,
@@ -3835,6 +3919,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
             logger.warning("[resume] checkpoint lacks RNG state; continuing with the seeded RNG.")
         if bool(getattr(cfg, "resume_append_history", True)) and log_path.exists():
             try:
+                _kept_lines: list[str] = []
+                _dropped_rows = 0
                 with open(log_path, encoding="utf-8") as _hf:
                     for _line in _hf:
                         _line = _line.strip()
@@ -3844,11 +3930,24 @@ def _run_training_loop(session: _TrainingSession) -> None:
                             _prev_row = json.loads(_line)
                         except Exception:
                             continue
+                        # Resuming from an earlier snapshot re-trains the later
+                        # epochs (0-based ``epoch`` >= start_epoch): drop their
+                        # stale rows so every epoch appears once.
+                        if int(_prev_row.get("epoch", -1)) >= int(start_epoch):
+                            _dropped_rows += 1
+                            continue
+                        _kept_lines.append(_line)
                         # Project to the flat row schema (strip nested train/val blocks).
                         history.append({
                             k: v for k, v in _prev_row.items()
                             if k not in ("train", "val", "checkpoint_report")
                         })
+                if _dropped_rows:
+                    log_path.write_text("".join(f"{_l}\n" for _l in _kept_lines), encoding="utf-8")
+                    logger.info(
+                        "[resume] dropped %d history row(s) from epoch %d on (re-trained).",
+                        _dropped_rows, int(start_epoch) + 1,
+                    )
                 logger.info("[resume] loaded %s previous history rows (append mode).", len(history))
                 _hist_mode = "a"
             except Exception as _hexc:
@@ -3870,6 +3969,10 @@ def _run_training_loop(session: _TrainingSession) -> None:
     _periodic_completed: set = set()
     if periodic_plan.enabled:
         _periodic_completed = completed_periodic_eval_epochs(outdir)
+        if _resume_requested:
+            # Evals recorded for epochs this resume re-trains (1-based epochs
+            # after the resumed checkpoint) scored discarded weights: rerun them.
+            _periodic_completed = {e for e in _periodic_completed if e <= int(start_epoch)}
         logger.info(
             "[periodic-eval] scheduled epochs: %s | dataset=%s checkpoint=%s max_samples=%s "
             "device=%s continue_on_fail=%s",
@@ -3966,6 +4069,32 @@ def _run_training_loop(session: _TrainingSession) -> None:
             _prev_mse_a = _cur_mse_a
 
             va = trainer.run_epoch(val_loader,   is_train=False, epoch=epoch, max_batches=cfg.max_val_batches)
+
+            # Same explosion handling for validation. Without it a NaN/Inf
+            # validation loss reaches compute_checkpoint_score()'s finite-value
+            # guard and raises uncaught: no failure manifest, and the run
+            # manifest stays "running".
+            if va.get("nan_detected"):
+                run_status = "failed"
+                logger.error(
+                    "Training stopped at epoch %s due to NaN/Inf validation loss. Saving failure "
+                    "manifest to %s.",
+                    epoch+1, outdir / 'failure_manifest.json',
+                )
+                atomic_write_json(
+                    outdir / "failure_manifest.json",
+                    {"epoch": epoch, "reason": "nan_val_loss", "config": asdict(cfg)},
+                )
+                update_run_manifest(
+                    layout,
+                    {
+                        "status": "failed",
+                        "latest_epoch": int(epoch + 1),
+                        "notes": [f"Training stopped due to NaN/Inf validation loss at epoch {epoch + 1}."],
+                    },
+                )
+                break
+
             epoch_time_s = time.perf_counter() - epoch_t0
             global_step += int(tr.get("optimizer_steps", 0))
 
@@ -4314,8 +4443,11 @@ def _run_training_loop(session: _TrainingSession) -> None:
 def train(cfg: TrainConfig) -> None:
     """Main execution pipeline: build the training session (setup phases 1-10),
     then run the Sobolev training loop (phase 11)."""
-    session = build_training_session(cfg)
-    _run_training_loop(session)
+    try:
+        session = build_training_session(cfg)
+        _run_training_loop(session)
+    finally:
+        _detach_run_logs()
 
 
 # ---------------------------------------------------------------------------
