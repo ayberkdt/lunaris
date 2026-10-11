@@ -153,7 +153,12 @@ def solid_tide_potential_degree_numba(
     return k_l * mu_body * inv_d * (r_over_rho ** 4) * (r_over_d ** 3) * p_l
 
 
-@njit(cache=True, nogil=True)
+# The two acceleration kernels below are shared by strict callers (the dynamics
+# RHS) and by the fastmath wrapper ``third_body_effects.accel_solid_tide``.
+# fastmath=False is explicit: Numba otherwise compiles a callee with the flags of
+# whichever caller compiles it first and caches that build on disk, so a
+# fastmath-first compile changed the strict RHS by up to 2.7e-15 relative.
+@njit(cache=True, nogil=True, fastmath=False)
 def solid_tide_accel_degree_numba(
     rx: float,
     ry: float,
@@ -221,7 +226,7 @@ def solid_tide_accel_degree_numba(
     return scale * tx, scale * ty, scale * tz
 
 
-@njit(cache=True, nogil=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def accel_solid_tides_numba(
     rx: float,
     ry: float,

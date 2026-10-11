@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Changed: albedo and thermal IR are integrated over the visible disk by default (default results change).**
+  - **The defect.** The 18 x 36 point-facet sum (facets up to ~300 km across) gave 0.39x-1.25x of the converged acceleration at 100 km and 0.04x-1.05x at 30 km on a sunlit disk. The reference was a brute-force cap integral plus the exact uniform-exitance limit `C A/(m c) M (R/r)^2`.
+  - **The fix.** `AlbedoConfig` / `ThermalConfig` gain `surface_integration` (default `"visible_disk_quadrature"`), `quadrature_radial_nodes` (16) and `quadrature_azimuth_nodes` (32). The new `lunaris.physics.surface_radiation_quadrature` is ported from the Sidera fork and re-verified independently. It integrates in the spacecraft's solid angle: exact for uniform exitance, and within 2e-4 of the full-Sun magnitude where the terminator crosses the disk. An azimuth recurrence replaces per-node trig, so the kernel costs about as much as the old sum.
+  - **Scope.** The cached RHS kernel, the surrogate-gravity RHS, `get_acceleration_vector_breakdown` and the `albedo_accel` / `thermal_accel` wrappers all use it. Batch manifests record `albedo_surface_integration` / `thermal_ir_surface_integration`.
+  - **Reproducing old results.** `surface_integration="facets"` restores the former path bit-for-bit (the 18 recorded RHS golden scenarios are unchanged).
+  - **Impact.** 1 day at 100 km, polar: at most 5.7 mm for A/m = 0.002 m^2/kg and 57 mm for 0.02 m^2/kg, mostly in-track and from thermal IR.
+  - **Registry.** Registered as `LUNARIS-MODEL-RAD-002/003` plus `LUNARIS-ALG-NUM-001` (Gauss-Legendre via NumPy).
+
+- **Fixed: the engine's `simple` albedo kernel ignored `AlbedoConfig.enable_eclipse`.**
+  - The cached RHS kernel, the surrogate RHS and the acceleration breakdown hard-coded the Moon-shadow test on.
+  - They now follow `enable_eclipse`, as `surface_effects.albedo_accel` already did. The default (`True`) is unchanged.
+
+- **Fixed: the strict solid-tide kernel depended on numba compile order.**
+  - `solid_tides.accel_solid_tides_numba` and `solid_tide_accel_degree_numba` did not pin `fastmath`. When the fastmath wrapper `third_body_effects.accel_solid_tide` compiled first, the strict RHS inherited fastmath through the on-disk cache: 8913 of 12000 components changed, by up to 2.7e-15 relative.
+  - Both kernels now pin `fastmath=False`. Output is bit-identical in every compile order.
+  - A package-wide test fails if any unpinned non-inline helper compiles under a fastmath caller.
+
 - **Fixed: the numba CUDA SRP shadow matches the CPU again.**
   - The device shadow factor still used the old smoothstep penumbra; the CPU now uses the exact visible-disk (lens-overlap) fraction. The GPU penumbra differed by up to 2.6% of full-sun SRP.
   - `_shadow_factor_conical_cuda` now mirrors the CPU kernel branch for branch. Under the CUDA simulator the shadow factor is bit-identical in full sun, penumbra, umbra and annular geometry for both the Moon and the Earth. SRP acceleration agrees to 2.8e-16 of full-sun SRP.

@@ -46,6 +46,8 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
   albedo kernels, and the standalone albedo/thermal wrappers.
 - `lunar_albedo.py` — Lambertian lunar albedo (reflected-solar) facets.
 - `thermal_ir.py` — Lambertian lunar thermal IR radiation-pressure facets.
+- `surface_radiation_quadrature.py` — visible-disk quadrature of the same
+  albedo/thermal-IR physics (the default surface integration).
 - `solid_tides.py` — elastic lunar solid-body tide potential and acceleration.
 - `relativity_effects.py` — first-order post-Newtonian Schwarzschild plus
   external-body Schwarzschild/de Sitter terms when Sun/Earth ephemerides are available.
@@ -282,7 +284,14 @@ sources: `constant_albedo` (provider-free), `albedo_grid` (provider-supplied
 uses a dedicated coefficient `albedo_pressure_coefficient` (C_R_albedo), **not**
 the SRP `cr`. An optional lunar-eclipse (Earth-umbra) dimming applies one
 Moon-center conical shadow factor to the whole facet sum; this is an
-engineering eclipse approximation, not per-facet occultation. The legacy `simple`
+engineering eclipse approximation, not per-facet occultation.
+`surface_integration` (on `AlbedoConfig` and `ThermalConfig`) chooses how the
+Lambertian surface is integrated: `visible_disk_quadrature` (default) integrates
+over the Moon's apparent disk in the spacecraft's solid angle
+(`lunaris.physics.surface_radiation_quadrature`), with accuracy independent of
+altitude. A mapped albedo or temperature grid is then read per facet cell.
+`facets` restores the former point-facet sum, which needs facets much smaller
+than the altitude (see `docs/FORCE_MODEL_VALIDATION.md` §2.6). The legacy `simple`
 cannonball backend remains
 available for backward compatibility via `albedo_model='simple'`. The facet
 model is Lambertian only: it

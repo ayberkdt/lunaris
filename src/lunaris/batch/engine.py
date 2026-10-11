@@ -237,6 +237,9 @@ def _force_model_fidelity_provenance(
         meta.update(
             {
                 "albedo_radiation_model": albedo_model,
+                "albedo_surface_integration": str(
+                    getattr(albedo_cfg, "surface_integration", "visible_disk_quadrature")
+                ),
                 "albedo_model_fidelity": "engineering_approximation",
                 "albedo_eclipse_model": (
                     "moon_center_global_earth_shadow_factor"
@@ -269,6 +272,9 @@ def _force_model_fidelity_provenance(
         meta.update(
             {
                 "thermal_ir_radiation_model": "lambert_facets",
+                "thermal_ir_surface_integration": str(
+                    getattr(thermal_cfg, "surface_integration", "visible_disk_quadrature")
+                ),
                 "thermal_ir_temperature_mode": thermal_mode,
                 "thermal_ir_model_fidelity": "engineering_approximation",
                 "thermal_ir_eclipse_model": eclipse_model,

@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**52 entries.**
+**53 entries.**
 
-Implementation class: adaptation (10), delegated_library (8), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (10)
+Implementation class: adaptation (10), delegated_library (9), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (10)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (41), verified_secondary_source (2)
+Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (42), verified_secondary_source (2)
 
 ## Index
 
@@ -33,6 +33,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 | [`LUNARIS-ALG-INTP-002`](#lunarisalgintp002) | Cubic Hermite interpolation of ephemeris position and velocity states | exact | verified_primary_source |
 | [`LUNARIS-ALG-ML-001`](#lunarisalgml001) | Sinusoidal Representation Network (SIREN) | exact | verified_primary_source |
 | [`LUNARIS-ALG-ML-002`](#lunarisalgml002) | Random Fourier feature input encoding | exact | verified_primary_source |
+| [`LUNARIS-ALG-NUM-001`](#lunarisalgnum001) | Gauss-Legendre quadrature nodes and weights mapped to the unit interval | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OE-001`](#lunarisalgoe001) | Classical orbital-element conversions (state vector to/from Keplerian elements) | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-001`](#lunarisalgopt001) | AdamW (decoupled weight decay) optimizer as delegated to PyTorch | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | GradNorm adaptive multi-task loss balancing | adaptation | verified_primary_source |
@@ -558,26 +559,33 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `Knocke1988EarthRadiation` -- Knocke, 1988. "Earth Radiation Pressure Effects on Satellites" (section Diffuse-body shortwave (albedo) radiation force; pages 577-587) [DOI: 10.2514/6.1988-4292]
-- **Verification notes**: P. C. Knocke, J. C. Ries & B. D. Tapley, "Earth Radiation Pressure Effects on Satellites", AIAA Paper 88-4292, 1988, pp. 577-587. DOI 10.2514/6.1988-4292 verified via AIAA. Lunaris ADAPTS this diffuse-body shortwave (albedo) radiation-pressure model from Earth to the MOON, summing reflected-sunlight contributions over a lat/lon facet grid.
+- **Verification notes**: P. C. Knocke, J. C. Ries & B. D. Tapley, "Earth Radiation Pressure Effects on Satellites", AIAA Paper 88-4292, 1988, pp. 577-587. DOI 10.2514/6.1988-4292 verified via AIAA. Lunaris ADAPTS this diffuse-body shortwave (albedo) radiation-pressure model from Earth to the MOON, summing reflected-sunlight contributions over a lat/lon facet grid or (default since 2026-10-11) integrating them over the visible disk.
 - **Mathematical contract**:
   - Inputs: spacecraft state, Sun direction, facet grid, albedo, spacecraft props
   - Outputs: albedo radiation-pressure acceleration (m/s^2)
   - Exactness: faceted_diffuse_reflection_sum
   - Preserves: only sunlit, visible facets contribute
 - **Implementing symbols**:
+  - `src/lunaris/physics/surface_radiation_quadrature.py` -- `accel_albedo_quadrature_numba` (numba_implementation)
+  - `src/lunaris/physics/surface_effects.py` -- `AlbedoConfig` (config_surface)
+  - `src/lunaris/physics/surface_effects.py` -- `albedo_accel` (api_entry_point)
   - `src/lunaris/physics/lunar_albedo.py` -- `albedo_single_facet_accel_numba` (numba_implementation)
   - `src/lunaris/physics/lunar_albedo.py` -- `accel_albedo_facets_numba` (numba_implementation)
   - `src/lunaris/physics/lunar_albedo.py` -- `calc_albedo_accel` (api_entry_point)
 - **Lunaris modifications**:
   - Earth ERP formalism applied to lunar albedo over a lat/lon facet grid
+  - default surface integration is a visible-disk solid-angle quadrature (Gauss-Legendre in v with cos(alpha) = cos(beta) + (1 - cos(beta)) v^2, periodic midpoint rule in azimuth; 16 x 32 nodes, altitude-independent); the 18 x 36 point-facet sum stays selectable with surface_integration='facets' (0.39x-1.25x of the converged value at 100 km on a sunlit disk, verified against a brute-force cap integral)
 - **Assumptions**:
   - Lambertian diffuse reflection; cannonball spacecraft response
 - **Limitations**:
-  - facet-resolution dependent; static albedo map
+  - static albedo map read per lat/lon cell; quadrature converges only algebraically where the day/night terminator crosses the visible disk (measured error <= 2e-4 of the full-Sun magnitude at 30-1000 km)
+  - point-facet integration is facet-resolution dependent
 - **Validated by**:
   - `tests/test_lunar_albedo.py`
   - `tests/test_surface_effects.py`
-- **See also**: [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003)
+  - `tests/test_surface_radiation_quadrature.py`
+  - `tests/test_dynamics_surface_radiation.py`
+- **See also**: [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003), [`LUNARIS-ALG-NUM-001`](#lunarisalgnum001)
 
 <a id="lunarismodelrad003"></a>
 ### LUNARIS-MODEL-RAD-003 -- Faceted lunar thermal-infrared (longwave) radiation-pressure model
@@ -587,26 +595,32 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `Knocke1988EarthRadiation` -- Knocke, 1988. "Earth Radiation Pressure Effects on Satellites" (section Diffuse-body longwave (thermal) radiation force; pages 577-587) [DOI: 10.2514/6.1988-4292]
-- **Verification notes**: Same primary source as LUNARIS-MODEL-RAD-002 (Knocke et al. 1988, DOI 10.2514/6.1988-4292 verified); this entry is the longwave (thermal-IR) counterpart, summing thermal re-emission over the lunar facet grid.
+- **Verification notes**: Same primary source as LUNARIS-MODEL-RAD-002 (Knocke et al. 1988, DOI 10.2514/6.1988-4292 verified); this entry is the longwave (thermal-IR) counterpart, summing thermal re-emission over the lunar facet grid or (default since 2026-10-11) integrating it over the visible disk.
 - **Mathematical contract**:
   - Inputs: spacecraft state, facet grid, thermal emission model, spacecraft props
   - Outputs: thermal-IR radiation-pressure acceleration (m/s^2)
   - Exactness: faceted_thermal_emission_sum
   - Preserves: integrates longwave emission over visible facets
 - **Implementing symbols**:
+  - `src/lunaris/physics/surface_radiation_quadrature.py` -- `accel_thermal_ir_quadrature_numba` (numba_implementation)
+  - `src/lunaris/physics/surface_effects.py` -- `ThermalConfig` (config_surface)
+  - `src/lunaris/physics/surface_effects.py` -- `thermal_accel` (api_entry_point)
   - `src/lunaris/physics/thermal_ir.py` -- `build_latlon_facets` (cpu_implementation)
   - `src/lunaris/physics/thermal_ir.py` -- `accel_thermal_ir_facets_numba` (numba_implementation)
   - `src/lunaris/physics/thermal_ir.py` -- `calc_thermal_ir_accel` (api_entry_point)
 - **Lunaris modifications**:
   - Earth ERP thermal formalism applied to lunar surface facets
+  - default surface integration is the visible-disk solid-angle quadrature shared with LUNARIS-MODEL-RAD-002; it reproduces the analytic uniform-sphere limit C A/(m c) M (R/r)^2 to machine precision, where the 18 x 36 point-facet sum (surface_integration='facets') gives 0.39x-1.25x at 100 km
 - **Assumptions**:
   - diffuse thermal re-emission; cannonball spacecraft response
 - **Limitations**:
-  - depends on the surface thermal model and facet resolution
+  - depends on the surface thermal model; temperature grids are read per lat/lon cell
 - **Validated by**:
   - `tests/test_thermal_ir.py`
   - `tests/test_surface_effects.py`
-- **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002)
+  - `tests/test_surface_radiation_quadrature.py`
+  - `tests/test_dynamics_surface_radiation.py`
+- **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002), [`LUNARIS-ALG-NUM-001`](#lunarisalgnum001)
 
 ## Ephemeris and interpolation (EPH)
 
@@ -1676,6 +1690,36 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `tests/test_surrogate_training_contracts.py`
 - **See also**: [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002)
 - **Notes**: This is the core physics-supervision mechanism: matching accelerations as input-gradients of the learned potential.
+
+## Numerical utilities (NUM)
+
+<a id="lunarisalgnum001"></a>
+### LUNARIS-ALG-NUM-001 -- Gauss-Legendre quadrature nodes and weights mapped to the unit interval
+
+- **Slug**: `gauss_legendre_quadrature_unit_interval`
+- **Category**: numerical_algorithm | **Domain**: NUM | **Status**: active
+- **Classification**: delegated_library
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Harris2020NumPy` -- Harris, 2020. "Array programming with {NumPy}" (section numpy.polynomial.legendre.leggauss; pages 357-362) [DOI: 10.1038/s41586-020-2649-2]
+- **Verification notes**: Read 2026-10-11: the leggauss documentation (NumPy v2.5 manual, source tag v2.5.0) returns deg Gauss-Legendre sample points and weights on [-1, 1] for weight function 1 that integrate polynomials of degree 2*deg - 1 or less exactly, with weights w_k = c / (L'_n(x_k) L_{n-1}(x_k)) scaled to integrate 1. The NumPy paper (C. R. Harris et al., "Array programming with NumPy", Nature 585(7825):357-362, 2020, DOI 10.1038/s41586-020-2649-2) was checked through its Crossref record. The page cites no original source; Gauss's quadrature paper was not read.
+- **Mathematical contract**:
+  - Inputs: a node count n >= 1
+  - Outputs: n nodes in (0, 1) and weights summing to 1
+  - Exactness: exact
+  - Preserves: integrates polynomials up to degree 2n - 1 exactly on [0, 1]
+- **Implementing symbols**:
+  - `src/lunaris/physics/surface_radiation_quadrature.py` -- `gauss_legendre_unit_interval` (cpu_implementation)
+  - `src/lunaris/core/dynamics/preparation.py` -- `_quadrature_fields` (config_surface)
+- **Lunaris modifications**:
+  - the [-1, 1] nodes and weights of numpy.polynomial.legendre.leggauss are mapped affinely to [0, 1] (x -> (x + 1)/2, w -> w/2)
+- **Assumptions**:
+  - NumPy's leggauss returns the standard Gauss-Legendre rule
+- **Limitations**:
+  - NumPy documents testing only up to degree 100; Lunaris caps the surface-radiation node count at 512 and uses 16 by default
+  - the rule is cited through the library it delegates to, not Gauss
+- **Validated by**:
+  - `tests/test_surface_radiation_quadrature.py`
+- **See also**: [`LUNARIS-MODEL-RAD-002`](#lunarismodelrad002), [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003)
 
 ## Scientific data products (DATA)
 

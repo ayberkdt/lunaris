@@ -18,6 +18,12 @@ trajectory per configuration) was run when the change was made.
 
 Regenerate ``GOLDEN_ACCEL`` only for a deliberate, reviewed numerical change:
 ``python tests/test_dynamics_rhs_kernel_cache.py``.
+
+The visible-disk quadrature became the default albedo / thermal-IR surface
+integration after the recording, so the scenarios above pin
+``surface_integration="facets"`` (the recorded path, still bit-identical). The
+``*_quadrature`` scenarios were recorded after that change (same platform) and
+guard the quadrature branch of the cached kernel.
 """
 
 from __future__ import annotations
@@ -112,6 +118,7 @@ def _scenarios() -> dict[str, tuple[PerturbationFlags, dict[str, Any], bool]]:
     adaptive_power = AdaptiveDegreeConfig(enabled=True, power=2.5, min_degree=3, quantization_step=2)
     adaptive_table = AdaptiveDegreeConfig(enabled=True, altitude_table=((100.0, 8), (500.0, 5), (5000.0, 3)))
     F = PerturbationFlags
+    facets = {"surface_integration": "facets"}
     return {
         "sh_identity": (F(enable_sh=True), {"gravity_model": grav, "allow_identity_rotation": True}, False),
         "sh_rotation": (F(enable_sh=True), {"gravity_model": grav, "ephem_manager": eph}, False),
@@ -139,7 +146,20 @@ def _scenarios() -> dict[str, tuple[PerturbationFlags, dict[str, Any], bool]]:
             True,
         ),
         "sh_albedo_facets": (
+            F(enable_sh=True, enable_albedo=True),
+            {"gravity_model": grav, "ephem_manager": eph, "albedo": AlbedoConfig(**facets)},
+            False,
+        ),
+        "sh_albedo_quadrature": (
             F(enable_sh=True, enable_albedo=True), {"gravity_model": grav, "ephem_manager": eph, "albedo": AlbedoConfig()},
+            False,
+        ),
+        "sh_albedo_grid_quadrature": (
+            F(enable_sh=True, enable_albedo=True),
+            {
+                "gravity_model": grav, "ephem_manager": eph, "surface_provider": surf_grid,
+                "albedo": AlbedoConfig(albedo_mode="albedo_grid"),
+            },
             False,
         ),
         "sh_albedo_simple_grid": (
@@ -152,10 +172,23 @@ def _scenarios() -> dict[str, tuple[PerturbationFlags, dict[str, Any], bool]]:
         ),
         "sh_thermal_equilibrium": (
             F(enable_sh=True, enable_thermal=True),
-            {"gravity_model": grav, "ephem_manager": eph, "thermal": ThermalConfig(thermal_mode="equilibrium")},
+            {"gravity_model": grav, "ephem_manager": eph, "thermal": ThermalConfig(thermal_mode="equilibrium", **facets)},
             False,
         ),
         "sh_thermal_temperature_grid": (
+            F(enable_sh=True, enable_thermal=True),
+            {
+                "gravity_model": grav, "ephem_manager": eph, "surface_provider": surf_temp,
+                "thermal": ThermalConfig(thermal_mode="temperature_grid", **facets),
+            },
+            False,
+        ),
+        "sh_thermal_equilibrium_quadrature": (
+            F(enable_sh=True, enable_thermal=True),
+            {"gravity_model": grav, "ephem_manager": eph, "thermal": ThermalConfig(thermal_mode="equilibrium")},
+            False,
+        ),
+        "sh_thermal_temperature_grid_quadrature": (
             F(enable_sh=True, enable_thermal=True),
             {
                 "gravity_model": grav, "ephem_manager": eph, "surface_provider": surf_temp,
@@ -178,7 +211,7 @@ def _scenarios() -> dict[str, tuple[PerturbationFlags, dict[str, Any], bool]]:
             ),
             {
                 "gravity_model": grav, "ephem_manager": eph, "earth_j2": ej2, "solid_tides": tides,
-                "gravity_adaptive": adaptive_power, "thermal": ThermalConfig(),
+                "gravity_adaptive": adaptive_power, "thermal": ThermalConfig(**facets),
                 "albedo": AlbedoConfig(albedo_model="simple", albedo_mode="albedo_grid"), "surface_provider": surf_grid,
             },
             True,
@@ -249,6 +282,18 @@ GOLDEN_ACCEL: dict[str, list[list[str]]] = {
         ["-0x1.0a40a9e635d63p-6", "0x1.900778ca1cc50p-6", "-0x1.7b50656ef3ca9p+0"],
         ["0x1.0e2fad8306494p+0", "-0x1.946b9e8f182fdp-4", "0x1.947086c9009d9p-5"],
     ],
+    "sh_albedo_grid_quadrature": [
+        ["-0x1.918ed34dcb97fp+0", "-0x1.221b3a62c7b58p-7", "0x1.23dc502c3af3bp-6"],
+        ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
+        ["-0x1.0a40a9e2ae99bp-6", "0x1.900778c97662ap-6", "-0x1.7b50656f0a6cap+0"],
+        ["0x1.0e2fad8306494p+0", "-0x1.946b9e8f182fdp-4", "0x1.947086c9009d9p-5"],
+    ],
+    "sh_albedo_quadrature": [
+        ["-0x1.918ed350345c5p+0", "-0x1.221b3a58eefdfp-7", "0x1.23dc502da82bfp-6"],
+        ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
+        ["-0x1.0a40a9e2bf539p-6", "0x1.900778ca21924p-6", "-0x1.7b50656f0992ap+0"],
+        ["0x1.0e2fad8306494p+0", "-0x1.946b9e8f182fdp-4", "0x1.947086c9009d9p-5"],
+    ],
     "sh_albedo_simple_grid": [
         ["-0x1.918ed36e02624p+0", "-0x1.221b3a6136e23p-7", "0x1.23dc5035f0103p-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
@@ -297,11 +342,23 @@ GOLDEN_ACCEL: dict[str, list[list[str]]] = {
         ["-0x1.0a40aa7328588p-6", "0x1.900778ce40357p-6", "-0x1.7b50656c80992p+0"],
         ["0x1.0e2fad82c719ap+0", "-0x1.946b9e8eb692ep-4", "0x1.947086c89e37ep-5"],
     ],
+    "sh_thermal_equilibrium_quadrature": [
+        ["-0x1.918ed30922d0ap+0", "-0x1.221b3a2438d9ap-7", "0x1.23dc4ff8f207ap-6"],
+        ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
+        ["-0x1.0a40aa5229f33p-6", "0x1.900778c807ecdp-6", "-0x1.7b50656d1336ep+0"],
+        ["0x1.0e2fad82c6d1fp+0", "-0x1.946b9e8eb9320p-4", "0x1.947086c8a19fcp-5"],
+    ],
     "sh_thermal_temperature_grid": [
         ["-0x1.918ed35aa21e4p+0", "-0x1.221b39c98fae3p-7", "0x1.23dc50508cd9cp-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
         ["-0x1.0a40a9c1c6db8p-6", "0x1.900779fd8e28fp-6", "-0x1.7b5065642ce0ap+0"],
         ["0x1.0e2fad728071ep+0", "-0x1.946b9e56f1e0bp-4", "0x1.94708625a464cp-5"],
+    ],
+    "sh_thermal_temperature_grid_quadrature": [
+        ["-0x1.918ed359f20ebp+0", "-0x1.221b3aac06c7ep-7", "0x1.23dc4ffe1926dp-6"],
+        ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
+        ["-0x1.0a40a8ab77f7bp-6", "0x1.900778fc9d62bp-6", "-0x1.7b5065614e87fp+0"],
+        ["0x1.0e2fad72848edp+0", "-0x1.946b9e5c435f6p-4", "0x1.94708638db824p-5"],
     ],
     "sh_third_body": [
         ["-0x1.918eebf16e0b5p+0", "-0x1.218f74dfc0096p-7", "0x1.23e468a4f345bp-6"],
@@ -337,7 +394,7 @@ def test_cache_guard_tracks_every_callee_module() -> None:
     assert {
         "math_utils.py", "adaptive_degree.py", "ephemeris.py", "lunar_albedo.py", "relativity_effects.py",
         "solar_effects.py", "solid_tides.py", "spherical_harmonics.py", "surface_effects.py", "thermal_ir.py",
-        "third_body_effects.py",
+        "third_body_effects.py", "surface_radiation_quadrature.py",
     } <= names
     assert "engine.py" not in names  # numba itself validates against engine.py
     assert any(entry.startswith("lunaris.physics.relativity_effects.C_SQ=") for entry in frozen)

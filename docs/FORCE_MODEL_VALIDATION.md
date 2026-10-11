@@ -108,6 +108,27 @@ factor rather than per-facet occultation. This is an engineering approximation
 documented by the kernels and recorded in batch manifests through
 `force_model_fidelity`; high-accuracy surface-radiation claims must call it out.
 
+### 2.6 Surface-radiation integration — **changed** (visible-disk quadrature)
+The 18 x 36 point-facet sum (facets up to ~300 km across) misestimated albedo
+and thermal IR at low altitude. Against a brute-force midpoint integral over the
+visible cap (surface coordinates centred on the sub-satellite point, converged to
+~1e-5) and, for uniform exitance, the exact cannonball result
+`C A/(m c) M (R/r)^2`, on a sunlit disk it gave 0.39x-1.25x of the converged
+acceleration at 100 km, 0.04x-1.05x at 30 km and ~0.2-1 % error at 1000 km,
+depending on where the spacecraft sits over the grid. `AlbedoConfig` and
+`ThermalConfig` now default to `surface_integration="visible_disk_quadrature"`
+(`lunaris.physics.surface_radiation_quadrature`, 16 x 32 directions in the
+spacecraft's solid angle). It reproduces the uniform limit to machine precision
+at 30-1000 km. Where the day/night terminator crosses the visible disk its error
+is at most 2e-4 of the full-Sun albedo magnitude; elsewhere it is below the
+reference's own ~1e-5. The kernel cost is about that of the 18 x 36 sum.
+`surface_integration="facets"` restores the former sum bit-for-bit, so older
+results can be reproduced. On a 1-day, 100 km circular polar orbit (GL1800F
+degree 20, Sun/Earth, SRP, 0.12 albedo, 250 K thermal) the change moves the
+position by at most 5.7 mm for A/m = 0.002 m^2/kg and 57 mm for 0.02 m^2/kg,
+mostly in-track and mostly from thermal IR. Batch manifests record
+`albedo_surface_integration` / `thermal_ir_surface_integration`.
+
 ## 3. Finite-difference gradient checks (`a = +∇U`)
 
 Central differences of each potential vs the analytic acceleration kernel; bar is

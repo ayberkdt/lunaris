@@ -95,7 +95,7 @@ def test_force_model_fidelity_provenance_labels_engineering_scope() -> None:
             enable_relativity_1pn=True,
         ),
         srp=SimpleNamespace(enable_moon_eclipse=True, enable_earth_eclipse=True),
-        albedo=SimpleNamespace(albedo_model="lambert_facets", enable_eclipse=True),
+        albedo=SimpleNamespace(albedo_model="lambert_facets", enable_eclipse=True, surface_integration="facets"),
         thermal=SimpleNamespace(
             thermal_mode="equilibrium_temperature",
             enable_eclipse=True,
@@ -121,6 +121,9 @@ def test_force_model_fidelity_provenance_labels_engineering_scope() -> None:
         == "moon_center_global_earth_shadow_factor_on_solar_input"
     )
     assert meta["thermal_ir_model_fidelity"] == "engineering_approximation"
+    # The surface integration is provenance: the facet sum and the quadrature differ.
+    assert meta["albedo_surface_integration"] == "facets"
+    assert meta["thermal_ir_surface_integration"] == "visible_disk_quadrature"  # config default
 
 
 def test_degraded_backend_provenance_never_copies_request_as_actual() -> None:
