@@ -125,7 +125,7 @@ def _add_gravity_args(parser: argparse.ArgumentParser) -> None:
         choices=("classic_sh", "st_lrps"),
         help="Central gravity backend: classical spherical harmonics or ST-LRPS surrogate.",
     )
-    g_grav.add_argument("--gravity-file-path", type=str, help="Gravity model file path (.tab/.gfc/.shbdr)")
+    g_grav.add_argument("--gravity-file-path", type=str, help="Gravity model file path (SHADR .tab/.sha/.txt or binary .shbdr)")
     g_grav.add_argument(
         "--surrogate-gravity-model-dir",
         type=str,

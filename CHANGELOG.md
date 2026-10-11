@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Fixed: strict SHADR loading.** In strict mode every numeric field must now
+  be a complete literal. Before, a regex fallback read `1.0-08` as the two
+  numbers 1.0 and -8.0 and accepted `-9.0E-05junk`. Fortran `D` exponents
+  parse as one number. A non-integral degree/order index or normalization
+  state (`1.7`, `1.5`, `nan`) is rejected instead of truncated or skipped, in
+  both `load_shadr_ascii` and `read_gravity_model_header`. ICGEM `.gfc` files
+  are refused with a clear error instead of reaching the binary SHBDR parser,
+  and `--gravity-file-path` no longer offers `.gfc`. The GL1800F table loads
+  bit-identically (SHA-256 of the coefficient arrays at degree 1800, 660 and
+  50 unchanged). Tests are in `tests/test_io_gravity.py`.
 - **Fixed: SH acceleration within nanometres of the polar axis.** The numba and
   torch kernels softened the longitudinal projection to `1/(rho^2 + 1e-24)`,
   which halved it at `rho = 1e-12 m` (up to 49% transverse error against a
