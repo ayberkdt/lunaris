@@ -43,10 +43,12 @@ Implementation notes
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -176,10 +178,8 @@ class _PreparedForces(NamedTuple):
 # the pack is unboxed as one object. Each force's tuple is unpacked inside its
 # own branch, so a run pays reference counting only for what it uses.
 #
-# Numba revalidates a cached kernel against THIS file only: after editing a
-# force-model callee in another module, delete the engine kernels' cache files
-# (``core/dynamics/__pycache__/engine.*.nbi`` / ``.nbc``) before trusting
-# results from a warm cache.
+# Numba revalidates a cached kernel against THIS file only; the guard in
+# section 0c drops the cache when a force-model callee module changes.
 
 
 @structref.register
@@ -692,6 +692,121 @@ def _rhs_kernel_numba(t: float, y: np.ndarray, pack: _RhsPack) -> np.ndarray:
     if n > 6:
         dydt[6] = 0.0
     return dydt
+
+
+# =============================================================================
+# 0c.               STALE-CACHE GUARD FOR THE CACHED RHS KERNELS
+# =============================================================================
+# Numba inlines the force-model callees into the cached kernels above but
+# validates the cache against engine.py's own source stamp only. A stamp file
+# next to the cache records a digest of every callee's source module (found by
+# walking the kernels' global references, transitively) and of the scalar and
+# array globals numba freezes into them; on mismatch engine.py's cache files are
+# removed so the kernels recompile against the current callees.
+
+_RHS_CACHED_KERNELS = (_new_rhs_pack, _rhs_sh_only_numba, _rhs_kernel_numba)
+_RHS_DEPS_STAMP_NAME = "engine.rhs_kernel_deps.stamp"
+
+
+def _iter_code_names(code: Any) -> Any:
+    """Global names referenced by ``code`` and its nested code objects."""
+    yield from code.co_names
+    for const in code.co_consts:
+        if hasattr(const, "co_names"):
+            yield from _iter_code_names(const)
+
+
+def _rhs_kernel_dependencies() -> tuple[list[str], list[str]]:
+    """Source files of the numba callees the cached kernels reach, and frozen globals.
+
+    Returns ``(sorted source paths, sorted "module.name=value" entries)``.
+    engine.py itself is excluded: numba already validates against it.
+    """
+    own_file = _rhs_kernel_numba.py_func.__code__.co_filename
+    files: set[str] = set()
+    frozen: set[str] = set()
+    seen: set[int] = set()
+    stack = [k.py_func for k in _RHS_CACHED_KERNELS]
+    while stack:
+        func = stack.pop()
+        if id(func) in seen:
+            continue
+        seen.add(id(func))
+        if func.__code__.co_filename != own_file:
+            files.add(func.__code__.co_filename)
+        g = func.__globals__
+        for name in _iter_code_names(func.__code__):
+            if name not in g:
+                continue
+            obj = g[name]
+            py_func = getattr(obj, "py_func", None)
+            if py_func is not None and hasattr(obj, "signatures"):  # numba dispatcher
+                stack.append(py_func)
+            elif isinstance(obj, bool | int | float | complex | str | np.generic) or (
+                isinstance(obj, tuple) and all(isinstance(v, bool | int | float | str) for v in obj)
+            ):
+                frozen.add(f"{func.__module__}.{name}={obj!r}")
+            elif isinstance(obj, np.ndarray):
+                digest = hashlib.sha256(np.ascontiguousarray(obj).tobytes()).hexdigest()
+                frozen.add(f"{func.__module__}.{name}=ndarray{obj.dtype}{obj.shape}:{digest}")
+    return sorted(files), sorted(frozen)
+
+
+def _rhs_kernel_dependency_digest() -> str:
+    files, frozen = _rhs_kernel_dependencies()
+    h = hashlib.sha256()
+    for path in files:
+        h.update(Path(path).name.encode())
+        h.update(hashlib.sha256(Path(path).read_bytes()).digest())
+    for entry in frozen:
+        h.update(entry.encode())
+    return h.hexdigest()[:32]
+
+
+def _rhs_kernel_cache_dirs() -> list[Path]:
+    """Numba's own cache directory for the cached kernels (in-tree or NUMBA_CACHE_DIR)."""
+    dirs = {getattr(k._cache, "_cache_path", None) for k in _RHS_CACHED_KERNELS}
+    return [Path(d) for d in sorted(d for d in dirs if d)]
+
+
+def _refresh_stale_rhs_kernel_cache(
+    cache_dirs: list[Path] | None = None,
+    digest: str | None = None,
+) -> list[Path]:
+    """Remove engine.py's numba cache files when a callee changed; return what was removed.
+
+    Best-effort: any failure (read-only cache dir, unreadable source) is logged
+    at debug level and never propagates, so importing the engine cannot fail
+    because of it.
+    """
+    removed: list[Path] = []
+    try:
+        if digest is None:
+            digest = _rhs_kernel_dependency_digest()
+        if cache_dirs is None:
+            cache_dirs = _rhs_kernel_cache_dirs()
+        module_stem = Path(_rhs_kernel_numba.py_func.__code__.co_filename).stem
+        for cache_dir in cache_dirs:
+            stamp = cache_dir / _RHS_DEPS_STAMP_NAME
+            try:
+                if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == digest:
+                    continue
+                for pattern in (f"{module_stem}.*.nbi", f"{module_stem}.*.nbc"):
+                    for cached in sorted(cache_dir.glob(pattern)):
+                        cached.unlink()
+                        removed.append(cached)
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                stamp.write_text(digest + "\n", encoding="utf-8")
+            except OSError as exc:
+                logger.debug("RHS kernel cache guard skipped %s: %s", cache_dir, exc)
+        if removed:
+            logger.info("Removed %d stale RHS kernel cache file(s): a force-model callee changed.", len(removed))
+    except Exception as exc:  # best-effort guard: never break the import
+        logger.debug("RHS kernel cache guard failed: %s", exc)
+    return removed
+
+
+_refresh_stale_rhs_kernel_cache()
 
 
 # =============================================================================

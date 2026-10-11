@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import platform
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -330,6 +331,78 @@ def _platform_fingerprint() -> tuple[str, str, str, str]:
 # =============================================================================
 # Tests
 # =============================================================================
+def test_cache_guard_tracks_every_callee_module() -> None:
+    files, frozen = engine_module._rhs_kernel_dependencies()
+    names = {Path(f).name for f in files}
+    assert {
+        "math_utils.py", "adaptive_degree.py", "ephemeris.py", "lunar_albedo.py", "relativity_effects.py",
+        "solar_effects.py", "solid_tides.py", "spherical_harmonics.py", "surface_effects.py", "thermal_ir.py",
+        "third_body_effects.py",
+    } <= names
+    assert "engine.py" not in names  # numba itself validates against engine.py
+    assert any(entry.startswith("lunaris.physics.relativity_effects.C_SQ=") for entry in frozen)
+
+
+def _fake_cache(cache_dir: Path) -> tuple[list[Path], list[Path]]:
+    stale = [
+        cache_dir / "engine._rhs_kernel_numba-291.py310.nbi",
+        cache_dir / "engine._rhs_kernel_numba-291.py310.1.nbc",
+        cache_dir / "engine._rhs_sh_only_numba-217.py310.nbi",
+    ]
+    keep = [cache_dir / "engine.cpython-310.pyc", cache_dir / "math_utils.clamp-104.py310.nbi"]
+    for path in stale + keep:
+        path.write_bytes(b"x")
+    return stale, keep
+
+
+def test_cache_guard_removes_engine_cache_when_a_callee_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    callee = tmp_path / "callee_module.py"
+    callee.write_text("A = 1" + chr(10), encoding="utf-8")
+    real = engine_module._rhs_kernel_dependencies
+
+    def with_fake_callee() -> tuple[list[str], list[str]]:
+        files, frozen = real()
+        return [*files, str(callee)], frozen
+
+    monkeypatch.setattr(engine_module, "_rhs_kernel_dependencies", with_fake_callee)
+    cache_dir = tmp_path / "__pycache__"
+    cache_dir.mkdir()
+    stale, keep = _fake_cache(cache_dir)
+
+    # No stamp yet: the cache's provenance is unknown, so it is dropped once.
+    removed = engine_module._refresh_stale_rhs_kernel_cache([cache_dir])
+    assert sorted(removed) == sorted(stale)
+    stamp = cache_dir / engine_module._RHS_DEPS_STAMP_NAME
+    first_digest = stamp.read_text(encoding="utf-8").strip()
+
+    # Same callee sources: a freshly written cache is kept.
+    stale, keep = _fake_cache(cache_dir)
+    assert engine_module._refresh_stale_rhs_kernel_cache([cache_dir]) == []
+    assert all(p.exists() for p in stale + keep)
+
+    # A callee's source changes: engine.py's cache files go, nothing else does.
+    callee.write_text("A = 2" + chr(10), encoding="utf-8")
+    removed = engine_module._refresh_stale_rhs_kernel_cache([cache_dir])
+    assert sorted(removed) == sorted(stale)
+    assert not any(p.exists() for p in stale)
+    assert all(p.exists() for p in keep)
+    assert stamp.read_text(encoding="utf-8").strip() != first_digest
+
+
+def test_cache_guard_never_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    not_a_dir = tmp_path / "file"
+    not_a_dir.write_text("", encoding="utf-8")
+    assert engine_module._refresh_stale_rhs_kernel_cache([not_a_dir / "sub"], digest="abc") == []
+
+    def broken() -> tuple[list[str], list[str]]:
+        raise RuntimeError("unreadable source")
+
+    monkeypatch.setattr(engine_module, "_rhs_kernel_dependencies", broken)
+    assert engine_module._refresh_stale_rhs_kernel_cache([tmp_path]) == []
+
+
 def test_kernels_are_module_level_and_disk_cached() -> None:
     for kernel in (engine_module._rhs_kernel_numba, engine_module._rhs_sh_only_numba, engine_module._new_rhs_pack):
         assert kernel.py_func.__qualname__ == kernel.py_func.__name__  # not a closure

@@ -10,8 +10,10 @@
   `cache=True` kernels that read one `_RhsPack` (a numba StructRef). Results are
   bit-identical (`np.array_equal`) on 27 force configurations: 1000 RHS states
   and a 1-day DOP853 trajectory each. The surrogate (Python) RHS is unchanged.
-  Numba checks a cached kernel only against `engine.py`, so after editing a
-  force kernel in another module, delete `core/dynamics/__pycache__/engine.*.nb*`.
+  Numba checks a cached kernel only against `engine.py`; a stamp next to the
+  cache hashes the 11 callee modules (and the constants numba freezes into
+  them), and on import a mismatch removes engine.py's cache files so the
+  kernels recompile against the current force code.
 - **Added: ST-LRPS direction-accuracy training options.** The changes are:
   - A relative acceleration loss.
   - Radial/cross-track splits of the acceleration error, in the same scaled units as the acceleration loss.
