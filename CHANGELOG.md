@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: the Mission Monitor doubled every panel when it restored a saved dashboard.** `clear_docks` scheduled the old docks with `deleteLater`, and `restoreState` matched them by object name before they were gone. Removed docks now lose their object name and are hidden first.
+
+- **Fixed: a Mission Studio session save could write a page blank.** A page whose state could not be read was saved with empty defaults, and the 30 s auto-save replaced the last good session with it. The snapshot now lists such pages in `meta.unreadable_sections`, and both the auto-save and Save Profile refuse to write it, log a warning and keep the previous file.
+
 - **Fixed: install hints pointed at an unrelated PyPI package.**
   - **The defect.** `pip install lunaris[hpc]` / `pip install lunaris[ml]` resolve on PyPI to "Lunaris — agent memory engine". That is a different project, verified on pypi.org on 2026-10-11.
   - **The fix.** The deployment guide, the torch-missing error and the third-party notice now install from a Lunaris checkout or a locally built wheel.

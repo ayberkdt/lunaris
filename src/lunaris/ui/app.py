@@ -2698,6 +2698,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"Failed to load session file:\n\n{e!s}"
             )
 
+    def _session_payload_for_save(self) -> dict[str, Any]:
+        """The session snapshot, refused when a page could not be read.
+
+        Writing it anyway would store that section blank and replace the last
+        good session with it; the callers report the error instead.
+        """
+        data = self._collect_preset_dict()
+        unreadable = (data.get("meta") or {}).get("unreadable_sections")
+        if unreadable:
+            raise RuntimeError(
+                "not written, the previous file is kept: could not read "
+                + "; ".join(str(item) for item in unreadable)
+            )
+        return data
+
     def _action_save_session(self, _checked: bool = False):
         """Save session to file."""
         current = str(self.app_data_dir / "mission_profile.json")
@@ -2709,7 +2724,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            data = self._collect_preset_dict()
+            data = self._session_payload_for_save()
             write_session_file(Path(path), data)
             self._log_message(f"[UI] Session saved to: {Path(path).name}", severity="success")
         except Exception as e:
@@ -2943,7 +2958,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lifecycle event such as window close.
         """
         try:
-            data = self._collect_preset_dict()
+            data = self._session_payload_for_save()
             write_session_file(self.session_path, data)
             self._last_autosave_error = None
             return True
