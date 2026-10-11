@@ -1860,6 +1860,11 @@ class GPUBatchPropagator:
 
         self._ephem_pack = self._build_ephem_pack(dynamics_engine)
         self._grav_pack = self._build_grav_pack(dynamics_engine)
+        # Impact sphere radius: the CPU path's get_ref_radius_and_mu SSOT (gravity
+        # model reference radius; R_MOON only without a gravity model).
+        from lunaris.core.propagation.time_grid import get_ref_radius_and_mu
+
+        self._impact_ref_radius_m = float(get_ref_radius_and_mu(dynamics_engine)[0])
         self._earth_j2_pack = self._build_earth_j2_pack(dynamics_engine)
         self._recommended_max_batch = self._estimate_recommended_max_batch()
 
@@ -2263,7 +2268,7 @@ class GPUBatchPropagator:
         tpb = int(self._launch_tpb)
         bpg = (N + tpb - 1) // tpb
 
-        r_impact = float(R_MOON) + float(self._cfg.impact_alt_km) * 1_000.0
+        r_impact = self._impact_ref_radius_m + float(self._cfg.impact_alt_km) * 1_000.0
 
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
         Y_out[0] = np.ascontiguousarray(Y0, dtype=np.float64)  # initial state = snapshot 0

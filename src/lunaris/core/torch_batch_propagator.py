@@ -276,7 +276,11 @@ class TorchBatchPropagator:
         self._device = torch.device(f"cuda:{int(device_id)}")
         self._dt = float(getattr(batch_cfg, "dt_s", 60.0))
         self._impact_alt_m = float(getattr(batch_cfg, "impact_alt_km", 0.0)) * 1_000.0
-        self._impact_r = float(R_MOON) + self._impact_alt_m
+        # Same impact sphere as the CPU path, whose gravity model IS this surrogate:
+        # its reference radius (R_MOON only when the model exposes none).
+        self._impact_r = (
+            float(getattr(surrogate_model, "R_ref_m", 0.0) or R_MOON) + self._impact_alt_m
+        )
         self._detect_impact = bool(getattr(batch_cfg, "impact_detection_enabled", True))
         self._terrain_requested = self._detect_impact and (
             str(getattr(batch_cfg, "impact_surface_mode", "sphere")) == "terrain"
