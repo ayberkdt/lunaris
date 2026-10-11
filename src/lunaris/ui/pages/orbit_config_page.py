@@ -77,18 +77,23 @@ except ImportError as e:
 
 
 try:
+    from lunaris.common.constants import R_MOON as _R_ORBIT_INIT_M
     from lunaris.ui.components.primitives import InlineNotice, Section
     from lunaris.ui.core.ui_commons import (
         MU_MOON_KM3_S2,
         ORBIT_THEME,
-        R_MOON_KM,
         THEME,
         NumericDragLineEdit,
         get_icon,
         hex_to_rgba_float,
         rgba_css_to_tuple,
     )
-    R_MOON = R_MOON_KM  # local alias used throughout this module
+    # Local alias used throughout this module. It is the radius the runner
+    # converts --hp-km/--ha-km/--alt-km into a semi-major axis with
+    # (lunaris.cli.common_args, R_MOON = 1738.0 km), so the a/e and hp/ha the
+    # page derives describe the orbit that is launched. The mean radius
+    # (1737.4 km) made the preview disagree with the run by 0.6 km.
+    R_MOON = _R_ORBIT_INIT_M / 1000.0
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):

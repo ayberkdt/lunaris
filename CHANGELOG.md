@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: the Mission Studio orbit page disagreed with the run by 0.6 km.**
+  - The page converted altitudes with the mean radius (1737.4 km); the runner converts `--hp-km/--ha-km/--alt-km` with `R_MOON` = 1738.0 km. The preview's semi-major axis was 0.6 km below the launched one, and in a/e mode the periselene/aposelene the page showed were 0.6 km above what the run used. The page now uses the runner's radius. Ported from Sidera.
+
 - **Fixed: PDS3 `^IMAGE` pointers with a `<BYTES>` unit.**
   - `^IMAGE = 2049 <BYTES>` was read as record 2049 (offset `RECORD_BYTES * 2048`, silently wrong) and `("F.IMG", 2049 <BYTES>)` was refused as a missing pointer. A `<BYTES>` pointer is now a 1-based byte position. Record pointers are unchanged. Ported from Sidera.
 
