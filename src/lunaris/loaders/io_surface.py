@@ -188,8 +188,10 @@ class PDS3ParseError(ValueError):
 _RE_PDS_COMMENT = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
 
 _RE_IMAGE_STR = re.compile(r'\^IMAGE\s*=\s*"([^"]+)"', flags=re.IGNORECASE)
-_RE_IMAGE_TUP = re.compile(r'\^IMAGE\s*=\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*\)', flags=re.IGNORECASE)
-_RE_IMAGE_REC = re.compile(r"\^IMAGE\s*=\s*(\d+)", flags=re.IGNORECASE)
+_RE_IMAGE_TUP = re.compile(
+    r'\^IMAGE\s*=\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*(<\s*BYTES\s*>)?\s*\)', flags=re.IGNORECASE
+)
+_RE_IMAGE_REC = re.compile(r"\^IMAGE\s*=\s*(\d+)\s*(<\s*BYTES\s*>)?", flags=re.IGNORECASE)
 
 _RE_FILE_NAME = re.compile(r'\bFILE_NAME\s*=\s*"([^"]+)"', flags=re.IGNORECASE | re.MULTILINE)
 _RE_RECORD_BYTES = re.compile(r"\bRECORD_BYTES\s*=\s*(\d+)", flags=re.IGNORECASE | re.MULTILINE)
@@ -314,7 +316,7 @@ def _find_case_insensitive(path: str | Path) -> Path | None:
     return None
 
 
-def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[str | None, int]:
+def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[str | None, int, bool]:
     """
     Parse the PDS3 '^IMAGE' pointer.
 
@@ -322,6 +324,11 @@ def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[
       ^IMAGE = "FILE.IMG"             -> (FILE.IMG, 1)
       ^IMAGE = ("FILE.IMG", 123)      -> (FILE.IMG, 123)
       ^IMAGE = 123                    -> (None, 123)   (data in the label file itself)
+      ^IMAGE = 2049 <BYTES>           -> (None, 2049, True)
+      ^IMAGE = ("FILE.IMG", 2049 <BYTES>)
+
+    A ``<BYTES>`` unit makes the number a 1-based byte position instead of a
+    record number (PDS3 Standards Reference, pointer statements).
 
     Parameters
     ----------
@@ -331,24 +338,25 @@ def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[
 
     Returns
     -------
-    (filename, start_record)
-        filename is None if the label points to itself.
+    (filename, start, in_bytes)
+        filename is None if the label points to itself; ``in_bytes`` says
+        whether ``start`` is a 1-based byte position (else a record number).
     """
     m = _RE_IMAGE_STR.search(label_text)
     if m:
-        return m.group(1), 1
+        return m.group(1), 1, False
 
     m = _RE_IMAGE_TUP.search(label_text)
     if m:
-        return m.group(1), int(m.group(2))
+        return m.group(1), int(m.group(2)), m.group(3) is not None
 
     m = _RE_IMAGE_REC.search(label_text)
     if m:
-        return None, int(m.group(1))
+        return None, int(m.group(1)), m.group(2) is not None
 
     if strict:
         raise PDS3ParseError("PDS3 parse error: missing required ^IMAGE pointer.")
-    return None, 1
+    return None, 1, False
 
 
 def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> tuple[Path, int]:
@@ -384,13 +392,16 @@ def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> t
     raw_text = _strip_pds_comments(raw_text)
 
     # 1) Parse metadata
-    ptr_file, start_record = _parse_pds3_image_pointer(raw_text, strict=strict)
+    ptr_file, start_record, start_in_bytes = _parse_pds3_image_pointer(raw_text, strict=strict)
     explicit_file_name = _re_find_optional(_RE_FILE_NAME, raw_text, str, default=None)
     record_bytes = _re_find_optional(_RE_RECORD_BYTES, raw_text, int, default=None)
 
     # 2) Compute offset
     offset_bytes = 0
-    if start_record > 1:
+    if start_in_bytes:
+        # A <BYTES> pointer is a 1-based byte position, independent of RECORD_BYTES.
+        offset_bytes = int(start_record) - 1
+    elif start_record > 1:
         if record_bytes is None:
             # In strict mode, if ^IMAGE implies an offset but RECORD_BYTES is missing, fail fast.
             if strict:

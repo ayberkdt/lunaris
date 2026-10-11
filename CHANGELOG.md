@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: PDS3 `^IMAGE` pointers with a `<BYTES>` unit.**
+  - `^IMAGE = 2049 <BYTES>` was read as record 2049 (offset `RECORD_BYTES * 2048`, silently wrong) and `("F.IMG", 2049 <BYTES>)` was refused as a missing pointer. A `<BYTES>` pointer is now a 1-based byte position. Record pointers are unchanged. Ported from Sidera.
+
 - **Fixed: a Mission Monitor layout file that is not UTF-8 was overwritten instead of kept.**
   - `load_layout` let `UnicodeDecodeError` escape (it is not an `OSError` or `LayoutError`), the caller swallowed it, no `.bak` was made, and the layout was overwritten at close. It now raises `LayoutError`, so the file is quarantined like invalid JSON. Ported from Sidera.
 

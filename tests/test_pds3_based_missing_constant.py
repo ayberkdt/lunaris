@@ -83,6 +83,27 @@ def test_decimal_missing_constant_is_unchanged(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("pointer", "expected_offset"),
+    [
+        ('^IMAGE = ("data.img", 2049 <BYTES>)', 2048),
+        ('^IMAGE = ("data.img", 3)', 200),  # records: RECORD_BYTES * (3 - 1)
+        ('^IMAGE = ("data.img", 1 <BYTES>)', 0),
+    ],
+)
+def test_image_pointer_units(tmp_path: Path, pointer: str, expected_offset: int) -> None:
+    """Regression: ``<BYTES>`` pointers were read as record numbers (offset
+    RECORD_BYTES * (n - 1)) or, in the tuple form, refused as missing."""
+    from lunaris.loaders.io_surface import _resolve_img_from_label
+
+    (tmp_path / "data.img").write_bytes(b"\0" * 4096)
+    lbl = tmp_path / "data.lbl"
+    lbl.write_text(f"RECORD_BYTES = 100\n{pointer}\n", encoding="utf-8")
+    img, offset = _resolve_img_from_label(lbl)
+    assert img.name.lower() == "data.img"
+    assert offset == expected_offset
+
+
+@pytest.mark.parametrize(
     ("sample_type", "bits", "expected"),
     [
         ("PC_REAL", 32, "<f4"),
