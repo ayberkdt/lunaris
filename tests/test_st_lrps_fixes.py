@@ -836,9 +836,11 @@ def test_streaming_u_relative_error_is_computed(tmp_path):
         r_ref_m=1737400.0,
         alt_bin_km=50.0,
     )
-    rel_pct = result.get("U", {}).get("rel_mean_pct", None)
-    assert rel_pct is not None, "U.rel_mean_pct missing from streaming result"
-    assert rel_pct > 0.0, f"U.rel_mean_pct should be > 0; got {rel_pct}"
+    # Streaming reports the ratio of sums under its own key (not rel_mean_pct,
+    # which in-memory mode uses for the per-point mean).
+    rel_pct = result.get("U", {}).get("rel_ratio_of_sums_pct", None)
+    assert rel_pct is not None, "U.rel_ratio_of_sums_pct missing from streaming result"
+    assert rel_pct > 0.0, f"U.rel_ratio_of_sums_pct should be > 0; got {rel_pct}"
 
 
 # ==============================================================================
