@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Fixed: post-processing GM, radius and eclipse timing.**
+  - GM and radius: `process_simulation_results` and `build_orbit_analysis`
+    read `mu_m3s2` / `R_body_m` attributes that the dynamics engine does not
+    have. They therefore always used a hard-coded 4.902801e12 m^3/s^2 and
+    1737.4 km, or `MU_MOON`. They now use the run's gravity model
+    (`engine.grav.GM_m3s2` / `R_ref_m`), the same source the propagator uses,
+    and fall back to `MU_MOON` / `R_MOON`. Altitudes and elements in reports
+    of SH runs change accordingly (GL1800F: altitude reference 1738.0 km
+    instead of 1737.4 km).
+  - Eclipse mask: it now interpolates the Sun/Earth ephemeris at each sample
+    time. Before, it used the next table row. Its Moon radius is the SRP
+    occulter radius when the engine has one.
+  - The ephemeris index helper now returns the nearest-left row, as its
+    docstring states. The ground track uses this helper.
+
+  Tests are in `tests/test_analysis_gm_radius.py`.
 - **Fixed: rv-to-COE edge cases.**
   - Inclination: `acos(hz/|h|)` lost precision near 0 and 180 deg (1e-6 rad
     came back 4e-5 relative off; below about 1.5e-8 rad it came back as 0).
