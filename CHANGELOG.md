@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: a PDS3 `MISSING_CONSTANT` written as a based integer was read as its radix.**
+  - `parse_pds3_cyl_label` matched `16#FF7FFFFB#` with a decimal pattern and stored `16.0`, so a DN of 16 was masked as missing and the real null was not.
+  - ODL based integers (`radix#[sign]digits#`, radix 2-16) are now decoded: as the integer for integer samples (range-checked), as the IEEE bit pattern of the sample word for real samples (`16#FF7FFFFB#` = float32 -3.4028226550889045e38). Malformed constants raise `PDS3ParseError`. Decimal constants are unchanged; no repository data label uses the based form. Ported from Sidera (66237c40).
+
 - **Fixed: the frozen-orbit search recorded the working directory's git commit.**
   - `git rev-parse HEAD` ran in the process's cwd, so a search started inside another repository wrote that repository's commit into its manifest. It now runs in the installed package's directory. Ported from Sidera.
 

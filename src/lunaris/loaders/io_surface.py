@@ -1112,6 +1112,50 @@ class PDS3RasterInfo:
     center_lat_deg: float
 
 
+_RE_MISSING_BASED = re.compile(
+    r"\bMISSING_CONSTANT\s*=\s*(\d+)#([+-]?)([0-9A-Za-z]+)#", flags=re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _based_missing_constant(radix: str, sign: str, digits: str, sample_type: str, sample_bits: int) -> float:
+    """A MISSING_CONSTANT written as an ODL based integer, as the sample value it marks.
+
+    ODL based integers are ``radix#[sign]digits#`` with a radix of 2 to 16
+    (PDS3 Standards Reference, 12.3.1.2). For an integer SAMPLE_TYPE the
+    constant is that integer and must fit the sample type. For a real
+    SAMPLE_TYPE the integer is read as the IEEE bit pattern of a
+    SAMPLE_BITS-wide word (``16#FF7FFFFB#`` is the float32
+    -3.4028226550889045e+38, the LRO null), taken as the pattern of the
+    decoded value, so the file's byte order does not enter. Chapter 12
+    defines only the integer; the bit-pattern reading for real samples is an
+    interpretation (the integer itself, 4286578683 here, is no float32 value).
+    """
+    text = f"MISSING_CONSTANT = {radix}#{sign}{digits}#"
+    base = int(radix)
+    if not 2 <= base <= 16:
+        raise PDS3ParseError(f"PDS3 parse error: {text}: the radix must be 2 to 16 (ODL based integer)")
+    try:
+        magnitude = int(digits, base)
+    except ValueError as error:
+        raise PDS3ParseError(f"PDS3 parse error: {text}: {digits!r} are not base-{base} digits") from error
+    value = -magnitude if sign == "-" else magnitude
+    dtype = dtype_from_pds3_sample(sample_type, sample_bits)
+    if dtype.kind == "f":
+        if not 0 <= value < 2 ** (8 * dtype.itemsize):
+            raise PDS3ParseError(
+                f"PDS3 parse error: {text} is not a {8 * dtype.itemsize}-bit pattern for SAMPLE_TYPE {sample_type}"
+            )
+        word = np.array([value], dtype=f"u{dtype.itemsize}")
+        return float(word.view(f"f{dtype.itemsize}")[0])
+    limits = np.iinfo(dtype)
+    if not limits.min <= value <= limits.max:
+        raise PDS3ParseError(
+            f"PDS3 parse error: {text} = {value} is outside {sample_type} {sample_bits}-bit "
+            f"({limits.min}..{limits.max})"
+        )
+    return float(value)
+
+
 @lru_cache(maxsize=128)
 def parse_pds3_cyl_label(label_path: PathLike) -> PDS3RasterInfo:
     """
@@ -1145,14 +1189,20 @@ def parse_pds3_cyl_label(label_path: PathLike) -> PDS3RasterInfo:
     scaling_factor = _re_find_one(r"\bSCALING_FACTOR\s*=\s*([0-9.+-Ee]+)", txt, float)
     offset = _re_find_one(r"\bOFFSET\s*=\s*([0-9.+-Ee]+)", txt, float)
 
-    # Optional missing constant (often present in derived maps)
-    # Robust numeric pattern (supports sign + scientific notation)
-    missing_constant = _re_find_optional(
-        r"\bMISSING_CONSTANT\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[Ee][+-]?\d+)?)",
-        txt,
-        float,
-        default=float("nan"),
-    )
+    # Optional missing constant (often present in derived maps): a based
+    # integer (16#FF7FFFFB#) or a decimal number (sign + scientific notation).
+    based = _RE_MISSING_BASED.search(txt)
+    if based is not None:
+        missing_constant = _based_missing_constant(
+            based.group(1), based.group(2), based.group(3), sample_type, sample_bits,
+        )
+    else:
+        missing_constant = _re_find_optional(
+            r"\bMISSING_CONSTANT\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[Ee][+-]?\d+)?)",
+            txt,
+            float,
+            default=float("nan"),
+        )
 
     # Map projection block
     map_projection_type = _re_find_one(r"\bMAP_PROJECTION_TYPE\s*=\s*\"([^\"]+)\"", txt, str)
