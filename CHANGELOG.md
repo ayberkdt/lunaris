@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Fixed: SciPy event root-finding crash on circular orbits.**
+  - **The crash.** On an exactly circular orbit, RK45, Radau and LSODA raised `ValueError: f(a) and f(b) must have different signs` from inside `solve_ivp`. This was reproduced on a 100 km lunar orbit.
+  - **Cause.** The apsis event `r . v` sits at rounding level there. SciPy detects a crossing from the solver states, but `brentq` re-evaluates the step interpolant, whose end values can have the other sign.
+  - **The fix.** Events are now wrapped so a root search sees the step-end signs SciPy detected, and an event that starts on its surface stays silent until it leaves the rounding band.
+  - **Results.** Runs without the inconsistency are bit-identical, tested on an eccentric orbit for RK45 and DOP853.
+  - Ported from Sidera (7e3deea4).
+
 - **Changed: albedo and thermal IR are integrated over the visible disk by default (default results change).**
   - **The defect.** The 18 x 36 point-facet sum (facets up to ~300 km across) gave 0.39x-1.25x of the converged acceleration at 100 km and 0.04x-1.05x at 30 km on a sunlit disk. The reference was a brute-force cap integral plus the exact uniform-exitance limit `C A/(m c) M (R/r)^2`.
   - **The fix.** `AlbedoConfig` / `ThermalConfig` gain `surface_integration` (default `"visible_disk_quadrature"`), `quadrature_radial_nodes` (16) and `quadrature_azimuth_nodes` (32). The new `lunaris.physics.surface_radiation_quadrature` is ported from the Sidera fork and re-verified independently. It integrates in the spacecraft's solid angle: exact for uniform exitance, and within 2e-4 of the full-Sun magnitude where the terminator crosses the disk. An azimuth recurrence replaces per-node trig, so the kernel costs about as much as the old sum.

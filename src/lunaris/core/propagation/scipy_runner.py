@@ -10,6 +10,7 @@ preserved exactly — no numerical change.
 from __future__ import annotations
 
 import logging
+import math
 import warnings
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -48,6 +49,111 @@ def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
         if atol_vel is not None:
             vec[3:6] = float(atol_vel)
     return vec
+
+
+# A non-terminal event whose start value is within this many times its measured
+# rounding sensitivity of zero starts on its surface (see `_rounding_band`); the
+# factor covers the few float64 operations between a state component and the
+# event value with a wide margin.
+_SURFACE_BAND_FACTOR = 64.0
+# Size of the probe perturbation of each state component, in units of
+# eps * |y_i| (a few ulps of the component).
+_SURFACE_PROBE_ULPS = 4.0
+
+
+def _rounding_band(event: Callable[[float, np.ndarray], float], t: float, y: np.ndarray, g0: float) -> float:
+    """Rounding level of ``event`` at ``(t, y)``: how far a few-ulp state change moves it.
+
+    Each component of ``y`` is moved by ``_SURFACE_PROBE_ULPS`` ulps in turn and
+    the largest change of the event value, times ``_SURFACE_BAND_FACTOR``, is
+    returned; NaN when a probe is not finite.
+    """
+    state = np.asarray(y, dtype=np.float64)
+    eps = float(np.finfo(np.float64).eps)
+    largest = 0.0
+    for index in range(state.size):
+        delta = _SURFACE_PROBE_ULPS * eps * abs(float(state[index]))
+        if delta == 0.0:
+            continue
+        probe = state.copy()
+        probe[index] += delta
+        change = abs(float(event(t, probe)) - g0)
+        if not math.isfinite(change):
+            return math.nan
+        largest = max(largest, change)
+    return _SURFACE_BAND_FACTOR * largest
+
+
+def _step_consistent_events(
+    events: list[Callable[[float, np.ndarray], float]],
+) -> list[Callable[[float, np.ndarray], float]]:
+    """Wrap events so a root search sees the signs that SciPy detected.
+
+    ``solve_ivp`` decides that an event crossed from its values at the step
+    ends, computed on the solver states, and then calls ``brentq`` on the event
+    of the step interpolant between the same two times. The interpolant's end
+    value differs from the solver state by rounding, so an event whose value is
+    at rounding level there (``r . v`` on a circular orbit, ~1e-16 of
+    ``|r| |v|``) can change sign between the two, and ``brentq`` raises "f(a)
+    and f(b) must have different signs" from inside the solver (reproduced for
+    RK45, Radau and LSODA on a circular lunar orbit). Each wrapper remembers the
+    values at the two latest step ends (evaluations at a time past every
+    earlier one) and returns that value again at the same time when a fresh
+    evaluation has the other sign. A fresh value of the same sign is returned
+    unchanged, so a run without the inconsistency is bit-for-bit what it was.
+
+    A non-terminal event that starts on its surface (first value within
+    `_rounding_band` of zero) returns NaN, which SciPy never reads as a
+    crossing, until the first step end at which it leaves that band; its
+    rounding-level sign flips over SciPy's tiny first steps would otherwise
+    give repeated roots at the start. Terminal events are not touched there: a
+    start on the impact sphere moving inward stays an impact at the start.
+    Ported from Sidera (commit 7e3deea4).
+    """
+
+    def consistent(event: Callable[[float, np.ndarray], float]) -> Callable[[float, np.ndarray], float]:
+        step_ends: list[tuple[float, float]] = []
+        terminal = bool(getattr(event, "terminal", False))
+        started = False
+        surface_band: float | None = None
+
+        def g(t: float, y: np.ndarray) -> float:
+            nonlocal started, surface_band
+            t_key = float(t)
+            value = event(t, y)
+            if not terminal and not started:
+                started = True
+                g0 = float(value)
+                if math.isfinite(g0):
+                    band = _rounding_band(event, t, y, g0)
+                    if math.isfinite(band) and abs(g0) <= band:
+                        surface_band = band
+            frontier = not step_ends or t_key > step_ends[-1][0]
+            if surface_band is not None:
+                if not frontier:
+                    return math.nan
+                if abs(float(value)) <= surface_band:
+                    step_ends.append((t_key, math.nan))
+                    del step_ends[:-2]
+                    return math.nan
+                surface_band = None
+            for t_end, end_value in step_ends:
+                if t_end == t_key:
+                    fresh = float(value)
+                    same_side = fresh == end_value or (fresh > 0.0 and end_value > 0.0) or (
+                        fresh < 0.0 and end_value < 0.0
+                    )
+                    return value if same_side else end_value
+            if frontier:
+                step_ends.append((t_key, float(value)))
+                del step_ends[:-2]
+            return value
+
+        g.terminal = getattr(event, "terminal", False)  # type: ignore[attr-defined]
+        g.direction = getattr(event, "direction", 0.0)  # type: ignore[attr-defined]
+        return g
+
+    return [consistent(event) for event in events]
 
 
 def _grid_tolerance_s(grid: np.ndarray, chunk_s: float) -> float:
@@ -133,7 +239,7 @@ def run_scipy_propagation(
             rtol=float(getattr(cfg, "rtol", 1e-9)),
             atol=atol_arg,
             max_step=float(max_step),
-            events=(events or None),
+            events=(_step_consistent_events(events) if events else None),
             dense_output=False,
             vectorized=False,
         )
