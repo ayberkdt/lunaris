@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: the ST-LRPS Studio relaunched an interrupted queue job from scratch.**
+  - A job that was running when the Studio died was restored as Pending; Start Queue relaunched it without `--resume-from`, and the trainer started a new history in the same output folder, deleting the run's history and checkpoints. It is now restored as Interrupted and the queue skips it. Ported from Sidera (64d48728).
+
 - **Fixed: Mission Studio overwrote an unreadable session file with defaults.**
   - A `studio_session.json` with one typo, a truncation or a UTF-8 BOM failed to load, the defaults stayed, and the next auto-save (30 s) or the close wrote them over the user's profile.
   - A BOM is now accepted; a file that is not JSON is moved to `studio_session.json.bak` (then `.bak.1`, ...) and the console names it.
