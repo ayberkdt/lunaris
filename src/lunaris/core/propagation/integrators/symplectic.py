@@ -64,6 +64,34 @@ _Y6_WEIGHTS = _composition_weights(2)
 _Y8_WEIGHTS = _composition_weights(3)
 
 
+def _composition_time_overhang(weights: tuple[float, ...]) -> float:
+    """Largest excursion of a composition's force-evaluation times outside [t, t+h], in steps.
+
+    Velocity-Verlet evaluates the force at both ends of each sub-step, so the
+    evaluation times are the partial sums of the weights. The negative middle
+    weight of a triple jump sends them before ``t`` and past ``t + h``.
+    """
+    ends = np.concatenate(([0.0], np.cumsum(np.asarray(weights, dtype=np.float64))))
+    return float(max(0.0, -float(ends.min()), float(ends.max()) - 1.0))
+
+
+_STAGE_TIME_OVERHANG: dict[str, float] = {
+    "Y4": _composition_time_overhang(_Y4_WEIGHTS),
+    "Y6": _composition_time_overhang(_Y6_WEIGHTS),
+    "Y8": _composition_time_overhang(_Y8_WEIGHTS),
+}
+
+
+def stage_time_overhang(method: str) -> float:
+    """Force-evaluation overhang beyond [t, t+h] of a canonical fixed-step method, in steps.
+
+    0.351 (Y4), 0.649 (Y6), 0.916 (Y8); 0 for every method whose stage times
+    stay inside the step (VV, PEFRL, RKN4, RK4, RK8). The first step of a run
+    therefore samples the force (and the ephemeris) at ``t0 - overhang * h``.
+    """
+    return _STAGE_TIME_OVERHANG.get(str(method).strip().upper(), 0.0)
+
+
 def _composed_step(
     accel: Callable[[float, np.ndarray], np.ndarray],
     t: float,

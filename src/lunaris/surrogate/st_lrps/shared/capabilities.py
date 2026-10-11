@@ -127,7 +127,7 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         "training", "potential_autograd", "sobolev_autograd",
         CapabilityStatus.SUPPORTED,
-        "Main trainer (lunaris-train-st-lrps): scalar-potential SIREN with a "
+        "Main trainer (lunaris-train): scalar-potential SIREN with a "
         "Sobolev U/a objective and autograd acceleration.",
     ),
 )

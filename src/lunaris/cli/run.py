@@ -750,9 +750,9 @@ def run_pipeline(args: Namespace) -> int:
     diag_payload = build_run_diagnostics_payload(run.result, cfg.propagator.method)
     # SPICE provenance chain (kernels/hashes/ET window) into the run diagnostics,
     # so a single run's ephemeris evidence sits alongside its config and figures.
-    if ephem_mgr is not None and hasattr(ephem_mgr, "kernel_provenance"):
-        with contextlib.suppress(Exception):
-            diag_payload["spice_kernels"] = ephem_mgr.kernel_provenance()
+    from lunaris.physics.ephemeris import spice_provenance_fields
+
+    diag_payload.update(spice_provenance_fields(ephem_mgr))
     if requested_sh_degree != cfg.gravity.degree:
         diag_payload["requested_sh_degree"] = requested_sh_degree
         diag_payload["effective_sh_degree"] = cfg.gravity.degree

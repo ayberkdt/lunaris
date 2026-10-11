@@ -36,6 +36,11 @@ REQUIRED_SH_PHASE_CONVENTION = "4pi_geodesy_no_condon_shortley_v1"
 GRAVITY_LABEL_ENGINE_VERSION = "lunaris_sh_v2"
 DEFAULT_COORDINATE_FRAME = MOON_FIXED_FRAME
 DEFAULT_UNITS = {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}
+# `--canonical` datasets store r/DU, U/VU^2 and a/(DU/TU^2) (DU = r_ref_m,
+# scales in the DU_m/TU_s/VU_m_s attrs). Datasets written before this block
+# existed declare DEFAULT_UNITS whatever they store; their top-level
+# `unit_system` attr is what loaders read and stays authoritative for them.
+CANONICAL_UNITS = {"position": "DU", "potential": "VU^2", "acceleration": "DU/TU^2"}
 DATASET_CONTRACT_ATTR = "dataset_contract_json"
 METADATA_GROUP = "metadata"
 
@@ -222,9 +227,11 @@ class DatasetContract:
             errors.append("full-field datasets require degree_max >= 0")
         if not self.coordinate_frame:
             errors.append("coordinate_frame is required")
-        for key, expected in DEFAULT_UNITS.items():
-            if self.units.get(key) != expected:
-                errors.append(f"units.{key} must be {expected!r}")
+        if self.units not in (DEFAULT_UNITS, CANONICAL_UNITS):
+            errors.append(
+                f"units must be the SI block {DEFAULT_UNITS!r} or the canonical block "
+                f"{CANONICAL_UNITS!r}, got {self.units!r}"
+            )
         if self.a_sign not in (-1.0, 1.0):
             errors.append("a_sign must be +1.0 or -1.0")
         if self.mu_si <= 0.0 or not np.isfinite(self.mu_si):
@@ -450,8 +457,10 @@ def build_contract_payload_for_generator(
     source_gravity_file_sha256: str | None,
     generator_version: str,
     columns: list[str],
+    canonical: bool = False,
 ) -> dict[str, Any]:
     return DatasetContract(
+        units=dict(CANONICAL_UNITS if canonical else DEFAULT_UNITS),
         dataset_id=dataset_id,
         created_at_utc=utc_now_iso(),
         generator_name="spatial_cloud_generator",
@@ -498,6 +507,7 @@ __all__ = [
     "DATASET_CONTRACT_ATTR",
     "DATASET_CONTRACT_SCHEMA_VERSION",
     "DEFAULT_COORDINATE_FRAME",
+    "CANONICAL_UNITS",
     "DEFAULT_UNITS",
     "DatasetContract",
     "DatasetContractError",
