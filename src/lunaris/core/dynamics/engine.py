@@ -112,6 +112,10 @@ from lunaris.physics.spherical_harmonics import (
     sh_accel_fixed_numba,
 )
 from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig, accel_albedo_simple
+from lunaris.physics.surface_radiation_quadrature import (
+    accel_albedo_quadrature_numba,
+    accel_thermal_ir_quadrature_numba,
+)
 from lunaris.physics.thermal_ir import (
     accel_thermal_ir_facets_numba,
 )
@@ -304,7 +308,6 @@ def _rhs_kernel_numba(t: float, y: np.ndarray, pack: _RhsPack) -> np.ndarray:
         EJ2_J2, EJ2_RREF, EJ2_KX, EJ2_KY, EJ2_KZ,
         TIDE_USE_K2, TIDE_USE_K3, TIDE_K2, TIDE_K3, TIDE_RREF,
     ) = pack.ej2_tide
-    ENABLE_ECLIPSE = True
 
     rx, ry, rz = y[0], y[1], y[2]
     vx, vy, vz = y[3], y[4], y[5]
@@ -513,8 +516,17 @@ def _rhs_kernel_numba(t: float, y: np.ndarray, pack: _RhsPack) -> np.ndarray:
             ALB_MISSING, ALB_FLIP, ALB_LATMIN, ALB_LATMAX,
             ALB_FACET_POS, ALB_FACET_NORM, ALB_FACET_AREA, ALB_FACET_ALB,
             ALB_PCOEF, ALB_SOLAR_FLUX, ALB_AU, ALB_C, ALB_R_EARTH, ALB_SCALE_SUN_DIST, ALB_ECLIPSE,
+            ALB_INTEGRATION, ALB_RADIUS, ALB_CELL_NLAT, ALB_CELL_NLON, ALB_QUAD_NODES, ALB_QUAD_WEIGHTS, ALB_QUAD_AZ,
         ) = pack.alb
-        if ALB_BACKEND == 1:
+        if ALB_BACKEND == 1 and ALB_INTEGRATION == 1:
+            # Lambertian surface integrated over the visible disk (Moon-fixed).
+            aax_f, aay_f, aaz_f = accel_albedo_quadrature_numba(
+                rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
+                ALB_RADIUS, ALB_FACET_ALB, ALB_CELL_NLAT, ALB_CELL_NLON, ALB_CONST,
+                ALB_PCOEF, SC_AREA, mass, ALB_SOLAR_FLUX, ALB_AU, ALB_C, ALB_R_EARTH,
+                ALB_SCALE_SUN_DIST, ALB_ECLIPSE, ALB_QUAD_NODES, ALB_QUAD_WEIGHTS, ALB_QUAD_AZ,
+            )
+        elif ALB_BACKEND == 1:
             # Lambertian facet model: sum reflected-solar contributions
             # from sunlit, visible facets in the Moon-fixed frame.
             aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
@@ -598,7 +610,7 @@ def _rhs_kernel_numba(t: float, y: np.ndarray, pack: _RhsPack) -> np.ndarray:
                 SC_CR,
                 SC_AREA,
                 mass,
-                1 if ENABLE_ECLIPSE else 0,
+                1 if ALB_ECLIPSE else 0,
             )
 
         aax, aay, aaz = quat_rotate_vec(q0, -q1, -q2, -q3, aax_f, aay_f, aaz_f)
@@ -612,38 +624,48 @@ def _rhs_kernel_numba(t: float, y: np.ndarray, pack: _RhsPack) -> np.ndarray:
             TH_MODE, TH_EPS, TH_ALB, TH_TEMP, TH_NIGHT_TEMP, TH_FLOOR, TH_COEFF,
             TH_SOLAR_FLUX, TH_AU, TH_C, TH_SIGMA, TH_SCALE_SUN_DIST, TH_ECLIPSE, TH_R_EARTH,
             TH_POS, TH_NORMALS, TH_AREAS, TH_TEMPS,
+            TH_INTEGRATION, TH_RADIUS, TH_CELL_NLAT, TH_CELL_NLON, TH_QUAD_NODES, TH_QUAD_WEIGHTS, TH_QUAD_AZ,
         ) = pack.th
-        athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
-            rfx,
-            rfy,
-            rfz,
-            sfx,
-            sfy,
-            sfz,
-            efx,
-            efy,
-            efz,
-            TH_POS,
-            TH_NORMALS,
-            TH_AREAS,
-            TH_TEMPS,
-            TH_MODE,
-            TH_EPS,
-            TH_ALB,
-            TH_TEMP,
-            TH_NIGHT_TEMP,
-            TH_FLOOR,
-            TH_COEFF,
-            SC_AREA,
-            mass,
-            TH_SOLAR_FLUX,
-            TH_AU,
-            TH_C,
-            TH_SIGMA,
-            TH_SCALE_SUN_DIST,
-            TH_R_EARTH,
-            TH_ECLIPSE,
-        )
+        if TH_INTEGRATION == 1:
+            athx_f, athy_f, athz_f = accel_thermal_ir_quadrature_numba(
+                rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
+                TH_RADIUS, TH_TEMPS, TH_CELL_NLAT, TH_CELL_NLON,
+                TH_MODE, TH_EPS, TH_ALB, TH_TEMP, TH_NIGHT_TEMP, TH_FLOOR, TH_COEFF,
+                SC_AREA, mass, TH_SOLAR_FLUX, TH_AU, TH_C, TH_SIGMA, TH_SCALE_SUN_DIST,
+                TH_R_EARTH, TH_ECLIPSE, TH_QUAD_NODES, TH_QUAD_WEIGHTS, TH_QUAD_AZ,
+            )
+        else:
+            athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
+                rfx,
+                rfy,
+                rfz,
+                sfx,
+                sfy,
+                sfz,
+                efx,
+                efy,
+                efz,
+                TH_POS,
+                TH_NORMALS,
+                TH_AREAS,
+                TH_TEMPS,
+                TH_MODE,
+                TH_EPS,
+                TH_ALB,
+                TH_TEMP,
+                TH_NIGHT_TEMP,
+                TH_FLOOR,
+                TH_COEFF,
+                SC_AREA,
+                mass,
+                TH_SOLAR_FLUX,
+                TH_AU,
+                TH_C,
+                TH_SIGMA,
+                TH_SCALE_SUN_DIST,
+                TH_R_EARTH,
+                TH_ECLIPSE,
+            )
         athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
         ax += athx
         ay += athy
@@ -1025,8 +1047,6 @@ class DynamicsEngine:
         SRP_MOON_ECLIPSE = bool(getattr(srp_cfg, "enable_moon_eclipse", True))
         SRP_EARTH_ECLIPSE = bool(getattr(srp_cfg, "enable_earth_eclipse", False))
 
-        ENABLE_ECLIPSE = True
-
         # Ephemeris arrays/scalars
         EPH_DT_S = float(ep.dt_s)
         EPH_SUN = ep.r_sun_tab_m
@@ -1095,6 +1115,14 @@ class DynamicsEngine:
         ALB_R_EARTH = float(ap.r_earth_m)
         ALB_SCALE_SUN_DIST = bool(ap.include_sun_distance_scaling)
         ALB_ECLIPSE = bool(ap.enable_eclipse)
+        # Surface integration: 1 = visible-disk quadrature, 0 = facet sum.
+        ALB_INTEGRATION = int(ap.integration)
+        ALB_RADIUS = float(ap.surface_radius_m)
+        ALB_CELL_NLAT = int(ap.cell_lat_count)
+        ALB_CELL_NLON = int(ap.cell_lon_count)
+        ALB_QUAD_NODES = ap.quadrature_nodes
+        ALB_QUAD_WEIGHTS = ap.quadrature_weights
+        ALB_QUAD_AZ = int(ap.quadrature_azimuth_nodes)
 
         # Earth J2 axis normalize once outside kernel
         EJ2_J2 = float(ej.j2)
@@ -1133,6 +1161,13 @@ class DynamicsEngine:
         TH_NORMALS = th.facet_normals
         TH_AREAS = th.facet_areas_m2
         TH_TEMPS = th.facet_temperatures_K
+        TH_INTEGRATION = int(th.integration)
+        TH_RADIUS = float(th.surface_radius_m)
+        TH_CELL_NLAT = int(th.cell_lat_count)
+        TH_CELL_NLON = int(th.cell_lon_count)
+        TH_QUAD_NODES = th.quadrature_nodes
+        TH_QUAD_WEIGHTS = th.quadrature_weights
+        TH_QUAD_AZ = int(th.quadrature_azimuth_nodes)
 
         if USE_SURROGATE:
             surrogate = self.grav
@@ -1254,7 +1289,15 @@ class DynamicsEngine:
                     az += asz
 
                 if USE_ALBEDO:
-                    if ALB_BACKEND == 1:
+                    if ALB_BACKEND == 1 and ALB_INTEGRATION == 1:
+                        # Lambertian surface integrated over the visible disk (Moon-fixed).
+                        aax_f, aay_f, aaz_f = accel_albedo_quadrature_numba(
+                            rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
+                            ALB_RADIUS, ALB_FACET_ALB, ALB_CELL_NLAT, ALB_CELL_NLON, ALB_CONST,
+                            ALB_PCOEF, SC_AREA, mass, ALB_SOLAR_FLUX, ALB_AU, ALB_C, ALB_R_EARTH,
+                            ALB_SCALE_SUN_DIST, ALB_ECLIPSE, ALB_QUAD_NODES, ALB_QUAD_WEIGHTS, ALB_QUAD_AZ,
+                        )
+                    elif ALB_BACKEND == 1:
                         # Lambertian facet model (reflected solar; Moon-fixed sum).
                         aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
                             rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
@@ -1285,7 +1328,7 @@ class DynamicsEngine:
                         alb_val *= ALB_SCALE
                         aax_f, aay_f, aaz_f = accel_albedo_simple(
                             rfx, rfy, rfz, sfx, sfy, sfz, RMOON, AU_, P1AU,
-                            alb_val, ALB_KLAMB, SC_CR, SC_AREA, mass, 1 if ENABLE_ECLIPSE else 0,
+                            alb_val, ALB_KLAMB, SC_CR, SC_AREA, mass, 1 if ALB_ECLIPSE else 0,
                         )
 
                     aax, aay, aaz = quat_rotate_vec(q0, -q1, -q2, -q3, aax_f, aay_f, aaz_f)
@@ -1294,37 +1337,46 @@ class DynamicsEngine:
                     az += aaz
 
                 if USE_THERMAL:
-                    athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
-                        rfx,
-                        rfy,
-                        rfz,
-                        sfx,
-                        sfy,
-                        sfz,
-                        efx,
-                        efy,
-                        efz,
-                        TH_POS,
-                        TH_NORMALS,
-                        TH_AREAS,
-                        TH_TEMPS,
-                        TH_MODE,
-                        TH_EPS,
-                        TH_ALB,
-                        TH_TEMP,
-                        TH_NIGHT_TEMP,
-                        TH_FLOOR,
-                        TH_COEFF,
-                        SC_AREA,
-                        mass,
-                        TH_SOLAR_FLUX,
-                        TH_AU,
-                        TH_C,
-                        TH_SIGMA,
-                        TH_SCALE_SUN_DIST,
-                        TH_R_EARTH,
-                        TH_ECLIPSE,
-                    )
+                    if TH_INTEGRATION == 1:
+                        athx_f, athy_f, athz_f = accel_thermal_ir_quadrature_numba(
+                            rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
+                            TH_RADIUS, TH_TEMPS, TH_CELL_NLAT, TH_CELL_NLON,
+                            TH_MODE, TH_EPS, TH_ALB, TH_TEMP, TH_NIGHT_TEMP, TH_FLOOR, TH_COEFF,
+                            SC_AREA, mass, TH_SOLAR_FLUX, TH_AU, TH_C, TH_SIGMA, TH_SCALE_SUN_DIST,
+                            TH_R_EARTH, TH_ECLIPSE, TH_QUAD_NODES, TH_QUAD_WEIGHTS, TH_QUAD_AZ,
+                        )
+                    else:
+                        athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
+                            rfx,
+                            rfy,
+                            rfz,
+                            sfx,
+                            sfy,
+                            sfz,
+                            efx,
+                            efy,
+                            efz,
+                            TH_POS,
+                            TH_NORMALS,
+                            TH_AREAS,
+                            TH_TEMPS,
+                            TH_MODE,
+                            TH_EPS,
+                            TH_ALB,
+                            TH_TEMP,
+                            TH_NIGHT_TEMP,
+                            TH_FLOOR,
+                            TH_COEFF,
+                            SC_AREA,
+                            mass,
+                            TH_SOLAR_FLUX,
+                            TH_AU,
+                            TH_C,
+                            TH_SIGMA,
+                            TH_SCALE_SUN_DIST,
+                            TH_R_EARTH,
+                            TH_ECLIPSE,
+                        )
                     athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
                     ax += athx
                     ay += athy
@@ -1417,6 +1469,7 @@ class DynamicsEngine:
                 ALB_MISSING, ALB_FLIP, ALB_LATMIN, ALB_LATMAX,
                 ALB_FACET_POS, ALB_FACET_NORM, ALB_FACET_AREA, ALB_FACET_ALB,
                 ALB_PCOEF, ALB_SOLAR_FLUX, ALB_AU, ALB_C, ALB_R_EARTH, ALB_SCALE_SUN_DIST, ALB_ECLIPSE,
+                ALB_INTEGRATION, ALB_RADIUS, ALB_CELL_NLAT, ALB_CELL_NLON, ALB_QUAD_NODES, ALB_QUAD_WEIGHTS, ALB_QUAD_AZ,
             ),
             (
                 EJ2_J2, EJ2_RREF, EJ2_KX, EJ2_KY, EJ2_KZ,
@@ -1426,6 +1479,7 @@ class DynamicsEngine:
                 TH_MODE, TH_EPS, TH_ALB, TH_TEMP, TH_NIGHT_TEMP, TH_FLOOR, TH_COEFF,
                 TH_SOLAR_FLUX, TH_AU, TH_C, TH_SIGMA, TH_SCALE_SUN_DIST, TH_ECLIPSE, TH_R_EARTH,
                 TH_POS, TH_NORMALS, TH_AREAS, TH_TEMPS,
+                TH_INTEGRATION, TH_RADIUS, TH_CELL_NLAT, TH_CELL_NLON, TH_QUAD_NODES, TH_QUAD_WEIGHTS, TH_QUAD_AZ,
             ),
             (WS_P, WS_DP, WS_COS, WS_SIN),
         )
@@ -1716,7 +1770,17 @@ class DynamicsEngine:
             rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
             sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
 
-            if ap.backend == 1:
+            if ap.backend == 1 and ap.integration == 1:
+                efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
+                aax_f, aay_f, aaz_f = accel_albedo_quadrature_numba(
+                    rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
+                    float(ap.surface_radius_m), ap.facet_albedo, int(ap.cell_lat_count), int(ap.cell_lon_count),
+                    float(ap.alb_const), float(ap.pressure_coefficient), float(self.sc_props.area_m2), float(mass),
+                    float(ap.solar_flux_1au_W_m2), float(ap.au_m), float(ap.c_light_m_s), float(ap.r_earth_m),
+                    bool(ap.include_sun_distance_scaling), bool(ap.enable_eclipse),
+                    ap.quadrature_nodes, ap.quadrature_weights, int(ap.quadrature_azimuth_nodes),
+                )
+            elif ap.backend == 1:
                 efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
                 aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
                     rfx,
@@ -1802,7 +1866,7 @@ class DynamicsEngine:
                     float(self.sc_props.cr),
                     float(self.sc_props.area_m2),
                     float(mass),
-                    1,
+                    1 if ap.enable_eclipse else 0,
                 )
 
             aax_i, aay_i, aaz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], aax_f, aay_f, aaz_f)
@@ -1813,37 +1877,49 @@ class DynamicsEngine:
             rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
             sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
             efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
-            athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
-                rfx,
-                rfy,
-                rfz,
-                sfx,
-                sfy,
-                sfz,
-                efx,
-                efy,
-                efz,
-                np.ascontiguousarray(th.facet_pos_m, dtype=np.float64),
-                np.ascontiguousarray(th.facet_normals, dtype=np.float64),
-                np.ascontiguousarray(th.facet_areas_m2, dtype=np.float64),
-                np.ascontiguousarray(th.facet_temperatures_K, dtype=np.float64),
-                int(th.mode),
-                float(th.surface_emissivity),
-                float(th.surface_albedo),
-                float(th.temperature_K),
-                float(th.night_temperature_K),
-                float(th.thermal_floor_flux_W_m2),
-                float(th.ir_pressure_coefficient),
-                float(self.sc_props.area_m2),
-                float(mass),
-                float(th.solar_flux_1au_W_m2),
-                float(th.au_m),
-                float(th.c_light_m_s),
-                float(th.sigma_sb),
-                bool(th.include_sun_distance_scaling),
-                float(th.r_earth_m),
-                bool(th.enable_eclipse),
-            )
+            if th.integration == 1:
+                athx_f, athy_f, athz_f = accel_thermal_ir_quadrature_numba(
+                    rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
+                    float(th.surface_radius_m), th.facet_temperatures_K, int(th.cell_lat_count), int(th.cell_lon_count),
+                    int(th.mode), float(th.surface_emissivity), float(th.surface_albedo), float(th.temperature_K),
+                    float(th.night_temperature_K), float(th.thermal_floor_flux_W_m2), float(th.ir_pressure_coefficient),
+                    float(self.sc_props.area_m2), float(mass), float(th.solar_flux_1au_W_m2), float(th.au_m),
+                    float(th.c_light_m_s), float(th.sigma_sb), bool(th.include_sun_distance_scaling),
+                    float(th.r_earth_m), bool(th.enable_eclipse),
+                    th.quadrature_nodes, th.quadrature_weights, int(th.quadrature_azimuth_nodes),
+                )
+            else:
+                athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
+                    rfx,
+                    rfy,
+                    rfz,
+                    sfx,
+                    sfy,
+                    sfz,
+                    efx,
+                    efy,
+                    efz,
+                    np.ascontiguousarray(th.facet_pos_m, dtype=np.float64),
+                    np.ascontiguousarray(th.facet_normals, dtype=np.float64),
+                    np.ascontiguousarray(th.facet_areas_m2, dtype=np.float64),
+                    np.ascontiguousarray(th.facet_temperatures_K, dtype=np.float64),
+                    int(th.mode),
+                    float(th.surface_emissivity),
+                    float(th.surface_albedo),
+                    float(th.temperature_K),
+                    float(th.night_temperature_K),
+                    float(th.thermal_floor_flux_W_m2),
+                    float(th.ir_pressure_coefficient),
+                    float(self.sc_props.area_m2),
+                    float(mass),
+                    float(th.solar_flux_1au_W_m2),
+                    float(th.au_m),
+                    float(th.c_light_m_s),
+                    float(th.sigma_sb),
+                    bool(th.include_sun_distance_scaling),
+                    float(th.r_earth_m),
+                    bool(th.enable_eclipse),
+                )
             athx_i, athy_i, athz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], athx_f, athy_f, athz_f)
             _record("Thermal IR", athx_i, athy_i, athz_i)
 

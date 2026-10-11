@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -14,6 +15,39 @@ from lunaris.physics.thermal_ir import (
     THERMAL_MODE_EQUILIBRIUM,
     THERMAL_MODE_TEMPERATURE_GRID,
 )
+
+
+def _validated_quadrature(owner: str, pack: Any, cell_count: int) -> None:
+    """Normalise and check the visible-disk quadrature fields of a pack (in place)."""
+    integration = int(pack.integration)
+    if integration not in (0, 1):
+        raise ValueError(f"{owner} integration must be 0 (facets) or 1 (quadrature), got {integration}")
+    lat = int(pack.cell_lat_count)
+    lon = int(pack.cell_lon_count)
+    if lat < 0 or lon < 0 or (lat == 0) != (lon == 0):
+        raise ValueError(f"{owner} cell_lat_count/cell_lon_count must both be 0 or both positive")
+    if lat > 0 and lat * lon > cell_count:
+        raise ValueError(f"{owner} cell grid {lat}x{lon} exceeds the {cell_count} cell values supplied")
+    raw_nodes = pack.quadrature_nodes
+    raw_weights = pack.quadrature_weights
+    nodes = np.zeros(1, dtype=np.float64) if raw_nodes is None else _as_f64_c(raw_nodes, f"{owner}.quadrature_nodes")
+    weights = (
+        np.zeros(1, dtype=np.float64) if raw_weights is None else _as_f64_c(raw_weights, f"{owner}.quadrature_weights")
+    )
+    if integration == 1:
+        if raw_nodes is None or raw_weights is None:
+            raise ValueError(f"{owner} quadrature integration requires quadrature_nodes and quadrature_weights")
+        if nodes.ndim != 1 or nodes.shape != weights.shape or nodes.shape[0] < 1:
+            raise ValueError(f"{owner} quadrature nodes and weights must be equal-length 1D arrays")
+        if not (np.all(np.isfinite(nodes)) and np.all(np.isfinite(weights))):
+            raise ValueError(f"{owner} quadrature nodes and weights must be finite")
+        if int(pack.quadrature_azimuth_nodes) < 1:
+            raise ValueError(f"{owner} quadrature_azimuth_nodes must be >= 1")
+        radius = float(pack.surface_radius_m)
+        if not np.isfinite(radius) or radius <= 0.0:
+            raise ValueError(f"{owner} surface_radius_m must be finite and > 0")
+    object.__setattr__(pack, "quadrature_nodes", nodes)
+    object.__setattr__(pack, "quadrature_weights", weights)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -33,6 +67,12 @@ class _AlbedoPack:
       0 = albedo grid (grid_alb)
       1 = scaled DN grid (dn; albedo = sf*DN + off)
       2 = constant albedo (alb_const)
+
+    For backend 1, ``integration`` selects how the Lambertian surface is
+    integrated: 1 = visible-disk quadrature
+    (``accel_albedo_quadrature_numba``; a mapped albedo is read from the
+    ``cell_lat_count`` x ``cell_lon_count`` facet cells, a constant albedo from
+    ``alb_const``), 0 = the point-facet sum.
     """
     backend: int = 1
 
@@ -69,6 +109,15 @@ class _AlbedoPack:
     r_earth_m: float = float(R_EARTH_MEAN)
     include_sun_distance_scaling: bool = True
     enable_eclipse: bool = True
+
+    # --- surface integration (0 = facet sum, 1 = visible-disk quadrature) ---
+    integration: int = 0
+    surface_radius_m: float = 1.0
+    cell_lat_count: int = 0
+    cell_lon_count: int = 0
+    quadrature_nodes: F64Array | None = None
+    quadrature_weights: F64Array | None = None
+    quadrature_azimuth_nodes: int = 1
 
     def __post_init__(self) -> None:
         if self.backend not in (0, 1):
@@ -125,6 +174,7 @@ class _AlbedoPack:
         object.__setattr__(self, "facet_normals", normals)
         object.__setattr__(self, "facet_areas_m2", areas)
         object.__setattr__(self, "facet_albedo", albedo)
+        _validated_quadrature("albedo", self, int(albedo.shape[0]))
 
         # Legacy grid validation only matters for the simple backend with a grid.
         if self.backend == 0 and self.mode != 2:
@@ -205,7 +255,13 @@ class _TidePack:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _ThermalPack:
-    """Engine-internal Lambertian thermal IR configuration."""
+    """Engine-internal Lambertian thermal IR configuration.
+
+    ``integration`` = 1 selects the visible-disk quadrature
+    (``accel_thermal_ir_quadrature_numba``; ``temperature_grid`` temperatures
+    are read from the ``cell_lat_count`` x ``cell_lon_count`` facet cells),
+    0 the point-facet sum.
+    """
     mode: int
     surface_emissivity: float
     surface_albedo: float
@@ -224,6 +280,15 @@ class _ThermalPack:
     facet_normals: F64Array
     facet_areas_m2: F64Array
     facet_temperatures_K: F64Array
+
+    # --- surface integration (0 = facet sum, 1 = visible-disk quadrature) ---
+    integration: int = 0
+    surface_radius_m: float = 1.0
+    cell_lat_count: int = 0
+    cell_lon_count: int = 0
+    quadrature_nodes: F64Array | None = None
+    quadrature_weights: F64Array | None = None
+    quadrature_azimuth_nodes: int = 1
 
     def __post_init__(self) -> None:
         if self.mode not in (THERMAL_MODE_CONSTANT, THERMAL_MODE_EQUILIBRIUM, THERMAL_MODE_TEMPERATURE_GRID):
@@ -285,5 +350,6 @@ class _ThermalPack:
         object.__setattr__(self, "facet_normals", normals)
         object.__setattr__(self, "facet_areas_m2", areas)
         object.__setattr__(self, "facet_temperatures_K", temps)
+        _validated_quadrature("thermal", self, int(temps.shape[0]))
 
 __all__ = ["_AlbedoPack", "_EarthJ2Pack", "_TidePack", "_ThermalPack"]
