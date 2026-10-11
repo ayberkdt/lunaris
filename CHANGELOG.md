@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: PDS3 `IEEE_REAL` / `REAL` rasters were read as little-endian.**
+  - `dtype_from_pds3_sample` mapped them to `<f4/<f8` like `PC_REAL`; PDS3 (Standards Reference, Appendix C) defines them, and `MAC_REAL` / `SUN_REAL`, as big-endian. They now map to `>f4/>f8`. `PC_REAL` (the LOLA products shipped here) is unchanged. Ported from Sidera.
+
 - **Fixed: the ST-LRPS paper-evidence multi-seed stage aggregated no seeds.**
   - It read each train entry's seed from the manifest's `config` record, which holds only path and hashes, so every candidate was skipped and the summary reported 0 seeds. Train entries now record `extra.seed`.
   - Field-validation entries were all written under the manifest key `field_validation` (a second model overwrote the first), and the multi-seed lookup used a `seed{N}` folder the stage never writes. Entries are keyed `field_validation:<model>`, record `--seed`, and are paired by seed or by the evaluated checkpoint's sha256.

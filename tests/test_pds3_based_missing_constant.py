@@ -83,6 +83,29 @@ def test_decimal_missing_constant_is_unchanged(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("sample_type", "bits", "expected"),
+    [
+        ("PC_REAL", 32, "<f4"),
+        ("PC_REAL", 64, "<f8"),
+        ("IEEE_REAL", 32, ">f4"),  # PDS3 Appendix C: IEEE_REAL is big-endian
+        ("REAL", 64, ">f8"),
+        ("MAC_REAL", 32, ">f4"),
+        ("SUN_REAL", 32, ">f4"),
+    ],
+)
+def test_real_sample_type_byte_order(sample_type: str, bits: int, expected: str) -> None:
+    """Regression: IEEE_REAL / REAL were read as little-endian like PC_REAL."""
+    from lunaris.loaders.io_surface import dtype_from_pds3_sample
+
+    dtype = dtype_from_pds3_sample(sample_type, bits)
+    assert dtype == np.dtype(expected)
+    # A big-endian word decodes to the value it encodes.
+    raw = struct.pack(">f", 1737.4) if expected == ">f4" else None
+    if raw is not None:
+        assert np.frombuffer(raw, dtype=dtype)[0] == np.float32(1737.4)
+
+
+@pytest.mark.parametrize(
     ("sample_type", "bits", "missing"),
     [
         ("LSB_INTEGER", 16, "16#10000#"),  # outside int16

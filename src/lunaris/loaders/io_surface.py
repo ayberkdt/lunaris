@@ -591,12 +591,19 @@ def dtype_from_pds3_sample(sample_type: str, sample_bits: int) -> np.dtype:
     bits = int(sample_bits)
 
     # --- Floating point ----------------------------------------------------
-    # "PC_REAL" is the canonical little-endian IEEE encoding in many PDS3 labels.
-    if st in {"PC_REAL", "IEEE_REAL", "REAL"}:
+    # "PC_REAL" is little-endian; IEEE_REAL/MAC_REAL/SUN_REAL/REAL are
+    # big-endian (PDS3 Standards Reference, Appendix C).
+    if st == "PC_REAL":
         if bits == 32:
             return np.dtype("<f4")
         if bits == 64:
             return np.dtype("<f8")
+        raise ValueError(f"Unsupported REAL bit depth: {bits}")
+    if st in {"IEEE_REAL", "MAC_REAL", "SUN_REAL", "REAL"}:
+        if bits == 32:
+            return np.dtype(">f4")
+        if bits == 64:
+            return np.dtype(">f8")
         raise ValueError(f"Unsupported REAL bit depth: {bits}")
 
     # --- Signed integers ---------------------------------------------------
