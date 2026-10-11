@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: `lunaris-frozen-search` printed tracebacks for impossible bounds.**
+  - Crossed bounds (`--e 0.5 0.1`) or `--n-samples 1` raised a ValueError traceback, and `--hp-km` with an eccentricity bound of 1 raised ZeroDivisionError. They now print one `[FATAL]` line and exit 2. Ported from Sidera.
+
 - **Fixed: the batch command silently replaced invalid solver text and rounded solver values.**
   - Invalid max step / rtol / atol text on the Propagation page was replaced by defaults without a warning (the single-run builder warns); it now warns the same way.
   - The values were written with `:g`, six significant digits (a max step of 123.4567891 s became 123.457); they now round-trip exactly. Ported from Sidera.
