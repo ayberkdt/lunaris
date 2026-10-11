@@ -19,6 +19,8 @@ Design goals
 from __future__ import annotations
 
 import dataclasses
+import json
+import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -600,3 +602,55 @@ def autodetect_data_state(project_root: Path, current_state: DataFilesState) -> 
         ),
         messages,
     )
+
+
+# ---------------------------------------------------------------------------
+# Session file I/O
+# ---------------------------------------------------------------------------
+
+
+class SessionFileUnreadable(ValueError):
+    """A session file exists but is not readable JSON (typo, truncation, encoding)."""
+
+
+def read_session_file(path: Path) -> Any:
+    """Parse a session file; a UTF-8 BOM is accepted.
+
+    Raises ``SessionFileUnreadable`` when the bytes are not JSON, so the caller
+    can quarantine the file instead of letting the next save overwrite it with
+    defaults. ``OSError`` (missing, locked) propagates unchanged.
+    """
+    raw = Path(path).read_bytes()
+    try:
+        return json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SessionFileUnreadable(f"{Path(path).name}: {exc}") from exc
+
+
+def quarantine_session_file(path: Path) -> Path:
+    """Move an unreadable session file aside (``<name>.bak``, then ``.bak.<n>``) and return the new path."""
+    path = Path(path)
+    target = path.with_name(path.name + ".bak")
+    n = 1
+    while target.exists():
+        target = path.with_name(f"{path.name}.bak.{n}")
+        n += 1
+    os.replace(path, target)
+    return target
+
+
+def write_session_file(path: Path, data: Any) -> None:
+    """Write a session file atomically (temporary file in the same folder, then ``os.replace``).
+
+    An exception while serializing or writing leaves the previous file intact
+    instead of a truncated one.
+    """
+    path = Path(path)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()

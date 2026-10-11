@@ -113,11 +113,15 @@ from lunaris.ui.core.command_builder import (
 from lunaris.ui.core.log_stream import LineAssembler
 from lunaris.ui.core.preflight_validation import PreFlightWorker
 from lunaris.ui.core.session_persistence import (
+    SessionFileUnreadable,
     apply_session_snapshot,
     apply_visual_state,
     autodetect_data_state,
     collect_session_snapshot,
     collect_visual_state,
+    quarantine_session_file,
+    read_session_file,
+    write_session_file,
 )
 from lunaris.ui.core.solver_policy import normalize_solver_config_object
 
@@ -2697,8 +2701,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             data = self._collect_preset_dict()
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            write_session_file(Path(path), data)
             self._log_message(f"[UI] Session saved to: {Path(path).name}", severity="success")
         except Exception as e:
             self._log_message(f"[Error] Failed to save session: {e}", severity="error")
@@ -2736,21 +2739,47 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
         try:
-            with open(source_path, encoding='utf-8') as f:
-                data = json.load(f)
+            data = read_session_file(source_path)
+        except SessionFileUnreadable as e:
+            # A typo or a truncated file must not be replaced with defaults by
+            # the next auto-save: move it aside and say where it went.
+            if migrating_legacy:
+                self._log_message(f"[Warning] Could not read the legacy session: {e}", severity="warning")
+                return
+            try:
+                moved = quarantine_session_file(source_path)
+            except OSError as move_exc:
+                self._log_message(
+                    f"[Warning] Could not restore last session ({e}) nor move it aside: {move_exc}",
+                    severity="warning",
+                )
+                return
+            self._log_message(
+                f"[Warning] Could not restore last session ({e}); the file was kept as {moved.name}.",
+                severity="warning",
+            )
+            return
+        except Exception as e:
+            self._log_message(f"[Warning] Could not restore last session: {e}", severity="warning")
+            return
+
+        try:
             self._apply_preset_dict(data)
             if migrating_legacy:
                 # Copy the migrated profile forward so future launches use the
                 # new location; never delete the legacy file.
                 try:
-                    with open(self.session_path, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, indent=2, ensure_ascii=False)
-                except Exception:
-                    pass
-                self._log_message(
-                    "[UI] Migrated previous session from legacy app-data folder.",
-                    severity="system",
-                )
+                    write_session_file(self.session_path, data)
+                except Exception as copy_exc:
+                    self._log_message(
+                        f"[Warning] Restored the legacy session but could not copy it forward: {copy_exc}",
+                        severity="warning",
+                    )
+                else:
+                    self._log_message(
+                        "[UI] Migrated previous session from legacy app-data folder.",
+                        severity="system",
+                    )
             else:
                 self._log_message("[UI] Previous session restored.", severity="system")
         except Exception as e:
@@ -2906,8 +2935,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         try:
             data = self._collect_preset_dict()
-            with open(self.session_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            write_session_file(self.session_path, data)
             self._last_autosave_error = None
             return True
         except Exception as exc:

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: Mission Studio overwrote an unreadable session file with defaults.**
+  - A `studio_session.json` with one typo, a truncation or a UTF-8 BOM failed to load, the defaults stayed, and the next auto-save (30 s) or the close wrote them over the user's profile.
+  - A BOM is now accepted; a file that is not JSON is moved to `studio_session.json.bak` (then `.bak.1`, ...) and the console names it.
+  - Session saves (auto-save, Save Profile, the legacy migration) write atomically, so a failure mid-write leaves the previous file intact. The migration reports "Migrated" only when the forward copy succeeded.
+  - Ported from Sidera (64d48728, desktop-UI fixes).
+
 - **Fixed: `tools/gpu_qualification.py` reported PASS when every GPU test was skipped.**
   - The verdict was pytest's exit code, which is 0 when no CUDA is visible and every `requires_cuda` test skips. The tool now reads a JUnit report and fails unless at least one test passed. `--help` prints usage instead of running the suite. Ported from Sidera (64d48728).
 
