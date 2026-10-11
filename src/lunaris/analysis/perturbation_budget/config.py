@@ -55,8 +55,11 @@ class PerturbationBudgetConfig:
     include_relativity: bool = True
     include_earth_j2: bool = True
 
+    # Sampling uses deterministic synthetic Sun/Earth geometry only; True is
+    # refused in __post_init__ until ephemeris-backed sampling exists.
     use_ephemeris: bool = False
-    use_synthetic_geometry_fallback: bool = True
+    # Use synthetic gravity coefficients when no gravity_model_path is given.
+    use_synthetic_gravity_fallback: bool = True
     gravity_model_path: str | None = None
 
     spacecraft_area_m2: float = 2.0
@@ -95,6 +98,11 @@ class PerturbationBudgetConfig:
         object.__setattr__(self, "sh_degrees", _int_list(self.sh_degrees))
         if int(self.reference_sh_degree) not in self.sh_degrees:
             object.__setattr__(self, "reference_sh_degree", max(self.sh_degrees))
+        if self.use_ephemeris:
+            raise NotImplementedError(
+                "use_ephemeris=True is not implemented: perturbation-budget sampling "
+                "uses deterministic synthetic Sun/Earth geometry only."
+            )
         if any(a < 0.0 for a in self.altitudes_km):
             raise ValueError("altitudes_km must be non-negative")
         if self.spacecraft_mass_kg <= 0.0:

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: the perturbation-budget summary labels its geometry honestly.** Sampling always uses synthetic Sun/Earth geometry, but the summary printed `ephemeris_requested` whenever the synthetic *gravity* fallback was off. The summary now always reads `synthetic_geometry`. `use_ephemeris=True`, which was silently ignored, now raises `NotImplementedError`. The config field that gates synthetic gravity coefficients is renamed from `use_synthetic_geometry_fallback` to `use_synthetic_gravity_fallback`. The CLI flag `--synthetic-fallback` is unchanged.
 - **Fixed: report history extractors read the state layout from the time grid and stop guessing units.** Two bugs are fixed in `extract_rv_vectors` / `extract_elements`:
   - A row-major `(N, 6)` state with `N >= 6` was read as `(6, N)`. Now, when both axes could hold the state, the time grid decides. The canonical `(6, N)` layout wins for a square state, and a shape that matches neither axis raises.
   - Magnitude-based unit guesses (`_maybe_km`, `_maybe_r_m`, `_maybe_v_mps`) are removed. Histories are SI by contract, and canonical `*_km` / `*_kmps` keys are kept as stored. Before, an `r_norm_km` above 1e5 km was divided by 1000 again.

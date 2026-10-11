@@ -199,7 +199,8 @@ def _summary_markdown(
         "## Configuration",
         "",
         f"- Gravity source: `{gravity_source}`",
-        f"- Geometry source: `{'synthetic_geometry' if config.use_synthetic_geometry_fallback else 'ephemeris_requested'}`",
+        # Sampling has only synthetic Sun/Earth geometry (use_ephemeris=True is refused).
+        "- Geometry source: `synthetic_geometry`",
         f"- Git commit: `{_git_commit()}`",
         f"- Runtime: {runtime_s:.3f} s",
         f"- Altitudes km: {', '.join(str(v) for v in config.altitudes_km)}",
@@ -236,7 +237,7 @@ def _summary_markdown(
             "",
             "## Limitations",
             "",
-            "- Default runs use deterministic synthetic Sun/Earth geometry unless ephemeris-backed integration is added/configured.",
+            "- Sun/Earth geometry is deterministic and synthetic; ephemeris-backed geometry is not implemented.",
             "- If no gravity model file is supplied, synthetic coefficients are used only for smoke testing and workflow validation.",
             "- Propagation-level ablation and detailed runtime benchmarking are scaffolded but not run by the MVP.",
             "",

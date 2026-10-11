@@ -153,3 +153,57 @@ def test_cli_smoke_writes_outputs(tmp_path: Path) -> None:
     assert rc == 0
     assert (tmp_path / "perturbation_budget.csv").exists()
     assert (tmp_path / "perturbation_budget_summary.md").exists()
+
+
+def _write_degree4_shadr(path: Path) -> Path:
+    rows = [
+        f"{n}, {m}, {1e-6 / n:.6e}, {(5e-7 / n) if m else 0.0:.6e}"
+        for n in range(1, 5)
+        for m in range(0, n + 1)
+    ]
+    path.write_text("1738.0, 4902.8, 0, 4, 4, 1, 0, 0\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def test_summary_labels_the_geometry_it_actually_used(tmp_path: Path) -> None:
+    # Sampling always uses synthetic Sun/Earth geometry. The summary used to say
+    # "ephemeris_requested" whenever the (gravity) synthetic fallback was off.
+    cfg = PerturbationBudgetConfig(
+        altitudes_km=[100],
+        inclinations_deg=[0],
+        true_anomalies_deg=[0],
+        epochs_utc=["synthetic"],
+        sh_degrees=[2, 4],
+        include_albedo=False,
+        include_thermal_ir=False,
+        include_tides=False,
+        include_third_body=False,
+        include_relativity=False,
+        gravity_model_path=str(_write_degree4_shadr(tmp_path / "deg4.tab")),
+        use_synthetic_gravity_fallback=False,
+        output_dir=str(tmp_path / "out"),
+    )
+
+    summary = run_perturbation_budget(cfg).summary_md.read_text(encoding="utf-8")
+
+    assert "- Geometry source: `synthetic_geometry`" in summary
+    assert "ephemeris_requested" not in summary
+
+
+def test_ephemeris_geometry_request_is_refused() -> None:
+    import pytest
+
+    with pytest.raises(NotImplementedError, match="use_ephemeris"):
+        PerturbationBudgetConfig(use_ephemeris=True)
+
+
+def test_synthetic_gravity_fallback_off_requires_a_gravity_file(tmp_path: Path) -> None:
+    import pytest
+
+    from lunaris.analysis.perturbation_budget.acceleration_budget import (
+        load_gravity_model_for_budget,
+    )
+
+    cfg = PerturbationBudgetConfig(sh_degrees=[2, 4], use_synthetic_gravity_fallback=False)
+    with pytest.raises(ValueError, match="gravity_model_path"):
+        load_gravity_model_for_budget(cfg)
