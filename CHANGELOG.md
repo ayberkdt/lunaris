@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: `lunaris-data download` never fetched companion files.**
+  - Only the entry's main URL was downloaded; the detached labels listed under `companion_files` (the `.lbl` each LOLA, GRAIL and Diviner product needs) were not, so `lunaris-data verify --strict` failed right after a fresh download. Missing companions are now fetched from their own `url` or the main file's folder, hash-checked; a required companion's failure is the entry's status. Ported from Sidera.
+
 - **Fixed: PDS3 `IEEE_REAL` / `REAL` rasters were read as little-endian.**
   - `dtype_from_pds3_sample` mapped them to `<f4/<f8` like `PC_REAL`; PDS3 (Standards Reference, Appendix C) defines them, and `MAC_REAL` / `SUN_REAL`, as big-endian. They now map to `>f4/>f8`. `PC_REAL` (the LOLA products shipped here) is unchanged. Ported from Sidera.
 
