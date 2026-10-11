@@ -820,11 +820,12 @@ if _CUDA_AVAILABLE:
         # ----------------------------------------------------------------
         phi_fac = dv_dphi * inv_r
         # CPU _compute_pole_safe_inv_rho_sq: zero inside the polar cutoff, the
-        # unchanged softened inverse elsewhere.
+        # exact inverse elsewhere (bit-identical to the former 1/(rho^2 + 1e-24)
+        # for rho^2 >= 2**-26 m^2, i.e. rho >= 0.13 mm).
         if rho2 < EPS_1E24:
             inv_rho2 = 0.0
         else:
-            inv_rho2 = 1.0 / (rho2 + EPS_1E24)
+            inv_rho2 = 1.0 / rho2
 
         out[0] = dv_dr * rx * inv_r + phi_fac * u_phi_x - dv_dlambda * ry * inv_rho2
         out[1] = dv_dr * ry * inv_r + phi_fac * u_phi_y + dv_dlambda * rx * inv_rho2
@@ -856,57 +857,71 @@ if _CUDA_AVAILABLE:
         """
         Device mirror of ``physics.solar_effects._shadow_factor_conical``.
 
-        Conical umbra/penumbra of one spherical occulter with a finite Sun
-        (``R_SUN_MEAN``), smoothstep across the penumbra; inputs are
-        occulter-centred. Keep the branch structure identical to the CPU kernel.
+        Visible fraction of the solar disk (``R_SUN_MEAN``) past one spherical
+        occulter: the lens-area overlap of the apparent solar and occulter
+        disks (Montenbruck & Gill 2000, sec. 3.4), with the umbra, annular and
+        full-sunlight branches; inputs are occulter-centred. Keep the branch
+        structure and the arithmetic identical to the CPU kernel.
         """
-        dist_sun_sq = sx * sx + sy * sy + sz * sz
-        if dist_sun_sq <= EPS_1E24:
-            return 1.0
-        dist_sun = math.sqrt(dist_sun_sq)
-        inv_dist_sun = 1.0 / dist_sun
-        u_sx = sx * inv_dist_sun
-        u_sy = sy * inv_dist_sun
-        u_sz = sz * inv_dist_sun
-
-        # proj >= 0: the spacecraft is on the day side of the occulter.
-        proj = rx * u_sx + ry * u_sy + rz * u_sz
-        if proj >= 0.0:
-            return 1.0
-        x = -proj
-
+        # 1) Spacecraft -> Sun vector d = r_sun - r_sc and the spacecraft radius
+        dx = sx - rx
+        dy = sy - ry
+        dz = sz - rz
+        d_sq = dx * dx + dy * dy + dz * dz
         r_sq = rx * rx + ry * ry + rz * rz
-        rho2 = r_sq - proj * proj
-        if rho2 < 0.0:
-            rho2 = 0.0
-
-        denom_u = R_SUN_MEAN - r_occult
-        if denom_u <= EPS_1E12:
+        if d_sq <= EPS_1E24 or r_sq <= EPS_1E24 or r_occult <= 0.0:
             return 1.0
-        common_factor = r_occult * dist_sun
-        L_u = common_factor / denom_u
-        denom_p = R_SUN_MEAN + r_occult
-        if denom_p <= EPS_1E12:
-            return 1.0
-        L_p = common_factor / denom_p
 
-        if x >= L_u:
-            r_u = 0.0
+        sin_a = R_SUN_MEAN / math.sqrt(d_sq)
+        if sin_a >= 1.0:
+            return 1.0
+
+        # 2) Cheap exit on the sunlit side (c >= 90 deg and no possible overlap).
+        dot = -(rx * dx + ry * dy + rz * dz)
+        R_sq = r_occult * r_occult
+        if dot <= 0.0 and r_sq * (1.0 - sin_a * sin_a) >= R_sq:
+            return 1.0
+
+        # 3) Apparent radii and separation [rad]
+        a = math.asin(sin_a)
+        if r_sq <= R_sq:
+            b = 0.5 * math.pi
         else:
-            r_u = r_occult * (1.0 - x / L_u)
-        r_p = r_occult * (1.0 + x / L_p)
+            b = math.asin(r_occult / math.sqrt(r_sq))
+        cx = ry * dz - rz * dy
+        cy = rz * dx - rx * dz
+        cz = rx * dy - ry * dx
+        c = math.atan2(math.sqrt(cx * cx + cy * cy + cz * cz), dot)
 
-        if rho2 <= r_u * r_u:
-            return 0.0
-        if rho2 >= r_p * r_p:
+        # 4) Region classification
+        if c >= a + b:
             return 1.0
-
-        rho = math.sqrt(rho2)
-        width = r_p - r_u
-        if width <= EPS_1E12:
+        if c <= b - a:
             return 0.0
-        u = (rho - r_u) / width
-        return u * u * (3.0 - 2.0 * u)
+        if c <= a - b:
+            return 1.0 - (b * b) / (a * a)
+
+        # 5) Partial overlap: lens area of circles (a, b) at centre distance c
+        x = (c * c + a * a - b * b) / (2.0 * c)
+        y_sq = a * a - x * x
+        y = math.sqrt(y_sq) if y_sq > 0.0 else 0.0
+        ca = x / a
+        if ca > 1.0:
+            ca = 1.0
+        elif ca < -1.0:
+            ca = -1.0
+        cb = (c - x) / b
+        if cb > 1.0:
+            cb = 1.0
+        elif cb < -1.0:
+            cb = -1.0
+        area = a * a * math.acos(ca) + b * b * math.acos(cb) - c * y
+        nu = 1.0 - area / (math.pi * a * a)
+        if nu < 0.0:
+            return 0.0
+        if nu > 1.0:
+            return 1.0
+        return nu
 
     @cuda.jit(device=True, inline=True)
     def _srp_accel_cuda(
