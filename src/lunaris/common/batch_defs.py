@@ -222,14 +222,23 @@ class StateUncertainty:
 
     def cholesky_factor(self) -> F64Array:
         """
-        Lower-triangular Cholesky factor L such that P = L @ L.T.
+        Square-root factor L such that P = L @ L.T.
 
         Used for efficient Gaussian sampling: x = mean + L @ z,  z ~ N(0,I).
+        For a positive-definite P this is the lower-triangular Cholesky factor.
+        A singular PSD P (accepted by ``__post_init__``; e.g. perfectly
+        correlated components) has no Cholesky factor in floating point, so the
+        symmetric eigen-decomposition factor ``V diag(sqrt(max(w, 0)))`` is used.
         """
         P = self.to_covariance()
-        # Regularise very small diagonal entries to avoid near-singular Cholesky.
-        P = P + np.eye(6, dtype=np.float64) * 1e-30
-        return np.asarray(np.linalg.cholesky(P), dtype=np.float64)
+        try:
+            # Regularise very small diagonal entries to avoid near-singular Cholesky.
+            return np.asarray(
+                np.linalg.cholesky(P + np.eye(6, dtype=np.float64) * 1e-30), dtype=np.float64
+            )
+        except np.linalg.LinAlgError:
+            w, V = np.linalg.eigh(P)
+            return np.ascontiguousarray(V * np.sqrt(np.clip(w, 0.0, None)), dtype=np.float64)
 
     @property
     def sigma_summary(self) -> str:
