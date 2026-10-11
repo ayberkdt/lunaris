@@ -166,6 +166,21 @@ def _extract_state(result: Any) -> tuple[np.ndarray, np.ndarray]:
     return t, state
 
 
+_RE_EPOCH_TIME_SYSTEM = re.compile(r"\b(TDB|TDT|TT)\b", flags=re.IGNORECASE)
+
+
+def _start_epoch_time_system(start_text: str | None) -> str:
+    """Time system of a ``TimeConfig.start_date`` string as SPICE ``str2et`` reads it.
+
+    A trailing ``TDB`` / ``TT`` (``TDT``) label selects that scale; anything
+    else (ISO strings, SPICE calendar strings) is UTC.
+    """
+    m = _RE_EPOCH_TIME_SYSTEM.search(str(start_text or ""))
+    if m is None:
+        return "UTC"
+    return "TDB" if m.group(1).upper() == "TDB" else "TT"
+
+
 def _epoch_at(start_text: str | None, elapsed_s: float) -> str | None:
     if not start_text:
         return None
@@ -891,7 +906,7 @@ def build_orbit_analysis(
         or "J2000"
     )
     start_epoch = str(_get(config, "time", "start_date", default="")) or None
-    time_system = "UTC"
+    time_system = _start_epoch_time_system(start_epoch)
     termination_reason, termination_status = _termination(result)
 
     event_map = history.get("events", {})

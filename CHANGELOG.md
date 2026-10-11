@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: orbit analysis labelled every start epoch UTC.** `build_orbit_analysis` hard-coded `time_system = "UTC"`, but `TimeConfig.start_date` may be a SPICE `"... TDB"` or `"... TT"` string, which reaches `str2et` unchanged. The label now follows the epoch string: `TDB`, `TT` (also for `TDT`), else `UTC`.
+
 - **Fixed: a UTC start epoch before 1972 was converted silently with the wrong TAI-UTC.** The leapseconds kernel has no pre-1972 UTC model; `str2et` applied TAI-UTC = 9 s, measured with naif0012.tls. The historical value on 1969-07-20 was 7.5746 s, so that epoch was off by 1.43 s. `build_spice_tables` now refuses a pre-1972 UTC epoch and asks for a TDB or TT epoch string. TDB/TT strings and post-1972 UTC are unchanged.
 
 - **Fixed: the output-point cap could be exceeded by one point.** The output grid has `ceil(D/dt) + 1` points, but `TimeConfig` estimated `floor(D/dt) + 1`, so a config one point over `max_points_cap` passed the config-time check. `_clamp_output_dt` chose `dt = D/(cap-1)`, which floating-point rounding could turn into `cap + 1` points (seen for caps 8 and 14 among others). Both now count points exactly as `build_output_time_grid` does. A config exactly one point over the cap is now rejected at construction.
