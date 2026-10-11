@@ -31,6 +31,7 @@ from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import (
 from lunaris.surrogate.st_lrps.ui.studio_parts.runtime_pages import STLRPSProfilingTab
 from lunaris.surrogate.st_lrps.ui.studio_parts.training_pages import STLRPSTrainTab
 from lunaris.ui_foundation.event_filters import NoWheelOnSpinFilter
+from lunaris.ui_foundation.qt_setup import prepare_qt_application
 
 
 def main() -> None:
@@ -40,6 +41,7 @@ def main() -> None:
         )
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
     os.chdir(str(project_root_from_file(__file__)))
+    prepare_qt_application()  # C number locale + shared GL contexts, before QApplication
     app = QApplication(sys.argv)
     apply_premium_dark_theme(app)
     _wheel_guard = NoWheelOnSpinFilter(app)

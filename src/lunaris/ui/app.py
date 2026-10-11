@@ -3160,7 +3160,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     """Application entry point."""
+    from lunaris.ui_foundation.qt_setup import prepare_qt_application
 
+    prepare_qt_application()  # C number locale + shared GL contexts, before QApplication
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("ST_LRPS")

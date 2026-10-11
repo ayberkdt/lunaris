@@ -815,6 +815,9 @@ def main() -> None:
     with contextlib.suppress(Exception):
         os.chdir(str(find_project_root()))
 
+    from lunaris.ui_foundation.qt_setup import prepare_qt_application
+
+    prepare_qt_application()  # C number locale + shared GL contexts, before QApplication
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Lunaris")
     app.setFont(load_fonts())
