@@ -303,8 +303,8 @@ def test_solar_eclipse_validation():
 
 def test_solar_eclipse_moon_shadow_sign_and_guard():
     ev = make_solar_eclipse_event(get_sun_vec_m=_sun_far_plus_x, R_moon_m=R, t_guard_s=5.0)
-    # Before guard -> no root
-    assert ev(1.0, _state(-(R + 2_000.0))) == pytest.approx(1.0)
+    # Inside the start-relative guard window -> NaN (never a crossing)
+    assert np.isnan(ev(1.0, _state(-(R + 2_000.0))))
     # Night side (behind Moon from Sun): LOS passes through Moon -> eclipsed (<0)
     assert ev(10.0, _state(-(R + 2_000.0))) < 0.0
     # Day side (between Moon and Sun): clear LOS (>0)
@@ -344,8 +344,10 @@ def test_max_eclipse_duration_accumulates_and_resets():
     assert ev(0.0, night) == pytest.approx(15.0)   # first sample, dur=0
     assert ev(10.0, night) == pytest.approx(5.0)    # dur=10 -> 15-10
     assert ev(20.0, night) < 0.0                    # dur=20 -> triggered
-    # Out-of-order probe must not mutate state
-    assert ev(5.0, night) < 0.0
+    # Out-of-order probe must not mutate state: it reads the recorded entry
+    # time (0) and stays linear in t, so a root search can bracket the limit.
+    assert ev(5.0, night) == pytest.approx(10.0)
+    assert ev(20.0, night) < 0.0
     # Leaving eclipse resets the accumulator
     assert ev(30.0, day) == pytest.approx(15.0)
     assert ev.terminal is True
@@ -443,8 +445,8 @@ def test_stability_violation_within_bounds_and_violation():
     assert ev_ok(10.0, circular) < 0.0
     # An impossible eccentricity ceiling forces a violation (positive), past the guard.
     ev_bad = make_stability_violation_event(mu=MU, R_ref_m=R, e_max=-0.001, t_guard_s=5.0)
+    # The start-relative guard window (from the first call) returns NaN.
+    assert np.isnan(ev_bad(0.0, circular))
     assert ev_bad(10.0, circular) > 0.0
     # Degenerate state (r=0) is treated as a violation.
     assert ev_bad(10.0, np.zeros(6)) == pytest.approx(1.0)
-    # Time guard suppresses the root near t=0 (guard_value = -1 -> inside bounds).
-    assert ev_bad(0.0, circular) == pytest.approx(-1.0)

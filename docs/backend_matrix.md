@@ -18,9 +18,9 @@ recurring cadence, not just once. Two mechanisms:
   PRs.
 - **Local (`tools/gpu_qualification.py`)** runs the same suite on the local
   device and writes a timestamped, commit-stamped log under the git-ignored
-  `outputs/gpu_qualification/`. It exits non-zero on failure and uses `pytest -rs`
-  so a run that merely *skipped* (no CUDA visible) is distinguishable from one
-  that truly validated the GPU.
+  `outputs/gpu_qualification/`. It exits non-zero on failure, and also when no
+  `requires_cuda` test passed (pytest exits 0 when every test is skipped because
+  no CUDA is visible), so a skipped run is never reported as a pass.
 
   Schedule it weekly with Windows Task Scheduler:
 

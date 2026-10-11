@@ -113,11 +113,15 @@ from lunaris.ui.core.command_builder import (
 from lunaris.ui.core.log_stream import LineAssembler
 from lunaris.ui.core.preflight_validation import PreFlightWorker
 from lunaris.ui.core.session_persistence import (
+    SessionFileUnreadable,
     apply_session_snapshot,
     apply_visual_state,
     autodetect_data_state,
     collect_session_snapshot,
     collect_visual_state,
+    quarantine_session_file,
+    read_session_file,
+    write_session_file,
 )
 from lunaris.ui.core.solver_policy import normalize_solver_config_object
 
@@ -134,6 +138,19 @@ from lunaris.ui.pages.force_models_page import find_best_gravity_file
 # =============================================================================
 from lunaris.ui.pages.mission_propagation_page import UISolverConfig, UISpacecraftConfig
 from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
+
+
+def _child_process_environment() -> QtCore.QProcessEnvironment:
+    """Environment for the run/batch child processes: unbuffered, UTF-8 streams.
+
+    On Windows a child whose stdout is a pipe encodes with the ANSI code page
+    (cp1252) and raises ``UnicodeEncodeError`` on the first character outside
+    it, killing the run; the UI decodes the streams as UTF-8 anyway.
+    """
+    env = QtCore.QProcessEnvironment.systemEnvironment()
+    env.insert("PYTHONUNBUFFERED", "1")
+    env.insert("PYTHONIOENCODING", "utf-8")
+    return env
 
 
 @dataclass
@@ -1106,9 +1123,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batch_process.readyReadStandardError.connect(self._on_batch_stderr)
         self.batch_process.finished.connect(self._on_batch_finished)
 
-        env = QtCore.QProcessEnvironment.systemEnvironment()
-        env.insert("PYTHONUNBUFFERED", "1")
-        self.batch_process.setProcessEnvironment(env)
+        self.batch_process.setProcessEnvironment(_child_process_environment())
 
         self._batch_stdout_buf = ""
         self._batch_metrics: dict = {}
@@ -1958,6 +1973,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stderr_assembler.clear()
         self._run_wall_t0 = time.time()
         self._last_telem_t_s = None
+        self._reset_run_watch_state()
         self._progress_is_determinate = False
         self.progress_bar.show()
         if prefers_reduced_motion():
@@ -2024,10 +2040,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.process.readyReadStandardError.connect(self._handle_stderr)
         self.process.finished.connect(self._on_process_finished)
 
-        # Ensure python process uses unbuffered output for streaming telemetry
-        env = QtCore.QProcessEnvironment.systemEnvironment()
-        env.insert("PYTHONUNBUFFERED", "1")
-        self.process.setProcessEnvironment(env)
+        # Unbuffered UTF-8 output for streaming telemetry (see _child_process_environment).
+        self.process.setProcessEnvironment(_child_process_environment())
 
         self.process.start(cmd_list[0], cmd_list[1:])
         if not self.process.waitForStarted(1500):
@@ -2092,6 +2106,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return float(s)
         except Exception:
             return None
+
+    def _reset_run_watch_state(self) -> None:
+        """Per-run telemetry bookkeeping, reset when a run starts.
+
+        The impact watchdog latches once per run, not once per window: without
+        the reset, every run after the first impact was never warned about.
+        """
+        self._collision_triggered = False
+        self._telemetry_holds_probes = False
+        self._telemetry_saw_probes = False
 
     def _check_collision(self, telem: dict) -> None:
         """Best-effort collision detection.
@@ -2333,6 +2357,19 @@ class MainWindow(QtWidgets.QMainWindow):
         from the typed sample keeps a single producer emission feeding both the
         Mission Monitor and the legacy pipeline.
         """
+        # The solver's rhs_probe samples give a live trace while the
+        # integration runs; the run's output states follow from t0 once it
+        # has finished and are the scientific trajectory. The first output
+        # state replaces the probe trace instead of being drawn after it
+        # (which plotted the orbit twice with a line back to t0).
+        kind = getattr(sample, "sample_kind", "output_state")
+        if kind == "rhs_probe":
+            self._telemetry_holds_probes = True
+            self._telemetry_saw_probes = True
+        elif getattr(self, "_telemetry_holds_probes", False):
+            self._telemetry_holds_probes = False
+            with contextlib.suppress(Exception):
+                self.page_telemetry.telemetry_multiplot.clear_all()
         legacy: dict[str, float] = {"t_s": float(sample.simulation_time_s)}
         if sample.altitude_m is not None:
             legacy["alt_km"] = sample.altitude_m / 1000.0
@@ -2353,8 +2390,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         with contextlib.suppress(Exception):
             self.page_telemetry.telemetry_multiplot.add_datapoint(legacy)
-        self._check_collision(legacy)
-        self._update_run_progress(sample.simulation_time_s)
+        # A probe is a solver evaluation that may belong to a rejected step, so
+        # it is never evidence of an impact.
+        if kind != "rhs_probe":
+            self._check_collision(legacy)
+        # Once probes have driven the progress bar, the output states replayed
+        # from t0 after the integration must not run it backwards.
+        if kind == "rhs_probe" or not getattr(self, "_telemetry_saw_probes", False):
+            self._update_run_progress(sample.simulation_time_s)
 
     def _update_run_progress(self, t_s: float | None) -> None:
         """Progress bar / ETA update from the latest telemetry time."""
@@ -2667,8 +2710,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             data = self._collect_preset_dict()
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            write_session_file(Path(path), data)
             self._log_message(f"[UI] Session saved to: {Path(path).name}", severity="success")
         except Exception as e:
             self._log_message(f"[Error] Failed to save session: {e}", severity="error")
@@ -2706,21 +2748,47 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
         try:
-            with open(source_path, encoding='utf-8') as f:
-                data = json.load(f)
+            data = read_session_file(source_path)
+        except SessionFileUnreadable as e:
+            # A typo or a truncated file must not be replaced with defaults by
+            # the next auto-save: move it aside and say where it went.
+            if migrating_legacy:
+                self._log_message(f"[Warning] Could not read the legacy session: {e}", severity="warning")
+                return
+            try:
+                moved = quarantine_session_file(source_path)
+            except OSError as move_exc:
+                self._log_message(
+                    f"[Warning] Could not restore last session ({e}) nor move it aside: {move_exc}",
+                    severity="warning",
+                )
+                return
+            self._log_message(
+                f"[Warning] Could not restore last session ({e}); the file was kept as {moved.name}.",
+                severity="warning",
+            )
+            return
+        except Exception as e:
+            self._log_message(f"[Warning] Could not restore last session: {e}", severity="warning")
+            return
+
+        try:
             self._apply_preset_dict(data)
             if migrating_legacy:
                 # Copy the migrated profile forward so future launches use the
                 # new location; never delete the legacy file.
                 try:
-                    with open(self.session_path, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, indent=2, ensure_ascii=False)
-                except Exception:
-                    pass
-                self._log_message(
-                    "[UI] Migrated previous session from legacy app-data folder.",
-                    severity="system",
-                )
+                    write_session_file(self.session_path, data)
+                except Exception as copy_exc:
+                    self._log_message(
+                        f"[Warning] Restored the legacy session but could not copy it forward: {copy_exc}",
+                        severity="warning",
+                    )
+                else:
+                    self._log_message(
+                        "[UI] Migrated previous session from legacy app-data folder.",
+                        severity="system",
+                    )
             else:
                 self._log_message("[UI] Previous session restored.", severity="system")
         except Exception as e:
@@ -2876,8 +2944,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         try:
             data = self._collect_preset_dict()
-            with open(self.session_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            write_session_file(self.session_path, data)
             self._last_autosave_error = None
             return True
         except Exception as exc:

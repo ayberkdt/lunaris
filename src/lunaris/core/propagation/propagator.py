@@ -158,6 +158,7 @@ def propagate(
     topo_grid: Any = None,
     extra_events: Sequence[Callable[[float, np.ndarray], float]] | None = None,
     maneuver_plan: ManeuverPlan | None = None,
+    _t_eval_override: np.ndarray | None = None,
 ) -> PropagationResult:
     """
     Propagate the trajectory for a configured duration and output sampling grid.
@@ -172,6 +173,10 @@ def propagate(
     -----
     - t0 (start epoch in seconds) is owned by TimeConfig when provided (time_cfg.t0_s).
     - max_points_cap / verbosity / integration tolerances remain in PropagatorConfig unless also provided in TimeConfig.
+    - ``_t_eval_override`` is a private hook used only by
+      ``_propagate_with_maneuvers`` to hand a segment its exact slice of one
+      output grid aligned to the run's t0 (instead of each segment re-spacing
+      its own burn-shifted duration). Not part of the public contract.
     """
     y0_arr = _as_state_array(y0)
 
@@ -219,7 +224,9 @@ def propagate(
     tf = time_plan.tf
     dur_s = time_plan.duration_s
     dt_out = time_plan.realized_output_dt_s
-    t_eval = time_plan.t_eval
+    t_eval = time_plan.t_eval if _t_eval_override is None else np.ascontiguousarray(
+        _t_eval_override, dtype=np.float64
+    )
 
     # The propagator owns the invariant that the solver state dimension is
     # fixed for an integration. Use the trusted hot-path callable; external
@@ -586,6 +593,25 @@ def _propagate_with_maneuvers(
         telemetry_sink_path="",
     )
 
+    # Build the full output grid once, aligned to t0/output_dt_s exactly as a
+    # run without burns would produce it, plus every burn epoch. Each segment
+    # gets an exact slice of it; re-spacing each segment's own burn-shifted
+    # duration silently changed the requested spacing and its alignment to t0
+    # (and, without output_dt_s, re-derived it from each post-burn period).
+    master_plan = resolve_time_grid_plan(
+        dynamics=dynamics, y0=y0, cfg=cfg, time_cfg=time_cfg, verbose=bool(getattr(cfg, "verbose", False)),
+    )
+    burn_epochs = np.asarray([float(m.t_burn_s) for m in maneuver_plan.maneuvers], dtype=np.float64)
+    master_grid = np.union1d(np.asarray(master_plan.t_eval, dtype=np.float64), burn_epochs)
+
+    def segment_grid(lo: float, hi: float) -> np.ndarray:
+        sel = master_grid[(master_grid >= lo) & (master_grid <= hi)]
+        if sel.size == 0 or sel[0] != lo:
+            sel = np.concatenate(([lo], sel))
+        if sel[-1] != hi:
+            sel = np.concatenate((sel, [hi]))
+        return np.ascontiguousarray(sel, dtype=np.float64)
+
     t_rows: list[float] = []
     y_rows: list[np.ndarray] = []
     event_t_parts: list[list[np.ndarray]] = []
@@ -634,6 +660,7 @@ def _propagate_with_maneuvers(
                 time_cfg=segment_time,
                 topo_grid=topo_grid,
                 extra_events=extra_events,
+                _t_eval_override=segment_grid(current_t, burn_t),
             )
             append_segment(segment)
             current_t = float(segment.t[-1])
@@ -654,6 +681,7 @@ def _propagate_with_maneuvers(
             time_cfg=segment_time,
             topo_grid=topo_grid,
             extra_events=extra_events,
+            _t_eval_override=segment_grid(current_t, tf),
         )
         append_segment(segment)
 

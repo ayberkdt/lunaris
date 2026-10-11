@@ -609,7 +609,7 @@ class TrainingQueue(QWidget):
             # the item's themed foreground color (emoji ignore setForeground)
             # and render identically across platforms. The status word at the
             # end of the row keeps the meaning color-independent.
-            icon = {"Pending": "○", "Running…": "▶", "Stopped": "■"}.get(
+            icon = {"Pending": "○", "Running…": "▶", "Stopped": "■", "Interrupted": "■"}.get(
                 job["status"], "●" if "Completed" in job["status"] else "✕"
             )
             text = f"{icon}  [{i + 1}] {job['label']}  —  {job['status']}"
@@ -619,7 +619,7 @@ class TrainingQueue(QWidget):
                 item.setForeground(QColor(THEME["accent"]))
             elif "Completed" in job["status"]:
                 item.setForeground(QColor(THEME["success"]))
-            elif "Error" in job["status"] or "Stopped" in job["status"]:
+            elif "Error" in job["status"] or "Stopped" in job["status"] or "Interrupted" in job["status"]:
                 item.setForeground(QColor(THEME["error"]))
             self._list.addItem(item)
 
@@ -661,7 +661,11 @@ class TrainingQueue(QWidget):
                     continue
                 restored = dict(job)
                 if str(restored.get("status", "Pending")).startswith("Running"):
-                    restored["status"] = "Pending"
+                    # The Studio died while this job ran. Relaunching it fresh
+                    # would wipe that run's history and checkpoints (the
+                    # trainer starts a new history in the same --out), so it
+                    # is not Pending: the user resumes or re-adds it.
+                    restored["status"] = "Interrupted"
                 self._queue.append(restored)
         policy = settings.value("training_queue/failure_policy", "stop")
         index = self.failure_policy.findData(str(policy))

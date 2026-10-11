@@ -253,16 +253,21 @@ def classify_st_lrps_run(config: dict[str, Any], *, has_checkpoint: bool) -> tup
 _BATCH_REQUIRED_KEYS = {"Y", "t", "impact_flags", "sc_samples"}
 
 
-def _is_batch_hdf5(path: Path) -> bool:
+def _is_batch_hdf5(path: Path) -> bool | str:
+    """True/False for a readable HDF5 file; a reason string when it cannot be read.
+
+    An archive the auditor cannot open (h5py missing, unreadable file) must be
+    reported, not silently left out of an audit that then looks clean.
+    """
     try:
         import h5py
     except ImportError:
-        return False
+        return "h5py is not installed, so this HDF5 file could not be read or audited"
     try:
         with h5py.File(str(path), "r") as f:
             return _BATCH_REQUIRED_KEYS.issubset(set(f.keys()))
-    except Exception:
-        return False
+    except Exception as exc:
+        return f"HDF5 file could not be read: {exc}"
 
 
 def _is_batch_npz(path: Path) -> bool:
@@ -316,9 +321,19 @@ def audit_root(root: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
 
     for path in sorted(root.rglob("*")):
-        is_batch_h5 = path.suffix.lower() in (".h5", ".hdf5") and _is_batch_hdf5(path)
+        h5_probe = _is_batch_hdf5(path) if path.suffix.lower() in (".h5", ".hdf5") else False
+        if isinstance(h5_probe, str):
+            entries.append({
+                "path": str(path),
+                "kind": "batch_archive",
+                "status": INVALID,
+                "reasons": [h5_probe],
+                "has_impacts": None,
+                "archive_schema_version": None,
+            })
+            continue
         is_batch_npz = path.suffix.lower() == ".npz" and _is_batch_npz(path)
-        if is_batch_h5 or is_batch_npz:
+        if h5_probe or is_batch_npz:
             entries.append(_audit_batch_archive(path))
 
     for cfg_path in sorted(root.rglob("config.json")):

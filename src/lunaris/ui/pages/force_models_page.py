@@ -1887,8 +1887,9 @@ class ForceModelsPage(QtWidgets.QWidget):
             "Blank keeps the engine default.",
         )
         self.ent_tide_k3 = _tide_value_row(
-            1, "k3 value", "engine default",
-            "Degree-3 lunar potential Love number (used when the k3 row is on).",
+            1, "k3 value", "required for k3",
+            "Degree-3 lunar potential Love number. Required when the k3 row is on: "
+            "the engine has no default k3.",
         )
         self.ent_tide_r_ref = _tide_value_row(
             2, "Reference radius [m]", "engine default",

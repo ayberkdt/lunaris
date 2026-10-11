@@ -251,8 +251,15 @@ class TimelineController(QtCore.QObject):
         current = self.cursor()
         if current is None:
             current = float(times[-1])
-        idx = int(np.searchsorted(times, current, side="right")) - 1
-        idx = max(0, min(times.shape[0] - 1, idx + int(direction)))
+        # Backward counts from the last sample strictly before the cursor,
+        # forward from the first one strictly after it: from between two
+        # samples (a paused playback cursor), one step lands on the
+        # neighbour, never past it.
+        if int(direction) < 0:
+            idx = int(np.searchsorted(times, current, side="left")) + int(direction)
+        else:
+            idx = int(np.searchsorted(times, current, side="right")) - 1 + int(direction)
+        idx = max(0, min(times.shape[0] - 1, idx))
         self.set_cursor(float(times[idx]))
 
     def jump_start(self) -> None:

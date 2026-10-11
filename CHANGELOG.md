@@ -2,6 +2,91 @@
 
 ## Unreleased
 
+- **Fixed: the gravity benchmark swallowed a failed surrogate degree override.**
+  - `propagate_for_scenario` lowered and restored the surrogate's `degree_max` inside `contextlib.suppress(Exception)`: a refused assignment benchmarked the model at another degree than recorded, and a failed restore left the cached model altered for later scenarios. Both assignments now raise. The shipped providers use plain attributes, so their runs are unchanged. Ported from Sidera.
+
+- **Fixed: the result auditor skipped HDF5 archives it could not read.**
+  - Without h5py, or with an unreadable `.h5`, the archive was silently left out and the audit looked clean. Such a file is now listed as invalid with the reason. Ported from Sidera (64d48728).
+
+- **Fixed: `lunaris-frozen-search` printed tracebacks for impossible bounds.**
+  - Crossed bounds (`--e 0.5 0.1`) or `--n-samples 1` raised a ValueError traceback, and `--hp-km` with an eccentricity bound of 1 raised ZeroDivisionError. They now print one `[FATAL]` line and exit 2. Ported from Sidera.
+
+- **Fixed: the batch command silently replaced invalid solver text and rounded solver values.**
+  - Invalid max step / rtol / atol text on the Propagation page was replaced by defaults without a warning (the single-run builder warns); it now warns the same way.
+  - The values were written with `:g`, six significant digits (a max step of 123.4567891 s became 123.457); they now round-trip exactly. Ported from Sidera.
+
+- **Fixed: the Mission Studio orbit page disagreed with the run by 0.6 km.**
+  - The page converted altitudes with the mean radius (1737.4 km); the runner converts `--hp-km/--ha-km/--alt-km` with `R_MOON` = 1738.0 km. The preview's semi-major axis was 0.6 km below the launched one, and in a/e mode the periselene/aposelene the page showed were 0.6 km above what the run used. The page now uses the runner's radius. Ported from Sidera.
+
+- **Fixed: PDS3 `^IMAGE` pointers with a `<BYTES>` unit.**
+  - `^IMAGE = 2049 <BYTES>` was read as record 2049 (offset `RECORD_BYTES * 2048`, silently wrong) and `("F.IMG", 2049 <BYTES>)` was refused as a missing pointer. A `<BYTES>` pointer is now a 1-based byte position. Record pointers are unchanged. Ported from Sidera.
+
+- **Fixed: a Mission Monitor layout file that is not UTF-8 was overwritten instead of kept.**
+  - `load_layout` let `UnicodeDecodeError` escape (it is not an `OSError` or `LayoutError`), the caller swallowed it, no `.bak` was made, and the layout was overwritten at close. It now raises `LayoutError`, so the file is quarantined like invalid JSON. Ported from Sidera.
+
+- **Fixed: Mission Studio run and batch children could die on a non-ASCII print (Windows).**
+  - A Python child whose stdout is a pipe encodes with the ANSI code page; the first character outside cp1252 (for example an arrow) raised `UnicodeEncodeError` and killed the run (reproduced on this machine). The children now run with `PYTHONIOENCODING=utf-8`, matching the UI's UTF-8 decoding. Ported from Sidera (64d48728).
+
+- **Fixed: an impulsive-manoeuvre run re-spaced its output grid per segment (output times change).**
+  - Each segment between burns built its own evenly spaced grid over its burn-shifted duration: `output_dt_s = 60` with a burn at 1000 s gave 58.82 s spacing before the burn and 59.09 s after, neither 60 s nor aligned to t0 (without `output_dt_s`, each segment re-derived it from its own post-burn period).
+  - The output is now the grid a run without burns would produce, plus each burn epoch; each segment integrates its exact slice. Trajectories are unchanged; only the sample times move. Ported from Sidera.
+
+- **Fixed: `lunaris-data download` never fetched companion files.**
+  - Only the entry's main URL was downloaded; the detached labels listed under `companion_files` (the `.lbl` each LOLA, GRAIL and Diviner product needs) were not, so `lunaris-data verify --strict` failed right after a fresh download. Missing companions are now fetched from their own `url` or the main file's folder, hash-checked; a required companion's failure is the entry's status. Ported from Sidera.
+
+- **Fixed: PDS3 `IEEE_REAL` / `REAL` rasters were read as little-endian.**
+  - `dtype_from_pds3_sample` mapped them to `<f4/<f8` like `PC_REAL`; PDS3 (Standards Reference, Appendix C) defines them, and `MAC_REAL` / `SUN_REAL`, as big-endian. They now map to `>f4/>f8`. `PC_REAL` (the LOLA products shipped here) is unchanged. Ported from Sidera.
+
+- **Fixed: the ST-LRPS paper-evidence multi-seed stage aggregated no seeds.**
+  - It read each train entry's seed from the manifest's `config` record, which holds only path and hashes, so every candidate was skipped and the summary reported 0 seeds. Train entries now record `extra.seed`.
+  - Field-validation entries were all written under the manifest key `field_validation` (a second model overwrote the first), and the multi-seed lookup used a `seed{N}` folder the stage never writes. Entries are keyed `field_validation:<model>`, record `--seed`, and are paired by seed or by the evaluated checkpoint's sha256.
+  - Shared field and orbit-benchmark CSVs that name no candidate are borrowed only when there is a single seed; with several, every seed got the same numbers (std 0).
+  - A `--seed` sweep of one named config collapsed onto one manifest entry and evidence folder; the run key now appends `_seed<N>` unless the name already contains it.
+  - Ported from Sidera (64d48728), with a stricter seed-in-name check.
+
+- **Fixed: the ST-LRPS Studio relaunched an interrupted queue job from scratch.**
+  - A job that was running when the Studio died was restored as Pending; Start Queue relaunched it without `--resume-from`, and the trainer started a new history in the same output folder, deleting the run's history and checkpoints. It is now restored as Interrupted and the queue skips it. Ported from Sidera (64d48728).
+
+- **Fixed: Mission Studio overwrote an unreadable session file with defaults.**
+  - A `studio_session.json` with one typo, a truncation or a UTF-8 BOM failed to load, the defaults stayed, and the next auto-save (30 s) or the close wrote them over the user's profile.
+  - A BOM is now accepted; a file that is not JSON is moved to `studio_session.json.bak` (then `.bak.1`, ...) and the console names it.
+  - Session saves (auto-save, Save Profile, the legacy migration) write atomically, so a failure mid-write leaves the previous file intact. The migration reports "Migrated" only when the forward copy succeeded.
+  - Ported from Sidera (64d48728, desktop-UI fixes).
+
+- **Fixed: `tools/gpu_qualification.py` reported PASS when every GPU test was skipped.**
+  - The verdict was pytest's exit code, which is 0 when no CUDA is visible and every `requires_cuda` test skips. The tool now reads a JUnit report and fails unless at least one test passed. `--help` prints usage instead of running the suite. Ported from Sidera (64d48728).
+
+- **Fixed: surface and eclipse event factories faked or lost crossings near the start (default behaviour changes).**
+  - Terminator, node, target-flyover, occultation, stability and solar-eclipse events returned a constant for absolute `t < 1 s`. A start on the other side of the surface reported a fake crossing at t = 1 s (a run starting in shadow got a false eclipse entry), a real crossing in the first second was lost, and a run whose t0 is an epoch never got the window.
+  - `t_guard_s` now defaults to 0 and, when positive, is start-relative and returns NaN (never a crossing), like the apsis and longitude events; a negative or non-finite value raises.
+  - `make_max_eclipse_duration_event` returned the same stale value at both ends of a root bracket, so plain `solve_ivp` raised "f(a) and f(b) must have different signs" (through the step-consistent wrapper it reported 171 s for a 150 s limit). It now records the eclipse entry time from monotone calls and returns `max_duration_s - (t - entry_t)`, linear inside a step.
+  - No production path builds these events; they are public API. Ported from Sidera (66237c40, 64d48728); Sidera's start-on-surface rule is not ported (the SciPy step-consistent wrapper already covers that case).
+
+- **Fixed: Mission Studio impact watchdog and live telemetry around `rhs_probe` samples.**
+  - An `rhs_probe` sample (a solver evaluation that may belong to a rejected adaptive step) reached the impact watchdog, so one probe below the surface could stop a run. Probes no longer count as impact evidence; output states still do (the engine's own impact events are unchanged).
+  - The output states the engine emits from t0 after the integration were drawn after the live probe trace (the orbit twice, with a line back to t0) and ran the progress bar from ~100 % back to 0. The first output state now replaces the probe trace, and progress follows the probes only.
+  - The watchdog latched once per window: after one impact, later runs were never warned. It is re-armed when a run starts.
+  - Ported from Sidera (64d48728, library audit); the progress fix is Lunaris-specific.
+
+- **Fixed: replay step-back from a paused cursor skipped a sample.**
+  - With the cursor between two samples, one step back landed two samples back. Backward steps now count from the last sample strictly before the cursor, forward steps from the first strictly after. Ported from Sidera (66237c40).
+
+- **Fixed: the Results page Duration KPI was missing for every real run.**
+  - It read `time.duration_days`, a `TimeConfig` property that `asdict()` never writes to `run_config.json`. It now reads `time.duration_s` (a hand-written `duration_days` still works). Ported from Sidera (66237c40).
+
+- **Fixed: a PDS3 `MISSING_CONSTANT` written as a based integer was read as its radix.**
+  - `parse_pds3_cyl_label` matched `16#FF7FFFFB#` with a decimal pattern and stored `16.0`, so a DN of 16 was masked as missing and the real null was not.
+  - ODL based integers (`radix#[sign]digits#`, radix 2-16) are now decoded: as the integer for integer samples (range-checked), as the IEEE bit pattern of the sample word for real samples (`16#FF7FFFFB#` = float32 -3.4028226550889045e38). Malformed constants raise `PDS3ParseError`. Decimal constants are unchanged; no repository data label uses the based form. Ported from Sidera (66237c40).
+
+- **Fixed: the frozen-orbit search recorded the working directory's git commit.**
+  - `git rev-parse HEAD` ran in the process's cwd, so a search started inside another repository wrote that repository's commit into its manifest. It now runs in the installed package's directory. Ported from Sidera.
+
+- **Fixed: Mission Studio tide values and absolute tolerance reach the run.**
+  - k3 tides with a blank k3 field built a command the runner refused (`--tides-kind k3 requires an explicit --tide-k3 value`, exit 2); the engine has no default k3. The UI now refuses to build it and names the field.
+  - A Love number of 0 (accepted by the CLI, `>= 0`) was dropped as invalid; it is now sent. Non-finite values are skipped with a warning; the reference radius must still be positive.
+  - The Propagation page's absolute tolerance never reached single runs, batch runs or the pre-flight check (they read `solver_cfg.atol`); the page value now wins and `solver_cfg.atol` fills a blank field.
+  - Ported from Sidera (66237c40).
+
 - **Fixed: SciPy event root-finding crash on circular orbits.**
   - **The crash.** On an exactly circular orbit, RK45, Radau and LSODA raised `ValueError: f(a) and f(b) must have different signs` from inside `solve_ivp`. This was reproduced on a 100 km lunar orbit.
   - **Cause.** The apsis event `r . v` sits at rounding level there. SciPy detects a crossing from the solver states, but `brentq` re-evaluates the step interpolant, whose end values can have the other sign.

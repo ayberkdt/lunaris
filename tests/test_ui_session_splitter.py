@@ -220,13 +220,16 @@ def test_corrupt_session_file_allows_startup_without_overwrite(tmp_path, monkeyp
     from lunaris.ui.app import MainWindow
 
     win = MainWindow()  # startup must survive a corrupt session
+    backup = appdir / "studio_session.json.bak"
     try:
-        # The corrupt file must not be silently overwritten during init.
-        assert corrupt.read_text(encoding="utf-8") == "{ this is not valid json "
+        # The corrupt file is moved aside, so no later save can overwrite it.
+        assert backup.read_text(encoding="utf-8") == "{ this is not valid json "
     finally:
         win.close()
         win.deleteLater()
         app.processEvents()
+    # Closing auto-saves a fresh session; the user's file survives as .bak.
+    assert backup.read_text(encoding="utf-8") == "{ this is not valid json "
 
 
 def test_partial_session_file_restores_with_defaults(tmp_path, monkeypatch) -> None:

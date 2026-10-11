@@ -188,8 +188,10 @@ class PDS3ParseError(ValueError):
 _RE_PDS_COMMENT = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
 
 _RE_IMAGE_STR = re.compile(r'\^IMAGE\s*=\s*"([^"]+)"', flags=re.IGNORECASE)
-_RE_IMAGE_TUP = re.compile(r'\^IMAGE\s*=\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*\)', flags=re.IGNORECASE)
-_RE_IMAGE_REC = re.compile(r"\^IMAGE\s*=\s*(\d+)", flags=re.IGNORECASE)
+_RE_IMAGE_TUP = re.compile(
+    r'\^IMAGE\s*=\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*(<\s*BYTES\s*>)?\s*\)', flags=re.IGNORECASE
+)
+_RE_IMAGE_REC = re.compile(r"\^IMAGE\s*=\s*(\d+)\s*(<\s*BYTES\s*>)?", flags=re.IGNORECASE)
 
 _RE_FILE_NAME = re.compile(r'\bFILE_NAME\s*=\s*"([^"]+)"', flags=re.IGNORECASE | re.MULTILINE)
 _RE_RECORD_BYTES = re.compile(r"\bRECORD_BYTES\s*=\s*(\d+)", flags=re.IGNORECASE | re.MULTILINE)
@@ -314,7 +316,7 @@ def _find_case_insensitive(path: str | Path) -> Path | None:
     return None
 
 
-def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[str | None, int]:
+def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[str | None, int, bool]:
     """
     Parse the PDS3 '^IMAGE' pointer.
 
@@ -322,6 +324,11 @@ def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[
       ^IMAGE = "FILE.IMG"             -> (FILE.IMG, 1)
       ^IMAGE = ("FILE.IMG", 123)      -> (FILE.IMG, 123)
       ^IMAGE = 123                    -> (None, 123)   (data in the label file itself)
+      ^IMAGE = 2049 <BYTES>           -> (None, 2049, True)
+      ^IMAGE = ("FILE.IMG", 2049 <BYTES>)
+
+    A ``<BYTES>`` unit makes the number a 1-based byte position instead of a
+    record number (PDS3 Standards Reference, pointer statements).
 
     Parameters
     ----------
@@ -331,24 +338,25 @@ def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[
 
     Returns
     -------
-    (filename, start_record)
-        filename is None if the label points to itself.
+    (filename, start, in_bytes)
+        filename is None if the label points to itself; ``in_bytes`` says
+        whether ``start`` is a 1-based byte position (else a record number).
     """
     m = _RE_IMAGE_STR.search(label_text)
     if m:
-        return m.group(1), 1
+        return m.group(1), 1, False
 
     m = _RE_IMAGE_TUP.search(label_text)
     if m:
-        return m.group(1), int(m.group(2))
+        return m.group(1), int(m.group(2)), m.group(3) is not None
 
     m = _RE_IMAGE_REC.search(label_text)
     if m:
-        return None, int(m.group(1))
+        return None, int(m.group(1)), m.group(2) is not None
 
     if strict:
         raise PDS3ParseError("PDS3 parse error: missing required ^IMAGE pointer.")
-    return None, 1
+    return None, 1, False
 
 
 def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> tuple[Path, int]:
@@ -384,13 +392,16 @@ def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> t
     raw_text = _strip_pds_comments(raw_text)
 
     # 1) Parse metadata
-    ptr_file, start_record = _parse_pds3_image_pointer(raw_text, strict=strict)
+    ptr_file, start_record, start_in_bytes = _parse_pds3_image_pointer(raw_text, strict=strict)
     explicit_file_name = _re_find_optional(_RE_FILE_NAME, raw_text, str, default=None)
     record_bytes = _re_find_optional(_RE_RECORD_BYTES, raw_text, int, default=None)
 
     # 2) Compute offset
     offset_bytes = 0
-    if start_record > 1:
+    if start_in_bytes:
+        # A <BYTES> pointer is a 1-based byte position, independent of RECORD_BYTES.
+        offset_bytes = int(start_record) - 1
+    elif start_record > 1:
         if record_bytes is None:
             # In strict mode, if ^IMAGE implies an offset but RECORD_BYTES is missing, fail fast.
             if strict:
@@ -591,12 +602,19 @@ def dtype_from_pds3_sample(sample_type: str, sample_bits: int) -> np.dtype:
     bits = int(sample_bits)
 
     # --- Floating point ----------------------------------------------------
-    # "PC_REAL" is the canonical little-endian IEEE encoding in many PDS3 labels.
-    if st in {"PC_REAL", "IEEE_REAL", "REAL"}:
+    # "PC_REAL" is little-endian; IEEE_REAL/MAC_REAL/SUN_REAL/REAL are
+    # big-endian (PDS3 Standards Reference, Appendix C).
+    if st == "PC_REAL":
         if bits == 32:
             return np.dtype("<f4")
         if bits == 64:
             return np.dtype("<f8")
+        raise ValueError(f"Unsupported REAL bit depth: {bits}")
+    if st in {"IEEE_REAL", "MAC_REAL", "SUN_REAL", "REAL"}:
+        if bits == 32:
+            return np.dtype(">f4")
+        if bits == 64:
+            return np.dtype(">f8")
         raise ValueError(f"Unsupported REAL bit depth: {bits}")
 
     # --- Signed integers ---------------------------------------------------
@@ -1112,6 +1130,50 @@ class PDS3RasterInfo:
     center_lat_deg: float
 
 
+_RE_MISSING_BASED = re.compile(
+    r"\bMISSING_CONSTANT\s*=\s*(\d+)#([+-]?)([0-9A-Za-z]+)#", flags=re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _based_missing_constant(radix: str, sign: str, digits: str, sample_type: str, sample_bits: int) -> float:
+    """A MISSING_CONSTANT written as an ODL based integer, as the sample value it marks.
+
+    ODL based integers are ``radix#[sign]digits#`` with a radix of 2 to 16
+    (PDS3 Standards Reference, 12.3.1.2). For an integer SAMPLE_TYPE the
+    constant is that integer and must fit the sample type. For a real
+    SAMPLE_TYPE the integer is read as the IEEE bit pattern of a
+    SAMPLE_BITS-wide word (``16#FF7FFFFB#`` is the float32
+    -3.4028226550889045e+38, the LRO null), taken as the pattern of the
+    decoded value, so the file's byte order does not enter. Chapter 12
+    defines only the integer; the bit-pattern reading for real samples is an
+    interpretation (the integer itself, 4286578683 here, is no float32 value).
+    """
+    text = f"MISSING_CONSTANT = {radix}#{sign}{digits}#"
+    base = int(radix)
+    if not 2 <= base <= 16:
+        raise PDS3ParseError(f"PDS3 parse error: {text}: the radix must be 2 to 16 (ODL based integer)")
+    try:
+        magnitude = int(digits, base)
+    except ValueError as error:
+        raise PDS3ParseError(f"PDS3 parse error: {text}: {digits!r} are not base-{base} digits") from error
+    value = -magnitude if sign == "-" else magnitude
+    dtype = dtype_from_pds3_sample(sample_type, sample_bits)
+    if dtype.kind == "f":
+        if not 0 <= value < 2 ** (8 * dtype.itemsize):
+            raise PDS3ParseError(
+                f"PDS3 parse error: {text} is not a {8 * dtype.itemsize}-bit pattern for SAMPLE_TYPE {sample_type}"
+            )
+        word = np.array([value], dtype=f"u{dtype.itemsize}")
+        return float(word.view(f"f{dtype.itemsize}")[0])
+    limits = np.iinfo(dtype)
+    if not limits.min <= value <= limits.max:
+        raise PDS3ParseError(
+            f"PDS3 parse error: {text} = {value} is outside {sample_type} {sample_bits}-bit "
+            f"({limits.min}..{limits.max})"
+        )
+    return float(value)
+
+
 @lru_cache(maxsize=128)
 def parse_pds3_cyl_label(label_path: PathLike) -> PDS3RasterInfo:
     """
@@ -1145,14 +1207,20 @@ def parse_pds3_cyl_label(label_path: PathLike) -> PDS3RasterInfo:
     scaling_factor = _re_find_one(r"\bSCALING_FACTOR\s*=\s*([0-9.+-Ee]+)", txt, float)
     offset = _re_find_one(r"\bOFFSET\s*=\s*([0-9.+-Ee]+)", txt, float)
 
-    # Optional missing constant (often present in derived maps)
-    # Robust numeric pattern (supports sign + scientific notation)
-    missing_constant = _re_find_optional(
-        r"\bMISSING_CONSTANT\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[Ee][+-]?\d+)?)",
-        txt,
-        float,
-        default=float("nan"),
-    )
+    # Optional missing constant (often present in derived maps): a based
+    # integer (16#FF7FFFFB#) or a decimal number (sign + scientific notation).
+    based = _RE_MISSING_BASED.search(txt)
+    if based is not None:
+        missing_constant = _based_missing_constant(
+            based.group(1), based.group(2), based.group(3), sample_type, sample_bits,
+        )
+    else:
+        missing_constant = _re_find_optional(
+            r"\bMISSING_CONSTANT\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[Ee][+-]?\d+)?)",
+            txt,
+            float,
+            default=float("nan"),
+        )
 
     # Map projection block
     map_projection_type = _re_find_one(r"\bMAP_PROJECTION_TYPE\s*=\s*\"([^\"]+)\"", txt, str)

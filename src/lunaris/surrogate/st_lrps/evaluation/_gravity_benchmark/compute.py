@@ -780,8 +780,9 @@ def propagate_for_scenario(
         # Belt-and-suspenders: temporarily lower degree_max on the surrogate
         _orig_dmax = getattr(grav, "degree_max", 200)
         _base_deg  = max(1, int(getattr(grav, "degree_min", 20)))
-        with contextlib.suppress(Exception):
-            grav.degree_max = _base_deg
+        # Not suppressed: a provider that refuses the assignment must fail
+        # loudly rather than be benchmarked at another degree than recorded.
+        grav.degree_max = _base_deg
 
     dyn = DynamicsEngine(
         sc_props=cfg.spacecraft,
@@ -802,10 +803,10 @@ def propagate_for_scenario(
         print(f"    ERROR propagating {model_name}: {exc}", flush=True)
         res = None
     finally:
-        # Restore degree_max on surrogate
+        # Restore degree_max on surrogate (a cached model is reused by later
+        # scenarios, so a failed restore must not pass silently).
         if model_name == "st_lrps":
-            with contextlib.suppress(Exception):
-                grav.degree_max = _orig_dmax
+            grav.degree_max = _orig_dmax
     rt = time.perf_counter() - t0
 
     if res is None or (res.ode is not None and not res.ode.success):

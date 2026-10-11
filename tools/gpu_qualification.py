@@ -57,10 +57,42 @@ def _device_banner() -> str:
         return f"torch/CUDA unavailable: {type(exc).__name__}: {exc}"
 
 
+def count_passed(junit_xml: Path) -> int | None:
+    """Passed test count from a pytest JUnit XML report (None if unreadable)."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.parse(junit_xml).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    passed = 0
+    for suite in suites:
+        total = int(suite.get("tests", 0))
+        not_passed = sum(int(suite.get(key, 0)) for key in ("failures", "errors", "skipped"))
+        passed += total - not_passed
+    return passed
+
+
+def qualification_verdict(returncode: int, passed: int | None) -> tuple[int, str]:
+    """Exit code and verdict line.
+
+    pytest exits 0 when every ``requires_cuda`` test is skipped (no CUDA
+    visible), so a zero exit code alone is not a qualification: at least one
+    test must have passed.
+    """
+    if returncode != 0:
+        return returncode, f"pytest exit code: {returncode} (FAIL)"
+    if not passed:
+        return 1, "pytest exit code: 0 but no requires_cuda test passed (FAIL: nothing was validated on a GPU)"
+    return 0, f"pytest exit code: 0, {passed} requires_cuda test(s) passed (PASS)"
+
+
 def run_qualification() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = _utc_stamp()
     log_path = OUT_DIR / f"qualification_{stamp}.log"
+    junit_path = OUT_DIR / f"qualification_{stamp}.junit.xml"
 
     banner = _device_banner()
     header = [
@@ -74,21 +106,30 @@ def run_qualification() -> int:
     # -rs reports skip reasons: a green run that actually SKIPPED everything (no
     # CUDA visible) is distinguishable from one that truly validated the GPU.
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/", "-m", "requires_cuda", "-q", "-rs"],
+        [
+            sys.executable, "-m", "pytest", "tests/", "-m", "requires_cuda", "-q", "-rs",
+            f"--junitxml={junit_path}",
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
     body = proc.stdout + ("\n[stderr]\n" + proc.stderr if proc.stderr else "")
-    verdict = f"pytest exit code: {proc.returncode} ({'PASS' if proc.returncode == 0 else 'FAIL'})"
+    exit_code, verdict = qualification_verdict(int(proc.returncode), count_passed(junit_path))
 
     log_path.write_text("\n".join(header) + "\n" + body + "\n" + verdict + "\n", encoding="utf-8")
     print(body)
     print(verdict)
     print(f"Log written to: {log_path}")
-    return int(proc.returncode)
+    return exit_code
 
 
 if __name__ == "__main__":
+    import argparse
+
+    argparse.ArgumentParser(
+        description="Run the requires_cuda suite and write a provenance-stamped log "
+        "under outputs/gpu_qualification/. Fails unless at least one test passed."
+    ).parse_args()
     raise SystemExit(run_qualification())

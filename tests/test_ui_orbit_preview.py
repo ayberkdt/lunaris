@@ -14,8 +14,11 @@ from __future__ import annotations
 import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
-from lunaris.ui.core.ui_commons import R_MOON_KM as R
+from lunaris.common.constants import R_MOON as _R_ORBIT_INIT_M
 from lunaris.ui.pages.orbit_config_page import OrbitPage, OrbitViz3D, _OrbitState
+
+# The radius the runner converts hp/ha/alt with (lunaris.cli.common_args).
+R = _R_ORBIT_INIT_M / 1000.0
 
 
 def _app() -> QtWidgets.QApplication:
@@ -120,6 +123,40 @@ def test_metric_strip_and_preview_use_same_validated_state() -> None:
         assert p.lbl_ecc.text() == f"{state.e:.4f}"
         # Periselene chip derives from the same a/e.
         assert p.lbl_hp.text() == f"{state.a_km * (1 - state.e) - R:,.0f}"
+    finally:
+        p.deleteLater()
+
+
+@pytest.mark.parametrize(
+    ("mode", "fields", "cli"),
+    [
+        ("altitude", {"ent_hp": "100", "ent_ha": "300"}, {"hp_km": 100.0, "ha_km": 300.0}),
+        ("circular", {"ent_alt_circular": "50"}, {"alt_km": 50.0}),
+    ],
+)
+def test_preview_semi_major_axis_matches_the_runner(mode, fields, cli) -> None:
+    """Regression: the page converted altitudes with the mean radius
+    (1737.4 km) while the runner uses 1738.0 km, so the preview's a (and, in
+    a/e mode, the hp/ha it showed) disagreed with the launched orbit by 0.6 km."""
+    import argparse
+
+    from lunaris.cli.common_args import resolve_orbit_elements
+
+    p = _page()
+    try:
+        getattr(p, f"btn_mode_{mode}").setChecked(True)
+        for name, text in fields.items():
+            getattr(p, name).setText(text)
+        state = p._compute_orbit_state()
+        args = argparse.Namespace(
+            hp_km=None, ha_km=None, a_km=None, e=None, alt_km=None,
+            inc_deg=None, raan_deg=None, argp_deg=None, ta_deg=None,
+        )
+        for key, value in cli.items():
+            setattr(args, key, value)
+        coe = resolve_orbit_elements(args)
+        a_cli_km = coe.get("a_km", coe.get("a_m", 0.0) / 1000.0)
+        assert abs(state.a_km - a_cli_km) < 1e-9
     finally:
         p.deleteLater()
 
