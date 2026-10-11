@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: the gravity benchmark swallowed a failed surrogate degree override.**
+  - `propagate_for_scenario` lowered and restored the surrogate's `degree_max` inside `contextlib.suppress(Exception)`: a refused assignment benchmarked the model at another degree than recorded, and a failed restore left the cached model altered for later scenarios. Both assignments now raise. The shipped providers use plain attributes, so their runs are unchanged. Ported from Sidera.
+
 - **Fixed: the result auditor skipped HDF5 archives it could not read.**
   - Without h5py, or with an unreadable `.h5`, the archive was silently left out and the audit looked clean. Such a file is now listed as invalid with the reason. Ported from Sidera (64d48728).
 
