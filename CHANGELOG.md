@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: Mission Studio impact watchdog and live telemetry around `rhs_probe` samples.**
+  - An `rhs_probe` sample (a solver evaluation that may belong to a rejected adaptive step) reached the impact watchdog, so one probe below the surface could stop a run. Probes no longer count as impact evidence; output states still do (the engine's own impact events are unchanged).
+  - The output states the engine emits from t0 after the integration were drawn after the live probe trace (the orbit twice, with a line back to t0) and ran the progress bar from ~100 % back to 0. The first output state now replaces the probe trace, and progress follows the probes only.
+  - The watchdog latched once per window: after one impact, later runs were never warned. It is re-armed when a run starts.
+  - Ported from Sidera (64d48728, library audit); the progress fix is Lunaris-specific.
+
 - **Fixed: replay step-back from a paused cursor skipped a sample.**
   - With the cursor between two samples, one step back landed two samples back. Backward steps now count from the last sample strictly before the cursor, forward steps from the first strictly after. Ported from Sidera (66237c40).
 

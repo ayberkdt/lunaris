@@ -1958,6 +1958,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stderr_assembler.clear()
         self._run_wall_t0 = time.time()
         self._last_telem_t_s = None
+        self._reset_run_watch_state()
         self._progress_is_determinate = False
         self.progress_bar.show()
         if prefers_reduced_motion():
@@ -2092,6 +2093,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return float(s)
         except Exception:
             return None
+
+    def _reset_run_watch_state(self) -> None:
+        """Per-run telemetry bookkeeping, reset when a run starts.
+
+        The impact watchdog latches once per run, not once per window: without
+        the reset, every run after the first impact was never warned about.
+        """
+        self._collision_triggered = False
+        self._telemetry_holds_probes = False
+        self._telemetry_saw_probes = False
 
     def _check_collision(self, telem: dict) -> None:
         """Best-effort collision detection.
@@ -2333,6 +2344,19 @@ class MainWindow(QtWidgets.QMainWindow):
         from the typed sample keeps a single producer emission feeding both the
         Mission Monitor and the legacy pipeline.
         """
+        # The solver's rhs_probe samples give a live trace while the
+        # integration runs; the run's output states follow from t0 once it
+        # has finished and are the scientific trajectory. The first output
+        # state replaces the probe trace instead of being drawn after it
+        # (which plotted the orbit twice with a line back to t0).
+        kind = getattr(sample, "sample_kind", "output_state")
+        if kind == "rhs_probe":
+            self._telemetry_holds_probes = True
+            self._telemetry_saw_probes = True
+        elif getattr(self, "_telemetry_holds_probes", False):
+            self._telemetry_holds_probes = False
+            with contextlib.suppress(Exception):
+                self.page_telemetry.telemetry_multiplot.clear_all()
         legacy: dict[str, float] = {"t_s": float(sample.simulation_time_s)}
         if sample.altitude_m is not None:
             legacy["alt_km"] = sample.altitude_m / 1000.0
@@ -2353,8 +2377,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         with contextlib.suppress(Exception):
             self.page_telemetry.telemetry_multiplot.add_datapoint(legacy)
-        self._check_collision(legacy)
-        self._update_run_progress(sample.simulation_time_s)
+        # A probe is a solver evaluation that may belong to a rejected step, so
+        # it is never evidence of an impact.
+        if kind != "rhs_probe":
+            self._check_collision(legacy)
+        # Once probes have driven the progress bar, the output states replayed
+        # from t0 after the integration must not run it backwards.
+        if kind == "rhs_probe" or not getattr(self, "_telemetry_saw_probes", False):
+            self._update_run_progress(sample.simulation_time_s)
 
     def _update_run_progress(self, t_s: float | None) -> None:
         """Progress bar / ETA update from the latest telemetry time."""
