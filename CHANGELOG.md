@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: the result auditor skipped HDF5 archives it could not read.**
+  - Without h5py, or with an unreadable `.h5`, the archive was silently left out and the audit looked clean. Such a file is now listed as invalid with the reason. Ported from Sidera (64d48728).
+
 - **Fixed: `lunaris-frozen-search` printed tracebacks for impossible bounds.**
   - Crossed bounds (`--e 0.5 0.1`) or `--n-samples 1` raised a ValueError traceback, and `--hp-km` with an eccentricity bound of 1 raised ZeroDivisionError. They now print one `[FATAL]` line and exit 2. Ported from Sidera.
 
