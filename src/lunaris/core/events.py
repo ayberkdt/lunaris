@@ -447,31 +447,75 @@ def make_soi_event(soi_r_m: float, *, terminal: bool = True) -> EventFn:
 # 3.                         ORBITAL EVENTS
 # =============================================================================
 
+# A start state whose flight-path angle is below this (|r·v| <= tol |r||v|)
+# sits on an apsis to rounding: 1e3-1e4 times the float64 rounding of r·v for a
+# state built at true anomaly 0 or 180 deg.
+_APSIS_START_RTOL = 1.0e-12
+
+
 def _make_rdot_event(*, t_guard_s: float, direction: float, terminal: bool) -> EventFn:
     """
     Event for r·v = 0 (radial velocity zero crossing).
     direction=+1 => periapsis (from - to +)
     direction=-1 => apoapsis (from + to -)
+
+    The run starts at the *first* time this callable is evaluated (SciPy's
+    ``solve_ivp`` and the fixed-step driver both evaluate events at ``t0``);
+    a call earlier than that start begins a new run. A start state that lies
+    on an apsis (``|r·v| <= 1e-12 |r||v|``, e.g. a state built at true anomaly
+    0) is not reported as an apsis: at the start time the function returns a
+    value of the non-triggering sign, so neither SciPy (which reports a root
+    at a start value of exactly 0) nor the fixed-step driver locates it. Every
+    later root is reported, however close to the start.
+
+    ``t_guard_s > 0`` additionally suppresses every root in
+    ``[start, start + t_guard_s)`` by returning ``math.nan`` there (NaN is
+    never read as a crossing). A root after the window but inside the first
+    step that leaves it is lost too; keep it 0 unless that is wanted. Build a
+    fresh event per run.
     """
-    t_guard = float(t_guard_s)
+    guard_span = float(t_guard_s)
+    if not (math.isfinite(guard_span) and guard_span >= 0.0):
+        raise ValueError(f"t_guard_s must be finite and >= 0, got {t_guard_s!r}.")
+    sign = 1.0 if direction > 0.0 else -1.0
+    t_start: list[float | None] = [None]
 
     def rdot_event(t: float, y: NDArray[np.float64]) -> float:
-        if t < t_guard:
-            return 1.0  # keep away from root near t=0
+        start = t_start[0]
+        if start is None or t < start:
+            start = float(t)
+            t_start[0] = start
+        if t < start + guard_span:
+            return math.nan
         r = y[:3]
         v = y[3:]
-        return float(np.dot(r, v))
+        rdot = float(np.dot(r, v))
+        if t == start:
+            scale = _APSIS_START_RTOL * float(np.linalg.norm(r)) * float(np.linalg.norm(v))
+            if abs(rdot) <= scale:
+                # On the apsis at the start: report the side the event does not
+                # trigger from (+ for periapsis, - for apoapsis).
+                return sign * max(scale, float(np.finfo(np.float64).tiny))
+        return rdot
 
     return _set_event_props(rdot_event, terminal=terminal, direction=direction)
 
 
-def make_periselene_event(t_guard_s: float = 1.0, terminal: bool = False) -> EventFn:
-    """Periapsis when r·v crosses 0 with + slope (from - to +)."""
+def make_periselene_event(t_guard_s: float = 0.0, terminal: bool = False) -> EventFn:
+    """Periapsis when r·v crosses 0 with + slope (from - to +).
+
+    A start on the periapsis is not an event; see ``_make_rdot_event`` for the
+    start rule and the optional start-relative ``t_guard_s`` window.
+    """
     return _make_rdot_event(t_guard_s=t_guard_s, direction=+1.0, terminal=terminal)
 
 
-def make_aposelene_event(t_guard_s: float = 1.0, terminal: bool = False) -> EventFn:
-    """Apoapsis when r·v crosses 0 with - slope (from + to -)."""
+def make_aposelene_event(t_guard_s: float = 0.0, terminal: bool = False) -> EventFn:
+    """Apoapsis when r·v crosses 0 with - slope (from + to -).
+
+    A start on the apoapsis is not an event; see ``_make_rdot_event`` for the
+    start rule and the optional start-relative ``t_guard_s`` window.
+    """
     return _make_rdot_event(t_guard_s=t_guard_s, direction=-1.0, terminal=terminal)
 
 
@@ -729,22 +773,44 @@ def make_longitude_crossing_event(
     r_i_to_bf: XformFn_t,
     terminal: bool = False,
     direction: float = 0.0,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
 ) -> EventFn:
     """
     Moon-fixed longitude crossing event.
 
-    Root function: wrap_pi(lon(t) - lon0)  [radians]
+    Root function: ``sin(lon(t) - lon0)`` while ``cos(lon(t) - lon0) > 0``
+    (the near half, within +/-90 deg of ``lon0``), else ``math.nan``. The
+    wrapped difference ``wrap_pi(lon - lon0)`` jumps from +pi to -pi at the
+    antipode (``lon0 + 180 deg``), which solvers report as a second crossing
+    every revolution; ``sin`` is smooth with the same root and sign on the near
+    half, and NaN is never read as a crossing. A single integration step must
+    not sweep more than 90 deg of longitude near the crossing.
+
+    ``t_guard_s > 0`` suppresses roots in ``[start, start + t_guard_s)``
+    (start = first evaluation) by returning NaN; a constant guard value would
+    itself fake a crossing when the guard ends.
     """
     lon0 = math.radians(float(lon0_deg))
+    guard_span = float(t_guard_s)
+    if not (math.isfinite(guard_span) and guard_span >= 0.0):
+        raise ValueError(f"t_guard_s must be finite and >= 0, got {t_guard_s!r}.")
+    t_start: list[float | None] = [None]
 
-    def core(t: float, y: NDArray[np.float64]) -> float:
+    def ev(t: float, y: NDArray[np.float64]) -> float:
+        start = t_start[0]
+        if start is None or t < start:
+            start = float(t)
+            t_start[0] = start
+        if t < start + guard_span:
+            return math.nan
         r_i = as_vec3(y[:3], name="r_i")
         r_bf = as_vec3(r_i_to_bf(t, r_i), name="r_bf")
         _, lon = _latlon_from_r_bf(r_bf)
-        return float(_wrap_pi(lon - lon0))
+        diff = lon - lon0
+        if math.cos(diff) > 0.0:
+            return float(math.sin(diff))
+        return math.nan
 
-    ev = _with_t_guard(core, t_guard_s=t_guard_s)
     return _set_event_props(ev, terminal=terminal, direction=direction)
 
 
@@ -964,7 +1030,7 @@ def default_events(
     R_ref_m: float,
     impact_alt_km: float = 5.0,
     add_periapo: bool = True,
-    t_guard_s: float = 1.0,
+    t_guard_s: float = 0.0,
     *,
     topo=None,
     r_i_to_bf=None,
@@ -1228,7 +1294,7 @@ __all__ = (
     # -------------------------------------------------------------------------
     "make_terminator_crossing_event", # Terminator: dot(r_hat_fixed, sun_hat_fixed) = 0
     "make_node_crossing_event",       # Node crossing in reference plane: z=0 (asc/desc/both)
-    "make_longitude_crossing_event",  # Fixed-frame longitude crossing: wrap_pi(lon - lon0) = 0
+    "make_longitude_crossing_event",  # Fixed-frame longitude crossing: sin(lon - lon0) = 0 on the near half
     "make_target_flyover_event",      # Flyover: central angle to target <= gamma_max (downward crossing)
 
     # -------------------------------------------------------------------------

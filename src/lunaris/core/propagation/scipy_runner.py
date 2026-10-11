@@ -50,6 +50,26 @@ def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
     return vec
 
 
+def _grid_tolerance_s(grid: np.ndarray, chunk_s: float) -> float:
+    """Absolute time tolerance for 'on the output grid' [s].
+
+    A small fraction of the finer of the grid spacing and the chunk length:
+    far above the rounding a chain of ``t += chunk_s`` accumulates, far below
+    any real sample spacing, and independent of the absolute epoch.
+    """
+    spacing = float(np.min(np.diff(grid))) if grid.size > 1 else float(chunk_s)
+    return 1.0e-7 * max(min(spacing, float(chunk_s)), 1.0e-9)
+
+
+def _nearest_grid_distance(times: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    """Distance of each time to the nearest point of the sorted output grid [s]."""
+    if grid.size == 0:
+        return np.full(np.shape(times), np.inf)
+    right = np.clip(np.searchsorted(grid, times), 0, grid.size - 1)
+    left = np.clip(right - 1, 0, grid.size - 1)
+    return np.minimum(np.abs(times - grid[left]), np.abs(times - grid[right]))
+
+
 def run_scipy_propagation(
     *,
     rhs: Callable[[float, np.ndarray], np.ndarray],
@@ -125,7 +145,22 @@ def run_scipy_propagation(
     stop_reason = None
     chunk_idx = 0
 
-    if chunk_s is None:
+    if _stop_requested(stop_file):
+        # A stop file present before the first step stops the run at t0, as on
+        # the fixed-step path. The in-solver stop event cannot see it: its sign
+        # never changes while the file stays in place.
+        logger.warning("Stop file %s exists before the run started; stopping at t0 = %.12g s.", stop_file, float(t0))
+        stopped_early = True
+        stop_reason = "stop file"
+        t_cat: np.ndarray = np.asarray([t0], dtype=np.float64)
+        y_cat: np.ndarray = y0_arr.reshape(-1, 1)
+        t_events: list[np.ndarray] = [np.array([], dtype=np.float64) for _ in (events or [])]
+        y_events: list[np.ndarray] = [np.zeros((0, y0_arr.size), dtype=np.float64) for _ in (events or [])]
+        sol = SimpleNamespace(
+            t=t_cat, y=y_cat, t_events=t_events, y_events=y_events,
+            success=True, status=1, message="stop file present before start", nfev=0,
+        )
+    elif chunk_s is None:
         sol = _solve_span(t0, tf, y0_arr, t_eval)
         t_cat = np.asarray(sol.t, dtype=np.float64)
         y_cat = np.asarray(sol.y, dtype=np.float64)
@@ -162,21 +197,36 @@ def run_scipy_propagation(
         n_ev = len(events) if events else 0
         t_events_acc: list[list[np.ndarray]] = [[] for _ in range(n_ev)]
         y_events_acc: list[list[np.ndarray]] = [[] for _ in range(n_ev)]
+        last_event_t = [-np.inf] * n_ev
 
         y_curr = y0_arr.copy()
         t_curr = float(t0)
+        grid = np.asarray(t_eval, dtype=np.float64)
+        grid_tol = _grid_tolerance_s(grid, float(chunk_s))
+        last_kept_t = -np.inf
 
         while t_curr < tf - 1e-12:
-            if _stop_requested(stop_file) and (not bool(getattr(cfg, "stop_event_in_scipy", False))):
+            # Polled regardless of ``stop_event_in_scipy``: the in-solver stop
+            # event cannot fire for a file created between two chunks, whose
+            # sign is already "stop" at the next chunk's first evaluation.
+            if _stop_requested(stop_file):
                 stopped_early = True
                 stop_reason = "stop file"
                 break
 
             t_next = min(tf, t_curr + float(chunk_s))
-            mask = (t_eval >= t_curr - 1e-12) & (t_eval <= t_next + 1e-12)
-            t_eval_span = t_eval[mask]
-            if t_eval_span.size < 2:
-                t_eval_span = np.array([t_curr, t_next], dtype=np.float64)
+            # Repeated ``t += chunk_s`` drifts by rounding; a chunk end within
+            # the grid tolerance of an output time is that output time.
+            nearest_index = int(np.argmin(np.abs(grid - t_next))) if grid.size else -1
+            if nearest_index >= 0 and abs(float(grid[nearest_index]) - t_next) <= grid_tol:
+                t_next = min(tf, float(grid[nearest_index]))
+            mask = (t_eval >= t_curr - grid_tol) & (t_eval <= t_next + grid_tol)
+            # Both chunk ends are always sampled, on the grid or not: the next
+            # chunk restarts from the state at t_next, not from the last output
+            # sample, so no interval is integrated twice and no event is
+            # recorded twice. Only output-grid samples are kept below.
+            t_eval_span = np.clip(t_eval[mask], t_curr, t_next)
+            t_eval_span = np.unique(np.concatenate(([t_curr], t_eval_span, [t_next])).astype(np.float64))
 
             sol_k = _solve_span(t_curr, t_next, y_curr, t_eval_span)
 
@@ -213,19 +263,37 @@ def run_scipy_propagation(
                 else:
                     sol_y[:, -1] = y_terminal
 
-            if not t_parts:
-                t_parts.append(sol_t)
-                y_parts.append(sol_y)
-            else:
-                t_parts.append(sol_t[1:])
-                y_parts.append(sol_y[:, 1:])
+            # Keep output-grid samples (and a terminal event endpoint) that are
+            # new: a chunk's first sample repeats the previous chunk's last one,
+            # and off-grid chunk ends are restart points, not output.
+            on_grid = _nearest_grid_distance(sol_t, grid) <= grid_tol
+            if terminal_endpoint is not None:
+                on_grid[-1] = True
+            keep_out = on_grid & (sol_t > last_kept_t + 1e-12)
+            if np.any(keep_out):
+                t_parts.append(sol_t[keep_out])
+                y_parts.append(sol_y[:, keep_out])
+                last_kept_t = float(sol_t[keep_out][-1])
 
             if getattr(sol_k, "t_events", None) is not None:
                 for i in range(n_ev):
                     te = sol_k.t_events[i] if i < len(sol_k.t_events) else np.array([], dtype=np.float64)
                     ye = sol_k.y_events[i] if i < len(sol_k.y_events) else np.zeros((0, y0_arr.size), dtype=np.float64)
-                    t_events_acc[i].append(np.asarray(te, dtype=np.float64))
-                    y_events_acc[i].append(np.asarray(ye, dtype=np.float64))
+                    te_arr: np.ndarray = np.asarray(te, dtype=np.float64).reshape(-1)
+                    # solve_ivp returns an empty 1-D array for a chunk without
+                    # events; give it the (0, n) shape the concatenation needs.
+                    ye_arr: np.ndarray = np.asarray(ye, dtype=np.float64).reshape(-1, y0_arr.size)
+                    # A root exactly on the chunk boundary is reported by both
+                    # chunks (g = 0 at the end of one and the start of the
+                    # next); keep the first report only.
+                    if te_arr.size and last_event_t[i] >= t_curr - grid_tol:
+                        fresh = te_arr > t_curr + grid_tol
+                        te_arr = te_arr[fresh]
+                        ye_arr = ye_arr[fresh]
+                    if te_arr.size:
+                        last_event_t[i] = float(te_arr[-1])
+                    t_events_acc[i].append(te_arr)
+                    y_events_acc[i].append(ye_arr)
 
             # Advance the running state to the END of this completed chunk
             # BEFORE checkpointing, so a "latest/state/last" checkpoint records
