@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: the step-size convergence gate (`lunaris.validation.convergence`).** Three changes:
+  - It is now one-sided (`observed >= expected - order_tol`), as its docstring always said. Superconvergence no longer fails.
+  - The reference-based order comes from the finest (medium, fine) error pair instead of the coarse pair, which could hide a stalled sequence.
+  - 0/0, a solution that does not move across the sweep, now gives order `nan` and fails instead of passing as "converged".
+
+  Checked against RK4 (order 4.0) and Euler (order 1.0) on `y' = y`.
 - **Fixed: `lunaris-batch` exits 2 when the run produced no usable result.** If every sample failed or the metrics could not be built, the runner used to print `[BATCH][WARN]` and exit 0. It now prints `[BATCH][FATAL]` and exits 2.
 - **Fixed: the `lunaris` single run no longer reports success when the integration fails.** A failed SciPy integration returns a partial trajectory instead of raising. The runner used to print `[OK] Finished.` and exit 0 for it. It now keeps `run_config.json` / `run_diagnostics.json`, skips the report, prints `[FAIL] Integration failed at t = ...`, and exits 1. A requested SH degree above the gravity file's maximum was silently evaluated at the file maximum while the requested degree was recorded. The runner now warns and records the effective degree in the run config, report meta and telemetry, plus `requested_sh_degree` / `effective_sh_degree` in the run diagnostics.
 - **Fixed: `--samples-per-period` now sets the output grid.** The default config's `output_dt_s = 60 s` used to win, so the flag was recorded and ignored. On `lunaris` (single run), the flag now clears `output_dt_s` and the time-grid plan derives the spacing from the osculating period. `lunaris-batch` applies the same rule in the runner, because the batch engine would otherwise fall back to `10 * batch_dt_s`. The flag can no longer be combined with `--output-dt-s` on either command.
