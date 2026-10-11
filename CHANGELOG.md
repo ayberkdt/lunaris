@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: the capability matrix named a trainer command that does not exist.** It said `lunaris-train-st-lrps`; the installed console script is `lunaris-train`. Fixed in `shared/capabilities.py` and the generated `docs/ST_LRPS_CAPABILITY_MATRIX.md`.
+
+- **Fixed: SPICE kernel provenance could vanish without a trace.** The batch archive and single-run diagnostics wrapped `kernel_provenance()` in `contextlib.suppress(Exception)`, so a failure removed `spice_kernels` silently. Both now go through `physics.ephemeris.spice_provenance_fields`, which records `spice_kernels_unavailable_reason` and warns. Tables with no kernel provenance (an archive without `kernel_provenance_json`) now say so (`kernels_unavailable_reason`) instead of reporting an empty kernel list.
+
+- **Fixed: batch/GPU impact sphere differed from the CPU path.** The numba_cuda_sh, torch classic-SH and torch ST-LRPS propagators (and the engine's hit-index fallback) used `R_MOON` for the impact sphere; the CPU path uses the loaded gravity model's reference radius (`get_ref_radius_and_mu`). They now use the same radius. With the shipped SHADR model (reference radius 1738.0 km = `R_MOON`) results are bit-identical; runs with another model radius or an ST-LRPS artifact with its own `R_ref_m` now detect impacts on the CPU path's sphere.
+
 - **Fixed: LDEM product selection had no identity check.** `find_ldem_product` accepted any label that parsed, so a LOLA LDAM albedo or Diviner DGDR raster, or a product for another body, could be loaded as topography, and an explicit `ppd` was silently replaced by the closest resolution. Candidates must now be an LDEM/SLDEM product (PRODUCT_ID or file name), have `TARGET_NAME = MOON` when the label names a target, and parse with a length unit. An explicit `ppd` must match exactly. `parse_pds3_label` no longer routes LDAM/DGDR labels to the LDEM parser.
 
 - **Fixed: the PDS3 LDEM `UNIT` was ignored.** Every topography consumer assumed `SCALING_FACTOR` and `OFFSET` were in km, so a `UNIT = METER` label (the LOLA integer-LDEM convention) gave radii 1000 times too large. `parse_ldem_label` now normalises both to km from `UNIT` (KILOMETER or METER spellings) and refuses any other unit. The shipped `LDEM_64_FLOAT` label is `UNIT = KILOMETER`, so its results are unchanged. The terrain-freeze test fixture declared `UNIT = METER` while holding km values; it now says `KILOMETER`.
