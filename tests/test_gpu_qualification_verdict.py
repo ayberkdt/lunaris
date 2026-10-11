@@ -63,8 +63,8 @@ def test_passing_run_and_failing_run() -> None:
 
 def test_help_does_not_run_the_suite() -> None:
     proc = subprocess.run(
-        [sys.executable, str(_TOOL), "--help"], capture_output=True, text=True, timeout=60
+        [sys.executable, str(_TOOL), "--help"], capture_output=True, text=True, timeout=60, check=False
     )
     assert proc.returncode == 0
     assert "requires_cuda" in proc.stdout
-    assert "GPU qualification —" not in proc.stdout
+    assert "commit:" not in proc.stdout
