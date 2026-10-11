@@ -93,6 +93,88 @@ def test_run_gate_end_to_end_with_reference():
     assert math.isclose(manifest["observed_order"], 4.0, rel_tol=1e-9)
 
 
+def test_gate_is_one_sided_superconvergence_passes():
+    # The docstring always allowed an order above expected; the old
+    # |observed - expected| <= tol check failed order 6 against expected 4.
+    result = evaluate_convergence(
+        expected_order=4.0, observed_order=6.0, richardson_error_estimate=1e-12, order_tol=0.5
+    )
+    assert result.passed is True
+    assert evaluate_convergence(
+        expected_order=4.0, observed_order=3.4, richardson_error_estimate=1e-6, order_tol=0.5
+    ).passed is False
+
+
+def test_zero_over_zero_is_not_converged():
+    # A solver that ignores dt returns the same answer at every step: 0/0.
+    assert math.isnan(observed_order_from_solutions(1.0, 1.0, 1.0))
+    assert math.isnan(observed_order_from_errors(0.0, 0.0))
+    result = run_convergence_gate(lambda dt: 7.0, base_dt=0.1, expected_order=4.0)
+    assert result.passed is False
+    assert result.to_manifest()["observed_order"] is None
+
+
+def test_reference_gate_reads_the_order_from_the_finest_pair():
+    # e(dt) = C dt^4 + floor: the coarse pair still reads ~4, but the error has
+    # stalled between the medium and fine steps. The order that matters for
+    # the finest result is the fine pair's.
+    reference, c, floor = 0.0, 1.0e4, 1.5e-2
+    errors = {dt: c * dt**4 + floor for dt in (0.1, 0.05, 0.025)}
+    coarse_pair = observed_order_from_errors(errors[0.1], errors[0.05])
+    fine_pair = observed_order_from_errors(errors[0.05], errors[0.025])
+    assert coarse_pair > 3.5 and fine_pair < 2.5  # ~3.71 and ~2.04
+
+    result = run_convergence_gate(
+        lambda dt: reference + errors[dt], base_dt=0.1, expected_order=4.0, reference=reference
+    )
+    assert math.isclose(result.observed_order, fine_pair, rel_tol=1e-12)
+    assert result.passed is False
+
+
+def _integrate_exponential(step, dt: float, t_end: float = 1.0) -> float:
+    """Integrate y' = y, y(0) = 1 to t_end with a fixed-step one-step method."""
+    n = round(t_end / dt)
+    y = 1.0
+    for _ in range(n):
+        y = step(y, dt)
+    return y
+
+
+def _rk4(y: float, h: float) -> float:
+    k1 = y
+    k2 = y + 0.5 * h * k1
+    k3 = y + 0.5 * h * k2
+    k4 = y + h * k3
+    return y + h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
+
+
+def _euler(y: float, h: float) -> float:
+    return y + h * y
+
+
+def test_gate_recovers_real_integrator_orders_on_an_analytic_problem():
+    # y' = y has the exact solution e^t; classical RK4 is order 4, Euler order 1.
+    exact = math.exp(1.0)
+    rk4 = run_convergence_gate(
+        lambda dt: _integrate_exponential(_rk4, dt), base_dt=0.1, expected_order=4.0,
+        reference=exact,
+    )
+    assert abs(rk4.observed_order - 4.0) < 0.1
+    assert rk4.passed is True
+    rk4_free = run_convergence_gate(
+        lambda dt: _integrate_exponential(_rk4, dt), base_dt=0.1, expected_order=4.0
+    )
+    assert abs(rk4_free.observed_order - 4.0) < 0.1
+    assert rk4_free.passed is True
+    # Euler claimed as a 4th-order scheme must fail.
+    euler = run_convergence_gate(
+        lambda dt: _integrate_exponential(_euler, dt), base_dt=0.1, expected_order=4.0,
+        reference=exact,
+    )
+    assert abs(euler.observed_order - 1.0) < 0.1
+    assert euler.passed is False
+
+
 def test_skipped_gate_is_distinct_from_pass():
     result = skipped_gate("paper_safe: fixed reference step, no refinement sweep")
     assert result.passed is None

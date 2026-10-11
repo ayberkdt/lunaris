@@ -57,39 +57,15 @@ def tbe():
 
 @pytest.fixture(scope="session")
 def constants() -> tuple[float, float, float, float]:
-    """Best-effort import of common constants with safe numeric fallbacks."""
-    # Defaults (SI)
-    MU_EARTH = 3.986004418e14           # [m^3/s^2]
-    MU_SUN = 1.32712440018e20           # [m^3/s^2]
-    R_MOON = 1_737_400.0                # [m] mean radius
-    R_EARTH_EQ = 6_378_137.0            # [m] WGS-84 equatorial radius
+    """Physical constants from the project SSOT (``lunaris.common.constants``).
 
-    try:  # Prefer project SSOT if available
-        from lunaris.common.constants import MU_EARTH as _MU_EARTH  # type: ignore
-        from lunaris.common.constants import MU_SUN as _MU_SUN  # type: ignore
-        # Moon radius name varies a bit across codebases
-        try:
-            from lunaris.common.constants import R_MOON_MEAN as _R_MOON  # type: ignore
-        except Exception:  # pragma: no cover
-            from lunaris.common.constants import R_MOON_MEAN_M as _R_MOON  # type: ignore
-        try:
-            from lunaris.common.constants import R_EARTH_EQUATORIAL as _R_EARTH_EQ  # type: ignore
-        except Exception:  # pragma: no cover
-            try:
-                from lunaris.common.constants import R_EARTH_EQ as _R_EARTH_EQ  # type: ignore
-            except Exception:  # pragma: no cover
-                from lunaris.common.constants import R_EARTH_MEAN as _R_EARTH_EQ  # type: ignore
+    No local numeric fallback: a stale copy (the old fallback MU_SUN was
+    1.32712440018e20 against the SSOT 1.32712440042e20) would silently test
+    against different constants than the code uses.
+    """
+    from lunaris.common.constants import MU_EARTH, MU_SUN, R_EARTH_EQUATORIAL, R_MOON_MEAN
 
-        MU_EARTH = float(_MU_EARTH)
-        MU_SUN = float(_MU_SUN)
-        R_MOON = float(_R_MOON)
-        R_EARTH_EQ = float(_R_EARTH_EQ)
-
-    except Exception:
-        # Fall back to the local numeric defaults above.
-        pass
-
-    return MU_EARTH, MU_SUN, R_MOON, R_EARTH_EQ
+    return float(MU_EARTH), float(MU_SUN), float(R_MOON_MEAN), float(R_EARTH_EQUATORIAL)
 
 
 @pytest.fixture(scope="session", autouse=True)

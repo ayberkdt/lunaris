@@ -41,7 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tide-uncertainty", type=float, default=None)
     parser.add_argument("--absolute-threshold", type=float, default=None)
     parser.add_argument("--uncertainty-fraction", type=float, default=None)
-    parser.add_argument("--synthetic-fallback", choices=["on", "off"], default=None)
+    parser.add_argument(
+        "--synthetic-fallback",
+        choices=["on", "off"],
+        default=None,
+        help="Use synthetic gravity coefficients when no --gravity-model is given.",
+    )
     return parser
 
 
@@ -71,7 +76,7 @@ def config_from_args(args: argparse.Namespace) -> PerturbationBudgetConfig:
         "include_third_body": args.include_third_body,
         "include_relativity": args.include_relativity,
         "include_earth_j2": args.include_earth_j2,
-        "use_synthetic_geometry_fallback": args.synthetic_fallback,
+        "use_synthetic_gravity_fallback": args.synthetic_fallback,
     }
     for field, value in bool_map.items():
         if value is not None:

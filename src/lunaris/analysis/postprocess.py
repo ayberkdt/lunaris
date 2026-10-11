@@ -185,24 +185,6 @@ def first_present(d: Mapping[str, Any], keys: Sequence[str]) -> Any | None:
     return None
 
 
-def _maybe_km(x: np.ndarray) -> np.ndarray:
-    """
-    Best-effort length unit normalization to kilometers.
-
-    Heuristic:
-    - If median(|x|) is large (typical of meters), assume meters and divide by 1000.
-    - Otherwise, return as-is (assume already in km).
-    """
-    x = _as_np(x, dtype=float)
-    if x.size == 0:
-        return x
-    with np.errstate(invalid="ignore"):
-        m = float(np.nanmedian(np.abs(x)))
-    if np.isfinite(m) and m > 1e5:  # meters-scale typical orbital radii
-        return x / 1000.0
-    return x
-
-
 def _maybe_deg(x: np.ndarray) -> np.ndarray:
     """
     Best-effort angle unit normalization to degrees.
@@ -332,38 +314,36 @@ def extract_time_days(history: Mapping[str, Any]) -> np.ndarray:
 # State extraction (position/velocity)
 # ------------------------------------------------------------
 
-def _maybe_r_m(r: np.ndarray) -> np.ndarray:
-    """
-    Normalize position vectors to meters.
+def _state_rows(history: Mapping[str, Any], y: np.ndarray) -> np.ndarray | None:
+    """Return ``history["y"]`` as row-major ``(N, n_state)``, or None if it is not 2D.
 
-    Heuristic:
-    - If median radius looks like km-scale, multiply by 1000.
+    The canonical layout is ``(n_state, N)`` (solve_ivp style, as
+    :func:`compute_history` writes it); ``(N, n_state)`` is accepted too. When
+    both axes could be the state axis (both >= 6), the time grid decides: the
+    axis whose length matches it holds the epochs, the canonical layout winning
+    when both match (a square state). A shape that matches neither is refused
+    rather than guessed.
     """
-    r = _as_np(r, dtype=float)
-    if r.size == 0:
-        return r
-    with np.errstate(invalid="ignore"):
-        m = float(np.nanmedian(np.linalg.norm(r, axis=1))) if r.ndim == 2 and r.shape[1] == 3 else float(np.nanmedian(np.abs(r)))
-    if np.isfinite(m) and m < 1e5:  # likely km-scale (e.g., ~1700 km)
-        return r * 1000.0
-    return r
-
-
-def _maybe_v_mps(v: np.ndarray) -> np.ndarray:
-    """
-    Normalize velocity vectors to m/s.
-
-    Heuristic:
-    - If median speed looks like km/s-scale, multiply by 1000.
-    """
-    v = _as_np(v, dtype=float)
-    if v.size == 0:
-        return v
-    with np.errstate(invalid="ignore"):
-        m = float(np.nanmedian(np.linalg.norm(v, axis=1))) if v.ndim == 2 and v.shape[1] == 3 else float(np.nanmedian(np.abs(v)))
-    if np.isfinite(m) and m < 50.0:  # likely km/s (e.g., ~1.6 km/s)
-        return v * 1000.0
-    return v
+    if y.ndim != 2:
+        return None
+    if y.shape[0] >= 6 and y.shape[1] >= 6:
+        n_time = int(extract_time_seconds(history).size)
+        if n_time == 0:
+            n_time = int(extract_time_days(history).size)
+        if y.shape[1] == n_time:
+            return y.T
+        if y.shape[0] == n_time:
+            return y
+        raise ValueError(
+            f"history['y'] has shape {y.shape}, which could be (n_state, N) or "
+            f"(N, n_state), and neither axis matches the history's time grid "
+            f"length ({n_time}). Provide 't_s' or explicit 'r_m'/'v_mps' arrays."
+        )
+    if y.shape[0] >= 6 and y.shape[1] >= 1:
+        return y.T
+    if y.shape[1] >= 6 and y.shape[0] >= 1:
+        return y
+    return None
 
 
 def extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -372,8 +352,12 @@ def extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarr
       - r: meters
       - v: m/s
 
+    Histories are SI by contract (``compute_history``); values are returned
+    as stored, never rescaled by a magnitude guess.
+
     Expected canonical representation:
-      - history["y"] shaped (6, N) or (N, 6)
+      - history["y"] shaped (6, N) or (N, 6); see ``_state_rows`` for how an
+        ambiguous shape is resolved against the time grid.
     Optional canonical fallbacks:
       - history["r_m"] shaped (N, 3) or (3, N)
       - history["v_mps"] shaped (N, 3) or (3, N)
@@ -381,18 +365,9 @@ def extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarr
     y = first_present(history, ["y"])
     y = _as_np(y, dtype=float)
 
-    if y.ndim == 2:
-        if y.shape[0] >= 6 and y.shape[1] >= 1:
-            # solve_ivp-style (6, N)
-            r = y[0:3, :].T
-            v = y[3:6, :].T
-            return _maybe_r_m(r), _maybe_v_mps(v)
-
-        if y.shape[1] >= 6 and y.shape[0] >= 1:
-            # row-major (N, 6+)
-            r = y[:, 0:3]
-            v = y[:, 3:6]
-            return _maybe_r_m(r), _maybe_v_mps(v)
+    rows = _state_rows(history, y)
+    if rows is not None:
+        return rows[:, 0:3], rows[:, 3:6]
 
     # Explicit r/v fallbacks (canonical names only)
     r = _as_np(first_present(history, ["r_m"]), dtype=float)
@@ -412,7 +387,7 @@ def extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarr
 
     if rN3.size and vN3.size:
         n = min(rN3.shape[0], vN3.shape[0])
-        return _maybe_r_m(rN3[:n]), _maybe_v_mps(vN3[:n])
+        return rN3[:n], vN3[:n]
 
     return np.empty((0, 3), dtype=float), np.empty((0, 3), dtype=float)
 
@@ -452,12 +427,8 @@ def extract_elements(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
     y = first_present(history, ["y"])
     y = _as_np(y, dtype=float)
 
-    y6N = None
-    if y.ndim == 2:
-        if y.shape[0] >= 6:
-            y6N = y[:6, :]
-        elif y.shape[1] >= 6:
-            y6N = y[:, :6].T
+    rows = _state_rows(history, y)
+    y6N = rows[:, :6].T if rows is not None else None
 
     mu = None
     meta = history.get("meta") if isinstance(history, dict) else None
@@ -502,27 +473,19 @@ def extract_invariants(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
       - rel_energy_drift
       - rel_h_drift
 
-    If norms are missing, they are derived from r/v vectors.
+    If norms are missing, they are derived from the SI r/v vectors (m, m/s)
+    and converted to km, km/s. The canonical *_km / *_kmps keys are already in
+    km, km/s and are kept as stored (no magnitude-based unit guess).
     """
-    r_norm = _maybe_km(_as_np(first_present(history, ["r_norm_km"]), dtype=float))
+    r_norm = _as_np(first_present(history, ["r_norm_km"]), dtype=float)
     v_norm = _as_np(first_present(history, ["v_norm_kmps"]), dtype=float)
-
-    # If velocity norm looks like m/s, convert to km/s
-    if v_norm.size:
-        with np.errstate(invalid="ignore"):
-            if float(np.nanmedian(np.abs(v_norm))) > 50.0:
-                v_norm = v_norm / 1000.0
 
     if r_norm.size == 0 or v_norm.size == 0:
         r_vec, v_vec = extract_rv_vectors(history)
         if r_vec.size and r_norm.size == 0:
-            r_norm = _maybe_km(np.linalg.norm(r_vec, axis=1))
+            r_norm = np.linalg.norm(r_vec, axis=1) / 1000.0
         if v_vec.size and v_norm.size == 0:
-            vn = np.linalg.norm(v_vec, axis=1)  # m/s
-            with np.errstate(invalid="ignore"):
-                if float(np.nanmedian(np.abs(vn))) > 50.0:
-                    vn = vn / 1000.0
-            v_norm = vn
+            v_norm = np.linalg.norm(v_vec, axis=1) / 1000.0
 
     energy = _as_np(first_present(history, ["energy_Jkg"]), dtype=float)
     h = _as_np(first_present(history, ["h_norm_m2s"]), dtype=float)

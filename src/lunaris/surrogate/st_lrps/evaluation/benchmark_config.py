@@ -28,9 +28,8 @@ def load_benchmark_config(
 ) -> dict[str, Any]:
     """Load, validate, and resolve a benchmark config file.
 
-    JSON is supported without optional dependencies. YAML is supported when
-    PyYAML is installed; otherwise a small strict parser handles the simple
-    mapping/list/scalar subset used by Lunaris benchmark configs.
+    JSON is supported without optional dependencies. YAML needs PyYAML; without
+    it a YAML config raises ``BenchmarkConfigError``.
     """
 
     config_path = Path(path).expanduser().resolve()
@@ -305,107 +304,16 @@ def _load_config_payload(path: Path) -> Any:
 
 
 def _load_yaml_payload(text: str) -> Any:
+    # One parser only: a hand-written subset parser used to stand in when
+    # PyYAML was missing, so the same file could parse differently per machine
+    # (e.g. ``1e-10`` as a float there, a string under PyYAML).
     try:
         yaml_module: Any = import_module("yaml")
-        safe_load = yaml_module.safe_load
-    except (AttributeError, ImportError):
-        return _parse_simple_yaml(text)
-    return safe_load(text)
-
-
-def _parse_simple_yaml(text: str) -> Any:
-    lines: list[tuple[int, str]] = []
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        indent = len(line) - len(line.lstrip(" "))
-        lines.append((indent, line.strip()))
-    if not lines:
-        return {}
-    value, index = _parse_yaml_block(lines, 0, lines[0][0])
-    if index != len(lines):
-        raise BenchmarkConfigError("could not parse YAML config")
-    return value
-
-
-def _parse_yaml_block(lines: list[tuple[int, str]], index: int, indent: int) -> tuple[Any, int]:
-    mapping: dict[str, Any] = {}
-    sequence: list[Any] = []
-    mode: str | None = None
-    while index < len(lines):
-        current_indent, text = lines[index]
-        if current_indent < indent:
-            break
-        if current_indent > indent:
-            raise BenchmarkConfigError(f"unexpected YAML indentation near: {text}")
-        if text.startswith("- "):
-            if mode == "map":
-                raise BenchmarkConfigError("cannot mix YAML mapping and sequence at one indentation level")
-            mode = "seq"
-            item_text = text[2:].strip()
-            if not item_text:
-                item, index = _parse_yaml_block(lines, index + 1, indent + 2)
-                sequence.append(item)
-                continue
-            if ":" in item_text:
-                key, value_text = _split_yaml_key_value(item_text)
-                item = {}
-                if value_text:
-                    item[key] = _parse_yaml_scalar(value_text)
-                    index += 1
-                else:
-                    item[key], index = _parse_yaml_block(lines, index + 1, indent + 2)
-                if index < len(lines) and lines[index][0] == indent + 2 and not lines[index][1].startswith("- "):
-                    child, index = _parse_yaml_block(lines, index, indent + 2)
-                    if not isinstance(child, dict):
-                        raise BenchmarkConfigError("YAML list item continuation must be a mapping")
-                    item.update(child)
-                sequence.append(item)
-            else:
-                sequence.append(_parse_yaml_scalar(item_text))
-                index += 1
-        else:
-            if mode == "seq":
-                raise BenchmarkConfigError("cannot mix YAML sequence and mapping at one indentation level")
-            mode = "map"
-            key, value_text = _split_yaml_key_value(text)
-            if value_text:
-                mapping[key] = _parse_yaml_scalar(value_text)
-                index += 1
-            else:
-                mapping[key], index = _parse_yaml_block(lines, index + 1, indent + 2)
-    return (sequence if mode == "seq" else mapping), index
-
-
-def _split_yaml_key_value(text: str) -> tuple[str, str]:
-    if ":" not in text:
-        raise BenchmarkConfigError(f"expected YAML key/value pair near: {text}")
-    key, value = text.split(":", 1)
-    key = key.strip()
-    if not key:
-        raise BenchmarkConfigError("YAML key cannot be empty")
-    return key, value.strip()
-
-
-def _parse_yaml_scalar(text: str) -> Any:
-    value = text.strip()
-    if value in {"null", "Null", "NULL", "~"}:
-        return None
-    if value in {"true", "True", "TRUE"}:
-        return True
-    if value in {"false", "False", "FALSE"}:
-        return False
-    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-        return value[1:-1]
-    if value.startswith("[") or value.startswith("{"):
-        return json.loads(value)
-    try:
-        if any(ch in value for ch in (".", "e", "E")):
-            return float(value)
-        return int(value)
-    except ValueError:
-        return value
+    except ImportError as exc:
+        raise BenchmarkConfigError(
+            "YAML benchmark configs need PyYAML (pip install pyyaml); JSON configs need nothing extra."
+        ) from exc
+    return yaml_module.safe_load(text)
 
 
 def _fill_safe_defaults(config: MutableMapping[str, Any]) -> None:

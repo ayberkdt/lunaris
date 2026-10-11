@@ -142,6 +142,8 @@ cadence; halving `output_dt_s` scales the position-interpolation terms by
 
 The current implementation covers instantaneous acceleration budgets, SH degree
 sensitivity, uncertainty budgets, recommendations, CLI output, and tests.
+Sun/Earth geometry is deterministic and synthetic (no SPICE ephemeris);
+`PerturbationBudgetConfig(use_ephemeris=True)` is refused rather than ignored.
 
 Propagation-level ablation and detailed runtime comparisons are intentionally
 left as follow-up work because they require longer integrations and reference

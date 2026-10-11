@@ -5,3 +5,9 @@
 *.sbatch    text eol=lf
 *.slurm     text eol=lf
 hpc/cluster.env.example text eol=lf
+
+# Preserve the exact executed bytes referenced by recorded sha256 pins: the
+# rotating-validation evidence hashes its two runners, and every gravity-reference
+# generator hashes its own file into its benchmark manifest. A CRLF checkout
+# would change those bytes on Windows.
+validation/gravity_reference/generators/**/*.py text eol=lf

@@ -75,7 +75,7 @@ def load_gravity_model_for_budget(config: PerturbationBudgetConfig) -> GravityMo
     if config.gravity_model_path:
         model = GravityModel.from_file(config.gravity_model_path, requested_degree=max_degree)
         return GravityModelInfo(model=model, source=str(config.gravity_model_path), warning="")
-    if not config.use_synthetic_geometry_fallback:
+    if not config.use_synthetic_gravity_fallback:
         raise ValueError("gravity_model_path is required when synthetic fallback is disabled")
     return GravityModelInfo(
         model=synthetic_gravity_model(max_degree),

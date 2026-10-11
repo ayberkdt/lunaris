@@ -170,6 +170,28 @@ def build_gravity_provider(cfg: SimConfig) -> tuple[Any | None, float]:
     return gravity_core, mu
 
 
+def record_effective_sh_degree(cfg: SimConfig, gravity_core: Any | None) -> SimConfig:
+    """Record the SH degree the run evaluates, not the one requested.
+
+    ``GravityModel`` stops at the file's last supported degree, so a request
+    above it runs at the file maximum. Every record (run config, report meta,
+    telemetry) reads ``cfg.gravity.degree``; this warns and puts the effective
+    degree there instead of claiming a field that was never evaluated.
+    """
+    requested = cfg.gravity.degree
+    if gravity_core is None or requested is None or cfg.gravity.uses_st_lrps:
+        return cfg
+    effective = getattr(gravity_core, "degree_max", None)
+    if effective is None or int(effective) >= int(requested):
+        return cfg
+    print(
+        f"[WARN] Requested SH degree {int(requested)} exceeds the maximum degree "
+        f"{int(effective)} of {cfg.gravity.file_path}; the run evaluates and records "
+        f"degree {int(effective)}."
+    )
+    return replace_sim_config(cfg, gravity=replace(cfg.gravity, degree=int(effective)))
+
+
 def build_run_diagnostics_payload(result: Any, method: str) -> dict[str, Any]:
     """Flatten engine-reported run diagnostics into a JSON-safe dict.
 
@@ -640,6 +662,24 @@ def render_optional_3d(result: PropagationResult, cfg: SimConfig, out_dir: Path)
     )
 
 
+def integration_failure_message(result: PropagationResult) -> str | None:
+    """Why the solver failed, or ``None`` when it completed.
+
+    The SciPy path returns the partial trajectory with ``stop_reason ==
+    "integration failed"`` and an unsuccessful ``ode`` record instead of
+    raising. An early stop by an event (impact, stop file) is not a failure.
+    """
+    ode = getattr(result, "ode", None)
+    failed = getattr(result, "stop_reason", None) == "integration failed" or (
+        ode is not None and not bool(getattr(ode, "success", True))
+    )
+    if not failed:
+        return None
+    t_last = float(result.t[-1]) if len(result.t) else float("nan")
+    detail = getattr(ode, "message", None) if ode is not None else None
+    return f"Integration failed at t = {t_last:.6g} s" + (f": {detail}." if detail else ".")
+
+
 def run_pipeline(args: Namespace) -> int:
     """Execute the propagation command after argument parsing."""
     debug_tracebacks = bool(getattr(args, "debug_tracebacks", False))
@@ -652,6 +692,10 @@ def run_pipeline(args: Namespace) -> int:
         artifact_requested=bool(getattr(args, "telemetry_artifact", None)),
     )
     gravity_core, mu = _run_stage("Gravity model init failed", lambda: build_gravity_provider(cfg))
+    requested_sh_degree = cfg.gravity.degree
+    cfg = _run_stage(
+        "Gravity model init failed", lambda: record_effective_sh_degree(cfg, gravity_core)
+    )
     surface = _run_stage("Surface grids load failed", lambda: build_surface_provider_if_needed(cfg, args))
     ephem_mgr = _run_stage(
         "Ephemeris init failed",
@@ -709,12 +753,22 @@ def run_pipeline(args: Namespace) -> int:
     if ephem_mgr is not None and hasattr(ephem_mgr, "kernel_provenance"):
         with contextlib.suppress(Exception):
             diag_payload["spice_kernels"] = ephem_mgr.kernel_provenance()
+    if requested_sh_degree != cfg.gravity.degree:
+        diag_payload["requested_sh_degree"] = requested_sh_degree
+        diag_payload["effective_sh_degree"] = cfg.gravity.degree
     run.result.diagnostics = dict(diag_payload)
     _warn_optional_failure(
         "Could not write run artifacts",
         lambda: write_run_artifacts(run_dir, cfg, diag_payload),
     )
     _finalize_telemetry_artifact(cfg, run_dir)
+
+    failure = integration_failure_message(run.result)
+    if failure is not None:
+        # The config and diagnostics above are kept for inspection; a report of
+        # a failed integration would read as a result, so none is produced.
+        print(f"[FAIL] {failure} Partial run record: {run_dir}", flush=True)
+        return 1
 
     meta = build_run_meta(cfg, run.result, mu=mu, propagation_time_s=run.elapsed_s)
     meta.update(
@@ -776,10 +830,12 @@ __all__ = [
     "build_surface_provider_if_needed",
     "create_canonical_run_dir",
     "init_ephemeris",
+    "integration_failure_message",
     "load_runtime_config",
     "main",
     "main_entry",
     "orbit_init_requested",
+    "record_effective_sh_degree",
     "render_optional_3d",
     "render_reports",
     "resolve_initial_state",
