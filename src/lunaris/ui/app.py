@@ -2122,10 +2122,13 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if proc.state() == QtCore.QProcess.NotRunning:
                 return
-            self._log_message("[System] Graceful termination failed -> forcing kill...", severity="error")
+            # Kill before logging: a failing log write (window half torn down)
+            # must never leave the child running.
             proc.kill()
         except RuntimeError:
             return  # the wrapper was already deleted
+        with contextlib.suppress(Exception):
+            self._log_message("[System] Graceful termination failed -> forcing kill...", severity="error")
 
 
     # -------------------------------------------------------------------------
