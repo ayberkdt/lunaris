@@ -312,8 +312,9 @@ def test_build_command_emits_tide_value_flags_only_when_set() -> None:
     assert _val("--tide-r-ref-m") == "1.7374e+06"
     assert _val("--tide-bodies") == "earth,sun"
 
-    # Blank values keep engine defaults: no value flags emitted.
-    forces_blank = dict(forces, tide_k2_value="", tide_k3_value="",
+    # Blank values keep engine defaults: no value flags emitted. (k2 only: the
+    # engine has no default k3, so k3 tides with a blank k3 are refused.)
+    forces_blank = dict(forces, tides_k3=False, tide_k2_value="", tide_k3_value="",
                         tide_r_ref_m="", tide_bodies="")
     command_blank = build_command(
         python_executable="python",

@@ -25,6 +25,7 @@ between UI presentation and backend orchestration more explicit.
 
 from __future__ import annotations
 
+import math
 import os
 import shlex
 import subprocess
@@ -79,31 +80,62 @@ def _ui_telemetry_cadence_s(timeline: Mapping[str, Any], output_dt_s: str | None
     return max(5.0, min(600.0, float(cadence)))
 
 
+def _ui_atol(integrator: Mapping[str, Any], solver_cfg: Any) -> Any:
+    """The absolute tolerance the Propagation page shows; ``solver_cfg.atol`` fills a blank field."""
+    return str(integrator.get("atol", "") or "").strip() or getattr(solver_cfg, "atol", None)
+
+
+def _tide_value(raw: str, *, allow_zero: bool) -> float | None:
+    """A finite tide value the CLI accepts, or ``None``.
+
+    The CLI takes a Love number ``>= 0`` (0 switches that degree off) and a
+    reference radius ``> 0``; non-finite text is refused here as well.
+    """
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value < 0.0 or (value == 0.0 and not allow_zero):
+        return None
+    return value
+
+
 def _extend_tide_value_flags(
     command: list[str],
     forces: Mapping[str, Any],
     log_warning: Callable[[str], None] | None,
+    *,
+    require_k3: bool = False,
 ) -> None:
     """Emit optional --tide-* value flags when the user entered explicit values.
 
     Blank fields keep the engine defaults, so no flag is emitted for them.
     Invalid numeric text is skipped with a warning instead of producing a
-    command the CLI would reject.
+    command the CLI would reject. The engine has no default degree-3 Love
+    number (``SolidTideConfig.k3`` is ``None``), so with ``require_k3`` (k3
+    tides on) a missing or invalid k3 value raises ``ValueError`` instead of
+    building a command the CLI refuses.
     """
 
-    for key, flag in (
-        ("tide_k2_value", "--tide-k2"),
-        ("tide_k3_value", "--tide-k3"),
-        ("tide_r_ref_m", "--tide-r-ref-m"),
+    for key, flag, allow_zero in (
+        ("tide_k2_value", "--tide-k2", True),
+        ("tide_k3_value", "--tide-k3", True),
+        ("tide_r_ref_m", "--tide-r-ref-m", False),
     ):
         raw = str(forces.get(key, "") or "").strip()
         if not raw:
             continue
-        value = coerce_positive_float(raw)
+        value = _tide_value(raw, allow_zero=allow_zero)
         if value is None:
             _warn(log_warning, f"[UI] Invalid {flag} value: '{raw}'. Engine default kept.")
             continue
         command.extend([flag, f"{value:g}"])
+
+    if require_k3 and "--tide-k3" not in command:
+        raise ValueError(
+            "k3 tides need a k3 value: the engine has no default degree-3 Love number. "
+            "Enter one under the tide values on the Force Models page, or turn k3 tides off."
+        )
 
     bodies = str(forces.get("tide_bodies", "") or "").strip()
     if bodies:
@@ -135,7 +167,7 @@ def build_preflight_snapshot(
     rtol_value, atol_value = choose_solver_tolerances(
         method_label,
         rtol=integrator.get("rtol", getattr(solver_cfg, "rtol", None)),
-        atol=getattr(solver_cfg, "atol", None),
+        atol=_ui_atol(integrator, solver_cfg),
     )
     max_step_value = choose_max_step(
         getattr(solver_cfg, "max_step", DEFAULT_MAX_STEP_S),
@@ -356,7 +388,7 @@ def build_command(
     else:
         command.extend(["--enable-tides", "off"])
     if tides_k2 or tides_k3:
-        _extend_tide_value_flags(command, forces, log_warning)
+        _extend_tide_value_flags(command, forces, log_warning, require_k3=tides_k3)
 
     command.extend(
         ["--enable-relativity-1pn", bool_to_onoff(bool(forces.get("relativity_1pn", False)))]
@@ -400,11 +432,13 @@ def build_command(
                 f"[UI] Invalid rtol: '{rtol_raw}'. Using a safe default value instead.",
             )
 
-        atol_raw = getattr(solver_cfg, "atol", None)
+        # The Propagation page's atol field (what the page shows), like rtol
+        # above; solver_cfg only fills a blank field.
+        atol_raw = _ui_atol(integrator, solver_cfg)
         if coerce_positive_float(atol_raw) is None:
             _warn(
                 log_warning,
-                "[UI] Invalid atol in solver settings. Using a safe default value instead.",
+                f"[UI] Invalid atol: '{atol_raw}'. Using a safe default value instead.",
             )
 
         rtol_value, atol_value = choose_solver_tolerances(
@@ -561,7 +595,7 @@ def build_batch_command(
     else:
         command.extend(["--enable-tides", "off"])
     if tides_k2 or tides_k3:
-        _extend_tide_value_flags(command, forces, log_warning)
+        _extend_tide_value_flags(command, forces, log_warning, require_k3=tides_k3)
 
     command.extend(["--enable-relativity-1pn",
                     bool_to_onoff(bool(forces.get("relativity_1pn", False)))])
@@ -598,7 +632,7 @@ def build_batch_command(
     rtol_value, atol_value = choose_solver_tolerances(
         integrator_label or "DOP853 (Adaptive)",
         rtol=integrator.get("rtol", getattr(solver_cfg, "rtol", None)),
-        atol=getattr(solver_cfg, "atol", None),
+        atol=_ui_atol(integrator, solver_cfg),
     )
     command.extend(["--rtol", f"{float(rtol_value):g}"])
     command.extend(["--atol", f"{float(atol_value):g}"])

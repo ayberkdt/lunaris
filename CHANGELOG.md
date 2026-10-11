@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: Mission Studio tide values and absolute tolerance reach the run.**
+  - k3 tides with a blank k3 field built a command the runner refused (`--tides-kind k3 requires an explicit --tide-k3 value`, exit 2); the engine has no default k3. The UI now refuses to build it and names the field.
+  - A Love number of 0 (accepted by the CLI, `>= 0`) was dropped as invalid; it is now sent. Non-finite values are skipped with a warning; the reference radius must still be positive.
+  - The Propagation page's absolute tolerance never reached single runs, batch runs or the pre-flight check (they read `solver_cfg.atol`); the page value now wins and `solver_cfg.atol` fills a blank field.
+  - Ported from Sidera (66237c40).
+
 - **Fixed: SciPy event root-finding crash on circular orbits.**
   - **The crash.** On an exactly circular orbit, RK45, Radau and LSODA raised `ValueError: f(a) and f(b) must have different signs` from inside `solve_ivp`. This was reproduced on a 100 km lunar orbit.
   - **Cause.** The apsis event `r . v` sits at rounding level there. SciPy detects a crossing from the solver states, but `brentq` re-evaluates the step interpolant, whose end values can have the other sign.
