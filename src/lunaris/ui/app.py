@@ -1661,7 +1661,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if success:
             self._log_message(f"[System] {message}", severity="success")
             # Proceed with actual simulation
-            QtCore.QTimer.singleShot(100, self._run_process)
+            QtCore.QTimer.singleShot(100, self, self._run_process)
         else:
             self._log_message(f"[System] {message}", severity="error")
             self._set_preflight_state("idle")
@@ -2866,14 +2866,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # splitter ratio; this prevents page size hints from trapping the log
         # panel at an awkwardly small height.
         if not self._visual_state_restored:
-            QtCore.QTimer.singleShot(0, self._apply_default_log_splitter_sizes)
+            QtCore.QTimer.singleShot(0, self, self._apply_default_log_splitter_sizes)
 
         # Update command preview (delayed: lets UI settle)
-        QtCore.QTimer.singleShot(500, self._update_command_preview_silent)
+        QtCore.QTimer.singleShot(500, self, self._update_command_preview_silent)
 
         # Auto-detect gravity file if none set
         if not self.gravity_cfg.file_path:
-            QtCore.QTimer.singleShot(1000, self._auto_detect_gravity)
+            QtCore.QTimer.singleShot(1000, self, self._auto_detect_gravity)
 
     def _auto_detect_gravity(self):
         """Auto-detect gravity file in background."""

@@ -2152,7 +2152,7 @@ class ProcessPane(QWidget):
                 self.append("[UI] Force-killing process.\n")
                 self.proc.kill()
 
-        QTimer.singleShot(2000, kill_if_needed)
+        QTimer.singleShot(2000, self, kill_if_needed)
 
     def _on_ready_read(self) -> None:
         if not self.proc:

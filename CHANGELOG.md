@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: deferred UI callbacks ran on destroyed widgets.** `QTimer.singleShot(ms, callable)` has no receiver, so PySide6 ran lambdas and local closures after their widget was deleted: the Studio force-kill check, the launcher's open step, the orbit camera refit and the launch-button fit. A pending bound-method shot also ran after a synchronous delete. The Studio launch strip's `_refresh_layout` then read a deleted child and raised. All 33 single shots in the UI packages now pass their widget as the receiver. A scan test keeps it that way.
+
 - **Fixed: the test suite read and wrote the developer's real Qt settings.** `QSettings(organization, application)` opens the Windows registry, which `QSettings.setPath` cannot redirect. UI tests wrote window geometry and the density and motion keys there. An autouse fixture also cleared the real ST-LRPS Studio store on every run. Both apps now open their stores through `lunaris.ui_foundation.settings.persistent_settings`, which uses an .ini file under `LUNARIS_APP_DATA_DIR` when that is set. `tests/conftest.py` sets it to a fresh temporary folder for the whole session, which also isolates the session and layout files.
 
 - **Fixed: an ST-LRPS Studio post-run hook failed silently.** `ProcessPane` ran a page's finished hook under `contextlib.suppress(Exception)`. That hook chains the results refresh, train-then-evaluate and the training queue, so an exception stopped those follow-ups while the pane still read "Done". The failure is now written to the pane log, shown in the status line and logged with its traceback.

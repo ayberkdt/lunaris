@@ -709,7 +709,7 @@ class LauncherWindow(QtWidgets.QWidget):
         self._show_opening_overlay(name)
         # Defer the blocking build so the overlay paints first and the Moon gets
         # a few frames of motion before the build pause.
-        QtCore.QTimer.singleShot(_OPENING_BUILD_DELAY_MS, lambda: self._finish_open(name, builder))
+        QtCore.QTimer.singleShot(_OPENING_BUILD_DELAY_MS, self, lambda: self._finish_open(name, builder))
 
     def _finish_open(self, name: str, builder) -> None:
         """Build the workspace, then hand off from the launcher to it."""
