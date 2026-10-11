@@ -8,10 +8,9 @@
 from __future__ import annotations
 
 import pytest
+from tests.test_orbit_analysis_contract import _circular_result, _config
 
 from lunaris.analysis.orbit_analysis import build_orbit_analysis
-
-from tests.test_orbit_analysis_contract import _circular_result, _config
 
 
 @pytest.mark.parametrize(
