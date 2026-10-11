@@ -640,9 +640,12 @@ def _json_safe(value: Any) -> Any:
 
 
 def _git_commit() -> str:
+    # Resolve the commit of the checkout this package runs from, not of the
+    # process's working directory (which may be another repository).
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
             capture_output=True,
             text=True,
             timeout=10,

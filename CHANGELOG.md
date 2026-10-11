@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: the frozen-orbit search recorded the working directory's git commit.**
+  - `git rev-parse HEAD` ran in the process's cwd, so a search started inside another repository wrote that repository's commit into its manifest. It now runs in the installed package's directory. Ported from Sidera.
+
 - **Fixed: Mission Studio tide values and absolute tolerance reach the run.**
   - k3 tides with a blank k3 field built a command the runner refused (`--tides-kind k3 requires an explicit --tide-k3 value`, exit 2); the engine has no default k3. The UI now refuses to build it and names the field.
   - A Love number of 0 (accepted by the CLI, `>= 0`) was dropped as invalid; it is now sent. Non-finite values are skipped with a warning; the reference radius must still be positive.
