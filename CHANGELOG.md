@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: the numba CUDA SRP shadow matches the CPU again.**
+  - The device shadow factor still used the old smoothstep penumbra; the CPU now uses the exact visible-disk (lens-overlap) fraction. The GPU penumbra differed by up to 2.6% of full-sun SRP.
+  - `_shadow_factor_conical_cuda` now mirrors the CPU kernel branch for branch. Under the CUDA simulator the shadow factor is bit-identical in full sun, penumbra, umbra and annular geometry for both the Moon and the Earth. SRP acceleration agrees to 2.8e-16 of full-sun SRP.
+  - The CUDA SH longitudinal term uses the exact `1/rho^2` above the polar cutoff, as the CPU does. It is bit-identical for rho >= 0.13 mm and now agrees on and near the axis.
+  - GPU SRP results change inside penumbrae only. Non-SRP GPU runs are bit-identical off the polar axis.
+
 - **Fixed: worst-tail field statistics took one entry too many.**
   - The worst-1%/5% means sliced from `ceil(0.99*n) - 1`, which averaged 2 of 100 errors instead of 1.
   - They now take exactly `max(1, ceil(fraction*n))` entries.
