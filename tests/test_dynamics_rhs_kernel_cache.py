@@ -24,6 +24,13 @@ integration after the recording, so the scenarios above pin
 ``surface_integration="facets"`` (the recorded path, still bit-identical). The
 ``*_quadrature`` scenarios were recorded after that change (same platform) and
 guard the quadrature branch of the cached kernel.
+
+Re-recorded (same platform) for two deliberate physics changes, every other
+scenario still bit-identical: ``sh_relativity_1pn`` (the external 1PN term is
+the de Sitter term alone; up to 1.3e-11 m/s^2, 8.7e-12 relative) and the
+albedo / thermal-IR scenarios (the surface sphere is R_MOON_MEAN, not R_MOON;
+up to 4.3e-10 m/s^2, 2.7e-10 relative); ``all_forces_mass7`` carries both
+(1.1e-10 m/s^2, 6.7e-11 relative).
 """
 
 from __future__ import annotations
@@ -247,10 +254,10 @@ def _evaluate(engine_cls: Any = DynamicsEngine) -> dict[str, list[list[float]]]:
 GOLDEN_PLATFORM = ("Windows", "AMD64", "2.2.6", "0.64.0")
 GOLDEN_ACCEL: dict[str, list[list[str]]] = {
     "all_forces_mass7": [
-        ["-0x1.918ecd534cb4ep+0", "-0x1.21aaa8c361602p-7", "0x1.23df21aeaf466p-6"],
-        ["0x1.2072329539b2bp+0", "-0x1.08669dac00125p+0", "-0x1.20a1377eec888p-1"],
-        ["-0x1.0a3b0e88d0cc4p-6", "0x1.901af42f89481p-6", "-0x1.7b51e32cedd43p+0"],
-        ["0x1.0e300c1ffe339p+0", "-0x1.94819ca582e23p-4", "0x1.946da6f120921p-5"],
+        ["-0x1.918ecd52eafcbp+0", "-0x1.21aaa8a743889p-7", "0x1.23df21b55f882p-6"],
+        ["0x1.2072329535847p+0", "-0x1.08669dabf7c84p+0", "-0x1.20a1377eec261p-1"],
+        ["-0x1.0a3b0e8514835p-6", "0x1.901af4291a9b3p-6", "-0x1.7b51e32ce74e0p+0"],
+        ["0x1.0e300c1ff9e84p+0", "-0x1.94819ca592a1ap-4", "0x1.946da6f121b2cp-5"],
     ],
     "point_mass": [
         ["-0x1.916f686946689p+0", "-0x1.22a1be4544599p-7", "0x1.22a1be4544599p-6"],
@@ -277,21 +284,21 @@ GOLDEN_ACCEL: dict[str, list[list[str]]] = {
         ["0x1.0e2f3008f3b03p+0", "-0x1.9466d1f36152ap-4", "0x1.94a41c911a287p-5"],
     ],
     "sh_albedo_facets": [
-        ["-0x1.918ed3544d8b9p+0", "-0x1.221b3326fbe24p-7", "0x1.23dc5206caf17p-6"],
+        ["-0x1.918ed35418adbp+0", "-0x1.221b331692335p-7", "0x1.23dc520ab314ep-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
-        ["-0x1.0a40a9e635d63p-6", "0x1.900778ca1cc50p-6", "-0x1.7b50656ef3ca9p+0"],
+        ["-0x1.0a40a9e631defp-6", "0x1.900778ca11db7p-6", "-0x1.7b50656ef3916p+0"],
         ["0x1.0e2fad8306494p+0", "-0x1.946b9e8f182fdp-4", "0x1.947086c9009d9p-5"],
     ],
     "sh_albedo_grid_quadrature": [
-        ["-0x1.918ed34dcb97fp+0", "-0x1.221b3a62c7b58p-7", "0x1.23dc502c3af3bp-6"],
+        ["-0x1.918ed34dcd365p+0", "-0x1.221b3a63ce49ep-7", "0x1.23dc502c0b8c2p-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
-        ["-0x1.0a40a9e2ae99bp-6", "0x1.900778c97662ap-6", "-0x1.7b50656f0a6cap+0"],
+        ["-0x1.0a40a9e2bc613p-6", "0x1.900778c9756e7p-6", "-0x1.7b50656f0a27fp+0"],
         ["0x1.0e2fad8306494p+0", "-0x1.946b9e8f182fdp-4", "0x1.947086c9009d9p-5"],
     ],
     "sh_albedo_quadrature": [
-        ["-0x1.918ed350345c5p+0", "-0x1.221b3a58eefdfp-7", "0x1.23dc502da82bfp-6"],
+        ["-0x1.918ed3503661ep+0", "-0x1.221b3a58efcd3p-7", "0x1.23dc502da8fb3p-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
-        ["-0x1.0a40a9e2bf539p-6", "0x1.900778ca21924p-6", "-0x1.7b50656f0992ap+0"],
+        ["-0x1.0a40a9e2cc587p-6", "0x1.900778ca21499p-6", "-0x1.7b50656f094e7p+0"],
         ["0x1.0e2fad8306494p+0", "-0x1.946b9e8f182fdp-4", "0x1.947086c9009d9p-5"],
     ],
     "sh_albedo_simple_grid": [
@@ -313,10 +320,10 @@ GOLDEN_ACCEL: dict[str, list[list[str]]] = {
         ["0x1.0e2f35d719566p+0", "-0x1.9466f0831c88fp-4", "0x1.94a19b691fec0p-5"],
     ],
     "sh_relativity_1pn": [
-        ["-0x1.918eebf0dfd7fp+0", "-0x1.218f74ddd1d4ep-7", "0x1.23e468a48bb9ap-6"],
-        ["0x1.207235446e607p+0", "-0x1.0866a3d297f6bp+0", "-0x1.20a13c22fd0a8p-1"],
-        ["-0x1.0a3a7f874cf89p-6", "0x1.9012ecb569037p-6", "-0x1.7b5135d53b383p+0"],
-        ["0x1.0e2feab037953p+0", "-0x1.947f123839d09p-4", "0x1.946e23e62c14bp-5"],
+        ["-0x1.918eebf0d8b35p+0", "-0x1.218f74ddcae46p-7", "0x1.23e468a48c968p-6"],
+        ["0x1.207235446a323p+0", "-0x1.0866a3d28facap+0", "-0x1.20a13c22fca81p-1"],
+        ["-0x1.0a3a7f8711b43p-6", "0x1.9012ecb1e408cp-6", "-0x1.7b5135d53bef3p+0"],
+        ["0x1.0e2feab031366p+0", "-0x1.947f12384591bp-4", "0x1.946e23e62942ep-5"],
     ],
     "sh_rotation": [
         ["-0x1.918ed35b5e35fp+0", "-0x1.221b3a6136ecap-7", "0x1.23dc5035f01aap-6"],
@@ -337,28 +344,28 @@ GOLDEN_ACCEL: dict[str, list[list[str]]] = {
         ["0x1.0e2fad8306494p+0", "-0x1.946b9e8f182fdp-4", "0x1.947086c9009d9p-5"],
     ],
     "sh_thermal_equilibrium": [
-        ["-0x1.918ed327533fep+0", "-0x1.221b05241868fp-7", "0x1.23dc5d9624022p-6"],
+        ["-0x1.918ed325cdd28p+0", "-0x1.221b04ab32256p-7", "0x1.23dc5db2eb2e4p-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
-        ["-0x1.0a40aa7328588p-6", "0x1.900778ce40357p-6", "-0x1.7b50656c80992p+0"],
-        ["0x1.0e2fad82c719ap+0", "-0x1.946b9e8eb692ep-4", "0x1.947086c89e37ep-5"],
+        ["-0x1.0a40aa72f9efbp-6", "0x1.900778cde1c60p-6", "-0x1.7b50656c7ed1ep+0"],
+        ["0x1.0e2fad82c723dp+0", "-0x1.946b9e8eb6a69p-4", "0x1.947086c89e4b6p-5"],
     ],
     "sh_thermal_equilibrium_quadrature": [
-        ["-0x1.918ed30922d0ap+0", "-0x1.221b3a2438d9ap-7", "0x1.23dc4ff8f207ap-6"],
+        ["-0x1.918ed30931b4ep+0", "-0x1.221b3a243ed56p-7", "0x1.23dc4ff8f8036p-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
-        ["-0x1.0a40aa5229f33p-6", "0x1.900778c807ecdp-6", "-0x1.7b50656d1336ep+0"],
-        ["0x1.0e2fad82c6d1fp+0", "-0x1.946b9e8eb9320p-4", "0x1.947086c8a19fcp-5"],
+        ["-0x1.0a40aa5289744p-6", "0x1.900778c805e84p-6", "-0x1.7b50656d1152ap+0"],
+        ["0x1.0e2fad82c6dd2p+0", "-0x1.946b9e8eb942dp-4", "0x1.947086c8a1b09p-5"],
     ],
     "sh_thermal_temperature_grid": [
-        ["-0x1.918ed35aa21e4p+0", "-0x1.221b39c98fae3p-7", "0x1.23dc50508cd9cp-6"],
+        ["-0x1.918ed35a9b9c9p+0", "-0x1.221b39c896103p-7", "0x1.23dc504fb5892p-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
-        ["-0x1.0a40a9c1c6db8p-6", "0x1.900779fd8e28fp-6", "-0x1.7b5065642ce0ap+0"],
-        ["0x1.0e2fad728071ep+0", "-0x1.946b9e56f1e0bp-4", "0x1.94708625a464cp-5"],
+        ["-0x1.0a40a9c1057cap-6", "0x1.900779fc0e574p-6", "-0x1.7b5065641c138p+0"],
+        ["0x1.0e2fad7283465p+0", "-0x1.946b9e570d01ap-4", "0x1.947086260efdep-5"],
     ],
     "sh_thermal_temperature_grid_quadrature": [
-        ["-0x1.918ed359f20ebp+0", "-0x1.221b3aac06c7ep-7", "0x1.23dc4ffe1926dp-6"],
+        ["-0x1.918ed359ece97p+0", "-0x1.221b3ab203db2p-7", "0x1.23dc4ffd217fep-6"],
         ["0x1.20716d56acf55p+0", "-0x1.086682f9053cap+0", "-0x1.20a0c3f488809p-1"],
-        ["-0x1.0a40a8ab77f7bp-6", "0x1.900778fc9d62bp-6", "-0x1.7b5065614e87fp+0"],
-        ["0x1.0e2fad72848edp+0", "-0x1.946b9e5c435f6p-4", "0x1.94708638db824p-5"],
+        ["-0x1.0a40a8aa02a05p-6", "0x1.90077900d762ap-6", "-0x1.7b50656134633p+0"],
+        ["0x1.0e2fad72876d5p+0", "-0x1.946b9e5c50ae5p-4", "0x1.9470863909091p-5"],
     ],
     "sh_third_body": [
         ["-0x1.918eebf16e0b5p+0", "-0x1.218f74dfc0096p-7", "0x1.23e468a4f345bp-6"],
