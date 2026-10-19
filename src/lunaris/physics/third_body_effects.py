@@ -65,7 +65,13 @@ import numpy.typing as npt
 from numba import njit
 from numpy.typing import ArrayLike
 
-from lunaris.common.constants import MU_EARTH, MU_SUN, R_EARTH_EQUATORIAL, R_MOON
+from lunaris.common.constants import (
+    J2_EARTH_EGM2008,
+    MU_EARTH,
+    MU_SUN,
+    R_EARTH_EQUATORIAL_EGM2008_M,
+    R_MOON,
+)
 from lunaris.common.type_defs import Vec3
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 
@@ -346,15 +352,18 @@ class EarthJ2Params:
     Attributes
     ----------
     j2_coeff
-        Earth's J2 coefficient (dimensionless). WGS-84 nominal is ~1.08263e-3.
+        Earth's J2 coefficient (dimensionless). Default: EGM2008
+        (``J2_EARTH_EGM2008``).
     r_eq_m
-        Earth's equatorial reference radius [m] used by the J2 model.
+        Earth's equatorial reference radius [m] the J2 coefficient is
+        normalised to. J2 and this radius come from the same model; the default
+        is EGM2008's own radius (``R_EARTH_EQUATORIAL_EGM2008_M``).
     spin_axis_i
         Earth's spin axis expressed in the inertial frame (allowed non-unit;
         it will be normalized once per call in the Python wrapper).
     """
-    j2_coeff: float = 1.082_626_68e-3
-    r_eq_m: float = R_EARTH_EQUATORIAL  # expects your constants SSOT
+    j2_coeff: float = J2_EARTH_EGM2008
+    r_eq_m: float = R_EARTH_EQUATORIAL_EGM2008_M
     spin_axis_i: tuple[float, float, float] = (0.0, 0.0, 1.0)
 
 

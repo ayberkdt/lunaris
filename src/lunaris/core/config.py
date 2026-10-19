@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 # --- Local Imports: Common (dependency-light) ---
-from lunaris.common.constants import DAY_S
+from lunaris.common.constants import DAY_S, J2_EARTH_EGM2008, R_EARTH_EQUATORIAL_EGM2008_M
 from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.paths import data_dir_from_root, project_root_from_file
 from lunaris.common.type_defs import (
@@ -385,8 +385,8 @@ def ensure_model_configs(cfg: SimConfig) -> SimConfig:
                 "Earth J2 is enabled but lunaris.physics.third_body_effects could not be imported."
             ) from e
         changes["earth_j2"] = EarthJ2Params(
-            j2_coeff=1.08262668e-3,
-            r_eq_m=6_378_136.3,
+            j2_coeff=J2_EARTH_EGM2008,
+            r_eq_m=R_EARTH_EQUATORIAL_EGM2008_M,
             spin_axis_i=(0.0, 0.0, 1.0),
         )
 
@@ -537,12 +537,10 @@ def load_default_config(
                 "Earth J2 requested (enable_earth_j2=True) but lunaris.physics.third_body_effects is unavailable."
             ) from e
 
-        # Typical values (WGS-84-like)
-        R_EARTH_EQ_M = 6_378_136.3
-        J2_EARTH = 1.08262668e-3
+        # EGM2008 J2 with EGM2008's own reference radius (common.constants).
         earth_j2_params = EarthJ2Params(
-            j2_coeff=J2_EARTH,
-            r_eq_m=R_EARTH_EQ_M,
+            j2_coeff=J2_EARTH_EGM2008,
+            r_eq_m=R_EARTH_EQUATORIAL_EGM2008_M,
             spin_axis_i=(0.0, 0.0, 1.0),
         )
 

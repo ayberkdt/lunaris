@@ -112,6 +112,17 @@ R_EARTH_MEAN: float = 6_371_000.0            # Often used for spherical approxim
 # Standard WGS-84 value: 7.2921150e-5 rad/s
 OMEGA_EARTH: float = 7.292_115_0e-5
 
+# Earth reference radius and dynamical form factor (J2) of EGM2008, the default
+# pair of the Earth-J2 third-body perturbation (EarthJ2Params). The radius
+# (6,378,136.3 m) differs from WGS-84's R_EARTH_EQUATORIAL (6,378,137.0 m) by
+# 0.7 m: a distinct model convention, so it is its own named constant. Both come
+# from the ICGEM EGM2008.gfc header and coefficients (fully normalized,
+# tide-free): radius 6378136.3 m and C20 = -0.484165143790815e-3, so
+# J2 = -sqrt(5) C20. The earlier 1.08262668e-3 was not EGM2008's (4.7e-7
+# relative off).
+R_EARTH_EQUATORIAL_EGM2008_M: float = 6_378_136.3
+J2_EARTH_EGM2008: float = 1.0826261738522227e-3
+
 
 # =============================================================================
 # 5.                             SOLAR SYSTEM
@@ -197,6 +208,14 @@ CONSTANT_SOURCES: Final[Mapping[str, str]] = MappingProxyType({
     "R_EARTH_EQUATORIAL": "WGS-84 standards",
     "R_EARTH_MEAN": "IERS/WGS-84 mean radius convention used in project",
     "OMEGA_EARTH": "IERS/WGS-84 nominal Earth rotation rate",
+    "R_EARTH_EQUATORIAL_EGM2008_M": (
+        "EGM2008 reference radius, ICGEM EGM2008.gfc header (radius 6378136.3 m); "
+        "distinct from WGS-84's R_EARTH_EQUATORIAL."
+    ),
+    "J2_EARTH_EGM2008": (
+        "-sqrt(5) * C20 of ICGEM EGM2008.gfc (fully normalized, tide-free, "
+        "C20 = -0.484165143790815e-3): https://icgem.gfz-potsdam.de/"
+    ),
 
     # --- Moon ---
     "MU_MOON": "JPL DE440 / lunar gravity model reference (GM)",
