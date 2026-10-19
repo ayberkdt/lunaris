@@ -734,6 +734,20 @@ def _propagate_with_maneuvers(
 
     last = terminal_result or (segments[-1] if segments else None)
     diagnostics = dict(last.diagnostics) if last is not None else {}
+    if segments:
+        # The last segment's counts and drifts describe only that segment; a run's
+        # diagnostics cover all of it. Energy and angular momentum change at a burn by
+        # design, so their drifts are taken per segment and the worst one is reported.
+        diagnostics["n_points"] = float(len(t_rows))
+        nfevs = [float(s.diagnostics.get("nfev", np.nan)) for s in segments]
+        finite_nfevs = [value for value in nfevs if np.isfinite(value)]
+        diagnostics["nfev"] = float(sum(finite_nfevs)) if finite_nfevs else float("nan")
+        for key in ("kepler_energy_rel_drift", "kepler_energy_rel_spread", "angmom_rel_drift", "angmom_rel_spread"):
+            values = [float(s.diagnostics[key]) for s in segments if key in s.diagnostics]
+            finite = [value for value in values if np.isfinite(value)]
+            if finite:
+                diagnostics[key] = max(finite)
+        diagnostics["drift_scope"] = "worst_segment"
     diagnostics.update(
         {
             "maneuver_plan_sha256": maneuver_plan.plan_sha256,

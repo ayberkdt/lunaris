@@ -143,3 +143,39 @@ def test_terminal_event_at_burn_time_takes_precedence() -> None:
     assert result.stopped_early
     assert result.diagnostics["maneuvers_applied"] == []
     assert result.diagnostics["maneuver_event_precedence"] == "terminal_event_before_burn"
+
+
+def test_maneuver_run_diagnostics_cover_every_segment() -> None:
+    # The run's diagnostics were the last segment's: its n_points (not the run's
+    # rows), its nfev, and its energy / angular-momentum drift.
+    r0 = float(R_MOON + 100_000.0)
+    v0 = math.sqrt(MU_MOON / r0)
+    y0 = np.array([r0, 0.0, 0.0, 0.0, v0, 0.0])
+    period = 2.0 * math.pi * math.sqrt(r0**3 / MU_MOON)
+    plan = ManeuverPlan(
+        (
+            ImpulsiveManeuver(0.4 * period, (0.0, 5.0, 0.0), frame="ric"),
+            ImpulsiveManeuver(0.7 * period, (0.0, -5.0, 0.0), frame="ric"),
+        )
+    )
+    result = propagate(
+        _PointMassDynamics(),
+        y0,
+        _cfg(rtol=1.0e-9, atol=1.0e-9),
+        time_cfg=TimeConfig(duration_s=period, output_dt_s=period / 36.0),
+        maneuver_plan=plan,
+    )
+    diag = result.diagnostics
+    assert diag["maneuver_segments_completed"] == 3
+    assert diag["n_points"] == float(result.t.size)
+    run_nfev = diag["nfev"]
+    assert np.isfinite(run_nfev)
+    # Each segment costs at least one DOP853 step (12 evaluations), so three segments
+    # cost more than any one of them could on its own.
+    assert run_nfev > 3 * 12
+    assert diag["drift_scope"] == "worst_segment"
+    for key in ("kepler_energy_rel_drift", "angmom_rel_drift"):
+        assert np.isfinite(diag[key])
+        # Within a coasting segment both are conserved to the integrator tolerance;
+        # across a burn they change by ~|dv|/v (1e-3), which a run-wide drift would show.
+        assert diag[key] < 1.0e-6, (key, diag[key])
