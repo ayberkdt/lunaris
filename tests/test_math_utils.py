@@ -159,6 +159,23 @@ def test_wrap_lon_deg(lon, west, east, expected):
     assert_allclose(math_utils.wrap_lon_deg(lon, west=west, east=east), expected)
 
 
+# A negative longitude below half an ULP of 360 used to come back as 360.0.
+@pytest.mark.parametrize("lon_deg", [-1e-20, -3.4e-18, -1e-14])
+def test_wrap_lon_deg_stays_below_the_east_bound_for_tiny_negative_input(lon_deg):
+    wrapped = math_utils.wrap_lon_deg(lon_deg)  # default span [0, 360)
+    assert 0.0 <= wrapped < 360.0, wrapped
+
+
+@pytest.mark.parametrize("lon_deg", [-1e-13, -1e-10, -90.0, -360.0, 0.0, 359.9999999, 360.0, 720.0, 540.0])
+def test_wrap_lon_deg_lands_in_the_documented_range_for_ordinary_input(lon_deg):
+    assert 0.0 <= math_utils.wrap_lon_deg(lon_deg) < 360.0
+    assert -180.0 <= math_utils.wrap_lon_deg(lon_deg, -180.0, 180.0) < 180.0
+
+
+def test_wrap_lon_deg_keeps_nan():
+    assert math.isnan(math_utils.wrap_lon_deg(float("nan")))
+
+
 def test_latlon_from_xyz_m_basic_and_origin():
     R = 1737.4e3
 

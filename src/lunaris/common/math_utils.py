@@ -1428,7 +1428,12 @@ def wrap_lon_deg(lon_deg: float, west: float = 0.0, east: float = 360.0) -> floa
 
     x = lon_deg - west
     # Python/Numba `%` for floats yields a result with the sign of the divisor -> good here.
-    return (x % span) + west
+    # A tiny negative x rounds up to exactly span (-1e-20 % 360.0 == 360.0); that is
+    # the same longitude as west and is folded onto it to keep [west, east).
+    wrapped = x % span
+    if wrapped >= span:
+        wrapped = 0.0
+    return wrapped + west
 
 
 # Used by: surface_effects, dynamics
