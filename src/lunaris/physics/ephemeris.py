@@ -1230,8 +1230,9 @@ def _extrap_u_to_index_and_frac(u: float, n: int) -> tuple[int, float]:
     For ``u`` in ``[-1, 0)`` returns ``(0, u)`` and for ``u`` in ``(n-1, n]``
     returns ``(n-2, u-(n-2))``: the edge segment's cubic is continued instead of
     holding the end row. Yoshida compositions evaluate the force up to
-    0.92 steps before ``t0`` / after ``tf`` (``stage_time_overhang``); holding the
-    end row there froze the Moon attitude and Sun/Earth for that stage. Beyond
+    0.92 steps after ``tf`` (``stage_time_overhang``; the first step is a one-shot
+    DOP853 step, so nothing is sampled before ``t0``); holding the end row there
+    froze the Moon attitude and Sun/Earth for that stage. Beyond
     one interval it clamps exactly as before; inside the table it is identical.
     """
     if u < 0.0:
@@ -1521,7 +1522,7 @@ def get_ephem_state_with_velocity(
 ) -> tuple[float, float, float, float, float, float, float, float, float, float]:
     """Sample position/attitude using the schema-v2 position+velocity contract."""
     # The RHS sampler continues the edge segment one interval past the table:
-    # Yoshida stages evaluate the force before t0 / after tf (stage_time_overhang).
+    # Yoshida stages evaluate the force after tf (stage_time_overhang); before t0 only a caller that skips the one-shot first step.
     if use_hermite:
         sx, sy, sz = interp_vec3_hermite(t_s, dt_s, sun_tab_m, sun_velocity_tab_m_s, True)
         ex, ey, ez = interp_vec3_hermite(t_s, dt_s, earth_tab_m, earth_velocity_tab_m_s, True)

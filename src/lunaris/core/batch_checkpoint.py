@@ -20,8 +20,9 @@ Disk cost over a full run is therefore one uncompressed copy of ``Y_out``
 buffer the loop already holds. The caller deletes the directory when the run's
 own artifact is safely written.
 
-Resuming restores the tensors bit-for-bit and continues the same RK4 arithmetic
-from the same ``t_curr``; the trajectories are identical to an uninterrupted
+Resuming restores the tensors bit-for-bit and continues the same RK4 arithmetic;
+the clock is recomputed from the saved step index (``t = k * dt``, not a running
+sum), so a saved ``t_curr`` does not carry rounding into the resumed run. The trajectories are identical to an uninterrupted
 run (the loop is deterministic and every provider is stateless in time). That
 identity is *measured* bitwise on CPU float64 in
 ``tests/test_batch_checkpoint.py``. On CUDA it follows from the same argument —
