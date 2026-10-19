@@ -3,9 +3,10 @@
 - Every ``hpc/*.sbatch`` sourced ``$(dirname "$0")/env_template.sh``; Slurm runs
   a spooled copy of the script, so ``$0`` is in the spool directory and every
   job died at its first line.
-- ``--signal=B:TERM@600`` reaches only the batch shell: the trainer (or the
-  scenario launcher) must be ``exec``'d, and the launcher must relay the
-  signal to its child.
+- ``--signal=B:TERM@<lead>`` reaches only the batch shell: the shell relays it
+  to the trainer (or the scenario launcher) through ``lunaris_run_stoppable``
+  and keeps the exit status (75 = stopped with ckpt_last saved), and the
+  launcher relays the signal to its child.
 - An array job with unscrambled ``sobol`` runs the same ensemble in every
   task (the design ignores the seed); the batch template refuses it.
 """
@@ -97,14 +98,19 @@ def test_templates_do_not_source_relative_to_the_spooled_script(template):
     assert 'source "${_hpc_dir}/env_template.sh"' in text
 
 
-def test_signal_templates_exec_their_program():
+def test_signal_templates_relay_to_their_program_and_keep_its_status():
     for name, program in (
         ("slurm_train_stlrps.sbatch", "lunaris-train"),
         ("slurm_train_scenario_array.sbatch", "python tools/hpc/run_training_scenario.py"),
     ):
         text = (_HPC / name).read_text(encoding="utf-8")
         assert "--signal=B:TERM" in text
-        assert re.search(rf"^exec {re.escape(program)} \"\$@\"$", text, re.MULTILINE), name
+        # Not exec: the shell must see the exit status to act on 75 (resumable stop).
+        assert not re.search(rf"^exec {re.escape(program)}", text, re.MULTILINE), name
+        assert re.search(
+            rf"^lunaris_run_stoppable {re.escape(program)} .*\|\| rc=\$\?$", text, re.MULTILINE
+        ), name
+        assert re.search(r'^lunaris_after_run "\$\{rc\}"', text, re.MULTILINE), name
 
 
 def test_submit_helper_exports_the_hpc_dir():
