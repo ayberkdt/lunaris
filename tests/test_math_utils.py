@@ -266,6 +266,18 @@ def test_interp_quat_slerp_table_behavior():
     assert_allclose(out_empty, (1.0, 0.0, 0.0, 0.0), atol=0.0, rtol=0.0)
 
 
+@pytest.mark.parametrize("fraction", [0.001, 0.01, 0.02, 0.5, 0.99])
+def test_interp_quat_slerp_is_unit_for_nearby_nodes(fraction):
+    # The Moon's rotation over a 5 s table step (2.66e-6 rad/s): the nlerp
+    # blend falls short of unit length by up to 2 f (1 - f) (1 - dot), below
+    # 1e-12 near the nodes. The rotation scales vectors by |q|^2, so the
+    # quaternion must be unit to rounding (it was 1 - 4e-13 at f = 0.01).
+    q0 = axis_angle_quat(np.array([0.1, 0.2, 0.97]), 1.0)
+    q1 = axis_angle_quat(np.array([0.1, 0.2, 0.97]), 1.0 + 2.66e-6 * 5.0)
+    q = np.asarray(math_utils.interp_quat_slerp(fraction * 5.0, 5.0, np.vstack([q0, q1])))
+    assert abs(float(q @ q) - 1.0) < 1e-15  # abs: float64 rounding of a sum of four unit-scale squares
+
+
 # =============================================================================
 # 3) Interpolation (vectors)
 # =============================================================================

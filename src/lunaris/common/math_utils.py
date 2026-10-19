@@ -300,14 +300,12 @@ def _quat_normalize_kernel(q0: float, q1: float, q2: float, q3: float) -> tuple[
     Notes
     -----
     - Returns identity quaternion (1,0,0,0) if the norm is too small, preventing NaN/Inf.
-    - Includes a fast path if the quaternion is already unit length within tolerance,
-      avoiding an expensive sqrt() in stable cases.
+    - Always divides by the norm. A fast path that returned the input when
+      |n2 - 1| < 1e-12 left the nlerp blend of nearby table nodes up to 1e-12
+      short of unit length, and ``quat_rotate_vec`` then scaled the lunar
+      central gravity by that much near every node.
     """
     n2 = q0*q0 + q1*q1 + q2*q2 + q3*q3
-
-    # Fast check: avoid sqrt if already nearly unit length
-    if abs(n2 - 1.0) < EPS_1E12:
-        return q0, q1, q2, q3
 
     # Safety against division by ~0
     if n2 < EPS_1E30:
