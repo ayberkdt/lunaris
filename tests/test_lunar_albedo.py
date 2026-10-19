@@ -495,3 +495,21 @@ def test_standalone_albedo_accel_facet_default():
     a = albedo_accel(r_sc, r_sun, sc, AlbedoConfig())   # defaults to lambert_facets
     assert np.all(np.isfinite(a))
     assert a[0] > 0.0
+
+
+def test_the_simple_backend_flies_the_configured_constant_not_the_provider_default():
+    """--albedo-const with --albedo-model simple: the provider's default (0.12) must not replace it.
+
+    Every surface provider's ``as_numba_dict`` carries an ``albedo_const`` (its
+    ``default_albedo``), so reading it first silently discarded the configured value.
+    """
+    from types import SimpleNamespace
+
+    from lunaris.core.dynamics.preparation import prepare_albedo
+    from lunaris.loaders.io_surface import InMemorySurfaceProvider
+
+    provider = InMemorySurfaceProvider()
+    assert provider.as_numba_dict()["albedo_const"] == 0.12  # the value that used to win
+    cfg = AlbedoConfig(albedo_model="simple", albedo_const=0.25)
+    pack = prepare_albedo(SimpleNamespace(use_albedo=True), albedo=cfg, surface_provider=provider)
+    assert pack.mode == 2 and pack.alb_const == 0.25

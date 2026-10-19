@@ -753,7 +753,10 @@ def _prepare_albedo_simple(cfg: AlbedoConfig, surface_provider: Any) -> _AlbedoP
         )
 
     surf = extract_surface_provider_strict(surface_provider)
-    alb_const = float(surf.get("albedo_const", const))
+    # The configuration's constant fills cells without data and the no-map
+    # case, as on the lambert_facets path; the provider's value is only its
+    # default (catalog mean), which would override a user's --albedo-const.
+    alb_const = const
     alb_scale = float(surf.get("scale", 1.0))
     k_lambert = float(surf.get("k_lambert", klamb))
 
