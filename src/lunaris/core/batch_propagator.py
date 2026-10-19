@@ -2018,6 +2018,10 @@ class GPUBatchPropagator:
                 )
             except Exception:
                 self._free_mem_bytes, self._total_mem_bytes = (0, 0)
+            # Numba's CUDA simulator reports its memory as unbounded (inf): read
+            # that as unknown, like a failed query, so diagnostics stay integers.
+            if not (math.isfinite(self._free_mem_bytes) and math.isfinite(self._total_mem_bytes)):
+                self._free_mem_bytes, self._total_mem_bytes = (0, 0)
 
         self._ephem_pack = self._build_ephem_pack(dynamics_engine)
         self._grav_pack = self._build_grav_pack(dynamics_engine)
@@ -2434,6 +2438,7 @@ class GPUBatchPropagator:
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
         Y_out[0] = np.ascontiguousarray(Y0, dtype=np.float64)  # initial state = snapshot 0
         t_curr = 0.0
+        step_idx = 0  # the clock is step_idx * dt_eff, not a running sum (no drift)
         with cuda.gpus[self._device_id]:
             stream = cuda.stream()
             d_Y = cuda.to_device(np.ascontiguousarray(Y0, dtype=np.float64), stream=stream)
@@ -2517,7 +2522,8 @@ class GPUBatchPropagator:
                         np.float64(self._impact_alt_m),
                         np.int32(self._topo_pack["use_terrain"]),
                     )
-                    t_curr += dt_eff
+                    step_idx += 1
+                    t_curr = float(step_idx) * dt_eff
 
                 d_Y.copy_to_host(ary=Y_out[snap_idx + 1], stream=stream)
                 stream.synchronize()
@@ -2681,6 +2687,9 @@ class CPUBatchPropagator:
             flags=self._sim_cfg.flags,
             gravity_model=grav_model,
             gravity_adaptive=gravity_adaptive,
+            # The template's paper-safe posture (no adaptive blend, strict
+            # gravity contract) must reach every sample's engine.
+            strict_fixed_degree=bool(getattr(template, "strict_fixed_degree", False)),
             ephem_manager=ephem_manager,
             surface_provider=self._surface_provider,
             earth_j2=earth_j2,
@@ -2745,6 +2754,16 @@ class CPUBatchPropagator:
         needed.
         """
         from lunaris.core.propagation.propagator import propagate as propagate_single
+
+        # The single-run solver integrates from t0_s but the shared output grid
+        # below starts at 0: a nonzero t0_s would freeze the first t0_s seconds
+        # and shift the rest of every trajectory.
+        t0_s = float(getattr(getattr(self._sim_cfg, "time", None), "t0_s", 0.0) or 0.0)
+        if t0_s != 0.0:
+            raise ValueError(
+                f"CPUBatchPropagator resamples onto an output grid that starts at t = 0 "
+                f"but time.t0_s = {t0_s} s. Set start_date to the run start and t0_s = 0."
+            )
 
         N = int(Y0.shape[0])
         time_cfg, prop_cfg = _build_cpu_time_and_solver_config(
