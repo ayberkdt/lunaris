@@ -44,6 +44,12 @@ def _composition_weights(num_levels: int) -> tuple[float, ...]:
     ``num_levels == 0`` returns ``(1.0,)`` (plain 2nd-order Verlet); each
     additional level raises the order by two (4th, 6th, 8th, ...). The returned
     fractions always sum to 1.0.
+
+    Level ``k`` composes the whole order-``2k`` method three times,
+    ``S(x1 h) S(x0 h) S(x1 h)`` with ``p = 2k + 1``, so the newest level is the
+    outermost. Nesting it inside (each Verlet sub-step split by the new
+    level's weights) keeps the same multiset of weights, and so the same
+    order on a linear problem, but stays 4th order on a nonlinear one.
     """
     weights: list[float] = [1.0]
     for k in range(1, int(num_levels) + 1):
@@ -51,10 +57,7 @@ def _composition_weights(num_levels: int) -> tuple[float, ...]:
         root = 2.0 ** (1.0 / p)
         x1 = 1.0 / (2.0 - root)
         x0 = -root / (2.0 - root)
-        expanded: list[float] = []
-        for w in weights:
-            expanded.extend((x1 * w, x0 * w, x1 * w))
-        weights = expanded
+        weights = [x1 * w for w in weights] + [x0 * w for w in weights] + [x1 * w for w in weights]
     return tuple(weights)
 
 
