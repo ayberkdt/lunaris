@@ -2681,6 +2681,9 @@ class CPUBatchPropagator:
             flags=self._sim_cfg.flags,
             gravity_model=grav_model,
             gravity_adaptive=gravity_adaptive,
+            # The template's paper-safe posture (no adaptive blend, strict
+            # gravity contract) must reach every sample's engine.
+            strict_fixed_degree=bool(getattr(template, "strict_fixed_degree", False)),
             ephem_manager=ephem_manager,
             surface_provider=self._surface_provider,
             earth_j2=earth_j2,

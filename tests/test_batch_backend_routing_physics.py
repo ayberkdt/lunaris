@@ -277,6 +277,40 @@ def test_torch_cpu_sh_with_adaptive_gravity_is_refused_or_recorded_fallback(
     assert "physics not supported" in plan.fallback_reason
 
 
+@pytest.mark.parametrize("strict", [True, False])
+def test_cpu_batch_samples_keep_the_templates_strict_fixed_degree(strict: bool) -> None:
+    """A paper-safe template (strict_fixed_degree) built each sample's engine
+    without that flag, so a strict CPU batch could blend the degree adaptively
+    instead of refusing the adaptive configuration."""
+    from lunaris.common.type_defs import AdaptiveDegreeConfig, SpacecraftProps
+    from lunaris.core.batch_propagator import CPUBatchPropagator
+    from lunaris.core.dynamics import DynamicsEngine
+    from lunaris.core.dynamics.preparation import prepare_adaptive_gravity_policy
+
+    flags = PerturbationFlags(enable_sh=False)
+    adaptive = AdaptiveDegreeConfig(enabled=True)
+    template = DynamicsEngine(
+        sc_props=SpacecraftProps(mass_kg=100.0, area_m2=1.0, cd=2.2, cr=1.3),
+        flags=flags,
+        gravity_adaptive=adaptive,
+        strict_fixed_degree=strict,
+        allow_identity_rotation=True,
+    )
+    prop = CPUBatchPropagator(SimpleNamespace(flags=flags), SimpleNamespace(), dynamics_template=template)
+    sample = prop._make_sample_dynamics(mass_kg=120.0, area_m2=1.5, cd=2.0, cr=1.2)
+
+    assert sample.strict_fixed_degree is strict
+    assert sample.gravity_adaptive is adaptive
+    # The sample's own gravity preparation inputs refuse the adaptive blend
+    # exactly when the template does.
+    if strict:
+        with pytest.raises(ValueError, match="Adaptive SH degree blending is forbidden"):
+            prepare_adaptive_gravity_policy(
+                64, gravity_model=None, gravity_adaptive=sample.gravity_adaptive,
+                strict_fixed_degree=sample.strict_fixed_degree,
+            )
+
+
 def test_torch_sh_preflight_refuses_adaptive_gravity() -> None:
     torch = pytest.importorskip("torch")
     from lunaris.core.torch_sh_propagator import TorchSHBatchPropagator, TorchSHPreflightError
