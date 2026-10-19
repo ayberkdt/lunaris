@@ -1907,8 +1907,10 @@ class GravityModel:
         if not np.all(np.isfinite(s_full)):
             raise ValueError("s_coeffs_full must contain only finite values.")
 
-        # 1. Determine safe bounds
-        n_supported = _determine_effective_degree(c_full, s_full)
+        # 1. Determine safe bounds. The degree is limited by the number of rows only:
+        # a rectangular (n_max+1, m_max+1) block is zero-padded in order by
+        # slice_gravity_model, which also rejects mismatched C/S shapes.
+        n_supported = max(0, min(c_full.shape[0], s_full.shape[0]) - 1)
         final_degree = int(clamp(degree_max, 0, n_supported))
 
         # 2. Slice and precompute tables

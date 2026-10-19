@@ -1,4 +1,4 @@
-"""SH potential path (``potential_accel_fixed``) against the propagation kernel near the axis.
+"""SH potential path near the polar axis; ``GravityModel.from_arrays`` on rectangular blocks.
 
 Oracle: ``GravityModel.accel_fixed`` (the propagation kernel), which takes dP/dphi from the
 same-degree order recurrence and has no division by cos(phi). The potential path is the
@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lunaris.physics.spherical_harmonics import GravityModel
+from lunaris.physics.spherical_harmonics import GravityModel, slice_gravity_model
 
 MU = 4.9028e12  # lunar GM [m^3/s^2]; any positive value works, the checks are linear in it
 R_REF = 1738.0e3  # reference radius [m]
@@ -98,3 +98,49 @@ def test_potential_path_acceleration_is_the_gradient_of_its_potential() -> None:
         # loses ~1e-16 * |V| / (h |a|) ~ 1e-10 to cancellation (measured 2.7e-10 at degree 30);
         # the old near-axis defect was ~1e-1 of the transverse field at 2e-8 m.
         assert np.linalg.norm(a - fd) <= 1e-7 * np.linalg.norm(a)
+
+
+# ---------------------------------------------------------------------------
+# GravityModel.from_arrays with a rectangular (n_max+1, m_max+1) coefficient block
+# ---------------------------------------------------------------------------
+
+_N_REQUESTED, _M_BLOCK = 20, 4
+
+
+def _rectangular_block() -> tuple[np.ndarray, np.ndarray]:
+    c = np.zeros((_N_REQUESTED + 1, _M_BLOCK + 1))
+    s = np.zeros_like(c)
+    c[0, 0] = 1.0
+    c[2, 0] = -2e-4
+    c[_N_REQUESTED, 0] = 1e-4  # a degree-20 zonal term a degree-to-order clamp would drop
+    return c, s
+
+
+def test_slice_gravity_model_zero_pads_a_rectangular_block() -> None:
+    """The documented behaviour of the helper that ``from_arrays`` calls."""
+    c, s = _rectangular_block()
+    c_sq, s_sq = slice_gravity_model(c, s, _N_REQUESTED)
+    assert c_sq.shape == s_sq.shape == (_N_REQUESTED + 1, _N_REQUESTED + 1)
+    assert c_sq[_N_REQUESTED, 0] == c[_N_REQUESTED, 0]
+    assert not np.any(c_sq[:, _M_BLOCK + 1:])
+
+
+def test_from_arrays_keeps_the_requested_degree_of_a_rectangular_block() -> None:
+    # History: from_arrays clamped the degree to min(rows, cols) - 1, so this block became a
+    # degree-4 model and silently dropped the degree-20 zonal term.
+    c, s = _rectangular_block()
+    model = GravityModel.from_arrays(_N_REQUESTED, R_REF, MU, c, s)
+    assert model.max_degree == _N_REQUESTED
+    c_sq, s_sq = slice_gravity_model(c, s, _N_REQUESTED)
+    square = GravityModel.from_arrays(_N_REQUESTED, R_REF, MU, c_sq, s_sq)
+    point = np.array([1.7e6, 0.2e6, 0.5e6])  # Moon-fixed [m]
+    # Same coefficients, same kernel: bit-level agreement is expected; 1e-15 relative to |a|
+    # (about 2 ulp) absorbs nothing but rounding.
+    reference = square.accel_fixed(point)
+    assert np.linalg.norm(model.accel_fixed(point) - reference) <= 1e-15 * np.linalg.norm(reference)
+
+
+def test_from_arrays_still_clamps_to_the_available_rows() -> None:
+    c, s = _rectangular_block()
+    model = GravityModel.from_arrays(_N_REQUESTED + 10, R_REF, MU, c, s)
+    assert model.max_degree == _N_REQUESTED
