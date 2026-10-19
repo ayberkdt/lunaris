@@ -168,7 +168,13 @@ def read_history(run_dir: Path, *, limit: int = 10_000) -> list[dict[str, Any]]:
 
 
 def read_periodic_evals(run_dir: Path, *, limit: int = 500) -> list[dict[str, Any]]:
-    """Normalize periodic-evaluation rows from known artifact locations."""
+    """Normalize periodic-evaluation rows from known artifact locations.
+
+    The training loop (``training/periodic_eval.py``) writes
+    ``periodic_evals/periodic_eval_history.jsonl`` with the values nested under
+    ``"metrics"`` and the angle named ``mean_ang_deg``; older/flat rows keep the
+    values at the top level. Both forms are read, nested first.
+    """
 
     candidates = (
         run_dir / "periodic_evals" / "history.jsonl",
@@ -183,10 +189,12 @@ def read_periodic_evals(run_dir: Path, *, limit: int = 500) -> list[dict[str, An
                 break
     normalized: list[dict[str, Any]] = []
     for row in rows:
+        nested = row.get("metrics")
+        fields = {**row, **nested} if isinstance(nested, dict) else row
         epoch = _first(row, "epoch", "eval_epoch", "step")
-        u = _first(row, "rmse_u", "val_rmse_u", "potential_rmse", "rmse_potential")
-        a = _first(row, "rmse_a", "val_rmse_a", "accel_rmse", "rmse_accel")
-        angle = _first(row, "ang", "angle", "angular_error_deg", "mean_angle_deg")
+        u = _first(fields, "rmse_u", "val_rmse_u", "potential_rmse", "rmse_potential")
+        a = _first(fields, "rmse_a", "val_rmse_a", "accel_rmse", "rmse_accel")
+        angle = _first(fields, "mean_ang_deg", "ang", "angle", "angular_error_deg", "mean_angle_deg")
         if epoch is None and u is None and a is None and angle is None:
             continue
         normalized.append(

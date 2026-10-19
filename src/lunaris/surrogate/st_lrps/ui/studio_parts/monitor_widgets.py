@@ -59,7 +59,7 @@ class PeriodicEvalTable(Section):
         super().__init__("Periodic Evaluations", "Monitoring-only evaluations written during training; they do not change model weights.", parent=parent)
         self._empty = EmptyState("No periodic evaluations yet", "Enable periodic evaluation in Setup to populate this table.")
         self.table = DataTable(
-            [("Epoch", ""), ("RMSE U", ""), ("RMSE a", ""), ("Angle", "deg")],
+            [("Epoch", ""), ("RMSE U", "m²/s²"), ("RMSE a", "m/s²"), ("Angle", "deg")],
             numeric_columns=(0, 1, 2, 3),
         )
         self.content_layout.addWidget(self._empty)
