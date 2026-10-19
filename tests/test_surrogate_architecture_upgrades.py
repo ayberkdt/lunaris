@@ -320,22 +320,17 @@ def test_model_presets_select_expected_encodings():
         })
 
 
-def test_cli_manual_encoding_defaults_to_custom_preset(tmp_path, monkeypatch):
+def test_cli_manual_encoding_requires_an_explicit_preset(tmp_path, monkeypatch):
+    # A manual encoding flag no longer switches the default preset to custom
+    # silently: the command must name the preset (ported from Sidera 4a8784c1).
     data = tmp_path / "cloud.h5"
     _write_tiny_cloud(data)
     out = tmp_path / "run"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "st_lrps_train.py",
-            "--data",
-            str(data),
-            "--out",
-            str(out),
-            "--use-radial-decay-encoding",
-        ],
-    )
+    argv = ["st_lrps_train.py", "--data", str(data), "--out", str(out), "--use-radial-decay-encoding"]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit):
+        parse_args()
+    monkeypatch.setattr(sys, "argv", [*argv, "--model-preset", "custom"])
     cfg = parse_args()
     assert cfg.model_preset == "custom"
     assert cfg.use_radial_decay_encoding is True
