@@ -124,8 +124,10 @@ def extract_ephem_tables_strict(ephem: Any) -> tuple[float, np.ndarray, np.ndarr
     STRICT ephemeris contract (aligned with lunaris.physics.ephemeris.EphemerisManager).
 
     ephem.get_data_provider() must return a mapping with either:
-      A) dt, sun_table, earth_table, rot_table
-      B) dt_s, r_sun_tab_m, r_earth_tab_m, q_i2f_tab
+      A) dt_s, r_sun_tab_m, r_earth_tab_m, q_i2f_tab (canonical; what
+         EphemerisManager writes)
+      B) dt, sun_table, earth_table, rot_table (legacy; each read only when
+         its canonical key is absent)
 
     Returns (dt_s, sun_tab, earth_tab, q_tab) as float64 C-contiguous arrays.
 
@@ -145,11 +147,12 @@ def extract_ephem_tables_strict(ephem: Any) -> tuple[float, np.ndarray, np.ndarr
     if not isinstance(d, Mapping):
         raise TypeError("ephem_manager.get_data_provider() must return a mapping/dict.")
 
-    # Resolve keys (accept both naming conventions)
-    dt_val = d.get("dt", d.get("dt_s", None))
-    sun = d.get("sun_table", d.get("r_sun_tab_m", None))
-    earth = d.get("earth_table", d.get("r_earth_tab_m", None))
-    qtab = d.get("rot_table", d.get("q_i2f_tab", None))
+    # Resolve keys: the canonical names EphemerisManager writes win; the legacy
+    # names are read only when the canonical one is absent.
+    dt_val = d.get("dt_s", d.get("dt", None))
+    sun = d.get("r_sun_tab_m", d.get("sun_table", None))
+    earth = d.get("r_earth_tab_m", d.get("earth_table", None))
+    qtab = d.get("q_i2f_tab", d.get("rot_table", None))
 
     if dt_val is None:
         raise KeyError(f"ephem_manager provider missing dt/dt_s. Got keys: {list(d.keys())}")
