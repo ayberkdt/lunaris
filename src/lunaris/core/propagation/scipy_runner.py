@@ -565,7 +565,7 @@ def run_scipy_propagation(
             y0=np.asarray(y_start, dtype=np.float64),
             method=method,
             t_eval=np.asarray(t_eval_span, dtype=np.float64),
-            rtol=float(getattr(cfg, "rtol", 1e-9)),
+            rtol=float(cfg.rtol),
             atol=atol_arg,
             max_step=float(max_step) if step_cap is None else min(float(max_step), float(step_cap)),
             events=span_events or None,
