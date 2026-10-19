@@ -2018,6 +2018,10 @@ class GPUBatchPropagator:
                 )
             except Exception:
                 self._free_mem_bytes, self._total_mem_bytes = (0, 0)
+            # Numba's CUDA simulator reports its memory as unbounded (inf): read
+            # that as unknown, like a failed query, so diagnostics stay integers.
+            if not (math.isfinite(self._free_mem_bytes) and math.isfinite(self._total_mem_bytes)):
+                self._free_mem_bytes, self._total_mem_bytes = (0, 0)
 
         self._ephem_pack = self._build_ephem_pack(dynamics_engine)
         self._grav_pack = self._build_grav_pack(dynamics_engine)
