@@ -29,6 +29,7 @@ from lunaris.analysis.postprocess import _run_gm_and_radius, compute_history
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.hashing import canonical_json_sha256
 from lunaris.common.provenance import sha256_file, utc_now_iso
+from lunaris.common.time_utils import parse_iso_datetime_to_utc_datetime
 
 _KNOWN_FORCE_FLAGS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("spherical_harmonics", "Spherical-harmonic gravity residual", ("enable_sh",)),
@@ -181,16 +182,42 @@ def _start_epoch_time_system(start_text: str | None) -> str:
     return "TDB" if m.group(1).upper() == "TDB" else "TT"
 
 
-def _epoch_at(start_text: str | None, elapsed_s: float) -> str | None:
-    if not start_text:
+def _epoch_at(start_text: str | None, solver_time_s: float) -> str | None:
+    """UTC of solver time ``solver_time_s``: ``start_date`` is solver time 0 (``TimeConfig``).
+
+    A run with ``t0_s > 0`` starts later than ``start_date``; its sample times
+    are absolute solver times, so they are added as they are, never relative
+    to the first sample. Elapsed seconds are added on the UTC clock (a leap
+    second inside the span is not counted). A ``... TDB`` / ``... TT`` start
+    has no UTC epoch without a leap-second table, so it stays unavailable
+    rather than being reported as UTC.
+    """
+    if not start_text or _start_epoch_time_system(start_text) != "UTC":
         return None
     try:
-        text = str(start_text).strip()
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        epoch = parsed.astimezone(timezone.utc) + timedelta(seconds=float(elapsed_s))
+        parsed = parse_iso_datetime_to_utc_datetime(str(start_text).strip())
+        epoch = parsed + timedelta(seconds=float(solver_time_s))
         return epoch.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _first_sample_epoch(start_text: str | None, solver_time_s: float, time_system: str) -> str | None:
+    """Epoch of the first output sample in ``start_date``'s own time system.
+
+    ``start_date`` itself when the run starts at solver time 0. TDB and TT are
+    uniform scales, so their label is kept and the seconds are added to the
+    calendar date directly; ``None`` when the start cannot be parsed.
+    """
+    if not start_text or solver_time_s == 0.0:
+        return start_text
+    if time_system == "UTC":
+        return _epoch_at(start_text, solver_time_s)
+    bare = _RE_EPOCH_TIME_SYSTEM.sub("", str(start_text)).strip()
+    try:
+        parsed = parse_iso_datetime_to_utc_datetime(bare)
+        epoch = (parsed + timedelta(seconds=float(solver_time_s))).replace(tzinfo=None)
+        return f"{epoch.isoformat(timespec='milliseconds')} {time_system}"
     except (TypeError, ValueError, OverflowError):
         return None
 
@@ -799,7 +826,7 @@ def _event(
         event_id=event_id,
         event_type=event_type,
         simulation_time_s=float(t_s[idx]),
-        epoch_utc=_epoch_at(start_epoch, float(t_s[idx] - t_s[0])),
+        epoch_utc=_epoch_at(start_epoch, float(t_s[idx])),
         state_m_mps=tuple(float(value) for value in state[idx, :6]),
         altitude_m=float(altitude_m[idx]),
         frame=frame,
@@ -1149,7 +1176,8 @@ def build_orbit_analysis(
 
     metrics: list[MetricValue] = [
         _metric("run.status", "Run status", termination_reason, None, source="PropagationResult", kind="measured", status=termination_status),
-        _metric("mission.start_epoch", "Mission start epoch", start_epoch, None, source="TimeConfig.start_date", kind="configuration", time_system=time_system, unavailable_reason="Start epoch was not configured."),
+        # The run's first sample, solver time t_s[0] after start_date (t0_s > 0 starts later).
+        _metric("mission.start_epoch", "Mission start epoch", _first_sample_epoch(start_epoch, float(t_s[0]) if t_s.size else 0.0, time_system), None, source="TimeConfig.start_date + t0_s", kind="configuration", time_system=time_system, unavailable_reason="Start epoch was not configured." if not start_epoch else "start_date could not be parsed to add the first sample's solver time."),
         _metric("mission.duration", "Propagation duration", duration_s, "s", source="full-resolution time history", kind="measured", time_system="simulation elapsed time"),
         _metric("mission.output_samples", "Output sample count", int(t_s.size), "1", source="PropagationResult.t", kind="measured"),
         _metric("mission.maneuver.count", "Applied maneuver count", len(maneuver_records), "1", source="propagation diagnostics", kind="measured"),
