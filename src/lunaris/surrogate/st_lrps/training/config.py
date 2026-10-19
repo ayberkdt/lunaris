@@ -1373,13 +1373,30 @@ def parse_args() -> TrainConfig:
             except Exception as _e:  # pragma: no cover - defensive
                 print(f"[RESUME] Warning: could not read previous config.json: {_e}")
         # Infer data/out from the previous run when not explicitly provided.
+        # A run on independent files records ``data`` as a copy of its train
+        # file; restoring ``data`` alone would re-split that file with
+        # seeded_random and drop the validation file (the scaler provenance
+        # check then refuses the resume). Restore the files the run used.
         if a.data is None and a.train_data is None:
+            prev_train = prev_cfg.get("train_data_path") or prev_cfg.get("train_data")
+            prev_val = prev_cfg.get("val_data_path") or prev_cfg.get("val_data")
             prev_data = prev_cfg.get("data")
-            if prev_data:
+            if prev_train and prev_val:
+                a.train_data = str(prev_train)
+                a.val_data = a.val_data or str(prev_val)
+            elif prev_data:
                 a.data = str(prev_data)
             else:
-                a.train_data = a.train_data or prev_cfg.get("train_data_path") or prev_cfg.get("train_data")
-                a.val_data = a.val_data or prev_cfg.get("val_data_path") or prev_cfg.get("val_data")
+                a.train_data = prev_train
+                a.val_data = a.val_data or prev_val
+            for _attr, _keys in (
+                ("test_data", ("test_data_path", "test_data")),
+                ("ood_data", ("ood_data_path", "ood_data")),
+            ):
+                if getattr(a, _attr, None) is None:
+                    _prev = next((prev_cfg.get(k) for k in _keys if prev_cfg.get(k)), None)
+                    if _prev:
+                        setattr(a, _attr, str(_prev))
         if not a.out:
             a.out = str(resume_run_dir)
         print(f"[RESUME] Resuming run: {resume_run_dir}  (prefer={a.resume_checkpoint})")

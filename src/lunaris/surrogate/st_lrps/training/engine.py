@@ -24,8 +24,10 @@ import logging
 import math
 import os
 import random
+import shlex
+import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -3031,6 +3033,16 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
                 "[resume] locked architecture/scaler fields to previous run: %s",
                 _locked_changed,
             )
+        _drifted = resume_setting_drift(_prev_cfg, cfg, locked=_RESUME_LOCKED_FIELDS)
+        if _drifted:
+            logger.warning(
+                "[resume] %d setting(s) differ from the resumed run and are taken from THIS "
+                "command line or its defaults: %s. Pass them explicitly to keep the run's "
+                "values (the interrupt message prints a full resume command).",
+                len(_drifted),
+                ", ".join(f"{k}: {old!r} -> {new!r}" for k, old, new in _drifted[:25])
+                + (" ..." if len(_drifted) > 25 else ""),
+            )
 
         # Continuation counters from the checkpoint.
         start_epoch = int(_resume_ckpt.get("epoch", -1)) + 1
@@ -4342,7 +4354,7 @@ def _run_training_loop(session: _TrainingSession) -> str:
             if _interrupt["flag"]:
                 run_status = "interrupted"
                 _interrupt_done = int(epoch) + 1
-                _resume_hint = f"python -m lunaris.surrogate.st_lrps.training.cli --resume-from {outdir} --epochs {cfg.epochs}"
+                _resume_hint = resume_command_hint(sys.argv[1:], outdir, int(cfg.epochs))
                 logger.warning(
                     '[interrupt] Stopping after completed epoch %s. ckpt_last.pt is saved. Resume with:\n  %s',
                     _interrupt_done, _resume_hint,
@@ -4441,6 +4453,67 @@ def _run_training_loop(session: _TrainingSession) -> str:
     return run_status
 
 
+_RESUME_HINT_DROP_FLAGS = {
+    "--resume-from": True, "--out": True, "--out-dir": True, "--epochs": True,
+    "--overwrite": False,
+}
+# Config keys that legitimately change between the original run and its resume
+# (bookkeeping, I/O locations, the epoch target, the resume request itself) or
+# that are resolved from the dataset after the resume check runs.
+_RESUME_DRIFT_IGNORED_SUBSTRINGS = (
+    "resume", "epochs", "out", "data", "path", "hash", "sha256", "time", "created",
+    "commit", "best_", "dataset_meta", "split_manifest", "target_contract",
+    "altitude_", "degree_", "resolved_",
+)
+
+
+def resume_command_hint(argv: Sequence[str], outdir: Any, epochs: int) -> str:
+    """Return the command that continues this run with the SAME settings.
+
+    Resume locks only the architecture/scaler fields; optimisation settings come
+    from the resuming command line. A bare ``--resume-from <run> --epochs N``
+    would therefore fall back to the global defaults (batch size, learning
+    rate, loss weights). The hint repeats this process's own arguments, minus
+    the output/resume/epoch flags, plus ``--resume-from`` and ``--epochs``.
+    """
+    kept: list[str] = []
+    skip = False
+    for tok in [str(t) for t in argv]:
+        if skip:
+            skip = False
+            continue
+        head = tok.split("=", 1)[0]
+        if head in _RESUME_HINT_DROP_FLAGS:
+            skip = _RESUME_HINT_DROP_FLAGS[head] and "=" not in tok
+            continue
+        kept.append(tok)
+    cmd = ["python", "-m", "lunaris.surrogate.st_lrps.training.cli", *kept,
+           "--resume-from", str(outdir), "--epochs", str(int(epochs))]
+    return shlex.join(cmd)
+
+
+def resume_setting_drift(
+    prev_cfg: Mapping[str, Any], cfg: Any, *, locked: Sequence[str] = ()
+) -> list[tuple[str, Any, Any]]:
+    """List (key, previous, current) for settings a resume silently changes."""
+    locked_set = set(locked)
+    drift: list[tuple[str, Any, Any]] = []
+    for key in sorted(prev_cfg):
+        if key in locked_set or not hasattr(cfg, key):
+            continue
+        if any(part in key for part in _RESUME_DRIFT_IGNORED_SUBSTRINGS):
+            continue
+        prev, cur = prev_cfg.get(key), getattr(cfg, key)
+        if cur is None:
+            # Not resolved yet at this point (filled from the dataset later).
+            continue
+        if isinstance(cur, tuple):
+            cur = list(cur)
+        if prev != cur:
+            drift.append((key, prev, cur))
+    return drift
+
+
 EXIT_CODE_INTERRUPTED = 75  # EX_TEMPFAIL: stopped with ckpt_last.pt saved; resumable
 EXIT_CODE_FAILED = 1
 
@@ -4479,4 +4552,5 @@ def train(cfg: TrainConfig) -> str:
 __all__ = [
     'STLRPSTrainer', 'train', 'set_seed', 'get_device',
     'exit_code_for_run_status', 'EXIT_CODE_INTERRUPTED', 'EXIT_CODE_FAILED',
+    'resume_command_hint', 'resume_setting_drift',
 ]

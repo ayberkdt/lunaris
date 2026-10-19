@@ -30,7 +30,6 @@ export LUNARIS_REQUIRE_CUDA="${LUNARIS_REQUIRE_CUDA:-1}"
 # The run directory is what a resume needs: --out / --out-dir (the trainer's two
 # spellings of one option), or the --resume-from the caller already gave.
 run_dir="$(lunaris_arg_value --out "$@" || lunaris_arg_value --out-dir "$@" || lunaris_arg_value --resume-from "$@" || true)"
-epochs="$(lunaris_arg_value --epochs "$@" || true)"
 if [[ "${LUNARIS_AUTO_REQUEUE:-0}" == "1" && -z "${run_dir}" ]]; then
   echo "error: LUNARIS_AUTO_REQUEUE=1 needs an explicit --out-dir, otherwise a requeued run cannot find its checkpoint" >&2
   exit 64
@@ -52,4 +51,9 @@ fi
 # walltime SIGTERM/SIGUSR1 (which reach only this shell) to the trainer.
 rc=0
 lunaris_run_stoppable lunaris-train ${args[@]+"${args[@]}"} || rc=$?
-lunaris_after_run "${rc}" "hpc/submit.sh train -- --resume-from ${run_dir:-<run_dir>}${epochs:+ --epochs ${epochs}}"
+# The resume command repeats the original arguments: resume locks only the
+# architecture, so a bare --resume-from would fall back to default optimisation
+# settings (batch size, learning rate, loss weights).
+lunaris_drop_flag --resume-from 1 "$@"
+_resume_text="$(printf '%q ' ${LUNARIS_ARGS_OUT[@]+"${LUNARIS_ARGS_OUT[@]}"})"
+lunaris_after_run "${rc}" "hpc/submit.sh train -- ${_resume_text}--resume-from ${run_dir:-<run_dir>}"
