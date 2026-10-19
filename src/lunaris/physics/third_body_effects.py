@@ -266,7 +266,7 @@ class LoveParams:
     apply_sun_tide: bool = True
 
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True, fastmath=False)
 def accel_solid_tide(
     rx: float, ry: float, rz: float,
     sx: float, sy: float, sz: float,
@@ -358,7 +358,7 @@ class EarthJ2Params:
     spin_axis_i: tuple[float, float, float] = (0.0, 0.0, 1.0)
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def _normalize_axis_or_default(
     kx: float, ky: float, kz: float
 ) -> tuple[float, float, float]:
@@ -372,7 +372,7 @@ def _normalize_axis_or_default(
     return 0.0, 0.0, 1.0
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def _accel_j2_oblate_unit_k(
     x: float, y: float, z: float,
     mu: float, r_ref: float, j2: float,
@@ -413,7 +413,7 @@ def _accel_j2_oblate_unit_k(
     return ax, ay, az
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def accel_j2_oblate_diff_numba(
     rx: float, ry: float, rz: float,
     bx: float, by: float, bz: float,
@@ -437,7 +437,7 @@ def accel_j2_oblate_diff_numba(
     )
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def _accel_j2_oblate_diff_unit_k(
     rx: float, ry: float, rz: float,   # SC position wrt Moon (inertial)
     bx: float, by: float, bz: float,   # Earth position wrt Moon (inertial)

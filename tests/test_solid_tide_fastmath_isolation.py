@@ -2,7 +2,7 @@
 
 Numba compiles a callee that does not set ``fastmath`` itself with the flags of
 whichever caller compiles it first, and caches that build on disk for every
-later caller. ``third_body_effects.accel_solid_tide`` is ``fastmath=True`` and
+later caller. ``third_body_effects.accel_solid_tide`` was ``fastmath=True`` and
 calls ``solid_tides.accel_solid_tides_numba``, which the strict dynamics RHS
 also calls. Before the helpers pinned ``fastmath=False``, compiling the fastmath
 wrapper first changed the strict kernel's output in 8913 of 12000 components
@@ -10,6 +10,13 @@ wrapper first changed the strict kernel's output in 8913 of 12000 components
 the on-disk cache into a fresh process. ``tests/test_sh_fastmath_isolation.py``
 covers the SH helpers; this file covers the solid tides and guards the whole
 package against new unpinned shared helpers.
+
+The converse also matters: a helper that *sets* ``fastmath=True`` keeps it when
+a strict caller reaches it. The strict lunar RHS reached three such helpers in
+``third_body_effects`` (the differential Earth-J2 kernels, a difference of two
+nearly equal terms); they, the axis normaliser and the solid-tide wrapper now
+set ``fastmath=False`` and ``test_the_lunar_rhs_reaches_no_fastmath_helper``
+keeps it that way.
 """
 
 from __future__ import annotations
@@ -51,10 +58,7 @@ def _callees(dispatcher: Any) -> list[Any]:
     return [g[n] for n in _code_names(dispatcher.py_func.__code__) if n in g and _is_dispatcher(g[n])]
 
 
-def test_no_unpinned_helper_compiles_under_a_fastmath_caller() -> None:
-    """Walk every fastmath=True dispatcher's callees; flags propagate through
-    callees that do not set ``fastmath`` and stop at callees that pin it.
-    A non-inline callee reached that way is shared state across callers."""
+def _all_dispatchers() -> dict[int, Any]:
     dispatchers: dict[int, Any] = {}
     for pkg in (lunaris.common, lunaris.physics, lunaris.core.dynamics):
         for info in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
@@ -62,8 +66,17 @@ def test_no_unpinned_helper_compiles_under_a_fastmath_caller() -> None:
             for obj in vars(module).values():
                 if _is_dispatcher(obj):
                     dispatchers[id(obj)] = obj
+    return dispatchers
+
+
+def test_no_unpinned_helper_compiles_under_a_fastmath_caller() -> None:
+    """Walk every fastmath=True dispatcher's callees; flags propagate through
+    callees that do not set ``fastmath`` and stop at callees that pin it.
+    A non-inline callee reached that way is shared state across callers."""
+    dispatchers = _all_dispatchers()
     fastmath_callers = [d for d in dispatchers.values() if d.targetoptions.get("fastmath") is True]
-    assert any(d.__name__ == "accel_solid_tide" for d in fastmath_callers)  # the walk is not vacuous
+    # The walk is not vacuous: the SH potential kernel (ST-LRPS generator) is fastmath.
+    assert any(d.__name__ == "sh_potential_accel_batch_serial" for d in fastmath_callers)
 
     contaminated: set[str] = set()
     for caller in fastmath_callers:
@@ -77,6 +90,31 @@ def test_no_unpinned_helper_compiles_under_a_fastmath_caller() -> None:
                     contaminated.add(f"{callee.py_func.__module__}.{callee.__name__} (via {caller.__name__})")
                 stack.append(callee)
     assert not contaminated, sorted(contaminated)
+
+
+def test_the_lunar_rhs_reaches_no_fastmath_helper() -> None:
+    """The lunar engine's RHS kernels are strict (no fastmath); a fastmath callee
+    would reassociate inside them (the differential Earth J2 is a difference of
+    two nearly equal terms) and may drop NaN checks. On the old code this walk
+    found accel_j2_oblate_diff_numba, _accel_j2_oblate_diff_unit_k and
+    _accel_j2_oblate_unit_k."""
+    from lunaris.core.dynamics import engine
+
+    roots = [engine._rhs_sh_only_numba, engine._rhs_kernel_numba]
+    assert all(root.targetoptions.get("fastmath") is not True for root in roots)
+    reached: dict[int, Any] = {}
+    stack = list(roots)
+    while stack:
+        for callee in _callees(stack.pop()):
+            if id(callee) not in reached:
+                reached[id(callee)] = callee
+                stack.append(callee)
+    names = {d.__name__ for d in reached.values()}
+    assert {"accel_j2_oblate_diff_numba", "accel_solid_tides_numba"} <= names  # the walk is not vacuous
+    fast = sorted(
+        f"{d.py_func.__module__}.{d.__name__}" for d in reached.values() if d.targetoptions.get("fastmath") is True
+    )
+    assert not fast, "The lunar RHS reaches fastmath helpers:\n" + "\n".join(fast)
 
 
 _PROBE = textwrap.dedent(
