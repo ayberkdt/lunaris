@@ -311,6 +311,19 @@ def test_cpu_batch_samples_keep_the_templates_strict_fixed_degree(strict: bool) 
             )
 
 
+def test_cpu_batch_propagator_refuses_a_time_origin() -> None:
+    """The engine refuses t0_s != 0; the class itself does too, since it
+    resamples every sample onto an output grid that starts at t = 0."""
+    from lunaris.core.batch_propagator import CPUBatchPropagator
+
+    prop = CPUBatchPropagator(
+        SimpleNamespace(time=SimpleNamespace(t0_s=1000.0)), SimpleNamespace(), dynamics_template=None
+    )
+    one = np.ones(1)
+    with pytest.raises(ValueError, match="t0_s = 1000.0"):
+        prop.propagate(np.zeros((1, 6)), one, one, one, one, 600.0, 60.0)
+
+
 def test_torch_sh_preflight_refuses_adaptive_gravity() -> None:
     torch = pytest.importorskip("torch")
     from lunaris.core.torch_sh_propagator import TorchSHBatchPropagator, TorchSHPreflightError

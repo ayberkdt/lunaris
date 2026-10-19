@@ -2755,6 +2755,16 @@ class CPUBatchPropagator:
         """
         from lunaris.core.propagation.propagator import propagate as propagate_single
 
+        # The single-run solver integrates from t0_s but the shared output grid
+        # below starts at 0: a nonzero t0_s would freeze the first t0_s seconds
+        # and shift the rest of every trajectory.
+        t0_s = float(getattr(getattr(self._sim_cfg, "time", None), "t0_s", 0.0) or 0.0)
+        if t0_s != 0.0:
+            raise ValueError(
+                f"CPUBatchPropagator resamples onto an output grid that starts at t = 0 "
+                f"but time.t0_s = {t0_s} s. Set start_date to the run start and t0_s = 0."
+            )
+
         N = int(Y0.shape[0])
         time_cfg, prop_cfg = _build_cpu_time_and_solver_config(
             self._sim_cfg,
