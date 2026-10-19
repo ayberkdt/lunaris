@@ -266,3 +266,21 @@ def test_index_out_of_range_fails_cleanly(tmp_path):
     )
     assert result.returncode == 2
     assert "out of range" in result.stderr
+
+
+def test_exit_75_is_reported_as_a_resumable_stop(tmp_path, monkeypatch, capsys):
+    """Exit 75 (EX_TEMPFAIL) is the trainer's "stopped after saving ckpt_last":
+    the launcher passes it through and says how to continue, not "FAILED"."""
+    launcher = _load_launcher_module()
+    monkeypatch.setattr(launcher, "run_forwarding_signals", lambda cmd, *, cwd: 75)
+    code = launcher.main(
+        [
+            str(_SCENARIO_DIR / _SAMPLE_SCENARIO_FILE), "--index", "0",
+            "--output-root", str(tmp_path / "training"),
+            "--train-data", "dummy_train.h5", "--val-data", "dummy_val.h5",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert code == 75
+    assert "STOPPED" in err and "--resume" in err
+    assert "FAILED" not in err

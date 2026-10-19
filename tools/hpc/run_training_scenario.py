@@ -28,6 +28,10 @@ Usage (driven by ``hpc/slurm_train_scenario_array.sbatch``)::
 Any argument the launcher does not recognise (everything after the JSONL path
 that is not a launcher option) is treated as a *common flag* and appended to the
 entrypoint command, so the same data/epoch flags apply to every array task.
+
+Exit status: the entrypoint's own. Status 75 (``EX_TEMPFAIL``) is the trainer's
+"stopped by SIGTERM/SIGUSR1 after saving ckpt_last" code; the launcher reports
+it as a resumable stop (relaunch with ``--resume``) instead of a failure.
 """
 
 from __future__ import annotations
@@ -69,6 +73,9 @@ REQUIRED_FIELDS: tuple[str, ...] = (
 # The launcher injects the output directory itself; scenarios and common flags
 # must not also set an output flag, or the run directory would be ambiguous.
 OUTPUT_FLAGS: tuple[str, ...] = ("--out", "--out-dir", "--output-dir", "--output")
+
+# Exit status of a training run stopped by SIGTERM/SIGUSR1 after it saved ckpt_last.
+EX_TEMPFAIL = 75
 
 # Filesystem-safe scenario name: starts alphanumeric, then word/dot/dash chars.
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -525,7 +532,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[scenario] provenance written -> {run_dir}")
     print(f"[scenario] launching {scenario['entrypoint']} ...")
     returncode = run_forwarding_signals(cmd, cwd=str(_repo_root()))
-    if returncode != 0:
+    if returncode == EX_TEMPFAIL:
+        print(
+            f"[scenario] STOPPED {name} by a signal after saving its checkpoint "
+            f"(exit {EX_TEMPFAIL}); relaunch the same command with --resume to continue.",
+            file=sys.stderr,
+        )
+    elif returncode != 0:
         print(
             f"[scenario] FAILED {name} (exit {returncode}).",
             file=sys.stderr,

@@ -3745,7 +3745,7 @@ def _restore_stop_signal_handlers(orig: Mapping[int, Any]) -> None:
             _signal.signal(sig, old)
 
 
-def _run_training_loop(session: _TrainingSession) -> None:
+def _run_training_loop(session: _TrainingSession) -> str:
     """Execute the Sobolev training loop (phase 11) for a built session.
 
     Unpacks the session into the same local names the original ``train()`` body
@@ -4438,14 +4438,35 @@ def _run_training_loop(session: _TrainingSession) -> None:
             "eval_suggestion": eval_suggestion,
         },
     )
+    return run_status
 
 
-def train(cfg: TrainConfig) -> None:
+EXIT_CODE_INTERRUPTED = 75  # EX_TEMPFAIL: stopped with ckpt_last.pt saved; resumable
+EXIT_CODE_FAILED = 1
+
+
+def exit_code_for_run_status(status: str) -> int:
+    """Map a finished run's status to the trainer's process exit code.
+
+    ``"interrupted"`` (stopped by SIGINT/SIGTERM/SIGUSR1 after the current epoch
+    was saved) exits :data:`EXIT_CODE_INTERRUPTED`, so a Slurm job stopped at its
+    time limit is not recorded as COMPLETED; ``"failed"`` (NaN/Inf loss, aborted
+    periodic evaluation) exits :data:`EXIT_CODE_FAILED`; ``"completed"`` exits 0.
+    """
+    if status == "interrupted":
+        return EXIT_CODE_INTERRUPTED
+    if status == "failed":
+        return EXIT_CODE_FAILED
+    return 0
+
+
+def train(cfg: TrainConfig) -> str:
     """Main execution pipeline: build the training session (setup phases 1-10),
-    then run the Sobolev training loop (phase 11)."""
+    then run the Sobolev training loop (phase 11). Returns the final run status
+    (``"completed"``, ``"interrupted"`` or ``"failed"``)."""
     try:
         session = build_training_session(cfg)
-        _run_training_loop(session)
+        return _run_training_loop(session)
     finally:
         _detach_run_logs()
 
@@ -4455,4 +4476,7 @@ def train(cfg: TrainConfig) -> None:
 # ---------------------------------------------------------------------------
 
 
-__all__ = ['STLRPSTrainer', 'train', 'set_seed', 'get_device']
+__all__ = [
+    'STLRPSTrainer', 'train', 'set_seed', 'get_device',
+    'exit_code_for_run_status', 'EXIT_CODE_INTERRUPTED', 'EXIT_CODE_FAILED',
+]

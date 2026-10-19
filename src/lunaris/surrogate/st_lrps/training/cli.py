@@ -100,18 +100,23 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-def main() -> None:
+def main() -> int:
+    """Run the trainer; return the process exit code for the run's final status.
+
+    0 when the run completed, 75 (EX_TEMPFAIL) when a signal stopped it after
+    saving ``ckpt_last.pt`` (resumable), 1 when it failed (NaN/Inf loss).
+    """
     from lunaris.surrogate.st_lrps.training.config import parse_args
 
     cfg = parse_args()
-    from lunaris.surrogate.st_lrps.training.engine import train
+    from lunaris.surrogate.st_lrps.training.engine import exit_code_for_run_status, train
 
-    train(cfg)
+    return exit_code_for_run_status(train(cfg))
 
 
 if __name__ == '__main__':
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         print('\n[STOP] Training interrupted by user. Exiting safely...')
         sys.exit(0)
