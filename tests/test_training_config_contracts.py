@@ -135,3 +135,28 @@ def test_default_config_values_are_internally_consistent():
     # The default preset implies no manual encodings are active yet.
     assert _active_encodings(cfg) == set()
     assert cfg.model_preset in MODEL_PRESETS
+
+
+# =============================================================================
+# Command-line parsing
+# =============================================================================
+
+@pytest.mark.parametrize(
+    ("module", "argv"),
+    [
+        # --epoch is a unique prefix of --epochs; --mod of --model-dir.
+        ("lunaris.surrogate.st_lrps.training.config", ["--data", "d.h5", "--out", "o", "--epoch", "3"]),
+        ("lunaris.surrogate.st_lrps.evaluation.cli", ["--mod", "m", "--data", "d.h5"]),
+    ],
+)
+def test_trainer_and_evaluator_refuse_abbreviated_flags(monkeypatch, capsys, module, argv):
+    """A prefix of a flag must not silently bind to another option (allow_abbrev=False)."""
+    import importlib
+    import sys
+
+    parse_args = importlib.import_module(module).parse_args
+    monkeypatch.setattr(sys, "argv", ["prog", *argv])
+    with pytest.raises(SystemExit) as exc:
+        parse_args()
+    assert exc.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err

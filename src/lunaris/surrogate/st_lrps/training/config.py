@@ -619,7 +619,9 @@ def parse_args() -> TrainConfig:
 
     ap = argparse.ArgumentParser(
         description="Sobolev scalar-potential surrogate training for residual lunar gravity",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        # A prefix of a flag must not silently bind to another option.
+        allow_abbrev=False,
     )
 
     # Data & Output
