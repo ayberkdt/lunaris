@@ -175,6 +175,7 @@ def propagate(
     extra_events: Sequence[Callable[[float, np.ndarray], float]] | None = None,
     maneuver_plan: ManeuverPlan | None = None,
     _t_eval_override: np.ndarray | None = None,
+    _apsis_start_side: float | None = None,
 ) -> PropagationResult:
     """
     Propagate the trajectory for a configured duration and output sampling grid.
@@ -193,6 +194,9 @@ def propagate(
       ``_propagate_with_maneuvers`` to hand a segment its exact slice of one
       output grid aligned to the run's t0 (instead of each segment re-spacing
       its own burn-shifted duration). Not part of the public contract.
+    - ``_apsis_start_side`` is the same kind of private hook: the ``r·v`` the
+      previous maneuver segment ended with, so an apsis on the boundary is
+      reported once (see ``build_events``).
     """
     y0_arr = _as_state_array(y0)
 
@@ -385,7 +389,9 @@ def propagate(
     # -------------------------------------------------------------------------
     # 4) Events
     # -------------------------------------------------------------------------
-    events = build_events(dynamics, cfg, topo_grid=topo_grid, add_stop_event=bool(stop_file))
+    events = build_events(
+        dynamics, cfg, topo_grid=topo_grid, add_stop_event=bool(stop_file), apsis_start_side=_apsis_start_side,
+    )
     if extra_events:
         for ev in list(extra_events):
             events.append(_wrap_event_first6(ev))
@@ -665,6 +671,15 @@ def _propagate_with_maneuvers(
         if segment.impacted or segment.stopped_early:
             terminal_result = segment
 
+    def apsis_side() -> float | None:
+        # r·v at the end of the previous segment (before any impulse there): the next
+        # segment's apsis events start on that side, so an apsis on the boundary is
+        # reported once (a burn on an apsis epoch used to lose it).
+        if not segments:
+            return None
+        end = np.asarray(segments[-1].y[-1], dtype=np.float64)
+        return float(np.dot(end[:3], end[3:6]))
+
     def apply_boundary_burn(maneuver: Any) -> None:
         nonlocal current_y
         current_y, record = apply_impulsive_maneuver(current_y, maneuver)
@@ -687,6 +702,7 @@ def _propagate_with_maneuvers(
                 topo_grid=topo_grid,
                 extra_events=extra_events,
                 _t_eval_override=segment_grid(current_t, burn_t),
+                _apsis_start_side=apsis_side(),
             )
             append_segment(segment)
             current_t = float(segment.t[-1])
@@ -708,6 +724,7 @@ def _propagate_with_maneuvers(
             topo_grid=topo_grid,
             extra_events=extra_events,
             _t_eval_override=segment_grid(current_t, tf),
+            _apsis_start_side=apsis_side(),
         )
         append_segment(segment)
 

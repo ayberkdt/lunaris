@@ -442,8 +442,13 @@ def build_events(
     *,
     topo_grid: Any = None,
     add_stop_event: bool = True,
+    apsis_start_side: float | None = None,
 ) -> list[Callable[[float, np.ndarray], float]]:
-    """Build SciPy-compatible event callables based on PropagatorConfig (+ optional topo grid)."""
+    """Build SciPy-compatible event callables based on PropagatorConfig (+ optional topo grid).
+
+    ``apsis_start_side`` is the ``r·v`` a previous run ended with when this run
+    continues it at a boundary (see ``lunaris.core.events._make_rdot_event``).
+    """
     R_ref, _mu = get_ref_radius_and_mu(dynamics)
 
     detect_impact = _get_detect_impact(cfg)
@@ -475,8 +480,10 @@ def build_events(
 
     # Peri/Apo events (non-terminal)
     if _get_enable_peri_apo_events(cfg):
-        events.append(_wrap_event_first6(make_periselene_event(terminal=False), role="peri"))
-        events.append(_wrap_event_first6(make_aposelene_event(terminal=False), role="apo"))
+        events.append(_wrap_event_first6(
+            make_periselene_event(terminal=False, start_side=apsis_start_side), role="peri"))
+        events.append(_wrap_event_first6(
+            make_aposelene_event(terminal=False, start_side=apsis_start_side), role="apo"))
 
     # Stop file event (optional) – use +/-1 for sign change
     stop_file = getattr(cfg, "stop_file", None)

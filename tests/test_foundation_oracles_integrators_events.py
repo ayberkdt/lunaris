@@ -16,7 +16,7 @@ import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
-from lunaris.core.propagation import propagate
+from lunaris.core.propagation import ImpulsiveManeuver, ManeuverPlan, propagate
 from lunaris.core.propagation.integrators.fixed_step import _accel_stepper
 from lunaris.core.propagation.integrators.rk import _rk4_step_full
 from lunaris.core.propagation.integrators.symplectic import _composed_step, _composition_weights
@@ -270,3 +270,48 @@ def test_chunked_run_at_half_period_keeps_apsis_events():
 @pytest.mark.parametrize("chunk_s", [_T / 4.0, 1000.0])
 def test_chunked_run_keeps_apsis_events_control(chunk_s):
     _assert_events_match_unchunked(chunk_s)
+
+
+_METHOD_STEP = [("DOP853", 60.0), ("RK4", 10.0)]
+
+
+def _burn_run(method: str, h: float, t_burn: float):
+    # 10 m/s in-track: at an apsis the in-track axis is the velocity direction.
+    plan = ManeuverPlan((ImpulsiveManeuver(float(t_burn), (0.0, 10.0, 0.0), frame="ric"),))
+    return _run(_cfg(method, h), 0.9 * _T, plan)
+
+
+@pytest.mark.parametrize("method,h", _METHOD_STEP)
+def test_apoapsis_at_burn_epoch_is_reported_once(method, h):
+    # The post-burn segment read its start on the apsis as "not an event" and the
+    # pre-burn one ended just short of the root: DOP853 and RK4 lost it.
+    t_apo = float(_EV_ORBIT.apsis_times(0.0, 0.9 * _T, "apo")[0])
+    res = _burn_run(method, h, t_apo)
+    apo = np.asarray(res.t_events[1])
+    assert apo.size == 1, f"{method}: apo events {apo} oracle {t_apo}"
+    assert abs(apo[0] - t_apo) < _EVENT_TOL_S
+
+
+@pytest.mark.parametrize("method,h", _METHOD_STEP)
+def test_apoapsis_just_after_burn_is_reported_control(method, h):
+    """Control: the burn 1 ms after the apsis epoch still reports the apoapsis."""
+    t_apo = float(_EV_ORBIT.apsis_times(0.0, 0.9 * _T, "apo")[0])
+    res = _burn_run(method, h, t_apo + 1e-3)
+    apo = np.asarray(res.t_events[1])
+    assert apo.size == 1, f"{method}: apo events {apo} oracle {t_apo}"
+    # The burn 1 ms after the apsis moves it by a few ms at most; 0.1 s is well
+    # below the 10-60 s step and far above that shift.
+    assert abs(apo[0] - t_apo) < 0.1
+
+
+def test_zero_dv_plan_at_every_apsis_keeps_event_counts():
+    duration = 2.9 * _T
+    tp = _EV_ORBIT.apsis_times(1e-9, duration, "peri")
+    ta = _EV_ORBIT.apsis_times(0.0, duration, "apo")
+    burns = tuple(ImpulsiveManeuver(float(t), (0.0, 0.0, 0.0)) for t in np.sort(np.r_[tp, ta]))
+    cfg = _cfg("DOP853", 60.0)
+    base = _run(cfg, duration)
+    with_plan = _run(cfg, duration, ManeuverPlan(burns))
+    assert len(base.t_events[0]) == len(tp) and len(base.t_events[1]) == len(ta)  # oracle sanity
+    assert len(with_plan.t_events[0]) == len(base.t_events[0])
+    assert len(with_plan.t_events[1]) == len(base.t_events[1])
