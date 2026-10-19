@@ -89,8 +89,10 @@ def stage_time_overhang(method: str) -> float:
     """Force-evaluation overhang beyond [t, t+h] of a canonical fixed-step method, in steps.
 
     0.351 (Y4), 0.649 (Y6), 0.916 (Y8); 0 for every method whose stage times
-    stay inside the step (VV, PEFRL, RKN4, RK4, RK8). The first step of a run
-    therefore samples the force (and the ephemeris) at ``t0 - overhang * h``.
+    stay inside the step (VV, PEFRL, RKN4, RK4, RK8). The fixed-step driver
+    takes a run's first step with a one-shot DOP853 step, so a run never
+    samples the force (or the ephemeris) before ``t0``; past ``tf`` it samples
+    up to ``overhang * h``.
     """
     return _STAGE_TIME_OVERHANG.get(str(method).strip().upper(), 0.0)
 

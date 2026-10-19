@@ -114,9 +114,10 @@ def _require_ephemeris_coverage(
     have no window to check.
 
     ``stage_overhang_s`` is how far a Yoshida composition samples the force
-    before ``t0`` / after ``tf`` (``stage_time_overhang * h``). The Hermite and
-    attitude samplers continue the edge segment for one table interval, so those
-    stage times must lie in ``[-dt, (N - 1) dt + dt]``.
+    after ``tf`` (``stage_time_overhang * h``); before ``t0`` it does not, because
+    the fixed-step driver takes a run's first step with a one-shot DOP853 step.
+    The Hermite and attitude samplers continue the edge segment for one table
+    interval, so those stage times must lie in ``[0, (N - 1) dt + dt]``.
     """
     ephem = getattr(dynamics, "ephem", None)
     if ephem is None or not hasattr(ephem, "get_data_provider"):
@@ -134,12 +135,12 @@ def _require_ephemeris_coverage(
             "tables over t0_s + duration_s."
         )
     ov = float(stage_overhang_s)
-    if ov > 0.0 and (float(t0_s) - ov < -float(dt_s) - tol or float(tf_s) + ov > hi + float(dt_s) + tol):
+    if ov > 0.0 and float(tf_s) + ov > hi + float(dt_s) + tol:
         raise ValueError(
-            f"The integrator samples the force {ov:g} s outside [{float(t0_s)}, {float(tf_s)}] s, "
+            f"The integrator samples the force {ov:g} s past tf = {float(tf_s)} s, "
             f"beyond the one-interval ({float(dt_s):g} s) extrapolation band of the ephemeris "
-            f"table [0, {hi}] s. Use a smaller step or output_dt_s, start later than "
-            "start_date (t0_s), or a method whose stages stay inside the step (PEFRL, RK4, RK8)."
+            f"table [0, {hi}] s. Use a smaller step, build the tables past the run end, "
+            "or a method whose stages stay inside the step (PEFRL, RK4, RK8)."
         )
 
 

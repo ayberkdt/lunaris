@@ -218,6 +218,44 @@ def _build_fixed_stepper(
     return step_accel, True
 
 
+# Relative tolerance of the one-shot DOP853 step that replaces a Yoshida run's
+# first step (see `_integrate_fixed_step`): far below any fixed-step error.
+_ONE_SHOT_RTOL = 1.0e-13
+
+
+def _one_shot_atol(y: np.ndarray) -> np.ndarray:
+    """Absolute tolerances per component: rtol times the size of its group.
+
+    Position and velocity components are scaled by their vector's norm (a
+    component through zero must not demand an absolute accuracy of 1e-13 m);
+    any further component (mass) by its own size.
+    """
+    atol = np.empty_like(y)
+    atol[0:3] = max(float(np.linalg.norm(y[0:3])), 1.0)
+    atol[3:6] = max(float(np.linalg.norm(y[3:6])), 1.0e-3)
+    atol[6:] = np.maximum(np.abs(y[6:]), 1.0)
+    return _ONE_SHOT_RTOL * atol
+
+
+def _one_shot_step(
+    rhs: Callable[[float, np.ndarray], np.ndarray], t: float, y: np.ndarray, h: float
+) -> np.ndarray:
+    """Advance ``y`` from ``t`` by ``h`` with SciPy DOP853 at ``rtol = 1e-13``.
+
+    It evaluates the right-hand side inside ``[t, t + h]`` only.
+    """
+    from scipy.integrate import solve_ivp
+
+    y = np.asarray(y, dtype=np.float64)
+    if h == 0.0:
+        return y.copy()
+    sol = solve_ivp(rhs, (float(t), float(t) + float(h)), y, method="DOP853",
+                    rtol=_ONE_SHOT_RTOL, atol=_one_shot_atol(y))
+    if not sol.success:
+        raise RuntimeError(f"one-shot first step from t={t:.12g} s by {h:.6g} s failed: {sol.message}")
+    return np.asarray(sol.y[:, -1], dtype=np.float64)
+
+
 def _event_label(index: int, event: Callable[[float, np.ndarray], float]) -> str:
     """Return stable context for failures in an event callback."""
     role = str(getattr(event, "_event_role", "") or "").strip()
@@ -319,6 +357,15 @@ def _integrate_fixed_step(
         return a[3:6]
 
     step, _requires_6d = _build_fixed_stepper(method, rhs, accel)
+    # A Yoshida composition samples the force up to ``overhang * h`` before its step
+    # start. On the run's first step that is before t0, where tabulated data
+    # (ephemerides, orientation) may not exist: that step, and event refinement
+    # inside it, are taken with a one-shot DOP853 step (rtol 1e-13), which never
+    # leaves [t, t + h]. Every later step starts at least one step after t0.
+    first_step_one_shot = fixed_step_stage_overhang(method) > 0.0
+
+    def one_shot(t: float, y: np.ndarray, h_step: float) -> np.ndarray:
+        return _one_shot_step(rhs, t, y, h_step)
 
     # ------------------------------------------------------------------
     # Events: support all events, with optional refinement
@@ -380,7 +427,8 @@ def _integrate_fixed_step(
 
         for j in range(n_sub):
             tj = t_seg0 + j * h
-            y_next = step(tj, y_curr, h)
+            starts_run = first_step_one_shot and k == 0 and j == 0
+            y_next = (one_shot if starts_run else step)(tj, y_curr, h)
             t_next = tj + h
             executed_internal_steps += 1
 
@@ -405,7 +453,7 @@ def _integrate_fixed_step(
                     # Refine root within this substep
                     try:
                         t_ev, y_ev = _refine_event_time_bisect(
-                            step=step,
+                            step=one_shot if starts_run else step,
                             ev=ev,
                             t0=tj,
                             y0=y_curr,
