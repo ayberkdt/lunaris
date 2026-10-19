@@ -3,6 +3,10 @@
 (a) A GPU-path request that ends on the CPU (no CUDA, or a failed GPU build)
     flies the degree a single run of the same ``SimConfig`` flies, and the
     archive records the degree it actually flew.
+(b) The torch classic-SH routes and the GPU kernels cannot silently drop
+    physics (force models, ``gravity.adaptive``): refused or a recorded
+    fallback. CPU batch samples keep the template's strict fixed degree, and
+    ``CPUBatchPropagator`` refuses ``time.t0_s != 0`` itself.
 """
 
 from __future__ import annotations
