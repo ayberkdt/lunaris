@@ -4,7 +4,10 @@
 *.sh        text eol=lf
 *.sbatch    text eol=lf
 *.slurm     text eol=lf
-hpc/cluster.env.example text eol=lf
+# Site profiles and scenario files are read on the cluster too: a CRLF copy
+# leaves a carriage return in every value (partition "a100q").
+hpc/**/*.env.example text eol=lf
+hpc/scenarios/*.jsonl text eol=lf
 
 # Preserve the exact executed bytes referenced by recorded sha256 pins: the
 # rotating-validation evidence hashes its two runners, and every gravity-reference
