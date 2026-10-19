@@ -1135,15 +1135,13 @@ if _CUDA_AVAILABLE:
 
     @cuda.jit(device=True, inline=True)
     def _external_1pn_cuda(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out):
-        """External-body Schwarzschild differential plus de Sitter term."""
-        tmp = cuda.local.array(3, numba.float64)
-        _external_schwarzschild_diff_cuda(
-            rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out
-        )
-        _de_sitter_cuda(vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, tmp)
-        out[0] += tmp[0]
-        out[1] += tmp[1]
-        out[2] += tmp[2]
+        """External-body 1PN term: the de Sitter term alone.
+
+        The differential Schwarzschild term already carries the geodetic
+        precession, so it is not added (must match the CPU kernel
+        lunaris.physics.relativity_effects.external_1pn_components).
+        """
+        _de_sitter_cuda(vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out)
 
     @cuda.jit(device=True, inline=True)
     def _j2_oblate_unit_cuda(x, y, z, mu, r_ref, j2, kx, ky, kz, out):

@@ -198,9 +198,9 @@ def compute_requirements(
     albedo_model = str(getattr(alb_cfg, "albedo_model", "lambert_facets")).strip().lower()
 
     # Design (#4): there is intentionally no separate "external relativity"
-    # flag. The external-body Schwarzschild differential and the de Sitter
-    # geodetic term are the physically dominant relativistic effects for a
-    # lunar orbiter, but they can only be evaluated when Sun/Earth ephemeris
+    # flag. The external bodies' de Sitter geodetic terms are the physically
+    # dominant external relativistic effects for a lunar orbiter, but they can
+    # only be evaluated when Sun/Earth ephemeris
     # states are available. So they auto-enable whenever 1PN relativity is on
     # AND an ephemeris is present, and silently degrade to the central-body
     # Schwarzschild term alone otherwise. The body velocities they require are

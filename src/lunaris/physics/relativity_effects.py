@@ -7,9 +7,11 @@ This module implements first post-Newtonian (1PN) acceleration corrections used
 by the lunar propagation engine:
 
 - the Schwarzschild term for motion about a single central body,
-- differential Schwarzschild terms from external bodies, and
 - the de Sitter/geodetic precession term from the Moon's motion in an external
-  gravity field.
+  gravity field (what the engine applies for an external body), and
+- differential Schwarzschild terms from external bodies (a standalone kernel the
+  engine does not add: its velocity-dependent part already holds the geodetic
+  precession, so adding it to the de Sitter term counts that precession twice).
 
 The implementation is split into:
 - a small Numba-compiled scalar kernel (allocation-free), and
@@ -209,29 +211,28 @@ def external_1pn_components(
     body_vx: float, body_vy: float, body_vz: float,
     mu_body: float,
 ) -> tuple[float, float, float]:
-    """Combine selected external-body 1PN terms in Moon-centred inertial axes.
+    """External-body 1PN acceleration in Moon-centred inertial axes.
 
     Spacecraft and external-body position/velocity components are [m] and
     [m/s] in one Moon-centred inertial frame; ``mu_body`` is m³/s². The returned
-    acceleration [m/s²] is the sum of the differential Schwarzschild correction
-    and the prograde de Sitter/geodetic term. It is a selected-term Lunaris
-    composition, not the full Einstein–Infeld–Hoffmann N-body equations; frame
-    dragging and relativistic oblateness couplings are excluded.
+    acceleration [m/s²] is the prograde de Sitter/geodetic term: in the
+    central body's local frame of IERS TN 36 Eq. 10.12 an external body acts
+    through its Newtonian tide (applied by the engines' third-body terms) and
+    the geodesic precession, its other relativistic corrections being very
+    small. The differential Schwarzschild term
+    (:func:`external_schwarzschild_diff_components`) is the barycentric-frame
+    alternative: its velocity-dependent part already precesses the orbit at
+    the geodetic rate, so it is not added on top (both together precessed a
+    lunar orbit at twice that rate). The position arguments are unused and
+    kept for a stable signature. Frame dragging and relativistic oblateness
+    couplings are excluded.
     """
-    sx, sy, sz = external_schwarzschild_diff_components(
-        rx, ry, rz,
+    return de_sitter_components(
         vx, vy, vz,
         body_x, body_y, body_z,
         body_vx, body_vy, body_vz,
         mu_body,
     )
-    dx, dy, dz = de_sitter_components(
-        vx, vy, vz,
-        body_x, body_y, body_z,
-        body_vx, body_vy, body_vz,
-        mu_body,
-    )
-    return sx + dx, sy + dy, sz + dz
 
 
 @njit(cache=True, nogil=True, inline="always")
@@ -342,7 +343,7 @@ __all__ = (
 
     "calc_schwarzschild_accel_out",   # Allocation-free: writes into `out` (shape (3,))
 
-    "calc_external_1pn_accel",        # External-body Schwarzschild + de Sitter wrapper
+    "calc_external_1pn_accel",        # External-body (de Sitter) 1PN wrapper
 
     "schwarzschild_components",
 
