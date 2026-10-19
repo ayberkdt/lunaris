@@ -174,3 +174,69 @@ def test_gpu_request_ending_on_cpu_matches_single_run_degree(
         assert np.array_equal(np.asarray(single.t), t)
         dr = np.max(np.linalg.norm(Y[:, i, :3] - np.asarray(single.y)[:, :3], axis=1))
         assert dr <= 1e-9, f"member {i}: batch vs single-run position differs by {dr:.3e} m"
+
+
+# ---------------------------------------------------------------------------
+# (b) the torch classic-SH backends must not silently drop physics
+# ---------------------------------------------------------------------------
+
+
+def _torch_cfg(backend: str, policy: str) -> BatchPropagationConfig:
+    return BatchPropagationConfig(
+        n_samples=2, use_gpu=True, batch_backend=backend, sh_degree=8,
+        sh_fallback_policy=policy,
+    )
+
+
+def _sim(*, adaptive: bool = False, srp: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True, enable_srp=srp),
+        gravity=SimpleNamespace(uses_st_lrps=False, adaptive=SimpleNamespace(enabled=adaptive)),
+    )
+
+
+def test_torch_cpu_sh_with_unsupported_physics_is_refused_or_recorded_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit torch_cpu_sh skipped the unsupported-physics check: the plan
+    said torch_cpu_sh for a run the gravity-only evaluator cannot fly."""
+    from lunaris.batch.backend_policy import resolve_batch_backend_policy
+
+    pytest.importorskip("torch")
+    _patch_no_cuda(monkeypatch)
+    with pytest.raises(RuntimeError, match="not supported by torch_cpu_sh"):
+        resolve_batch_backend_policy(_torch_cfg("torch_cpu_sh", "error"), _sim(srp=True))
+    plan = resolve_batch_backend_policy(_torch_cfg("torch_cpu_sh", "compatible_gpu"), _sim(srp=True))
+    assert plan.actual_backend == "cpu_sh"
+    assert plan.requested_backend == "torch_cpu_sh"
+    assert plan.fallback_applied is True
+    assert "physics not supported" in plan.fallback_reason
+    # A gravity-only run keeps the explicit torch_cpu_sh request.
+    plan = resolve_batch_backend_policy(_torch_cfg("torch_cpu_sh", "error"), _sim())
+    assert plan.actual_backend == "torch_cpu_sh"
+    assert plan.fallback_applied is False
+
+
+def test_torch_cuda_sh_policy_cpu_route_honours_unsupported_physics() -> None:
+    from lunaris.batch.backend_policy import select_classic_sh_backend
+
+    pytest.importorskip("torch")
+    common = dict(
+        requested_backend="torch_cuda_sh", requested_degree=8,
+        numba_cuda_available=False, torch_cuda_available=False, fallback_policy="cpu",
+    )
+    ok = select_classic_sh_backend(torch_physics_ok=True, **common)
+    assert (ok.backend, ok.fallback_applied) == ("torch_cpu_sh", True)
+    blocked = select_classic_sh_backend(torch_physics_ok=False, **common)
+    assert (blocked.backend, blocked.fallback_applied, blocked.requires_error) == ("cpu_sh", True, False)
+    assert "physics" in blocked.fallback_reason
+
+
+def test_torch_sh_preflight_refuses_adaptive_gravity() -> None:
+    torch = pytest.importorskip("torch")
+    from lunaris.core.torch_sh_propagator import TorchSHBatchPropagator, TorchSHPreflightError
+
+    dyn = SimpleNamespace(gravity_adaptive=SimpleNamespace(enabled=True), grav=None, ephem=None)
+    cfg = SimpleNamespace(sh_degree=8, dt_s=60.0, torch_dtype="float64", impact_alt_km=0.0)
+    with pytest.raises(TorchSHPreflightError, match="adaptive"):
+        TorchSHBatchPropagator(dyn, cfg, PerturbationFlags(enable_sh=True), device=torch.device("cpu"))
