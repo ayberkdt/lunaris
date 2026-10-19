@@ -308,10 +308,11 @@ def build_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
             base_eval = [sys.executable, "-m", _EVALUATE_MODULE, "--model-dir", str(run_dir)]
             if args.eval_streaming:
                 base_eval.append("--streaming")
+            # The evaluator's output flag is --out (alias --output-dir); it has no --out-dir.
             if args.test_data:
-                eval_cmds.append(base_eval + ["--data", str(args.test_data), "--out-dir", str(run_dir / "evals" / "test")])
+                eval_cmds.append(base_eval + ["--data", str(args.test_data), "--out", str(run_dir / "evals" / "test")])
             if args.ood_data:
-                eval_cmds.append(base_eval + ["--data", str(args.ood_data), "--out-dir", str(run_dir / "evals" / "ood_high")])
+                eval_cmds.append(base_eval + ["--data", str(args.ood_data), "--out", str(run_dir / "evals" / "ood_high")])
 
         entry = {
             **asdict(spec),
@@ -372,11 +373,10 @@ def _ablation_summary_row(entry: Mapping[str, Any]) -> dict[str, Any]:
     config = _read_json(run_dir / "config.json")
     hist = _last_history_row(run_dir)
     eval_root = run_dir / "evals"
-    def _first(*candidates: Any) -> Any:
-        for value in candidates:
-            if value is not None:
-                return value
-        return None
+    # The trainer records capacity and cost only under run_manifest.json
+    # "compute_accounting" (n_params, hardware.wall_clock_seconds); no producer
+    # writes the flat param_count / training_time_s keys.
+    accounting = manifest.get("compute_accounting") or {}
 
     row = {
         "name": entry["name"],
@@ -389,14 +389,8 @@ def _ablation_summary_row(entry: Mapping[str, Any]) -> dict[str, Any]:
         "trained_run": str(run_dir) if run_dir.exists() else None,
         "overrides": " ".join(str(x) for x in entry.get("overrides", entry.get("flags", []))),
         # Capacity + cost.
-        "param_count": _first(
-            manifest.get("param_count"), manifest.get("n_parameters"),
-            config.get("param_count"), config.get("n_parameters"),
-        ),
-        "training_time_s": _first(
-            manifest.get("training_time_s"), manifest.get("elapsed_s"),
-            manifest.get("wall_time_s"), manifest.get("total_training_time_s"),
-        ),
+        "param_count": accounting.get("n_params"),
+        "training_time_s": (accounting.get("hardware") or {}).get("wall_clock_seconds"),
         "inference_runtime_path": str(run_dir / "runtime") if (run_dir / "runtime").exists() else None,
         # Checkpoint selection (validation-only; periodic eval is monitor-only).
         "best_checkpoint_score": manifest.get("best_score", config.get("best_score", hist.get("best_score"))),
@@ -409,14 +403,26 @@ def _ablation_summary_row(entry: Mapping[str, Any]) -> dict[str, Any]:
         "test_eval_path": str(eval_root / "test") if (eval_root / "test").exists() else None,
         "ood_eval_path": str(eval_root / "ood_high") if (eval_root / "ood_high").exists() else None,
         "test_rmse_a": None,
+        # ood_high_rmse_a is the evals/ood_high split (what this suite's eval command
+        # writes). ood_rmse_a is the evals/ood split when it has a summary, else the
+        # ood_high value; ood_rmse_a_split names the split it came from and
+        # ood_eval_path points at that split's directory.
+        "ood_high_rmse_a": None,
         "ood_rmse_a": None,
+        "ood_rmse_a_split": None,
         # Validation-suite (field + spatial/OOD) accel RMSE per split, when present.
         "validation_suite_path": None,
     }
-    for split, key in (("test", "test_rmse_a"), ("ood_high", "ood_rmse_a"), ("ood", "ood_rmse_a")):
+    for split, key in (("test", "test_rmse_a"), ("ood_high", "ood_high_rmse_a"), ("ood", "ood_rmse_a")):
         summary = _read_json(eval_root / split / "summary_metrics.json")
         if isinstance(summary, list) and summary:
             row[key] = summary[0].get("rmse_a_vec")
+    if row["ood_rmse_a"] is not None:
+        row["ood_rmse_a_split"] = "ood"
+        row["ood_eval_path"] = str(eval_root / "ood")
+    elif row["ood_high_rmse_a"] is not None:
+        row["ood_rmse_a"] = row["ood_high_rmse_a"]
+        row["ood_rmse_a_split"] = "ood_high"
     suite = _read_json(eval_root / "validation_suite.json")
     if isinstance(suite, Mapping) and suite.get("field_validation"):
         row["validation_suite_path"] = str(eval_root / "validation_suite.json")
@@ -443,8 +449,8 @@ def _write_summary_md(path: Path, rows: list[Mapping[str, Any]]) -> None:
         "(`A6_full_recommended`). Checkpoints are selected on the validation metric "
         "only; periodic evaluation is monitor-only and never influences selection.",
         "",
-        "| ablation | params | train time [s] | best epoch | val base loss | "
-        "test RMSE a | ood RMSE a | status |",
+        "| ablation | params | train time [s] | best epoch | final val base loss | "
+        "test RMSE a | ood RMSE a (split) | status |",
         "|---|---|---|---|---|---|---|---|",
     ]
     lines.extend(
@@ -455,7 +461,10 @@ def _write_summary_md(path: Path, rows: list[Mapping[str, Any]]) -> None:
             ep=_md_num(row.get("best_epoch")),
             vbl=_md_num(row.get("final_val_base_loss")),
             test=_md_num(row.get("test_rmse_a")),
-            ood=_md_num(row.get("ood_rmse_a")),
+            ood=(
+                f"{_md_num(row.get('ood_rmse_a'))} ({row.get('ood_rmse_a_split')})"
+                if row.get("ood_rmse_a_split") else _md_num(row.get("ood_rmse_a"))
+            ),
             status=row.get("status"),
         )
         for row in rows
