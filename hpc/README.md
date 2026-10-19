@@ -13,11 +13,11 @@ $EDITOR hpc/cluster.env
 #    On UHeM Altay, start from the pre-filled profile instead:
 #    cp hpc/clusters/uhem_altay.env.example hpc/cluster.env
 
-# 2. Build the headless environment once (creates a venv, installs .[hpc]).
+# 2. Build the headless environment once (CPython 3.11 only). Creates the venv at
+#    LUNARIS_VENV (default $HOME/venvs/lunaris) and installs the pinned HPC lock.
 bash hpc/setup_env.sh
-#    then paste the printed LUNARIS_VENV=... line into hpc/cluster.env
 
-# 3. Check, then submit.
+# 3. Check (inside a GPU allocation for the GPU checks), then submit.
 bash hpc/preflight.sh
 hpc/submit.sh train -- \
     --data "$LUNARIS_DATA_DIR/datasets/st_lrps_cloud_suite.h5" \
@@ -35,14 +35,14 @@ before `--` is passed to `sbatch`; everything after `--` goes to the program.
 |------|---------|
 | `cluster.env.example` | Site-config template — copy to `cluster.env` (git-ignored) and fill in once. |
 | `clusters/uhem_altay.env.example` | Pre-filled site profile for UHeM Altay (a100q, 1×A100, `$HOME` storage) — copy to `cluster.env`. |
-| `env_template.sh` | Sourced by every job: loads `cluster.env`, modules, and activates the env. |
-| `setup_env.sh` | Run once on a login node: creates the venv and installs `.[hpc]`. |
-| `preflight.sh` | Pre-submit sanity check (imports, entry points, CUDA, storage). |
-| `submit.sh` | Submit helper: injects scheduler placement from `cluster.env`. |
-| `slurm_train_stlrps.sbatch` | ST-LRPS training (`lunaris-train`). |
-| `slurm_train_scenario_array.sbatch` | Reproducible scenario sweeps (array jobs). |
-| `slurm_benchmark_gpu.sbatch` | Orbit-level gravity benchmark (`lunaris-benchmark`). |
-| `slurm_batch_array.sbatch` | Batch propagation / uncertainty ensembles (`lunaris-batch`). |
+| `env_template.sh` | Sourced by every job: loads `cluster.env`, modules, and activates the env. Fails the job on a collected setup error unless `LUNARIS_ENV_STRICT=0`. |
+| `setup_env.sh` | Run once on a login node (CPython 3.11): creates the venv at `LUNARIS_VENV`, installs the hash-pinned HPC lock, then the package. |
+| `preflight.sh` | Pre-submit check: runs every check, prints PASS/WARN/FAIL and one verdict (imports, entry points, GPU/CUDA, storage). |
+| `submit.sh` | Submit helper: injects scheduler placement from `cluster.env`; requests a GPU only where needed; refuses absolute paths left by an unset `$LUNARIS_DATA_DIR`/`$LUNARIS_OUTPUT_DIR`. |
+| `slurm_train_stlrps.sbatch` | ST-LRPS training (`lunaris-train`). Exit 75 = stopped and resumable; requeues with `LUNARIS_AUTO_REQUEUE=1`. |
+| `slurm_train_scenario_array.sbatch` | Reproducible scenario sweeps (array jobs). A restarted task resumes with `--resume`. |
+| `slurm_benchmark_gpu.sbatch` | Orbit-level gravity benchmark (`lunaris-benchmark`). Requires CUDA and an ST-LRPS model directory. |
+| `slurm_batch_array.sbatch` | Batch propagation / uncertainty ensembles (`lunaris-batch`). One CPU per task; a GPU only when the arguments ask for a GPU backend (via `submit.sh`). |
 | `slurm_generate_dataset.sbatch` | CPU-only ST-LRPS dataset / spatial-cloud generation (no GPU request). |
 | `scenarios/*.jsonl` | Self-describing experiment sweeps (ablations, capacity, encoding/loss). |
 
@@ -67,7 +67,10 @@ hpc/submit.sh scenario --array=0-0 --time=48:00:00 -- \
 ```
 
 Resume after a walltime stop by using the same command with `--resume` after
-the JSONL path. For persistent site defaults, set `LUNARIS_CPUS_PER_TASK`,
+the JSONL path. With `LUNARIS_AUTO_REQUEUE=1` in `cluster.env`, a job that exits
+75 (stopped by the walltime signal, checkpoint saved) requeues itself; a single
+training job also needs an explicit `--out-dir`. See
+[`../docs/HPC.md`](../docs/HPC.md#running-on-slurm) for the exit codes. For persistent site defaults, set `LUNARIS_CPUS_PER_TASK`,
 `LUNARIS_MEM`, `LUNARIS_TIME`, and `LUNARIS_SIGNAL` in `hpc/cluster.env`.
 Explicit options passed to `hpc/submit.sh` override those defaults.
 

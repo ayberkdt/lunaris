@@ -118,8 +118,10 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        print('\n[STOP] Training interrupted by user. Exiting safely...')
-        sys.exit(0)
+        # A second stop signal force-quits without saving the current epoch: not a
+        # success (130 = 128 + SIGINT, the shell convention).
+        print('\n[STOP] Training force-quit by a second stop signal; the current epoch was not saved.')
+        sys.exit(130)
     except Exception as exc:
         print(f'\n[FATAL ERROR] {exc}')
         import traceback
