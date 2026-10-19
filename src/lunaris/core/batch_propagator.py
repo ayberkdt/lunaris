@@ -16,8 +16,8 @@ GPU path  — ``GPUBatchPropagator``
       * Third-body Sun / Earth point-mass perturbations.
       * Solar Radiation Pressure (cannonball Cr*A/m area model with the
         conical Moon/Earth shadow factor of the CPU SRP kernel).
-      * Selected 1PN corrections (Moon Schwarzschild plus external-body
-        differential Schwarzschild/de Sitter terms when ephemeris tables are present).
+      * Selected 1PN corrections (Moon Schwarzschild plus the external-body
+        de Sitter term when ephemeris tables are present).
 
     Physics CPU-only (not on GPU):
       * Albedo / thermal surface forces.
@@ -2353,7 +2353,6 @@ class GPUBatchPropagator:
             "relativity_terms": (
                 [
                     "central_body_schwarzschild",
-                    "external_body_schwarzschild_differential_when_ephemeris_available",
                     "de_sitter_geodetic_when_ephemeris_available",
                 ]
                 if int(getattr(self, "_use_rel", 0))

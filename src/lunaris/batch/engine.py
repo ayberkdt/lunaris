@@ -217,7 +217,6 @@ def _force_model_fidelity_provenance(
                 "relativity_model": "selected_1pn_corrections",
                 "relativity_terms": [
                     "central_body_schwarzschild",
-                    "external_body_schwarzschild_differential_when_ephemeris_available",
                     "de_sitter_geodetic_when_ephemeris_available",
                 ],
                 "relativity_excluded_terms": [

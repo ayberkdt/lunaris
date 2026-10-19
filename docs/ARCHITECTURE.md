@@ -49,8 +49,8 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
 - `surface_radiation_quadrature.py` — visible-disk quadrature of the same
   albedo/thermal-IR physics (the default surface integration).
 - `solid_tides.py` — elastic lunar solid-body tide potential and acceleration.
-- `relativity_effects.py` — first-order post-Newtonian Schwarzschild plus
-  external-body Schwarzschild/de Sitter terms when Sun/Earth ephemerides are available.
+- `relativity_effects.py` — first-order post-Newtonian Schwarzschild plus the
+  external-body de Sitter term when Sun/Earth ephemerides are available.
 - `ephemeris.py` — SPICE kernel wrapper; ephemerides are pre-tabulated at startup.
 - Classical `GravityModel` exposes the engine-facing gravity-provider contract
   directly (`degree_max`, `R_ref_m`, `GM_m3s2`, coefficient arrays, workspace)
@@ -263,7 +263,7 @@ non-`None` (e.g. `enable_srp=True` requires `cfg.srp`).
 | `enable_earth_j2` | Earth oblateness (differential) | Implemented |
 | `enable_srp` | Solar radiation pressure | Implemented |
 | `enable_albedo` | Reflected-solar radiation pressure (facet Lambertian) | Implemented |
-| `enable_relativity_1pn` | Selected first-order post-Newtonian corrections: central-body Schwarzschild, and — when a Sun/Earth ephemeris is present — the external-body Schwarzschild differential plus de Sitter (geodetic) precession (no separate flag). This is not full EIH N-body relativity, frame dragging, J2-relativistic coupling, or a clock model. | Implemented |
+| `enable_relativity_1pn` | Selected first-order post-Newtonian corrections: central-body Schwarzschild, and — when a Sun/Earth ephemeris is present — the external-body de Sitter (geodetic) precession (no separate flag). This is not full EIH N-body relativity, frame dragging, J2-relativistic coupling, or a clock model. | Implemented |
 | `enable_thermal` | Lunar thermal IR radiation pressure | Implemented on CPU RHS |
 | `enable_tides_k2` / `enable_tides_k3` | Elastic lunar solid-body tides | Implemented on CPU RHS |
 

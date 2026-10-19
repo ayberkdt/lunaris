@@ -86,7 +86,10 @@ def test_numba_cuda_srp_diagnostics_disclose_conical_shadow_model() -> None:
     prop._srp_earth_eclipse = True
     assert prop.diagnostics_snapshot()["srp_shadow_model"] == "conical_moon_and_earth_shadow_factor"
     assert diag["relativity_model"] == "selected_1pn_corrections"
-    assert "external_body_schwarzschild_differential" in " ".join(diag["relativity_terms"])
+    terms = " ".join(diag["relativity_terms"])
+    assert "de_sitter_geodetic" in terms
+    # Counted once: the differential Schwarzschild term is not added to de Sitter.
+    assert "external_body_schwarzschild_differential" not in terms
     assert diag["effective_dt_s"] == pytest.approx(62.5)
 
 
