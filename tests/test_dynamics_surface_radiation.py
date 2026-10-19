@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from lunaris.common.constants import R_MOON
+from lunaris.common.constants import R_MOON, R_MOON_MEAN
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.physics.spherical_harmonics import compute_point_mass_acceleration
@@ -66,7 +66,7 @@ def test_simple_albedo_honours_enable_eclipse(enable_eclipse: bool) -> None:
         SC, PerturbationFlags(enable_sh=False, enable_albedo=True), ephem_manager=_StaticEphem(), albedo=cfg,
     )
     got = _surface_accel(eng, Y_SHADOW)
-    expected = albedo_accel(Y_SHADOW[:3], (AU_M, 0.0, 0.0), SC, cfg, R_moon=R_MOON)
+    expected = albedo_accel(Y_SHADOW[:3], (AU_M, 0.0, 0.0), SC, cfg, R_moon=R_MOON_MEAN)
     if enable_eclipse:
         assert np.all(expected == 0.0)
     else:
@@ -102,7 +102,7 @@ def test_quadrature_is_the_default_surface_integration() -> None:
 def test_engine_albedo_matches_wrapper(integration: str) -> None:
     cfg = AlbedoConfig(surface_integration=integration, albedo_const=0.15)
     eng = _engine(cfg)
-    expected = albedo_accel(Y_DAY[:3], (AU_M, 0.0, 0.0), SC, cfg, R_moon=R_MOON, r_earth=EARTH)
+    expected = albedo_accel(Y_DAY[:3], (AU_M, 0.0, 0.0), SC, cfg, R_moon=R_MOON_MEAN, r_earth=EARTH)
     assert np.linalg.norm(expected) > 1e-10
     breakdown = eng.get_acceleration_vector_breakdown(0.0, Y_DAY)["Albedo"]
     np.testing.assert_allclose(breakdown, expected, rtol=1e-12, atol=0.0)
@@ -114,7 +114,7 @@ def test_engine_albedo_matches_wrapper(integration: str) -> None:
 def test_engine_thermal_matches_wrapper(integration: str, mode: str) -> None:
     cfg = ThermalConfig(surface_integration=integration, thermal_mode=mode)
     eng = _engine(thermal=cfg)
-    expected = thermal_accel(Y_DAY[:3], (AU_M, 0.0, 0.0), SC, cfg, R_moon=R_MOON, r_earth=EARTH)
+    expected = thermal_accel(Y_DAY[:3], (AU_M, 0.0, 0.0), SC, cfg, R_moon=R_MOON_MEAN, r_earth=EARTH)
     assert np.linalg.norm(expected) > 1e-10
     breakdown = eng.get_acceleration_vector_breakdown(0.0, Y_DAY)["Thermal IR"]
     np.testing.assert_allclose(breakdown, expected, rtol=1e-12, atol=0.0)
@@ -140,3 +140,26 @@ def test_quadrature_reads_mapped_cells() -> None:
     ref = const.get_acceleration_vector_breakdown(0.0, Y_DAY)
     np.testing.assert_allclose(got["Albedo"], ref["Albedo"], rtol=1e-12, atol=0.0)
     np.testing.assert_allclose(got["Thermal IR"], ref["Thermal IR"], rtol=1e-12, atol=0.0)
+
+
+@pytest.mark.parametrize("integration", ["visible_disk_quadrature", "facets"])
+def test_the_moon_reflects_emits_and_casts_its_shadow_from_one_sphere(integration: str) -> None:
+    """The engine's albedo/thermal surface sphere is the IAU mean radius (1737.4 km): the
+    radius SRP uses for the Moon's own shadow and the standalone wrappers' default, not the
+    gravity field's 1738.0 km normalisation radius (which the engine used to fly)."""
+    from types import SimpleNamespace
+
+    from lunaris.core.dynamics.preparation import prepare_albedo, prepare_thermal
+    from lunaris.physics.solar_effects import SRPConfig
+
+    sphere = float(SRPConfig().R_moon_m)
+    assert sphere == R_MOON_MEAN
+    req: Any = SimpleNamespace(use_albedo=True, use_thermal=True)
+    albedo = prepare_albedo(req, albedo=AlbedoConfig(surface_integration=integration), surface_provider=None)
+    thermal = prepare_thermal(req, thermal=ThermalConfig(surface_integration=integration), surface_provider=None)
+    for pack in (albedo, thermal):
+        if integration == "visible_disk_quadrature":
+            assert pack.surface_radius_m == sphere
+        else:
+            # Facet centres sit on the sphere; 1e-15 relative absorbs the trig round-off only.
+            np.testing.assert_allclose(np.linalg.norm(pack.facet_pos_m, axis=1), sphere, rtol=1e-15, atol=0.0)

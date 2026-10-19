@@ -3364,6 +3364,15 @@ entries:
       - path: src/lunaris/core/batch_propagator.py
         symbol: _de_sitter_cuda
         role: cuda_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: external_1pn_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: calc_external_1pn_accel
+        role: api_entry_point
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _external_1pn_cuda
+        role: cuda_implementation
     mathematical_contract:
       inputs: spacecraft velocity and the Moon->body position/velocity
       outputs: geodesic-precession acceleration (m/s^2)
@@ -3383,13 +3392,17 @@ entries:
       - LUNARIS-MODEL-REL-001
     notes: >-
       Sign is intentionally +2 Omega x v (prograde); a previous sign error was
-      corrected and is locked by the precession regression test.
+      corrected and is locked by the precession regression test. Since
+      2026-10-20 this is the whole external-body 1PN term the engines apply
+      (external_1pn_components, _external_1pn_cuda); the differential
+      Schwarzschild term (LUNARIS-MODEL-REL-003) was added on top until then
+      and counted the geodetic precession twice.
 
   - id: LUNARIS-MODEL-REL-003
     slug: external_body_differential_1pn
     canonical_name: >-
-      External-body differential first post-Newtonian correction
-      (Schwarzschild + de Sitter)
+      External-body differential Schwarzschild correction (barycentric-frame
+      form, not applied by the engines)
     category: physical_model
     domain: REL
     status: active
@@ -3415,25 +3428,17 @@ entries:
         - "10.12"
       pages: null
       verification_notes: >-
-        Combines the differential Schwarzschild correction (a_1PN(SC wrt body) -
-        a_1PN(Moon wrt body)) with the de Sitter term (LUNARIS-MODEL-REL-002),
-        both derived from IERS TN 36 Eq. 10.12. The differential Moon-centred
+        The differential Schwarzschild correction (a_1PN(SC wrt body) -
+        a_1PN(Moon wrt body)) applies the single-body Schwarzschild form of
+        IERS TN 36 Eq. 10.12 to the external body's field at the spacecraft and
+        at the Moon and differences them. The differential Moon-centred
         composition is a Lunaris adaptation of the single-body IERS forms.
     symbols:
       - path: src/lunaris/physics/relativity_effects.py
         symbol: external_schwarzschild_diff_components
         role: numba_implementation
-      - path: src/lunaris/physics/relativity_effects.py
-        symbol: external_1pn_components
-        role: numba_implementation
-      - path: src/lunaris/physics/relativity_effects.py
-        symbol: calc_external_1pn_accel
-        role: api_entry_point
       - path: src/lunaris/core/batch_propagator.py
         symbol: _external_schwarzschild_diff_cuda
-        role: cuda_implementation
-      - path: src/lunaris/core/batch_propagator.py
-        symbol: _external_1pn_cuda
         role: cuda_implementation
     mathematical_contract:
       inputs: spacecraft state and the external body Moon-centred state and mu
@@ -3449,10 +3454,18 @@ entries:
       - no Lense-Thirring; external Schwarzschild uses beta = gamma = 1
     validation:
       - tests/test_relativity_effects.py
+      - tests/test_de_sitter_precession.py
     see_also:
       - LUNARIS-MODEL-REL-001
       - LUNARIS-MODEL-REL-002
-    notes: ""
+    notes: >-
+      The engines added this term to the de Sitter term until 2026-10-20. Its
+      velocity-dependent part already precesses an orbit at the geodetic rate
+      (orbit-averaged over a rotating geometry: 0.994 of Omega_dS for either
+      term alone, 1.988 for the sum; tests/test_de_sitter_precession.py), so the
+      sum precessed a lunar orbit at twice that rate. It is kept as a
+      standalone kernel for a barycentric-frame composition, where it replaces
+      the de Sitter term.
 
   - id: LUNARIS-MODEL-TID-001
     slug: lunar_solid_tide_love_degree_2_3

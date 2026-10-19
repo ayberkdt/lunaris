@@ -95,7 +95,7 @@ def test_singularity_protection_near_zero_r() -> None:
 
     a0 = calc_schwarzschild_accel(r0, v0, float(MU_MOON))
 
-    assert np.allclose(a0, 0.0), "Expected zero accel for near-zero position vector"
+    assert np.allclose(a0, 0.0, rtol=0.0, atol=0.0), "Expected zero accel for near-zero position vector"
 
 
 def test_v_zero_parallel_and_magnitude() -> None:

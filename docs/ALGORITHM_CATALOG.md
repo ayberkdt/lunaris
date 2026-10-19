@@ -65,7 +65,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 | [`LUNARIS-MODEL-RAD-003`](#lunarismodelrad003) | Faceted lunar thermal-infrared (longwave) radiation-pressure model | adaptation | verified_primary_source |
 | [`LUNARIS-MODEL-REL-001`](#lunarismodelrel001) | Schwarzschild first post-Newtonian acceleration (central body) | exact | verified_primary_source |
 | [`LUNARIS-MODEL-REL-002`](#lunarismodelrel002) | de Sitter (geodesic) precession acceleration | exact | verified_primary_source |
-| [`LUNARIS-MODEL-REL-003`](#lunarismodelrel003) | External-body differential first post-Newtonian correction (Schwarzschild + de Sitter) | adaptation | verified_primary_source |
+| [`LUNARIS-MODEL-REL-003`](#lunarismodelrel003) | External-body differential Schwarzschild correction (barycentric-frame form, not applied by the engines) | adaptation | verified_primary_source |
 | [`LUNARIS-MODEL-TID-001`](#lunarismodeltid001) | Elastic lunar solid-body tide (degree-2 and degree-3 Love-number disturbing potential) | adaptation | verified_primary_source |
 | [`LUNARIS-STD-FRM-001`](#lunarisstdfrm001) | Lunar principal-axis (PA) body-fixed frame realized by DE440 | standard_implementation | verified_primary_source |
 | [`LUNARIS-STD-FRM-002`](#lunarisstdfrm002) | Constant lunar principal-axis to mean-Earth rotation for surface-map sampling | standard_implementation | verified_secondary_source |
@@ -473,6 +473,9 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 - **Implementing symbols**:
   - `src/lunaris/physics/relativity_effects.py` -- `de_sitter_components` (numba_implementation)
   - `src/lunaris/core/batch_propagator.py` -- `_de_sitter_cuda` (cuda_implementation)
+  - `src/lunaris/physics/relativity_effects.py` -- `external_1pn_components` (numba_implementation)
+  - `src/lunaris/physics/relativity_effects.py` -- `calc_external_1pn_accel` (api_entry_point)
+  - `src/lunaris/core/batch_propagator.py` -- `_external_1pn_cuda` (cuda_implementation)
 - **Lunaris modifications**:
   - Coriolis-like +2 Omega x v application in the Moon-centred frame
 - **Assumptions**:
@@ -483,17 +486,17 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `tests/test_de_sitter_precession.py`
   - `tests/test_relativity_effects.py`
 - **See also**: [`LUNARIS-MODEL-REL-001`](#lunarismodelrel001)
-- **Notes**: Sign is intentionally +2 Omega x v (prograde); a previous sign error was corrected and is locked by the precession regression test.
+- **Notes**: Sign is intentionally +2 Omega x v (prograde); a previous sign error was corrected and is locked by the precession regression test. Since 2026-10-20 this is the whole external-body 1PN term the engines apply (external_1pn_components, _external_1pn_cuda); the differential Schwarzschild term (LUNARIS-MODEL-REL-003) was added on top until then and counted the geodetic precession twice.
 
 <a id="lunarismodelrel003"></a>
-### LUNARIS-MODEL-REL-003 -- External-body differential first post-Newtonian correction (Schwarzschild + de Sitter)
+### LUNARIS-MODEL-REL-003 -- External-body differential Schwarzschild correction (barycentric-frame form, not applied by the engines)
 
 - **Slug**: `external_body_differential_1pn`
 - **Category**: physical_model | **Domain**: REL | **Status**: active
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
 - **Primary reference**: `PetitLuzum2010IERSConventions` -- Petit, 2010. "{IERS} Conventions (2010)" (chapter 10 (General relativistic models for space-time coordinates and equations of motion); section 10.3; eq. 10.12) [ISBN: 978-3-89888-989-6]
-- **Verification notes**: Combines the differential Schwarzschild correction (a_1PN(SC wrt body) - a_1PN(Moon wrt body)) with the de Sitter term (LUNARIS-MODEL-REL-002), both derived from IERS TN 36 Eq. 10.12. The differential Moon-centred composition is a Lunaris adaptation of the single-body IERS forms.
+- **Verification notes**: The differential Schwarzschild correction (a_1PN(SC wrt body) - a_1PN(Moon wrt body)) applies the single-body Schwarzschild form of IERS TN 36 Eq. 10.12 to the external body's field at the spacecraft and at the Moon and differences them. The differential Moon-centred composition is a Lunaris adaptation of the single-body IERS forms.
 - **Mathematical contract**:
   - Inputs: spacecraft state and the external body Moon-centred state and mu
   - Outputs: differential external-body 1PN acceleration (m/s^2)
@@ -501,10 +504,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - Preserves: subtracts the Moon-origin 1PN term for the relative EOM
 - **Implementing symbols**:
   - `src/lunaris/physics/relativity_effects.py` -- `external_schwarzschild_diff_components` (numba_implementation)
-  - `src/lunaris/physics/relativity_effects.py` -- `external_1pn_components` (numba_implementation)
-  - `src/lunaris/physics/relativity_effects.py` -- `calc_external_1pn_accel` (api_entry_point)
   - `src/lunaris/core/batch_propagator.py` -- `_external_schwarzschild_diff_cuda` (cuda_implementation)
-  - `src/lunaris/core/batch_propagator.py` -- `_external_1pn_cuda` (cuda_implementation)
 - **Lunaris modifications**:
   - differential Moon-centred composition of the IERS single-body terms
 - **Assumptions**:
@@ -513,7 +513,9 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - no Lense-Thirring; external Schwarzschild uses beta = gamma = 1
 - **Validated by**:
   - `tests/test_relativity_effects.py`
+  - `tests/test_de_sitter_precession.py`
 - **See also**: [`LUNARIS-MODEL-REL-001`](#lunarismodelrel001), [`LUNARIS-MODEL-REL-002`](#lunarismodelrel002)
+- **Notes**: The engines added this term to the de Sitter term until 2026-10-20. Its velocity-dependent part already precesses an orbit at the geodetic rate (orbit-averaged over a rotating geometry: 0.994 of Omega_dS for either term alone, 1.988 for the sum; tests/test_de_sitter_precession.py), so the sum precessed a lunar orbit at twice that rate. It is kept as a standalone kernel for a barycentric-frame composition, where it replaces the de Sitter term.
 
 ## Radiation pressure (RAD)
 
