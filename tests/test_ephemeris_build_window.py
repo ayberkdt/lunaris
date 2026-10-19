@@ -37,6 +37,17 @@ def test_tables_cover_t0_plus_duration(monkeypatch):
     assert captured["duration_s"] == pytest.approx(90_000.0)
 
 
+@pytest.mark.parametrize("output_dt_s, table_dt_s", [(3600.0, 60.0), (600.0, 60.0), (60.0, 60.0), (10.0, 10.0)])
+def test_table_step_does_not_follow_a_coarse_output_step(monkeypatch, output_dt_s, table_dt_s):
+    # The output grid must not coarsen the force-model tables: a 3600 s output step
+    # moved a 100 km lunar orbit (SH 60, Sun + Earth, DOP853 rtol 1e-12) by 0.60 mm
+    # after 1 day and 10.8 mm after 2 days against 60 s tables.
+    captured = _capture_build(monkeypatch)
+    tc = TimeConfig(duration_s=7_200.0, output_dt_s=output_dt_s)
+    eph.build_spice_tables(tc, eph.SpiceBuildConfig(kernels=("naif0012.tls",)))
+    assert captured["output_dt_s"] == table_dt_s
+
+
 def test_negative_t0_is_refused(monkeypatch):
     _capture_build(monkeypatch)
     tc = TimeConfig(t0_s=-60.0, duration_s=3_600.0, output_dt_s=60.0)
