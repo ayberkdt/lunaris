@@ -84,8 +84,17 @@ def _rounding_band(event: Callable[[float, np.ndarray], float], t: float, y: np.
     return _SURFACE_BAND_FACTOR * largest
 
 
+# A chunk starts from the previous chunk's end state, read off its interpolant;
+# an event whose root lies on the boundary is then a rounding-level fraction of
+# its value over the last step away from zero, on either side. Within this
+# fraction of that value the side is taken from the previous chunk's last step
+# end. A distinct crossing that close to the boundary is not resolved.
+_ROOT_REACH = 1.0e-6
+
+
 def _step_consistent_events(
     events: list[Callable[[float, np.ndarray], float]],
+    seeds: list[float | None] | None = None,
 ) -> list[Callable[[float, np.ndarray], float]]:
     """Wrap events so a root search sees the signs that SciPy detected.
 
@@ -109,9 +118,26 @@ def _step_consistent_events(
     give repeated roots at the start. Terminal events are not touched there: a
     start on the impact sphere moving inward stays an impact at the start.
     Ported from Sidera (commit 7e3deea4).
-    """
 
-    def consistent(event: Callable[[float, np.ndarray], float]) -> Callable[[float, np.ndarray], float]:
+    A step end where the event is exactly zero (a root that falls on it) is
+    reported as the smallest value past zero, on the side away from the
+    previous step end: the step that reaches the root reports it, and the next
+    step, which starts there, does not report it again.
+
+    ``seeds`` (one signed value or ``None`` per event) is for a span that
+    continues another (a chunk boundary) rather than the start of the run: an
+    event, terminal or not, whose first value is within the band, or within
+    `_ROOT_REACH` of the seed's magnitude, reports that value on the seed's
+    side, the side the previous span ended on. A root on the boundary is then
+    reported once: by the previous span if it reached it, else in the first
+    step of this one. Each wrapper exposes the step ends it remembers as
+    ``step_ends``.
+    """
+    tiny = float(np.finfo(np.float64).tiny)
+
+    def consistent(
+        event: Callable[[float, np.ndarray], float], seed: float | None,
+    ) -> Callable[[float, np.ndarray], float]:
         step_ends: list[tuple[float, float]] = []
         terminal = bool(getattr(event, "terminal", False))
         started = False
@@ -121,12 +147,16 @@ def _step_consistent_events(
             nonlocal started, surface_band
             t_key = float(t)
             value = event(t, y)
-            if not terminal and not started:
+            if not started and (seed is not None or not terminal):
                 started = True
                 g0 = float(value)
                 if math.isfinite(g0):
                     band = _rounding_band(event, t, y, g0)
-                    if math.isfinite(band) and abs(g0) <= band:
+                    if seed is not None:
+                        reach = max(band if math.isfinite(band) else 0.0, _ROOT_REACH * abs(seed))
+                        if abs(g0) <= reach:
+                            value = math.copysign(max(band if math.isfinite(band) else 0.0, tiny), seed)
+                    elif math.isfinite(band) and abs(g0) <= band:
                         surface_band = band
             frontier = not step_ends or t_key > step_ends[-1][0]
             if surface_band is not None:
@@ -145,15 +175,23 @@ def _step_consistent_events(
                     )
                     return value if same_side else end_value
             if frontier:
+                previous = step_ends[-1][1] if step_ends else math.nan
+                if float(value) == 0.0 and math.isfinite(previous) and previous != 0.0:
+                    # A root exactly on a step end belongs to the step that
+                    # reaches it: SciPy reads 0 as a crossing at the end of
+                    # that step and again at the start of the next.
+                    value = -math.copysign(tiny, previous)
                 step_ends.append((t_key, float(value)))
                 del step_ends[:-2]
             return value
 
         g.terminal = getattr(event, "terminal", False)  # type: ignore[attr-defined]
         g.direction = getattr(event, "direction", 0.0)  # type: ignore[attr-defined]
+        g.step_ends = step_ends  # type: ignore[attr-defined]
         return g
 
-    return [consistent(event) for event in events]
+    signs = list(seeds) if seeds is not None else [None] * len(events)
+    return [consistent(event, seed) for event, seed in zip(events, signs, strict=True)]
 
 
 def _grid_tolerance_s(grid: np.ndarray, chunk_s: float) -> float:
@@ -229,7 +267,14 @@ def run_scipy_propagation(
                 method, dt_out, max_step,
             )
 
-    def _solve_span(t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray):
+    span_wrappers: list[Callable[[float, np.ndarray], float]] = []
+
+    def _solve_span(
+        t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray,
+        seeds: list[float | None] | None = None,
+    ):
+        wrappers = _step_consistent_events(events, seeds) if events else []
+        span_wrappers[:] = wrappers
         return solve_ivp(
             fun=rhs,
             t_span=(float(t_start), float(t_end)),
@@ -239,10 +284,29 @@ def run_scipy_propagation(
             rtol=float(getattr(cfg, "rtol", 1e-9)),
             atol=atol_arg,
             max_step=float(max_step),
-            events=(_step_consistent_events(events) if events else None),
+            events=(wrappers if events else None),
             dense_output=False,
             vectorized=False,
         )
+
+    def _boundary_seeds(t_boundary: float) -> list[float | None] | None:
+        """The events' sides at a chunk boundary: their values at the last step end there.
+
+        The next chunk starts from the same state, so an event whose root lies on or just
+        past the boundary is at rounding level at its start; without the side it is read
+        as starting on its surface and the crossing is dropped (chunk_s = T/2 from a
+        periapsis lost every apsis). A root just before the boundary was reported by the
+        previous chunk, which leaves the post-crossing side.
+        """
+        if not events or len(span_wrappers) != len(events):
+            return None
+        sides: list[float | None] = []
+        for wrapper in span_wrappers:
+            ends = getattr(wrapper, "step_ends", None) or []
+            t_end, value = ends[-1] if ends else (math.nan, math.nan)
+            usable = t_end == t_boundary and math.isfinite(value) and value != 0.0
+            sides.append(float(value) if usable else None)
+        return sides
 
     checkpoint_every_chunk = bool(getattr(cfg, "checkpoint_every_chunk", False))
     integration_failed = False
@@ -334,7 +398,7 @@ def run_scipy_propagation(
             t_eval_span = np.clip(t_eval[mask], t_curr, t_next)
             t_eval_span = np.unique(np.concatenate(([t_curr], t_eval_span, [t_next])).astype(np.float64))
 
-            sol_k = _solve_span(t_curr, t_next, y_curr, t_eval_span)
+            sol_k = _solve_span(t_curr, t_next, y_curr, t_eval_span, _boundary_seeds(t_curr) if chunk_idx else None)
 
             sol_k_status = int(getattr(sol_k, "status", 0))
             if sol_k_status != 1 and not bool(getattr(sol_k, "success", True)):

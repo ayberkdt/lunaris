@@ -577,3 +577,37 @@ def test_impact_at_t0_is_handled_correctly() -> None:
     np.testing.assert_array_equal(res.Y_out[-1, 1], Y0[1])
     # Active state steps must be less than full
     assert res.metrics["total_active_state_steps"] < res.metrics["total_raw_state_steps"]
+
+
+def test_fixed_step_clock_is_k_times_dt_not_a_running_sum() -> None:
+    from lunaris.common.batch_defs import build_fixed_step_grid_metadata
+
+    stage_times: list[float] = []
+
+    class _Recorder:
+        def acceleration(self, t_s: float, state):
+            stage_times.append(float(t_s))
+            return torch.zeros_like(state[:, :3])
+
+    duration_s, output_dt_s, dt_s = 5000.0, 100.0, 7.0  # 100/14 s: not representable
+    dt_eff = float(build_fixed_step_grid_metadata(duration_s, output_dt_s, dt_s)["effective_dt_s"])
+
+    run_batched_fixed_step(
+        torch_mod=torch, device=torch.device("cpu"), dtype=torch.float64,
+        provider=_Recorder(), frame=None,
+        Y0=np.array([[1.0e7, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+        duration_s=duration_s, output_dt_s=output_dt_s, dt_s=dt_s,
+        impact_r_m=1.0e6, detect_impact=True,
+    )
+    n_steps = len(stage_times) // 4  # RK4: four stage evaluations per step
+    assert n_steps == 50 * 14
+    start_times = stage_times[0::4]
+    expected = [float(k) * dt_eff for k in range(n_steps)]
+    assert start_times == expected  # exact, not approx
+    # The running sum the loop used to keep does leave k * dt_eff on this grid.
+    t = 0.0
+    drifted = False
+    for k in range(n_steps):
+        drifted = drifted or (t != expected[k])
+        t += dt_eff
+    assert drifted, "the chosen grid no longer separates a running sum from k * dt_eff"

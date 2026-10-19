@@ -155,3 +155,46 @@ def test_coverage_rejects_overhang_beyond_extrapolation_band() -> None:
         _require_ephemeris_coverage(dyn, 0.0, 6000.0, stage_overhang_s=0.916 * 120.0)
     with pytest.raises(ValueError, match="outside the"):
         _require_ephemeris_coverage(dyn, -1.0, 6000.0)
+
+
+def test_coverage_ignores_the_overhang_before_t0() -> None:
+    # The fixed-step driver takes a Yoshida run's first step with a one-shot DOP853
+    # step, so a stage overhang larger than one table interval is fine at t0 = 0.
+    dyn = _dyn(101)
+    _require_ephemeris_coverage(dyn, 0.0, 5000.0, stage_overhang_s=0.916 * 600.0)
+
+
+# ---------------------------------------------------------------- first step
+
+
+@pytest.mark.parametrize("method", ["YOSHIDA4", "YOSHIDA6", "YOSHIDA8"])
+def test_yoshida_run_never_samples_the_force_before_t0(method: str) -> None:
+    from lunaris.core.propagation.integrators.fixed_step import _integrate_fixed_step
+
+    mu = 4.9028e12
+    times: list[float] = []
+
+    def rhs(t: float, y: np.ndarray) -> np.ndarray:
+        times.append(float(t))
+        r = y[:3]
+        out = np.empty(6)
+        out[:3] = y[3:6]
+        out[3:] = -mu * r / float(np.linalg.norm(r)) ** 3
+        return out
+
+    r0 = 1.838e6
+    y0 = np.array([r0, 0.0, 0.0, 0.0, math.sqrt(mu / r0), 0.0])
+    t0, h = 100.0, 120.0
+    t_eval = t0 + np.arange(6) * h
+    ode, *_ = _integrate_fixed_step(
+        rhs, t_eval, y0, max_step=h, method=method, events=None, R_ref_m=1.738e6, mu_m3s2=mu,
+        verbose=False, heartbeat_hours=0.0, stop_file=None, checkpoint_path=None,
+    )
+    assert min(times) >= t0
+    # Later steps keep the composition (its stages do leave [t, t + h]).
+    assert max(times) > t_eval[-1]
+    # The first step is the one-shot DOP853 step: on the circular orbit it lands on
+    # the exact state (rtol 1e-13 of r0 is ~2e-7 m), unlike a 120 s Yoshida step.
+    w = math.sqrt(mu / r0**3)
+    exact = r0 * np.array([math.cos(w * h), math.sin(w * h), 0.0])
+    assert float(np.linalg.norm(ode.y[:3, 1] - exact)) < 1.0e-4  # m

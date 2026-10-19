@@ -114,9 +114,10 @@ def _require_ephemeris_coverage(
     have no window to check.
 
     ``stage_overhang_s`` is how far a Yoshida composition samples the force
-    before ``t0`` / after ``tf`` (``stage_time_overhang * h``). The Hermite and
-    attitude samplers continue the edge segment for one table interval, so those
-    stage times must lie in ``[-dt, (N - 1) dt + dt]``.
+    after ``tf`` (``stage_time_overhang * h``); before ``t0`` it does not, because
+    the fixed-step driver takes a run's first step with a one-shot DOP853 step.
+    The Hermite and attitude samplers continue the edge segment for one table
+    interval, so those stage times must lie in ``[0, (N - 1) dt + dt]``.
     """
     ephem = getattr(dynamics, "ephem", None)
     if ephem is None or not hasattr(ephem, "get_data_provider"):
@@ -134,12 +135,12 @@ def _require_ephemeris_coverage(
             "tables over t0_s + duration_s."
         )
     ov = float(stage_overhang_s)
-    if ov > 0.0 and (float(t0_s) - ov < -float(dt_s) - tol or float(tf_s) + ov > hi + float(dt_s) + tol):
+    if ov > 0.0 and float(tf_s) + ov > hi + float(dt_s) + tol:
         raise ValueError(
-            f"The integrator samples the force {ov:g} s outside [{float(t0_s)}, {float(tf_s)}] s, "
+            f"The integrator samples the force {ov:g} s past tf = {float(tf_s)} s, "
             f"beyond the one-interval ({float(dt_s):g} s) extrapolation band of the ephemeris "
-            f"table [0, {hi}] s. Use a smaller step or output_dt_s, start later than "
-            "start_date (t0_s), or a method whose stages stay inside the step (PEFRL, RK4, RK8)."
+            f"table [0, {hi}] s. Use a smaller step, build the tables past the run end, "
+            "or a method whose stages stay inside the step (PEFRL, RK4, RK8)."
         )
 
 
@@ -175,6 +176,7 @@ def propagate(
     extra_events: Sequence[Callable[[float, np.ndarray], float]] | None = None,
     maneuver_plan: ManeuverPlan | None = None,
     _t_eval_override: np.ndarray | None = None,
+    _apsis_start_side: float | None = None,
 ) -> PropagationResult:
     """
     Propagate the trajectory for a configured duration and output sampling grid.
@@ -193,6 +195,9 @@ def propagate(
       ``_propagate_with_maneuvers`` to hand a segment its exact slice of one
       output grid aligned to the run's t0 (instead of each segment re-spacing
       its own burn-shifted duration). Not part of the public contract.
+    - ``_apsis_start_side`` is the same kind of private hook: the ``r·v`` the
+      previous maneuver segment ended with, so an apsis on the boundary is
+      reported once (see ``build_events``).
     """
     y0_arr = _as_state_array(y0)
 
@@ -385,7 +390,9 @@ def propagate(
     # -------------------------------------------------------------------------
     # 4) Events
     # -------------------------------------------------------------------------
-    events = build_events(dynamics, cfg, topo_grid=topo_grid, add_stop_event=bool(stop_file))
+    events = build_events(
+        dynamics, cfg, topo_grid=topo_grid, add_stop_event=bool(stop_file), apsis_start_side=_apsis_start_side,
+    )
     if extra_events:
         for ev in list(extra_events):
             events.append(_wrap_event_first6(ev))
@@ -665,6 +672,15 @@ def _propagate_with_maneuvers(
         if segment.impacted or segment.stopped_early:
             terminal_result = segment
 
+    def apsis_side() -> float | None:
+        # r·v at the end of the previous segment (before any impulse there): the next
+        # segment's apsis events start on that side, so an apsis on the boundary is
+        # reported once (a burn on an apsis epoch used to lose it).
+        if not segments:
+            return None
+        end = np.asarray(segments[-1].y[-1], dtype=np.float64)
+        return float(np.dot(end[:3], end[3:6]))
+
     def apply_boundary_burn(maneuver: Any) -> None:
         nonlocal current_y
         current_y, record = apply_impulsive_maneuver(current_y, maneuver)
@@ -687,6 +703,7 @@ def _propagate_with_maneuvers(
                 topo_grid=topo_grid,
                 extra_events=extra_events,
                 _t_eval_override=segment_grid(current_t, burn_t),
+                _apsis_start_side=apsis_side(),
             )
             append_segment(segment)
             current_t = float(segment.t[-1])
@@ -708,6 +725,7 @@ def _propagate_with_maneuvers(
             topo_grid=topo_grid,
             extra_events=extra_events,
             _t_eval_override=segment_grid(current_t, tf),
+            _apsis_start_side=apsis_side(),
         )
         append_segment(segment)
 
@@ -717,6 +735,20 @@ def _propagate_with_maneuvers(
 
     last = terminal_result or (segments[-1] if segments else None)
     diagnostics = dict(last.diagnostics) if last is not None else {}
+    if segments:
+        # The last segment's counts and drifts describe only that segment; a run's
+        # diagnostics cover all of it. Energy and angular momentum change at a burn by
+        # design, so their drifts are taken per segment and the worst one is reported.
+        diagnostics["n_points"] = float(len(t_rows))
+        nfevs = [float(s.diagnostics.get("nfev", np.nan)) for s in segments]
+        finite_nfevs = [value for value in nfevs if np.isfinite(value)]
+        diagnostics["nfev"] = float(sum(finite_nfevs)) if finite_nfevs else float("nan")
+        for key in ("kepler_energy_rel_drift", "kepler_energy_rel_spread", "angmom_rel_drift", "angmom_rel_spread"):
+            values = [float(s.diagnostics[key]) for s in segments if key in s.diagnostics]
+            finite = [value for value in values if np.isfinite(value)]
+            if finite:
+                diagnostics[key] = max(finite)
+        diagnostics["drift_scope"] = "worst_segment"
     diagnostics.update(
         {
             "maneuver_plan_sha256": maneuver_plan.plan_sha256,

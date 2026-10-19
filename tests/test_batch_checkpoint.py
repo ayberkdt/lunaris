@@ -174,3 +174,31 @@ def test_checkpointer_metrics_start_clean(tmp_path) -> None:
     assert ck.metrics["checkpoint_saves"] == 0
     assert ck.load_chunk(0, 1) is None
     assert ck.due() is False
+
+
+class _ClockedProvider(_KillableProvider):
+    """Point mass plus a small time-dependent term, so the clock reaches the state."""
+
+    def acceleration(self, t_s: float, s):
+        return super().acceleration(t_s, s) + 1.0e-12 * float(t_s) * s[:, :3]
+
+
+def test_resume_recomputes_the_clock_from_the_step_index(tmp_path) -> None:
+    # dt = 600/86 s is not representable: an older checkpoint saved t_curr as a
+    # running sum, which differs from k * dt. The resume must use global_step.
+    Y0 = _y0(4)
+    reference = _run(Y0, _ClockedProvider(), dt_s=7.0)
+    spec = BatchCheckpointSpec(directory=tmp_path / "ckpt", interval_s=0.0)
+    steps_total = int(reference.metrics["total_raw_state_steps"] / Y0.shape[0])
+    with pytest.raises(RuntimeError, match="simulated kill"):
+        _run(Y0, _ClockedProvider(fail_after=4 * int(0.4 * steps_total)), spec=spec, dt_s=7.0)
+    states = list((tmp_path / "ckpt").glob("chunk_*/state.npz"))
+    assert states
+    for path in states:
+        with np.load(path, allow_pickle=False) as data:
+            payload = {key: data[key] for key in data.files}
+        # A stale clock, as a pre-fix running sum (or any other float) would leave.
+        payload["t_curr"] = np.asarray(float(payload["t_curr"]) + 1.0e-3, dtype=np.float64)
+        np.savez(path, **payload)
+    resumed = _run(Y0, _ClockedProvider(), spec=spec, dt_s=7.0)
+    _assert_identical(resumed, reference)

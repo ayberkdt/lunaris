@@ -66,17 +66,58 @@ def test_circular_orbit_events_do_not_crash_root_finding(method: str) -> None:
 
 
 def test_unwrapped_events_reproduce_the_brentq_failure(monkeypatch) -> None:
-    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events: list(events))
+    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events, seeds=None: list(events))
     with pytest.raises(ValueError, match="different signs"):
         _run("RK45", _state(1.0))
 
 
 def test_wrapper_is_bit_identical_when_signs_are_consistent(monkeypatch) -> None:
     wrapped = _run("RK45", _state(1.05))
-    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events: list(events))
+    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events, seeds=None: list(events))
     plain = _run("RK45", _state(1.05))
     assert np.array_equal(wrapped.t, plain.t)
     assert np.array_equal(wrapped.y, plain.y)
     assert len(wrapped.t_events) == len(plain.t_events)
     for a, b in zip(wrapped.t_events, plain.t_events, strict=True):
         assert np.array_equal(np.asarray(a), np.asarray(b))
+
+
+def test_a_root_exactly_on_a_step_end_is_reported_once() -> None:
+    # SciPy reads g = 0 at a step end as a crossing at the end of that step
+    # and again at the start of the next. A time limit that is a whole number
+    # of steps after a step end puts its root there.
+    from scipy.integrate import solve_ivp
+
+    def rhs(_t: float, y: np.ndarray) -> np.ndarray:
+        return np.array([y[1], -y[0]])
+
+    kwargs = dict(method="DOP853", rtol=1e-9, atol=1e-12, max_step=60.0)
+    probe = solve_ivp(rhs, (0.0, 600.0), [1.0, 0.0], dense_output=True, **kwargs)
+    root = float(probe.sol.ts[len(probe.sol.ts) // 2])  # a step end of the same solve
+
+    def event(t: float, y: np.ndarray) -> float:
+        return root - t
+
+    event.terminal = False  # type: ignore[attr-defined]
+    event.direction = -1.0  # type: ignore[attr-defined]
+    plain = solve_ivp(rhs, (0.0, 600.0), [1.0, 0.0], events=[event], **kwargs)
+    assert plain.t_events[0].size == 2  # SciPy alone: the same root twice
+    wrapped = solve_ivp(rhs, (0.0, 600.0), [1.0, 0.0], events=scipy_runner._step_consistent_events([event]), **kwargs)
+    assert wrapped.t_events[0].size == 1
+    assert wrapped.t_events[0][0] == pytest.approx(root, abs=1e-9)  # abs: brentq's xtol on a 60 s step
+
+
+def test_event_wrapper_reads_an_exact_zero_step_end_as_just_past_the_root() -> None:
+    def event(_t: float, y: np.ndarray) -> float:
+        return float(y[0])
+
+    event.terminal = False  # type: ignore[attr-defined]
+    (wrapped,) = scipy_runner._step_consistent_events([event])
+    assert wrapped(0.0, np.array([1.0])) == 1.0
+    # Away from the previous step end's +1, by the smallest normal float.
+    assert wrapped(1.0, np.array([0.0])) == -float(np.finfo(np.float64).tiny)
+    # The root search re-evaluates the step end on the interpolant: the side
+    # chosen above wins over a rounding-level fresh value of the other sign.
+    assert wrapped(1.0, np.array([2e-10])) == -float(np.finfo(np.float64).tiny)
+    # Interior times are never substituted.
+    assert wrapped(0.5, np.array([0.25])) == 0.25

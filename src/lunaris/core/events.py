@@ -453,7 +453,9 @@ def make_soi_event(soi_r_m: float, *, terminal: bool = True) -> EventFn:
 _APSIS_START_RTOL = 1.0e-12
 
 
-def _make_rdot_event(*, t_guard_s: float, direction: float, terminal: bool) -> EventFn:
+def _make_rdot_event(
+    *, t_guard_s: float, direction: float, terminal: bool, start_side: float | None = None,
+) -> EventFn:
     """
     Event for r·v = 0 (radial velocity zero crossing).
     direction=+1 => periapsis (from - to +)
@@ -467,6 +469,13 @@ def _make_rdot_event(*, t_guard_s: float, direction: float, terminal: bool) -> E
     value of the non-triggering sign, so neither SciPy (which reports a root
     at a start value of exactly 0) nor the fixed-step driver locates it. Every
     later root is reported, however close to the start.
+
+    ``start_side`` is for a run that continues another at a boundary (a
+    manoeuvre segment): the sign of ``r·v`` the previous run ended with. A
+    start on the apsis then reads on that side, so an apsis whose root falls on
+    the boundary, which the previous run ended just short of, is reported once
+    by this run's first step; one the previous run already passed leaves it on
+    the far side and is not reported again.
 
     ``t_guard_s > 0`` additionally suppresses every root in
     ``[start, start + t_guard_s)`` by returning ``math.nan`` there (NaN is
@@ -493,30 +502,38 @@ def _make_rdot_event(*, t_guard_s: float, direction: float, terminal: bool) -> E
         if t == start:
             scale = _APSIS_START_RTOL * float(np.linalg.norm(r)) * float(np.linalg.norm(v))
             if abs(rdot) <= scale:
+                tiny = float(np.finfo(np.float64).tiny)
+                if start_side is not None and start_side != 0.0:
+                    # Continuing at a boundary: the side the previous run ended on.
+                    return math.copysign(max(scale, tiny), start_side)
                 # On the apsis at the start: report the side the event does not
                 # trigger from (+ for periapsis, - for apoapsis).
-                return sign * max(scale, float(np.finfo(np.float64).tiny))
+                return sign * max(scale, tiny)
         return rdot
 
     return _set_event_props(rdot_event, terminal=terminal, direction=direction)
 
 
-def make_periselene_event(t_guard_s: float = 0.0, terminal: bool = False) -> EventFn:
+def make_periselene_event(
+    t_guard_s: float = 0.0, terminal: bool = False, *, start_side: float | None = None,
+) -> EventFn:
     """Periapsis when r·v crosses 0 with + slope (from - to +).
 
     A start on the periapsis is not an event; see ``_make_rdot_event`` for the
-    start rule and the optional start-relative ``t_guard_s`` window.
+    start rule, ``start_side`` and the optional start-relative ``t_guard_s`` window.
     """
-    return _make_rdot_event(t_guard_s=t_guard_s, direction=+1.0, terminal=terminal)
+    return _make_rdot_event(t_guard_s=t_guard_s, direction=+1.0, terminal=terminal, start_side=start_side)
 
 
-def make_aposelene_event(t_guard_s: float = 0.0, terminal: bool = False) -> EventFn:
+def make_aposelene_event(
+    t_guard_s: float = 0.0, terminal: bool = False, *, start_side: float | None = None,
+) -> EventFn:
     """Apoapsis when r·v crosses 0 with - slope (from + to -).
 
     A start on the apoapsis is not an event; see ``_make_rdot_event`` for the
-    start rule and the optional start-relative ``t_guard_s`` window.
+    start rule, ``start_side`` and the optional start-relative ``t_guard_s`` window.
     """
-    return _make_rdot_event(t_guard_s=t_guard_s, direction=-1.0, terminal=terminal)
+    return _make_rdot_event(t_guard_s=t_guard_s, direction=-1.0, terminal=terminal, start_side=start_side)
 
 
 def make_escape_event(mu: float, terminal: bool = True, *, eps_r_guard_m: float = 1e-9) -> EventFn:

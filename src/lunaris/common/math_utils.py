@@ -300,14 +300,12 @@ def _quat_normalize_kernel(q0: float, q1: float, q2: float, q3: float) -> tuple[
     Notes
     -----
     - Returns identity quaternion (1,0,0,0) if the norm is too small, preventing NaN/Inf.
-    - Includes a fast path if the quaternion is already unit length within tolerance,
-      avoiding an expensive sqrt() in stable cases.
+    - Always divides by the norm. A fast path that returned the input when
+      |n2 - 1| < 1e-12 left the nlerp blend of nearby table nodes up to 1e-12
+      short of unit length, and ``quat_rotate_vec`` then scaled the lunar
+      central gravity by that much near every node.
     """
     n2 = q0*q0 + q1*q1 + q2*q2 + q3*q3
-
-    # Fast check: avoid sqrt if already nearly unit length
-    if abs(n2 - 1.0) < EPS_1E12:
-        return q0, q1, q2, q3
 
     # Safety against division by ~0
     if n2 < EPS_1E30:
@@ -1430,7 +1428,12 @@ def wrap_lon_deg(lon_deg: float, west: float = 0.0, east: float = 360.0) -> floa
 
     x = lon_deg - west
     # Python/Numba `%` for floats yields a result with the sign of the divisor -> good here.
-    return (x % span) + west
+    # A tiny negative x rounds up to exactly span (-1e-20 % 360.0 == 360.0); that is
+    # the same longitude as west and is folded onto it to keep [west, east).
+    wrapped = x % span
+    if wrapped >= span:
+        wrapped = 0.0
+    return wrapped + west
 
 
 # Used by: surface_effects, dynamics
@@ -1941,9 +1944,12 @@ def screening_orbital_elements_vec(
         )
     argp = np.arccos(np.clip(cos_argp, -1.0, 1.0))
     argp = np.where(e_vec[..., 2] < 0.0, 2.0 * np.pi - argp, argp)
-    # Near-equatorial fallback: longitude of periapsis (see docstring).
+    # Near-equatorial fallback: longitude of periapsis (see docstring), with
+    # the sign convention of _rv_to_coe_kernel: a retrograde orbit (h_z < 0)
+    # reports atan2(-e_y, e_x), so a screening drift has the kernel's sign.
     equatorial = nn <= 1e-12 * np.maximum(hn, 1.0)
-    lon_peri = np.mod(np.arctan2(e_vec[..., 1], e_vec[..., 0]), 2.0 * np.pi)
+    e_y = np.where(h[..., 2] < 0.0, -e_vec[..., 1], e_vec[..., 1])
+    lon_peri = np.mod(np.arctan2(e_y, e_vec[..., 0]), 2.0 * np.pi)
     argp = np.where(equatorial, lon_peri, argp)
     return a, e, inc, argp
 

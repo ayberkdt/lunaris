@@ -29,7 +29,9 @@ Responsibilities
      Path resolution may transparently accept these variants depending on the resolver config.
 
 2) Table generation (one-time)
-   - Samples SPICE at a fixed step `output_dt_s` over `duration_s`.
+   - Samples SPICE at a fixed step over `duration_s`: `output_dt_s` for
+     `build_tables`; `build_spice_tables` uses `min(output_dt_s, _MAX_TABLE_DT_S)`
+     (60 s) so the output grid never coarsens the force-model tables.
    - Uses a deterministic uniform grid: t[k] = k * dt, with the last sample
      guaranteed >= duration_s so runtime interpolation never clamps inside the
      requested propagation span.
@@ -894,6 +896,12 @@ def build_tables(
     )
 
 
+# The force-model tables (Sun, Earth, Moon orientation) are sampled at the output
+# step or this one, whichever is finer, so choosing a coarser output step does not
+# change the dynamics: the table interpolation error grows with the table step.
+_MAX_TABLE_DT_S = 60.0
+
+
 def build_spice_tables(
     time_cfg: TimeConfig,
     spice_cfg: SpiceBuildConfig,
@@ -932,7 +940,7 @@ def build_spice_tables(
     return build_tables(
         start_utc=start_utc,
         duration_s=t0_s + _require_positive("duration_s", time_cfg.duration_s),
-        output_dt_s=_require_positive("output_dt_s", dt),
+        output_dt_s=min(_require_positive("output_dt_s", dt), _MAX_TABLE_DT_S),
         kernels=spice_cfg.kernels,
         inertial_frame=str(spice_cfg.inertial_frame),
         fixed_frame=str(spice_cfg.fixed_frame),
