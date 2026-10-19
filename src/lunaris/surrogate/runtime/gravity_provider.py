@@ -630,6 +630,11 @@ class SurrogateGravityModel:
         ----------
         positions_m:
             Either one position ``(3,)`` or a batch ``(N, 3)`` in meters.
+
+        The potential is in the geodesy convention of the baseline,
+        ``a = +grad(U)``: the network's own potential times ``a_sign`` (its
+        acceleration is ``a_sign * grad(dU)``), so total potential and total
+        acceleration stay consistent for either sign.
         """
 
         if torch is None:  # pragma: no cover - depends on machine setup
@@ -643,7 +648,9 @@ class SurrogateGravityModel:
 
         x_phys = torch.as_tensor(pos, device=self.device, dtype=self._torch_dtype)
         if self._force_runtime is not None:
-            delta_u_np = np.asarray(self._force_runtime.predict_residual_potential(pos), dtype=np.float64).reshape(-1, 1)
+            delta_u_np = self.a_sign * np.asarray(
+                self._force_runtime.predict_residual_potential(pos), dtype=np.float64
+            ).reshape(-1, 1)
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
             potential = torch.as_tensor(delta_u_np, device=self.device, dtype=self._torch_dtype)
             accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
@@ -668,7 +675,7 @@ class SurrogateGravityModel:
 
             grad_u_phys = grad_u_scaled * (self._u_scale / self._x_scale)
             accel = self.a_sign * grad_u_phys
-            potential = self._unscale_u(u_scaled)
+            potential = self.a_sign * self._unscale_u(u_scaled)
 
             if self.training_mode == "residual_potential":
                 accel = accel + self._base_acceleration(x_phys)

@@ -208,6 +208,73 @@ def test_base_potential_gradient_matches_base_acceleration():
     assert np.linalg.norm(a_fd - a_base) / np.linalg.norm(a_base) < 1e-5
 
 
+def _fd_total_accel(inst, p, h=50.0):
+    """Central difference of the total potential (a = +grad U); h in m."""
+    a_fd = np.empty(3)
+    for k in range(3):
+        pp, pm = p.copy(), p.copy()
+        pp[k] += h
+        pm[k] -= h
+        a_fd[k] = (inst.predict_potential_and_acceleration_fixed(pp)[0].item()
+                   - inst.predict_potential_and_acceleration_fixed(pm)[0].item()) / (2.0 * h)
+    return a_fd
+
+
+# dU = c . x  ->  grad(dU) = c  [m/s^2]. With a_sign = -1 the residual
+# acceleration is -c; an unsigned dU puts +c into the potential gradient, a 2|c|
+# (~7.5e-3 m/s^2, ~6e-3 of the ~1.3 m/s^2 monopole at 80 km) mismatch that misses
+# the 1e-5 relative tolerance by ~500x. FD truncation of mu/r at h = 50 m is ~1e-9.
+_C_RES = np.array([3.0e-3, -1.0e-3, 2.0e-3])
+_P_TEST = np.array([R_MOON + 80e3, 1.0e5, -5.0e4], dtype=np.float64)  # Moon-fixed, m
+
+
+def test_total_potential_and_acceleration_agree_for_a_negative_a_sign():
+    """a_sign = -1 (physics convention): the residual potential joins the baseline as a_sign * dU.
+
+    Ported from Sidera 4a8784c1. The baseline is geodesy-convention
+    (a = +grad U); the network's residual acceleration is a_sign * grad(dU).
+    Adding dU unsigned made the total potential's gradient disagree with the
+    total acceleration.
+    """
+
+    class _Runtime:
+        def predict_residual_potential(self, pos):
+            return np.asarray(pos, dtype=np.float64).reshape(-1, 3) @ _C_RES
+
+        def predict_residual_accel(self, pos):
+            return -1.0 * np.tile(_C_RES, (np.asarray(pos).reshape(-1, 3).shape[0], 1))
+
+    inst = _bare(
+        _force_runtime=_Runtime(), a_sign=-1.0, training_mode="residual_potential", device="cpu",
+        _torch_dtype=torch.float64, baseline_gravity_model=None,
+        _mu_tensor=torch.tensor(float(MU_MOON), dtype=torch.float64),
+    )
+    _u, a = inst.predict_potential_and_acceleration_fixed(_P_TEST)
+    a_fd = _fd_total_accel(inst, _P_TEST)
+    assert np.linalg.norm(a_fd - a.reshape(-1)) / np.linalg.norm(a) < 1e-5
+
+
+def test_legacy_path_potential_and_acceleration_agree_for_a_negative_a_sign():
+    """Same consistency on the local (non-canonical-runtime) autograd path."""
+
+    class _Linear(torch.nn.Module):
+        def forward(self, x):
+            return (x @ torch.as_tensor(_C_RES, dtype=x.dtype)).reshape(-1, 1)
+
+    inst = _bare(
+        _force_runtime=None, a_sign=-1.0, training_mode="residual_potential", device="cpu",
+        _torch_dtype=torch.float64, baseline_gravity_model=None, model=_Linear(),
+        _mu_tensor=torch.tensor(float(MU_MOON), dtype=torch.float64),
+        _x_mean=torch.zeros(3, dtype=torch.float64), _x_scale=1.0,
+        _u_mean=torch.zeros(1, dtype=torch.float64), _u_scale=1.0,
+    )
+    _u, a = inst.predict_potential_and_acceleration_fixed(_P_TEST)
+    a_mono = -float(MU_MOON) * _P_TEST / np.linalg.norm(_P_TEST) ** 3
+    np.testing.assert_allclose(a.reshape(-1), a_mono - _C_RES, rtol=1e-12)
+    a_fd = _fd_total_accel(inst, _P_TEST)
+    assert np.linalg.norm(a_fd - a.reshape(-1)) / np.linalg.norm(a) < 1e-5
+
+
 def test_base_potential_monopole_when_no_baseline():
     inst = _bare(baseline_gravity_model=None,
                  _mu_tensor=torch.tensor(float(MU_MOON), dtype=torch.float64))
