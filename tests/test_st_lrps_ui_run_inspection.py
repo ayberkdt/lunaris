@@ -59,6 +59,38 @@ def test_periodic_eval_and_config_diff_are_stable(tmp_path: Path) -> None:
     assert diff == [{"field": "model.hidden", "first": "128", "second": "256"}]
 
 
+def test_periodic_eval_reads_the_nested_rows_the_training_loop_writes(tmp_path: Path) -> None:
+    """training/periodic_eval.py nests the values under "metrics" and names the angle
+    mean_ang_deg (ported from Sidera 4a8784c1); the flat reader showed "-" in every cell."""
+    (tmp_path / "periodic_evals").mkdir()
+    (tmp_path / "periodic_evals" / "periodic_eval_history.jsonl").write_text(
+        '{"epoch": 7, "status": "success", "metrics": {"rmse_u": 0.3, "rmse_a": 0.004, '
+        '"mae_a": 0.003, "mean_ang_deg": 2.5, "n_samples": 10}}\n'
+        '{"epoch": 9, "status": "failure", "metrics": null, "error": "boom"}\n',
+        encoding="utf-8",
+    )
+    rows = read_periodic_evals(tmp_path)
+    assert [(r["epoch"], r["rmse_u"], r["rmse_a"], r["angle"]) for r in rows] == [
+        (7, 0.3, 0.004, 2.5),
+        (9, None, None, None),
+    ]
+
+
+def test_periodic_eval_record_written_by_the_training_loop_round_trips(tmp_path: Path) -> None:
+    """Use the real writer's helpers so a future key rename breaks this test."""
+    from lunaris.surrogate.st_lrps.training import periodic_eval as pe
+
+    eval_out = tmp_path / "periodic_evals" / "epoch_0003"
+    eval_out.mkdir(parents=True)
+    (eval_out / "summary_metrics.json").write_text(json.dumps([
+        {"rmse_u": 1.5, "rmse_a_vec": 2e-5, "mae_a_vec": 1e-5, "angular_mean_deg": 0.75, "n_samples": 4}
+    ]), encoding="utf-8")
+    _path, metrics = pe._extract_summary_metrics(eval_out)
+    pe._append_history_record(tmp_path, {"epoch": 3, "status": "success", "metrics": metrics})
+    rows = read_periodic_evals(tmp_path)
+    assert [(r["epoch"], r["rmse_u"], r["rmse_a"], r["angle"]) for r in rows] == [(3, 1.5, 2e-5, 0.75)]
+
+
 def test_provenance_marks_non_train_scaler_as_warning(tmp_path: Path) -> None:
     _write_json(
         tmp_path / "run_manifest.json",

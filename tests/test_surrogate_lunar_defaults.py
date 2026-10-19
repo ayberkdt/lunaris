@@ -129,3 +129,21 @@ def test_discover_st_lrps_model_dirs_filters_non_lunar_runs(tmp_path: Path) -> N
     discovered = discover_st_lrps_model_dirs(tmp_path)
 
     assert discovered == [lunar_run.resolve()]
+
+
+def test_cloud_worker_default_follows_the_cpu_affinity_not_the_node(monkeypatch, tmp_path):
+    """On a cluster the job's allocation (affinity mask) bounds the worker pool,
+    not os.cpu_count() of the whole node (ported from Sidera 4a8784c1)."""
+    import os
+
+    from lunaris.surrogate.st_lrps.data import spatial_cloud_parameters as scp
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 128)
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}, raising=False)
+    assert scp._available_cpu_count() == 4
+    cfg_path = tmp_path / "cloud.json"
+    cfg_path.write_text("{}", encoding="utf-8")
+    assert scp.SpatialCloudConfig.from_json(cfg_path).workers == 4
+
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    assert scp._available_cpu_count() == 128

@@ -126,8 +126,13 @@ class GradNormWeights:
         Use w_u and w_a exactly as set; no gradient computation.
 
     ``"dynamic"``
-        EMA-based GradNorm (Chen et al. 2018); amortised every
-        ``update_interval`` steps. For ablation studies only.
+        Moving-average gradient-norm-ratio weighting, adapted from the
+        learning-rate annealing of Wang, Teng & Perdikaris (2020,
+        arXiv:2001.04536, Alg. 1, Eqs. 40-41) with L2 norms; amortised every
+        ``update_interval`` steps. ``ema_beta`` weights the previous value
+        (alpha = 1 - ema_beta in Eq. 41). Not GradNorm (Chen et al. 2018)
+        despite the class name. For ablation studies only
+        [LUNARIS-ALG-OPT-002].
     """
 
     w_u: float = 1.0

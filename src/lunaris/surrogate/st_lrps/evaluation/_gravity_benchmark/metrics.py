@@ -286,7 +286,7 @@ def compute_gpu_batch_metrics_for_model(
         base = {
             "scenario_id": scenario.scenario_id,
             "model": result.display_name,
-            "reference": "sh200_dop853",
+            "reference": truth.model_name,
             "backend": result.backend,
             "device": result.device,
             "rk4_dt_s": result.rk4_dt_s,

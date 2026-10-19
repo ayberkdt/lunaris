@@ -555,6 +555,31 @@ def _load_residual_rows(dataset_path: Path, dataset_name: str = "data") -> tuple
     return xyz, u[:, 0], a, r_ref
 
 
+def _network_target_labels(
+    contract: Any, xyz: np.ndarray, u: np.ndarray, a: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The labels the network output is compared with: the dataset labels minus the contract's base.
+
+    Same rule as training (``shared.scaling.compute_base_potential_accel_from_contract``):
+    a residual target, or a full field with no baseline, is used as it is; a
+    point-mass baseline (``u = a_sign mu / r``, ``a = -mu r / r^3``) is
+    subtracted. An SH baseline needs its gravity field, which field validation
+    does not load, so it is refused rather than compared against the full field.
+    """
+    if contract.target_mode == "residual" or contract.baseline_kind == "none":
+        return u, a
+    if contract.baseline_kind == "point_mass":
+        r = np.linalg.norm(xyz, axis=1)
+        mu = float(contract.mu_si)
+        u_base = float(contract.a_sign) * mu / np.maximum(r, 1.0)
+        a_base = -mu * xyz / np.maximum(r, 1.0)[:, None] ** 3
+        return u - u_base, a - a_base
+    raise ValueError(
+        f"field validation cannot subtract a {contract.baseline_kind!r} baseline from full-field "
+        "labels; validate against a residual dataset instead"
+    )
+
+
 def run_field_validation(
     model_dir: str | Path,
     dataset_path: str | Path,
@@ -595,6 +620,9 @@ def run_field_validation(
     n_rows = xyz.shape[0]
 
     fm = load_surrogate_force_model(model_dir, device=device, strict_domain=False)
+    # The predictions below are the network's own output; compare them with
+    # labels in the same space, not with a full field that still holds the base.
+    u_true, a_true = _network_target_labels(fm.target_contract, xyz, u_true, a_true)
 
     # Leakage guard: establish the exact rows the model trained on so they can be
     # excluded from every evaluation split (see the docstring). The dataset path

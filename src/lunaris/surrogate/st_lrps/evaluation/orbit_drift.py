@@ -256,9 +256,8 @@ class _DomainTrackingTotalAccel:
     raises early with a clear orbit-level message.
     """
 
-    def __init__(self, runtime: Any, mu: float, *, strict_domain: bool = False) -> None:
+    def __init__(self, runtime: Any, *, strict_domain: bool = False) -> None:
         self.runtime = runtime
-        self.mu = float(mu)
         self.strict_domain = bool(strict_domain)
         self.n_eval = 0
         self.n_extrapolating = 0
@@ -279,12 +278,12 @@ class _DomainTrackingTotalAccel:
                     f"({(status or {}).get('reason', 'out of domain')}); refusing to "
                     "integrate an extrapolated orbit under strict_domain=True."
                 )
-        rn = np.linalg.norm(r, axis=1, keepdims=True)
-        base = -self.mu * r / rn ** 3
-        residual = np.asarray(
-            self.runtime.predict_residual_accel_fixed(r), dtype=np.float64
-        ).reshape(-1, 3)
-        return base + residual
+        # The runtime adds the base its target contract names: none for a
+        # full-field artifact, the point mass for a point-mass residual, and it
+        # refuses an SH-degree baseline it cannot supply. A point mass added
+        # here counted the monopole twice for the first and dropped degrees
+        # 2..base_degree for the last.
+        return np.asarray(self.runtime.predict_total_accel_fixed(r), dtype=np.float64).reshape(-1, 3)
 
     @property
     def extrapolation_fraction(self) -> float:
@@ -302,7 +301,7 @@ class _DomainTrackingTotalAccel:
 def _runtime_total_accel(
     model_dir: str, device: str, *, strict_domain: bool = False
 ) -> tuple[_DomainTrackingTotalAccel, float, float]:
-    """Build a total-acceleration callable (point-mass base + residual) for a run.
+    """Build a total-acceleration callable (the artifact's own base + its network output) for a run.
 
     Returns ``(accel_fn, mu, r_ref_m)`` using the artifact's own ``mu`` so the
     reference and test orbits share an identical Keplerian base. The returned
@@ -319,7 +318,7 @@ def _runtime_total_accel(
     if mu <= 0.0:
         raise ValueError(f"Artifact {model_dir} has no usable mu_si for a Keplerian base.")
 
-    return _DomainTrackingTotalAccel(runtime, mu, strict_domain=strict_domain), mu, r_ref
+    return _DomainTrackingTotalAccel(runtime, strict_domain=strict_domain), mu, r_ref
 
 
 def main(argv: Sequence[str] | None = None) -> int:
