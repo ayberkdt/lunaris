@@ -1512,6 +1512,9 @@ def sh_potential_accel_batch_serial(
     instead of using ``SHWorkspace``. Any convention or correctness fix in
     either kernel must be mirrored in the other; cross-path agreement is
     pinned by ``tests/test_st_lrps_generator_phase_parity.py``.
+    ``k_ratio`` is no longer read (the latitude derivative uses the order
+    recurrence of the propagation kernel); it stays in the signature for the
+    existing callers.
     """
     M = xyz_m.shape[0]
     N = degree_max
@@ -1622,18 +1625,29 @@ def sh_potential_accel_batch_serial(
                         term_lon = (-cnm * sin_m[m] + snm * cos_m[m]) * float(m)
                         dlam_sum += qpow * P * term_lon
 
-                    if c > eps_c:
-                        P_nm1_m = 0.0
-                        if m <= n - 1:
-                            P_nm1_m = P_nm1[m]
-                        kfac = 0.0
-                        if m <= n:
-                            kfac = k_ratio[n, m]
-                        # Correct derivative: dP̄_n^m/dφ = [-n sinφ P̄_n^m + (n+m) k_{n,m} P̄_{n-1}^m] / cosφ
-                        # WARNING: datasets generated before this fix have sign-flipped latitude
-                        # acceleration components and must be regenerated.
-                        dP_dphi = (-nn * s * P + (nn + float(m)) * kfac * P_nm1_m) / c
-                        dphi_sum += qpow * dP_dphi * term_cs
+            # Latitude sum in its own loop so the V / dr sums above compile as before.
+            if n > degree_min and c > eps_c:
+                for m in range(0, n + 1):
+                    term_cs = float(C[n, m]) * cos_m[m] + float(S[n, m]) * sin_m[m]
+                    # dP̄_n^m/dφ from the same-degree order recurrence used by the propagation
+                    # kernel (_compute_legendre_polynomials_inplace), rewritten for P̄ that
+                    # already carries the sqrt(2) of m>0 (hence the m = 0 and m = 1 factors).
+                    # The former [-n sinφ P̄_n^m + (n+m) k_{n,m} P̄_{n-1}^m] / cosφ form cancelled
+                    # catastrophically near the polar axis (error ~ 1e-13 / rho[m] m/s^2).
+                    # WARNING: datasets generated before the original latitude fix have
+                    # sign-flipped latitude acceleration components and must be regenerated.
+                    mm = float(m)
+                    if m == 0:
+                        dP_dphi = math.sqrt(0.5 * nn * (nn + 1.0)) * P_n[1]
+                    else:
+                        coeff_minus = math.sqrt((nn + mm) * (nn - mm + 1.0))
+                        if m == 1:
+                            coeff_minus *= math.sqrt(2.0)
+                        dP_dphi = -coeff_minus * P_n[m - 1]
+                        if m < n:
+                            dP_dphi += math.sqrt((nn - mm) * (nn + mm + 1.0)) * P_n[m + 1]
+                        dP_dphi *= 0.5
+                    dphi_sum += qpow * dP_dphi * term_cs
 
             P_nm2, P_nm1, P_n = P_nm1, P_n, P_nm2
 
