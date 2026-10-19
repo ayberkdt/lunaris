@@ -1080,3 +1080,19 @@ def test_exactly_equatorial_retrograde_round_trip(ecc, angle):
     r2, v2 = coe_to_rv(a2, e2, inc2, raan2, argp2, nu2, _RT_MU)
     assert_allclose(r2, r, rtol=0.0, atol=1e-9 * np.linalg.norm(r))
     assert_allclose(v2, v, rtol=0.0, atol=1e-9 * np.linalg.norm(v))
+
+
+def test_screening_argp_of_an_equatorial_orbit_matches_the_kernel_for_both_senses():
+    """A retrograde equatorial orbit reports atan2(-e_y, e_x) in the kernel; the screening must agree."""
+    from lunaris.common.constants import MU_MOON, R_MOON
+
+    radius = R_MOON + 100e3
+    speed = math.sqrt(MU_MOON / radius) * 1.05  # eccentric
+    angle = math.radians(30.0)
+    r = np.array([radius * math.cos(angle), radius * math.sin(angle), 0.0])
+    for sense in (1.0, -1.0):  # prograde, retrograde (h_z < 0)
+        v = sense * speed * np.array([-math.sin(angle), math.cos(angle), 0.0]) + np.array([5.0, 0.0, 0.0])
+        argp_kernel = math_utils.rv_to_coe_select(r, v, MU_MOON, mode="coe6")[4]
+        argp_screen = math_utils.screening_orbital_elements_vec(r[None, :], v[None, :], MU_MOON)[3][0]
+        # abs_tol: float64 rounding of two atan2 evaluations of the same O(1) vector
+        assert math.isclose(argp_screen, argp_kernel, abs_tol=1e-12), (sense, argp_screen, argp_kernel)

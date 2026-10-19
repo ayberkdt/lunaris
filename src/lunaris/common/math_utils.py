@@ -1944,9 +1944,12 @@ def screening_orbital_elements_vec(
         )
     argp = np.arccos(np.clip(cos_argp, -1.0, 1.0))
     argp = np.where(e_vec[..., 2] < 0.0, 2.0 * np.pi - argp, argp)
-    # Near-equatorial fallback: longitude of periapsis (see docstring).
+    # Near-equatorial fallback: longitude of periapsis (see docstring), with
+    # the sign convention of _rv_to_coe_kernel: a retrograde orbit (h_z < 0)
+    # reports atan2(-e_y, e_x), so a screening drift has the kernel's sign.
     equatorial = nn <= 1e-12 * np.maximum(hn, 1.0)
-    lon_peri = np.mod(np.arctan2(e_vec[..., 1], e_vec[..., 0]), 2.0 * np.pi)
+    e_y = np.where(h[..., 2] < 0.0, -e_vec[..., 1], e_vec[..., 1])
+    lon_peri = np.mod(np.arctan2(e_y, e_vec[..., 0]), 2.0 * np.pi)
     argp = np.where(equatorial, lon_peri, argp)
     return a, e, inc, argp
 
