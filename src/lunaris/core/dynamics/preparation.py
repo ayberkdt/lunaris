@@ -30,6 +30,7 @@ from lunaris.common.constants import (
     MU_SUN,
     R_EARTH_MEAN,
     R_MOON,
+    R_MOON_MEAN,
     SIGMA_SB,
     SOLAR_FLUX_1AU,
 )
@@ -663,8 +664,10 @@ def _quadrature_fields(cfg: Any) -> dict[str, Any]:
     )
     return {
         "integration": 1,
-        # The facets are built on the same sphere, so both integrations see one Moon.
-        "surface_radius_m": float(R_MOON),
+        # The facets are built on the same sphere, so both integrations see one Moon:
+        # the IAU mean sphere, the radius SRP uses for the Moon's own shadow (not the
+        # gravity field's 1738.0 km normalisation radius).
+        "surface_radius_m": float(R_MOON_MEAN),
         "cell_lat_count": 0,
         "cell_lon_count": 0,
         "quadrature_nodes": nodes,
@@ -693,7 +696,7 @@ def prepare_albedo(
     lat_count = int(getattr(cfg, "facet_lat_count", 18))
     lon_count = int(getattr(cfg, "facet_lon_count", 36))
     pos, normals, areas, lat_c, lon_c = build_latlon_facets(
-        lat_count, lon_count, radius_m=float(R_MOON)
+        lat_count, lon_count, radius_m=float(R_MOON_MEAN)
     )
 
     source = normalize_albedo_mode(getattr(cfg, "albedo_mode", "constant_albedo"))
@@ -969,7 +972,7 @@ def prepare_thermal(
     lat_count = int(getattr(cfg, "facet_lat_count", 18))
     lon_count = int(getattr(cfg, "facet_lon_count", 36))
     pos, normals, areas, _lat, _lon = build_latlon_facets(
-        lat_count, lon_count, radius_m=float(R_MOON)
+        lat_count, lon_count, radius_m=float(R_MOON_MEAN)
     )
 
     temps: np.ndarray = np.zeros(1, dtype=np.float64)

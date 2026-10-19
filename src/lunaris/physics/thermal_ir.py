@@ -38,7 +38,15 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit
 
-from lunaris.common.constants import AU, C_LIGHT, PI, R_EARTH_MEAN, R_MOON, SIGMA_SB, SOLAR_FLUX_1AU
+from lunaris.common.constants import (
+    AU,
+    C_LIGHT,
+    PI,
+    R_EARTH_MEAN,
+    R_MOON_MEAN,
+    SIGMA_SB,
+    SOLAR_FLUX_1AU,
+)
 from lunaris.physics.solar_effects import earth_shadow_factor_conical
 
 THERMAL_MODE_CONSTANT = 0
@@ -63,10 +71,13 @@ def normalize_thermal_mode(mode: str) -> int:
 def build_latlon_facets(
     lat_count: int,
     lon_count: int,
-    radius_m: float = R_MOON,
+    radius_m: float = R_MOON_MEAN,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build spherical latitude-longitude facet centers, normals, and exact areas.
+
+    The default sphere is the Moon's IAU mean radius, the surface-radiation
+    sphere the engine and the standalone wrappers share.
 
     Returns
     -------
