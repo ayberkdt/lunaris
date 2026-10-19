@@ -516,6 +516,9 @@ def propagate(
         )
 
     else:
+        # The dynamics' shadow contacts, where the SciPy path restarts
+        # (DynamicsEngine.restart_plan); dynamics without one restart nowhere.
+        restart_plan_fn = getattr(dynamics, "restart_plan", None)
         res = run_scipy_propagation(
             rhs=rhs,
             t_eval=t_eval,
@@ -533,6 +536,7 @@ def propagate(
             output_dt_s=float(dt_out),
             verbose=verbose,
             logger=logger,
+            restart_plan=restart_plan_fn() if callable(restart_plan_fn) else None,
         )
 
     # -------------------------------------------------------------------------

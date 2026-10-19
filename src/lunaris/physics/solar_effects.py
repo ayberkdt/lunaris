@@ -182,6 +182,111 @@ def _shadow_factor_conical(
     return nu
 
 
+@njit(cache=True, nogil=True)
+def conical_shadow_angles(
+    rx: float, ry: float, rz: float,
+    sx: float, sy: float, sz: float,
+    R_occult: float,
+) -> tuple[float, float, float]:
+    """Apparent solar radius ``a``, occulter radius ``b`` and their separation ``c`` [rad].
+
+    Same frame and inputs as :func:`_shadow_factor_conical` (spacecraft and Sun
+    relative to the occulter centre, one set of inertial axes), and the same
+    float64 operations, so the contacts below are the points where that
+    shadow factor switches region. ``b`` is pi/2 on or inside the occulter.
+    Degenerate geometry, where the shadow factor is 1 (spacecraft at the
+    occulter centre, inside the solar sphere, ``R_occult <= 0``), returns
+    NaN for all three.
+    """
+    dx = sx - rx
+    dy = sy - ry
+    dz = sz - rz
+    d_sq = dx * dx + dy * dy + dz * dz
+    r_sq = rx * rx + ry * ry + rz * rz
+    if d_sq <= EPS_1E24 or r_sq <= EPS_1E24 or R_occult <= 0.0:
+        return math.nan, math.nan, math.nan
+    sin_a = R_SUN_MEAN / math.sqrt(d_sq)
+    if sin_a >= 1.0:
+        return math.nan, math.nan, math.nan
+    a = math.asin(sin_a)
+    if r_sq <= R_occult * R_occult:
+        b = 0.5 * math.pi
+    else:
+        b = math.asin(R_occult / math.sqrt(r_sq))
+    cx = ry * dz - rz * dy
+    cy = rz * dx - rx * dz
+    cz = rx * dy - ry * dx
+    c = math.atan2(math.sqrt(cx * cx + cy * cy + cz * cz), -(rx * dx + ry * dy + rz * dz))
+    return a, b, c
+
+
+def conical_shadow_boundaries(
+    rx: float, ry: float, rz: float,
+    sx: float, sy: float, sz: float,
+    R_occult: float,
+) -> tuple[float, float]:
+    """Signed distances [rad] of the geometry from the conical shadow's two contacts.
+
+    With the angles of :func:`conical_shadow_angles` it returns
+    ``(c - (a + b), c - |b - a|)``: the first is zero where the penumbra
+    begins (the disks touch from outside), the second where the umbra
+    (``b > a``) or the annular phase (``a > b``) begins. The shadow factor of
+    one occulter is smooth except at these two zeros, so an integrator that
+    stops there never steps across a kink of the radiation force. Degenerate
+    geometry (shadow factor 1) returns ``(1, 1)``: no contact.
+
+    Ported from Sidera (2ddf461e); here on the shadow kernel's own arithmetic.
+    """
+    a, b, c = conical_shadow_angles(rx, ry, rz, sx, sy, sz, R_occult)
+    if not math.isfinite(c):
+        return 1.0, 1.0
+    return c - (a + b), c - abs(b - a)
+
+
+#: Steps across one penumbra passage for an adaptive integrator (see
+#: :func:`penumbra_max_step_s`). Sidera's measurement (2026-10-12, 400 km Venus
+#: orbit with 30 shadow passages a day, against TudatPy converged to 2.2e-5 m):
+#: with restarts at the contacts but no step cap, 2.4e-4 m (rtol 1e-11) and
+#: 1.7e-4 m (rtol 1e-12); with 5 steps, 8.2e-6 m and 9.7e-6 m; with 20,
+#: 6.4e-6 m and 7.1e-6 m, for 25 % more right-hand-side evaluations than 5.
+PENUMBRA_STEPS = 20
+
+
+def penumbra_max_step_s(
+    r_m: np.ndarray, v_m_s: np.ndarray, sun_m: np.ndarray, R_occult: float,
+) -> float | None:
+    """Largest step [s] that resolves the penumbra the spacecraft is entering or crossing.
+
+    ``r_m``/``v_m_s`` are the spacecraft position and velocity and ``sun_m``
+    the Sun, all relative to the occulter on one set of inertial axes. The
+    shadow factor grows like a power 3/2 of the time from a contact, so a
+    step spanning the whole passage is inaccurate even when no step contains
+    the contact itself. The passage lasts about ``2 a / omega`` (``a`` the
+    apparent solar radius, ``omega = |r x v| / |r|^2`` the spacecraft's
+    angular rate about the occulter; longer at grazing geometry, where this
+    estimate is the conservative one), divided into `PENUMBRA_STEPS`.
+    Returns ``None`` unless the spacecraft is in the penumbra a moment later
+    (a thousandth of that duration ahead along ``v``), so the step stays free
+    in sunlight and in the umbra. Ported from Sidera (2ddf461e).
+    """
+    r = np.asarray(r_m, dtype=np.float64)
+    v = np.asarray(v_m_s, dtype=np.float64)
+    s = np.asarray(sun_m, dtype=np.float64)
+    r_sq = float(r @ r)
+    omega = float(np.linalg.norm(np.cross(r, v))) / r_sq if r_sq > 0.0 else 0.0
+    distance = float(np.linalg.norm(s - r))
+    if omega <= 0.0 or distance <= R_SUN_MEAN:
+        return None
+    duration = 2.0 * math.asin(R_SUN_MEAN / distance) / omega
+    ahead = r + v * (1.0e-3 * duration)
+    outer, inner = conical_shadow_boundaries(
+        float(ahead[0]), float(ahead[1]), float(ahead[2]), float(s[0]), float(s[1]), float(s[2]), R_occult,
+    )
+    if outer < 0.0 < inner:
+        return duration / PENUMBRA_STEPS
+    return None
+
+
 @njit(cache=True, nogil=True, inline="always")
 def _in_umbra_from_nu(nu: float) -> int:
     """Convert a shadow factor nu into a binary umbra flag."""
@@ -438,6 +543,12 @@ __all__ = (
     # Shadow / Eclipse (Earth-centered)
     "earth_shadow_factor_conical",  # nu in [0,1]
     "in_earth_umbra_conical",       # 1 if umbra else 0
+
+    # Shadow contacts for adaptive integrators (vectors relative to the occulter)
+    "conical_shadow_angles",        # apparent solar/occulter radii and separation [rad]
+    "conical_shadow_boundaries",    # signed distances from the two contacts [rad]
+    "PENUMBRA_STEPS",               # steps per penumbra passage
+    "penumbra_max_step_s",          # step cap while crossing a penumbra [s]
 
     # Solar Radiation Pressure (SRP)
     "SRPConfig",                    # SRP settings/config

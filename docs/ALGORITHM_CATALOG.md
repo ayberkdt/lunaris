@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**53 entries.**
+**54 entries.**
 
-Implementation class: adaptation (10), delegated_library (9), exact (16), exact_reformulation (1), heuristic (7), standard_implementation (10)
+Implementation class: adaptation (10), delegated_library (9), exact (16), exact_reformulation (1), heuristic (8), standard_implementation (10)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (7), verified_primary_source (42), verified_secondary_source (2)
+Verification status: identifier_verified_content_pending (2), unverifiable (8), verified_primary_source (42), verified_secondary_source (2)
 
 ## Index
 
@@ -54,6 +54,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 | [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001) | In-step event-time localization by bisection with a false-position final correction | heuristic | unverifiable |
 | [`LUNARIS-HEUR-FRZ-001`](#lunarisheurfrz001) | Lunaris thresholded frozen-orbit candidate screening and validation gate | heuristic | unverifiable |
 | [`LUNARIS-HEUR-IMP-001`](#lunarisheurimp001) | Outer-sphere rejection and terrain-height bisection for batched impact localization | heuristic | unverifiable |
+| [`LUNARIS-HEUR-INT-001`](#lunarisheurint001) | Adaptive-integrator restart at the shadow contacts of radiation pressure, with a step cap across the penumbra | heuristic | unverifiable |
 | [`LUNARIS-HEUR-INTP-001`](#lunarisheurintp001) | Latitude-clamped, longitude-periodic planetary grid sampling with missing-value fallback | heuristic | unverifiable |
 | [`LUNARIS-HEUR-ML-001`](#lunarisheurml001) | Multi-band SIREN variants and physics-informed input encodings (Lunaris-specific) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-001`](#lunarisheursh001) | Pole-stable spherical-harmonic order truncation (stable-m limit) | heuristic | unverifiable |
@@ -538,6 +539,8 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/physics/solar_effects.py` -- `accel_srp` (numba_implementation)
   - `src/lunaris/physics/solar_effects.py` -- `_shadow_factor_conical` (numba_implementation)
   - `src/lunaris/physics/solar_effects.py` -- `compute_srp_accel` (api_entry_point)
+  - `src/lunaris/physics/solar_effects.py` -- `conical_shadow_angles` (numba_implementation)
+  - `src/lunaris/physics/solar_effects.py` -- `conical_shadow_boundaries` (cpu_implementation)
   - `src/lunaris/core/batch_propagator.py` -- `_srp_accel_cuda` (cuda_implementation)
   - `src/lunaris/core/batch_propagator.py` -- `_shadow_factor_conical_cuda` (cuda_implementation)
 - **Lunaris modifications**:
@@ -1101,6 +1104,39 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `tests/test_solver_policy_and_telemetry.py`
 - **See also**: [`LUNARIS-ALG-INT-001`](#lunarisalgint001)
 - **Notes**: Grouped delegation entry; SciPy is the verified delegated implementation and the method origins are cited per solver.
+
+<a id="lunarisheurint001"></a>
+### LUNARIS-HEUR-INT-001 -- Adaptive-integrator restart at the shadow contacts of radiation pressure, with a step cap across the penumbra
+
+- **Slug**: `integrator_restart_at_shadow_contacts`
+- **Category**: heuristic | **Domain**: INT | **Status**: active
+- **Classification**: heuristic
+- **Verification**: unverifiable | **Scientific status**: implemented_and_tested
+- **Primary reference**: Lunaris-specific; no external primary reference.
+- **Mathematical contract**:
+  - Inputs: the right-hand side, its contact functions g(t, y) (zero where the apparent solar and occulter disks touch, for the Moon and, when enabled, the Earth) and the step cap evaluated at each segment start
+  - Outputs: the trajectory integrated in segments that end at the contacts; the step that holds a contact is solved again from its exact start state so the restart state is a step end; inside a penumbra the maximum step is 2 a / omega / PENUMBRA_STEPS [s]
+  - Exactness: approximate
+  - Preserves: no accepted step contains a contact of the shadow factor
+  - Preserves: the restart state is a step end, not an interpolated value
+  - Preserves: user events see every time once and in order, as in a single solve
+  - Preserves: a run without restart events is the single solve_ivp call it was before
+- **Implementing symbols**:
+  - `src/lunaris/core/propagation/scipy_runner.py` -- `_solve_with_restarts` (cpu_implementation)
+  - `src/lunaris/physics/solar_effects.py` -- `penumbra_max_step_s` (cpu_implementation)
+  - `src/lunaris/core/dynamics/engine.py` -- `DynamicsEngine.restart_plan` (api_entry_point)
+- **Lunaris modifications**:
+  - Ported from Sidera (2ddf461e and the review fixes of fc6bae19) without Sidera's dense-output stitching (the Lunaris SciPy path keeps none); the contact functions use the float64 operations of the shadow kernel _shadow_factor_conical.
+- **Assumptions**:
+  - the penumbra passage lasts about 2 a / omega, with a the apparent solar radius and omega the spacecraft's angular rate about the occulter (an underestimate at grazing geometry, where it is the conservative side)
+- **Limitations**:
+  - Two roots of one contact function inside one step are not seen (a grazing passage shorter than a step); that passage is integrated as before.
+  - Not covered: the kink of min(nu_moon, nu_earth) where the two shadow factors cross inside overlapping penumbrae, the 1e-6 shadow-factor floor, and the eclipse terms of albedo and thermal IR; the fixed-step and batched paths do not use the plan.
+  - The shadow factor grows like a power 3/2 of the time from a contact; with 20 steps per penumbra a 100 km lunar orbit at an area-to-mass ratio of 1 m^2/kg kept 1.4e-5 m after one revolution at rtol 1e-12 (3.5e-7 m with 80 steps), measured 2026-10-20.
+- **Validated by**:
+  - `tests/test_propagation_restarts.py`
+- **See also**: [`LUNARIS-MODEL-RAD-001`](#lunarismodelrad001), [`LUNARIS-HEUR-EVT-001`](#lunarisheurevt001)
+- **Notes**: Lunaris' (and Sidera's) own measured rule; restarting an integrator at located non-smooth points is common practice, but no single primary source was verified for this form. Measured 2026-10-20 on a 100 km lunar orbit with real ephemerides (SH degree 10, Sun and Earth, SRP at A/m 0.1 m^2/kg, 8 h through the lunar eclipse of 2025-09-07): against a DOP853 rtol 1e-13 run capped at 0.25 s, 0.18 m -> 3.5e-6 m at rtol 1e-10 and 7.3e-3 m -> 1.2e-6 m at rtol 1e-12, for 1.9 and 1.7 times the right-hand-side evaluations.
 
 ## Event handling (EVT)
 

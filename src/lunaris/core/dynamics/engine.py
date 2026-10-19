@@ -77,7 +77,7 @@ from lunaris.core.dynamics.adaptive_degree import (
     _sample_albedo_dn_scaled,
     _select_adaptive_sh_degree,
 )
-from lunaris.core.dynamics.contracts import DynamicsRequirements
+from lunaris.core.dynamics.contracts import DynamicsRequirements, RestartPlan, restart_event_family
 from lunaris.core.dynamics.ephemeris_pack import _EphemPack
 from lunaris.core.dynamics.gravity_pack import _GravPack
 from lunaris.core.dynamics.perturbation_packs import (
@@ -105,7 +105,12 @@ from lunaris.physics.lunar_albedo import (
     accel_albedo_facets_numba,
 )
 from lunaris.physics.relativity_effects import external_1pn_components, schwarzschild_components
-from lunaris.physics.solar_effects import SRPConfig, accel_srp
+from lunaris.physics.solar_effects import (
+    SRPConfig,
+    accel_srp,
+    conical_shadow_boundaries,
+    penumbra_max_step_s,
+)
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 from lunaris.physics.spherical_harmonics import (
     compute_point_mass_acceleration,
@@ -1523,6 +1528,90 @@ class DynamicsEngine:
         logger.info("[Dynamics] RHS ready. (build=%.3fs)", dt_build)
 
         return rhs
+
+    def restart_plan(self) -> RestartPlan:
+        """Conical-shadow contacts of the SRP occulters (the Moon, and the Earth when enabled).
+
+        The radiation force is scaled by the shadow factor, which has a kink at
+        every contact (`conical_shadow_boundaries`); the SciPy path restarts
+        the integrator there and, inside a penumbra, limits the step
+        (`penumbra_max_step_s`). Sun and Earth positions come from the same
+        tables and interpolation as the right-hand side, and the radii and
+        eclipse switches are the ones the right-hand side reads from the SRP
+        configuration. Not covered: the kink of ``min(nu_moon, nu_earth)``
+        where the two shadow factors cross (only inside overlapping
+        penumbrae), the 1e-6 shadow-factor floor, and the eclipse terms of
+        albedo and thermal IR (the simple albedo model's Moon shadow has the
+        same contacts as SRP's and is restarted only when SRP is on).
+
+        Ported from Sidera (2ddf461e, fc6bae19).
+        """
+        if not self._prep:
+            self._build_solver_rhs(force_rebuild=False)
+        req: DynamicsRequirements = self._prep["req"]
+        if not req.use_srp or self.ephem is None:
+            return RestartPlan()
+        ep: _EphemPack = self._prep["eph"]
+        srp_cfg = self.srp
+        r_moon = float(getattr(srp_cfg, "R_moon_m", R_MOON))
+        r_earth = float(getattr(srp_cfg, "R_earth_m", R_EARTH_MEAN))
+        use_moon = bool(getattr(srp_cfg, "enable_moon_eclipse", True))
+        use_earth = bool(getattr(srp_cfg, "enable_earth_eclipse", False)) and r_earth > 0.0
+        tables = (
+            float(ep.dt_s),
+            np.ascontiguousarray(ep.r_sun_tab_m, dtype=np.float64),
+            np.ascontiguousarray(ep.r_earth_tab_m, dtype=np.float64),
+            np.ascontiguousarray(ep.v_sun_tab_m_s, dtype=np.float64),
+            np.ascontiguousarray(ep.v_earth_tab_m_s, dtype=np.float64),
+            np.ascontiguousarray(ep.q_i2f_tab, dtype=np.float64),
+            bool(ep.use_hermite),
+        )
+
+        def bodies(t: float) -> tuple[float, float, float, float, float, float]:
+            sx, sy, sz, ex, ey, ez, *_q = get_ephem_state_with_velocity(float(t), *tables)
+            return sx, sy, sz, ex, ey, ez
+
+        def moon_contacts(t: float, y: np.ndarray) -> tuple[float, float]:
+            sx, sy, sz, _ex, _ey, _ez = bodies(t)
+            return conical_shadow_boundaries(float(y[0]), float(y[1]), float(y[2]), sx, sy, sz, r_moon)
+
+        def earth_contacts(t: float, y: np.ndarray) -> tuple[float, float]:
+            sx, sy, sz, ex, ey, ez = bodies(t)
+            # The right-hand side's gate: no Earth table, no Earth shadow.
+            if ex * ex + ey * ey + ez * ez <= 1.0e12:
+                return 1.0, 1.0
+            return conical_shadow_boundaries(
+                float(y[0]) - ex, float(y[1]) - ey, float(y[2]) - ez, sx - ex, sy - ey, sz - ez, r_earth,
+            )
+
+        events: list[Callable[[float, np.ndarray], float]] = []
+        if use_moon:
+            events += restart_event_family(moon_contacts, 2)
+        if use_earth:
+            events += restart_event_family(earth_contacts, 2)
+        if not events:
+            return RestartPlan()
+        half_dt = 0.5 * float(ep.dt_s)
+
+        def max_step(t: float, y: np.ndarray) -> float | None:
+            sx, sy, sz, ex, ey, ez = bodies(t)
+            r = np.asarray(y[:3], dtype=np.float64)
+            v = np.asarray(y[3:6], dtype=np.float64)
+            sun = np.array((sx, sy, sz))
+            caps = []
+            if use_moon:
+                caps.append(penumbra_max_step_s(r, v, sun, r_moon))
+            if use_earth and ex * ex + ey * ey + ez * ez > 1.0e12:
+                earth = np.array((ex, ey, ez))
+                # The Earth's velocity relative to the Moon, from the same tables.
+                *_s, bx, by, bz = bodies(t - half_dt)
+                *_s, fx, fy, fz = bodies(t + half_dt)
+                earth_v = (np.array((fx, fy, fz)) - np.array((bx, by, bz))) / (2.0 * half_dt)
+                caps.append(penumbra_max_step_s(r - earth, v - earth_v, sun - earth, r_earth))
+            finite = [cap for cap in caps if cap is not None]
+            return min(finite) if finite else None
+
+        return RestartPlan(events=tuple(events), max_step_s=max_step)
 
     # -------------------------------------------------------------------------
     # Debug / reporting
