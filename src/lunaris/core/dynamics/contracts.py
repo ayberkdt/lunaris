@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
+
+import numpy as np
+from numpy.typing import ArrayLike
 
 from lunaris.common.force_requirements import ForceRequirements
 
@@ -161,4 +165,50 @@ class DynamicsRequirements:
         }
 
 
-__all__ = ["DynamicsRequirements"]
+@dataclass(frozen=True, slots=True)
+class RestartPlan:
+    """The non-smooth points of a right-hand side, for an adaptive integrator.
+
+    An embedded Runge-Kutta pair cannot see a kink inside a step (see
+    ``lunaris.core.propagation.scipy_runner._solve_with_restarts``), so the
+    SciPy path stops at every zero of ``events`` (functions ``g(t, y)``) and
+    restarts there. ``max_step_s(t, y)``, evaluated at the start of each
+    segment, may return a smaller maximum step for that segment [s] (or
+    ``None``): a shadow factor is smooth between its contacts but grows like
+    a power 3/2 of the time from them, which a step spanning the whole
+    penumbra does not resolve either. Ported from Sidera (2ddf461e).
+    """
+
+    events: tuple[Callable[[float, np.ndarray], float], ...] = ()
+    max_step_s: Callable[[float, np.ndarray], float | None] | None = None
+
+
+def restart_event_family(
+    values: Callable[[float, np.ndarray], ArrayLike], count: int,
+) -> tuple[Callable[[float, np.ndarray], float], ...]:
+    """``count`` restart events ``g_k(t, y) = values(t, y)[k]`` sharing one evaluation per ``(t, y)``.
+
+    The integrator asks every event at the same ``(t, y)`` in turn; ``values``
+    computes them all at once, so it runs once there instead of ``count``
+    times. Ported from Sidera (fc6bae19).
+    """
+    cache: dict[str, Any] = {"key": None, "values": None}
+
+    def shared(t: float, y: np.ndarray) -> np.ndarray:
+        key = (float(t), np.asarray(y, dtype=np.float64).tobytes())
+        if cache["key"] != key:
+            cache["values"] = np.asarray(values(t, y), dtype=np.float64)
+            cache["key"] = key
+        values_now: np.ndarray = cache["values"]
+        return values_now
+
+    def event(index: int) -> Callable[[float, np.ndarray], float]:
+        def g(t: float, y: np.ndarray) -> float:
+            return float(shared(t, y)[index])
+
+        return g
+
+    return tuple(event(k) for k in range(count))
+
+
+__all__ = ["DynamicsRequirements", "RestartPlan", "restart_event_family"]

@@ -14,11 +14,13 @@ import math
 import warnings
 from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 from scipy.integrate import solve_ivp
 
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig
+from lunaris.core.dynamics.contracts import RestartPlan
 from lunaris.core.propagation.checkpoint import _atomic_save_npz, _stop_requested
 from lunaris.core.propagation.events import (
     _terminal_event_endpoint,
@@ -84,11 +86,14 @@ def _rounding_band(event: Callable[[float, np.ndarray], float], t: float, y: np.
     return _SURFACE_BAND_FACTOR * largest
 
 
-# A chunk starts from the previous chunk's end state, read off its interpolant;
-# an event whose root lies on the boundary is then a rounding-level fraction of
-# its value over the last step away from zero, on either side. Within this
-# fraction of that value the side is taken from the previous chunk's last step
-# end. A distinct crossing that close to the boundary is not resolved.
+# A chunk starts from the previous chunk's end state, read off its interpolant,
+# and a segment after a restart root starts from the exact solve's state while
+# the root came from the first solve's interpolant (2.4e-6 m apart on Sidera's
+# 400 km Venus orbit at 60 s steps). An event whose root lies on the boundary is
+# then a rounding-level fraction of its value over the last step away from
+# zero, on either side. Within this fraction of that value the side is taken
+# from the step end before the boundary. A distinct crossing that close to the
+# boundary (a millionth of a step) is not resolved.
 _ROOT_REACH = 1.0e-6
 
 
@@ -125,13 +130,14 @@ def _step_consistent_events(
     step, which starts there, does not report it again.
 
     ``seeds`` (one signed value or ``None`` per event) is for a span that
-    continues another (a chunk boundary) rather than the start of the run: an
-    event, terminal or not, whose first value is within the band, or within
-    `_ROOT_REACH` of the seed's magnitude, reports that value on the seed's
-    side, the side the previous span ended on. A root on the boundary is then
-    reported once: by the previous span if it reached it, else in the first
-    step of this one. Each wrapper exposes the step ends it remembers as
-    ``step_ends``.
+    continues another (a chunk boundary, or a restart root of
+    :func:`_solve_with_restarts`, from :func:`_side_after_root`) rather than
+    the start of the run: an event, terminal or not, whose first value is
+    within the band, or within `_ROOT_REACH` of the seed's magnitude, reports
+    that value on the seed's side, the side the previous span ended on. A
+    root on the boundary is then reported once: by the previous span if it
+    reached it, else in the first step of this one. Each wrapper exposes the
+    step ends it remembers as ``step_ends``.
     """
     tiny = float(np.finfo(np.float64).tiny)
 
@@ -194,6 +200,270 @@ def _step_consistent_events(
     return [consistent(event, seed) for event, seed in zip(events, signs, strict=True)]
 
 
+def _side_after_root(
+    wrapper: Callable[[float, np.ndarray], float], times: np.ndarray, t_root: float, forward: bool,
+) -> float | None:
+    """The side an event is on just past a restart root, or ``None`` when unknown.
+
+    The sign is the side (+/-); the magnitude is the event's value at the
+    step end before the root, the scale `_ROOT_REACH` is taken of.
+
+    The value at the root is at rounding level for an event whose surface the
+    root lies on, and the step end after it lies past roots SciPy did not
+    report (it reports none after a terminal root), so the side comes from the
+    step end before the root, flipped once per root reported after it.
+    Ported from Sidera (fc6bae19).
+    """
+    before = [
+        (t, v) for t, v in getattr(wrapper, "step_ends", [])
+        if (t < t_root if forward else t > t_root) and math.isfinite(v) and v != 0.0
+    ]
+    if not before:
+        return None
+    t_before, value = before[-1]
+    crossings = int(np.count_nonzero((times > t_before) if forward else (times < t_before)))
+    side = abs(value) if value > 0.0 else -abs(value)
+    return side if crossings % 2 == 0 else -side
+
+
+def _armed_restart_event(
+    event: Callable[[float, np.ndarray], float], t_start: float, *, on_root: bool = True,
+) -> Callable[[float, np.ndarray], float]:
+    """A terminal copy of ``event`` that cannot fire on the root it starts from.
+
+    A segment restarted at a root begins with the event at rounding level, and
+    its sign there is noise. The copy returns NaN at the segment's first
+    evaluation (SciPy then sees no crossing over the first step, which is
+    the one leaving that root) and the event's own value everywhere else.
+    For the first segment of a span (``on_root=False``: the run's or a
+    chunk's start, not a root) the start value is suppressed only when it is
+    within `_rounding_band` of zero, so a contact inside the first step is
+    still found. Ported from Sidera (fc6bae19).
+    """
+    first = True
+
+    def g(t: float, y: np.ndarray) -> float:
+        nonlocal first
+        if first:
+            first = False
+            if float(t) == float(t_start):
+                if on_root:
+                    return math.nan
+                value = float(event(t, y))
+                band = _rounding_band(event, t, y, value)
+                return math.nan if (value == 0.0 or (math.isfinite(band) and abs(value) <= band)) else value
+        return float(event(t, y))
+
+    g.terminal = True  # type: ignore[attr-defined]
+    g.direction = 0.0  # type: ignore[attr-defined]
+    return g
+
+
+def _solve_with_restarts(
+    solve_once: Callable[..., object],
+    t_start: float,
+    t_end: float,
+    y_start: np.ndarray,
+    t_eval_span: np.ndarray,
+    user_events: list[Callable[[float, np.ndarray], float]],
+    restart_events: list[Callable[[float, np.ndarray], float]],
+    segment_max_step: Callable[[float, np.ndarray], float | None] | None = None,
+    seeds: list[float | None] | None = None,
+) -> SimpleNamespace:
+    """Integrate ``[t_start, t_end]`` in segments that end at restart-event roots.
+
+    An embedded Runge-Kutta pair estimates its error from stages it shares
+    with the solution, so a kink of the right-hand side inside a step (a
+    shadow boundary, where the radiation force stops being smooth) corrupts
+    both and the estimate stays small: the step is accepted with an error the
+    tolerance never saw. Stopping at each root and restarting there puts every
+    kink on a step boundary.
+
+    Each segment is solved once, with the user events and the restart events,
+    up to the next root; SciPy cuts the step that holds the root there. The
+    state it reports at the root comes from that step's interpolant, whose
+    error the step control never sees, so the cut step alone is solved again,
+    from its start state (the solver's own, kept by an event that never
+    fires) to the root, with the same first step; the next segment starts
+    from that step end. The segment's samples and user events up to the cut
+    step come from the first solve, the samples inside it from the second.
+    The user events therefore see every time once and in order, as in a
+    single solve: an event that keeps state of its own
+    (`make_max_eclipse_duration_event`) or reads state outside the trajectory
+    (the stop file) behaves as without restarts. ``user_events`` are wrapped
+    afresh for each segment (their wrappers keep step-end state). A user
+    event whose root is also a restart root sits at rounding level at the end
+    of one segment and at the start of the next; each segment after a root
+    therefore starts its user events on the side they were on past that root
+    (:func:`_side_after_root`), so the crossing is reported once.
+
+    ``solve_once(t0, t1, y0, t_eval, events, step_cap, *, first_step=None)``
+    is one ``solve_ivp`` call. Returns the ``solve_ivp`` result fields the
+    callers read (``t``, ``y``, ``t_events``/``y_events`` of the user events,
+    ``status``, ``success``, ``message``, ``nfev``) plus ``restarts``. A user
+    terminal event ends the span as in a single solve. ``seeds`` are the user
+    events' sides at ``t_start`` when the span continues another (a chunk
+    boundary), as for a restart root; the result's ``user_wrappers`` are the
+    last segment's, for the next span's seeds.
+
+    Ported from Sidera (2ddf461e, with the review fixes of fc6bae19), without
+    the dense-output stitching, which the Lunaris SciPy path never asks for.
+    """
+    n_user = len(user_events)
+    grid = np.asarray(t_eval_span, dtype=np.float64)
+    forward = float(t_end) >= float(t_start)
+
+    def ahead(a: float, b: float) -> bool:
+        """``a`` lies past ``b`` in the integration direction."""
+        return a > b if forward else a < b
+
+    def between(lo: float, hi: float) -> np.ndarray:
+        """Grid times from ``lo`` to ``hi`` (both included), ``lo`` first in the integration direction."""
+        return grid[(grid >= min(lo, hi)) & (grid <= max(lo, hi))]
+
+    t_cur = float(t_start)
+    y_cur = np.asarray(y_start, dtype=np.float64)
+    t_parts: list[np.ndarray] = []
+    y_parts: list[np.ndarray] = []
+    te_parts: list[list[np.ndarray]] = [[] for _ in range(n_user)]
+    ye_parts: list[list[np.ndarray]] = [[] for _ in range(n_user)]
+    nfev = 0
+    status = 0
+    message = "The solver successfully reached the end of the integration interval."
+    restarts = 0
+
+    def keep(sol: Any, *, until: float | None = None, after: float | None = None, events: bool = True) -> None:
+        """Append ``sol``'s samples (past ``after``, not past ``until``) and user events."""
+        seg_t = np.asarray(sol.t, dtype=np.float64)
+        seg_y: np.ndarray = np.asarray(sol.y, dtype=np.float64).reshape(y_cur.size, -1)
+        mask = np.ones(seg_t.size, dtype=bool)
+        if until is not None:
+            mask &= np.array([not ahead(float(value), until) for value in seg_t], dtype=bool)
+        if after is not None:
+            mask &= np.array([ahead(float(value), after) for value in seg_t], dtype=bool)
+        seg_t, seg_y = seg_t[mask], seg_y[:, mask]
+        if t_parts and seg_t.size:
+            fresh = np.array([ahead(float(value), float(t_parts[-1][-1])) for value in seg_t], dtype=bool)
+            seg_t, seg_y = seg_t[fresh], seg_y[:, fresh]
+        if seg_t.size:
+            t_parts.append(seg_t)
+            y_parts.append(seg_y)
+        if events:
+            t_events = list(getattr(sol, "t_events", None) or [])
+            y_events = list(getattr(sol, "y_events", None) or [])
+            for i in range(n_user):
+                te_parts[i].append(np.asarray(t_events[i], dtype=np.float64).reshape(-1))
+                ye_parts[i].append(np.asarray(y_events[i], dtype=np.float64).reshape(-1, y_cur.size))
+
+    def step_end_recorder() -> Callable[[float, np.ndarray], float]:
+        """An event that never fires and keeps the last two step ends SciPy evaluated (exact solver states)."""
+        ends: list[tuple[float, np.ndarray]] = []
+
+        def g(t: float, y: np.ndarray) -> float:
+            if not ends or ahead(float(t), ends[-1][0]):
+                ends.append((float(t), np.array(y, dtype=np.float64, copy=True)))
+                del ends[:-2]
+            return 1.0
+
+        g.terminal = False  # type: ignore[attr-defined]
+        g.direction = 0.0  # type: ignore[attr-defined]
+        g.ends = ends  # type: ignore[attr-defined]
+        return g
+
+    def user_terminal(sol: Any) -> bool:
+        t_events = list(getattr(sol, "t_events", None) or [])
+        return any(
+            bool(getattr(user_events[i], "terminal", False)) and np.asarray(t_events[i]).size > 0
+            for i in range(n_user)
+        )
+
+    user_wrappers: list[Callable[[float, np.ndarray], float]] = []
+    while True:
+        cap = segment_max_step(t_cur, y_cur) if segment_max_step is not None else None
+        segment_eval = between(t_cur, t_end)
+        restart_copies = [_armed_restart_event(event, t_cur, on_root=restarts > 0) for event in restart_events]
+        user_wrappers = _step_consistent_events(user_events, seeds)
+        recorder = step_end_recorder()
+        locate: Any = solve_once(t_cur, t_end, y_cur, segment_eval, user_wrappers + restart_copies + [recorder], cap)
+        nfev += int(getattr(locate, "nfev", 0))
+        t_events = list(getattr(locate, "t_events", None) or [])
+        roots = [
+            float(np.asarray(t_events[n_user + k])[-1])
+            for k in range(len(restart_events))
+            if np.asarray(t_events[n_user + k]).size
+        ]
+        # The root met first in the integration direction.
+        first_root = (min(roots) if forward else max(roots)) if roots else None
+        located = (
+            bool(getattr(locate, "success", True))
+            and int(getattr(locate, "status", 0)) == 1
+            and not user_terminal(locate)
+            and bool(roots)
+        )
+        if not located or first_root is None or not ahead(float(t_end), first_root):
+            keep(locate)
+            if not bool(getattr(locate, "success", True)):
+                status = int(getattr(locate, "status", -1))
+                message = str(getattr(locate, "message", "integration failed"))
+            elif int(getattr(locate, "status", 0)) == 1 and not located:
+                status = 1
+                message = str(getattr(locate, "message", "A termination event occurred."))
+            break
+        t_root = float(first_root)
+        # SciPy cut the step holding the root at the root: its start is the
+        # last step end at or before the root (brentq can return the step's own
+        # start), whose solver state the recorder kept, and the cut step alone
+        # is solved again from there.
+        t_last, y_last = [end for end in recorder.ends if not ahead(end[0], t_root)][-1]  # type: ignore[attr-defined]
+        exact_eval = np.unique(np.concatenate((between(t_last, t_root), [t_root])))
+        if not forward:
+            exact_eval = exact_eval[::-1]
+        if abs(t_root - t_last) <= 64.0 * float(np.spacing(max(abs(t_root), 1.0))):
+            # No step to solve: the step end's own state, or within a few ulp
+            # of it the first solve's state at the root, stands.
+            if t_root == t_last:
+                y_root = np.asarray(y_last, dtype=np.float64)
+            else:
+                k_root = next(k for k in range(len(restart_events)) if np.asarray(t_events[n_user + k]).size
+                              and float(np.asarray(t_events[n_user + k])[-1]) == t_root)
+                y_root = np.asarray(locate.y_events[n_user + k_root], dtype=np.float64)[-1]
+            exact: Any = SimpleNamespace(t=np.array([t_root]), y=y_root.reshape(-1, 1), success=True, nfev=0)
+        else:
+            exact = solve_once(t_last, t_root, y_last, exact_eval, [], cap, first_step=abs(t_root - t_last))
+        nfev += int(getattr(exact, "nfev", 0))
+        keep(locate, until=t_last)
+        if not bool(getattr(exact, "success", True)):
+            keep(exact, after=t_last, events=False)
+            status = int(getattr(exact, "status", -1))
+            message = str(getattr(exact, "message", "integration failed"))
+            break
+        # The root sample is a restart point, not output, unless the grid asked for it.
+        root_on_grid = bool(np.isin([t_root], grid)[0])
+        keep(exact, after=t_last, until=t_root if root_on_grid else float(np.nextafter(t_root, t_last)), events=False)
+        seeds = [
+            _side_after_root(user_wrappers[i], np.asarray(t_events[i], dtype=np.float64).reshape(-1), t_root, forward)
+            for i in range(n_user)
+        ]
+        t_cur = t_root
+        y_cur = np.asarray(exact.y, dtype=np.float64).reshape(y_cur.size, -1)[:, -1].copy()
+        restarts += 1
+
+    t_out = np.concatenate(t_parts) if t_parts else np.zeros(0, dtype=np.float64)
+    y_out = np.concatenate(y_parts, axis=1) if y_parts else np.zeros((y_cur.size, 0), dtype=np.float64)
+    return SimpleNamespace(
+        t=t_out,
+        y=y_out,
+        t_events=[np.concatenate(parts) if parts else np.zeros(0) for parts in te_parts],
+        y_events=[np.concatenate(parts, axis=0) if parts else np.zeros((0, y_cur.size)) for parts in ye_parts],
+        status=status,
+        success=status >= 0,
+        message=message,
+        nfev=nfev,
+        restarts=restarts,
+        user_wrappers=user_wrappers,
+    )
+
+
 def _grid_tolerance_s(grid: np.ndarray, chunk_s: float) -> float:
     """Absolute time tolerance for 'on the output grid' [s].
 
@@ -232,11 +502,18 @@ def run_scipy_propagation(
     output_dt_s: float,
     verbose: bool,
     logger: logging.Logger,
+    restart_plan: RestartPlan | None = None,
 ) -> PropagationResult:
     """Run the SciPy adaptive branch and assemble a propagation result.
 
     The returned result carries an empty ``diagnostics`` dict; the caller
     (:func:`propagate`) attaches the full diagnostics afterwards.
+
+    ``restart_plan`` holds the dynamics' non-smooth points (functions whose
+    zero is a kink of the right-hand side, such as a shadow boundary). Each
+    span is integrated up to the next such root and restarted there, so no
+    step straddles a kink; see :func:`_solve_with_restarts`. Without events
+    the solve is exactly the single ``solve_ivp`` call it always was.
     """
     if solve_ivp is None:
         raise ImportError("SciPy is required for adaptive integration (solve_ivp not available).")
@@ -269,12 +546,19 @@ def run_scipy_propagation(
 
     span_wrappers: list[Callable[[float, np.ndarray], float]] = []
 
-    def _solve_span(
-        t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray,
-        seeds: list[float | None] | None = None,
+    def _solve_once(
+        t_start: float,
+        t_end: float,
+        y_start: np.ndarray,
+        t_eval_span: np.ndarray,
+        span_events: list[Callable[[float, np.ndarray], float]] | None,
+        step_cap: float | None = None,
+        *,
+        first_step: float | None = None,
     ):
-        wrappers = _step_consistent_events(events, seeds) if events else []
-        span_wrappers[:] = wrappers
+        # ``first_step`` is passed only when set, so a run without restarts is
+        # the very ``solve_ivp`` call it was before them.
+        extra: dict[str, float] = {} if first_step is None else {"first_step": float(first_step)}
         return solve_ivp(
             fun=rhs,
             t_span=(float(t_start), float(t_end)),
@@ -283,11 +567,27 @@ def run_scipy_propagation(
             t_eval=np.asarray(t_eval_span, dtype=np.float64),
             rtol=float(getattr(cfg, "rtol", 1e-9)),
             atol=atol_arg,
-            max_step=float(max_step),
-            events=(wrappers if events else None),
+            max_step=float(max_step) if step_cap is None else min(float(max_step), float(step_cap)),
+            events=span_events or None,
             dense_output=False,
             vectorized=False,
+            **extra,
         )
+
+    def _solve_span(
+        t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray,
+        seeds: list[float | None] | None = None,
+    ):
+        if restart_plan is None or not restart_plan.events:
+            wrappers = _step_consistent_events(events, seeds) if events else []
+            span_wrappers[:] = wrappers
+            return _solve_once(t_start, t_end, y_start, t_eval_span, wrappers)
+        result = _solve_with_restarts(
+            _solve_once, t_start, t_end, y_start, t_eval_span, list(events or []),
+            list(restart_plan.events), restart_plan.max_step_s, seeds,
+        )
+        span_wrappers[:] = list(getattr(result, "user_wrappers", []))
+        return result
 
     def _boundary_seeds(t_boundary: float) -> list[float | None] | None:
         """The events' sides at a chunk boundary: their values at the last step end there.
