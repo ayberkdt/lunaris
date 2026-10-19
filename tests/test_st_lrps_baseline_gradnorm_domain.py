@@ -152,7 +152,7 @@ class _StubRuntime:
         rn = np.linalg.norm(r, axis=1)
         return {"recommended_fallback": bool(np.any(rn > self.threshold_m)), "reason": "test"}
 
-    def predict_residual_accel_fixed(self, r):
+    def predict_total_accel_fixed(self, r):
         r = np.asarray(r, dtype=np.float64).reshape(-1, 3)
         return np.zeros_like(r)
 
@@ -161,7 +161,7 @@ def test_domain_tracking_counts_extrapolation():
     from lunaris.surrogate.st_lrps.evaluation.orbit_drift import _DomainTrackingTotalAccel
 
     rt = _StubRuntime(threshold_m=R_MOON_SI + 150e3)
-    acc = _DomainTrackingTotalAccel(rt, MU_MOON_SI, strict_domain=False)
+    acc = _DomainTrackingTotalAccel(rt, strict_domain=False)
 
     acc(np.array([R_MOON_SI + 100e3, 0.0, 0.0]))  # inside
     acc(np.array([R_MOON_SI + 300e3, 0.0, 0.0]))  # outside
@@ -176,7 +176,7 @@ def test_domain_tracking_strict_raises_on_extrapolation():
     from lunaris.surrogate.st_lrps.evaluation.orbit_drift import _DomainTrackingTotalAccel
 
     rt = _StubRuntime(threshold_m=R_MOON_SI + 150e3)
-    acc = _DomainTrackingTotalAccel(rt, MU_MOON_SI, strict_domain=True)
+    acc = _DomainTrackingTotalAccel(rt, strict_domain=True)
     # Inside the domain integrates fine.
     out = acc(np.array([R_MOON_SI + 100e3, 0.0, 0.0]))
     assert np.all(np.isfinite(out))
