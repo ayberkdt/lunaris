@@ -36,7 +36,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
 | [`LUNARIS-ALG-NUM-001`](#lunarisalgnum001) | Gauss-Legendre quadrature nodes and weights mapped to the unit interval | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OE-001`](#lunarisalgoe001) | Classical orbital-element conversions (state vector to/from Keplerian elements) | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-001`](#lunarisalgopt001) | AdamW (decoupled weight decay) optimizer as delegated to PyTorch | delegated_library | verified_primary_source |
-| [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | GradNorm adaptive multi-task loss balancing | adaptation | verified_primary_source |
+| [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | Gradient-magnitude-ratio loss weighting (learning-rate annealing for physics-informed networks) | adaptation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003) | Sobolev training (derivative-supervision loss) | adaptation | verified_primary_source |
 | [`LUNARIS-ALG-PHZ-001`](#lunarisalgphz001) | Tangential Gauss variational equation for along-track phase drift with RIC error decomposition | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001) | Scrambled Sobol low-discrepancy sequence sampling | delegated_library | verified_primary_source |
@@ -1544,7 +1544,6 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `siren_init_hidden_` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `SirenMLP` (torch_implementation)
   - `src/lunaris/surrogate/runtime/networks.py` -- `SirenMLP` (reference_implementation)
-  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `SirenResBlock` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `siren_init_first_` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `build_model_from_config` (api_entry_point)
   - `src/lunaris/surrogate/runtime/networks.py` -- `_build_model_from_config` (api_entry_point)
@@ -1612,8 +1611,10 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `compute_harmonic_w0_bands` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `RealSHBasisEncoding` (torch_implementation)
   - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `PhysicalRadialDecayEncoding` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/networks/models.py` -- `SirenResBlock` (torch_implementation)
 - **Lunaris modifications**:
   - w0 bands spaced in log-degree to match spherical-harmonic spatial frequencies (n/R_moon); radial-decay and real-SH-basis encodings that inject gravity structure into the input.
+  - SirenResBlock: pre-norm residual SIREN block y = x + W2 sin(w0 (W1 LN(x) + b1)) + b2 with W2 and b2 zero-initialised, so each block starts as the identity. The sine and the W1 init are SIREN's; the LayerNorm, the skip path and the zero init are not in Sitzmann et al. (2020).
 - **Assumptions**:
   - the residual field spectrum is bounded by the target SH degree
 - **Limitations**:
@@ -1652,27 +1653,30 @@ Verification status: identifier_verified_content_pending (2), unverifiable (7), 
   - `tests/test_surrogate_training_contracts.py`
 
 <a id="lunarisalgopt002"></a>
-### LUNARIS-ALG-OPT-002 -- GradNorm adaptive multi-task loss balancing
+### LUNARIS-ALG-OPT-002 -- Gradient-magnitude-ratio loss weighting (learning-rate annealing for physics-informed networks)
 
-- **Slug**: `gradnorm_adaptive_loss_balancing`
+- **Slug**: `gradient_norm_ratio_loss_weighting`
 - **Category**: optimization | **Domain**: OPT | **Status**: active
 - **Classification**: adaptation
 - **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
-- **Primary reference**: `Chen2018GradNorm` -- Chen, 2018. "{GradNorm}: Gradient Normalization for Adaptive Loss Balancing in Deep Multitask Networks" (section GradNorm gradient-magnitude balancing) [OFFICIAL URL: https://arxiv.org/abs/1711.02257]
-- **Verification notes**: Z. Chen, V. Badrinarayanan, C.-Y. Lee & A. Rabinovich, "GradNorm: Gradient Normalization for Adaptive Loss Balancing in Deep Multitask Networks", ICML 2018 (arXiv:1711.02257 verified). Lunaris ADAPTS GradNorm to balance its gravity loss terms (value/derivative/auxiliary) by tuning their gradient magnitudes on shared backbone parameters.
+- **Primary reference**: `Wang2020GradientPathologies` -- Wang, 2020. "Understanding and Mitigating Gradient Pathologies in Physics-Informed Neural Networks" (section Section 2.5, Algorithm 1 (learning rate annealing); pages 10; eq. 40, 41) [OFFICIAL URL: https://arxiv.org/abs/2001.04536]
+- **Verification notes**: S. Wang, Y. Teng & P. Perdikaris, "Understanding and mitigating gradient pathologies in physics-informed neural networks", arXiv:2001.04536v1 (preprint dated 2020-01-15); primary PDF read on 2026-10-20. Eq. 40 sets the instantaneous weight to max|grad L_r| over mean|grad L_i|; Eq. 41 smooths it as lambda = (1 - alpha) lambda + alpha lambda_hat with the recommended alpha = 0.9, optionally every 10 steps (p. 11). Lunaris adapts this rule; it is NOT GradNorm (Chen et al. 2018), which learns the weights by gradient descent on a gradient-norm loss with relative inverse training rates. The registry cited GradNorm until 2026-10-20.
 - **Mathematical contract**:
-  - Inputs: per-task losses and shared-parameter gradients
-  - Outputs: adaptively updated per-task loss weights
+  - Inputs: potential and acceleration losses and their gradients on the shared parameters
+  - Outputs: the acceleration-loss weight w_a (w_u fixed at 1)
   - Exactness: adaptive_loss_weighting
-  - Preserves: balances gradient magnitudes across loss terms
+  - Preserves: balances gradient magnitudes of the two loss terms
 - **Implementing symbols**:
   - `src/lunaris/surrogate/st_lrps/training/losses.py` -- `GradNormWeights` (torch_implementation)
 - **Lunaris modifications**:
-  - applied to Lunaris gravity loss terms and backbone parameter selection
+  - ratio of L2 norms ||grad L_U|| / ||grad L_a|| instead of max over mean of absolute entries
+  - default mode ntk_init computes the ratio once at the first valid step and freezes it (no NTK is computed; the name refers to the initialisation-time balancing)
+  - dynamic mode is an Eq. 41-style moving average updated every update_interval = 10 steps, but ema_beta = 0.9 weights the PREVIOUS value (w = 0.9 w_old + 0.1 w_new), i.e. alpha = 0.1 in Eq. 41's convention, not the paper's recommended alpha = 0.9
+  - the weight is clamped to [w_a_min, w_a_max] = [0.35, 4.0]
 - **Assumptions**:
   - a meaningful shared parameter set exists for gradient balancing
 - **Limitations**:
-  - adds a backward pass for the gradient-norm targets
+  - adds one backward pass per loss term at each weight update
 - **Validated by**:
   - `tests/test_st_lrps_baseline_gradnorm_domain.py`
 - **See also**: [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003)

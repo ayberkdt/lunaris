@@ -1064,9 +1064,6 @@ entries:
         symbol: SirenMLP
         role: reference_implementation
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
-        symbol: SirenResBlock
-        role: torch_implementation
-      - path: src/lunaris/surrogate/st_lrps/networks/models.py
         symbol: siren_init_first_
         role: torch_implementation
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
@@ -1353,8 +1350,10 @@ entries:
     notes: ""
 
   - id: LUNARIS-ALG-OPT-002
-    slug: gradnorm_adaptive_loss_balancing
-    canonical_name: GradNorm adaptive multi-task loss balancing
+    slug: gradient_norm_ratio_loss_weighting
+    canonical_name: >-
+      Gradient-magnitude-ratio loss weighting (learning-rate annealing for
+      physics-informed networks)
     category: optimization
     domain: OPT
     status: active
@@ -1363,43 +1362,56 @@ entries:
     verification_status: verified_primary_source
     scientific_status: implemented_and_tested
     citation_keys:
-      - Chen2018GradNorm
+      - Wang2020GradientPathologies
     primary_reference:
-      type: inproceedings
-      citation_key: Chen2018GradNorm
+      type: article
+      citation_key: Wang2020GradientPathologies
       identifier_kind: official_url
       doi: null
       isbn: null
       report_number: null
       standard_number: null
-      official_url: https://arxiv.org/abs/1711.02257
+      official_url: https://arxiv.org/abs/2001.04536
       edition: null
       chapter: null
-      section: GradNorm gradient-magnitude balancing
-      equations: []
-      pages: null
+      section: Section 2.5, Algorithm 1 (learning rate annealing)
+      equations:
+        - "40"
+        - "41"
+      pages: "10"
       verification_notes: >-
-        Z. Chen, V. Badrinarayanan, C.-Y. Lee & A. Rabinovich, "GradNorm:
-        Gradient Normalization for Adaptive Loss Balancing in Deep Multitask
-        Networks", ICML 2018 (arXiv:1711.02257 verified). Lunaris ADAPTS GradNorm
-        to balance its gravity loss terms (value/derivative/auxiliary) by tuning
-        their gradient magnitudes on shared backbone parameters.
+        S. Wang, Y. Teng & P. Perdikaris, "Understanding and mitigating gradient
+        pathologies in physics-informed neural networks", arXiv:2001.04536v1
+        (preprint dated 2020-01-15); primary PDF read on 2026-10-20. Eq. 40 sets
+        the instantaneous weight to max|grad L_r| over mean|grad L_i|; Eq. 41
+        smooths it as lambda = (1 - alpha) lambda + alpha lambda_hat with the
+        recommended alpha = 0.9, optionally every 10 steps (p. 11). Lunaris
+        adapts this rule; it is NOT GradNorm (Chen et al. 2018), which learns
+        the weights by gradient descent on a gradient-norm loss with relative
+        inverse training rates. The registry cited GradNorm until 2026-10-20.
     symbols:
       - path: src/lunaris/surrogate/st_lrps/training/losses.py
         symbol: GradNormWeights
         role: torch_implementation
     mathematical_contract:
-      inputs: per-task losses and shared-parameter gradients
-      outputs: adaptively updated per-task loss weights
+      inputs: potential and acceleration losses and their gradients on the shared parameters
+      outputs: the acceleration-loss weight w_a (w_u fixed at 1)
       exact_or_approximate: adaptive_loss_weighting
       preserved_properties:
-        - balances gradient magnitudes across loss terms
+        - balances gradient magnitudes of the two loss terms
     lunaris_modifications:
-      - applied to Lunaris gravity loss terms and backbone parameter selection
+      - ratio of L2 norms ||grad L_U|| / ||grad L_a|| instead of max over mean of absolute entries
+      - default mode ntk_init computes the ratio once at the first valid step and freezes it (no NTK is computed; the name refers to the initialisation-time balancing)
+      - >-
+        dynamic mode is an Eq. 41-style moving average updated every
+        update_interval = 10 steps, but ema_beta = 0.9 weights the PREVIOUS
+        value (w = 0.9 w_old + 0.1 w_new), i.e. alpha = 0.1 in Eq. 41's
+        convention, not the paper's recommended alpha = 0.9
+      - the weight is clamped to [w_a_min, w_a_max] = [0.35, 4.0]
     assumptions:
       - a meaningful shared parameter set exists for gradient balancing
     limitations:
-      - adds a backward pass for the gradient-norm targets
+      - adds one backward pass per loss term at each weight update
     validation:
       - tests/test_st_lrps_baseline_gradnorm_domain.py
     see_also:
@@ -2714,6 +2726,9 @@ entries:
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
         symbol: PhysicalRadialDecayEncoding
         role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: SirenResBlock
+        role: torch_implementation
     mathematical_contract:
       inputs: scaled coordinates (and radius) of the query point
       outputs: multi-band SIREN features / physics-motivated encodings
@@ -2725,6 +2740,11 @@ entries:
         w0 bands spaced in log-degree to match spherical-harmonic spatial
         frequencies (n/R_moon); radial-decay and real-SH-basis encodings that
         inject gravity structure into the input.
+      - >-
+        SirenResBlock: pre-norm residual SIREN block y = x + W2 sin(w0 (W1
+        LN(x) + b1)) + b2 with W2 and b2 zero-initialised, so each block starts
+        as the identity. The sine and the W1 init are SIREN's; the LayerNorm,
+        the skip path and the zero init are not in Sitzmann et al. (2020).
     assumptions:
       - the residual field spectrum is bounded by the target SH degree
     limitations:

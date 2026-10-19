@@ -324,9 +324,10 @@ def compute_base_accel_from_contract(
     return compute_base_potential_accel_from_contract(x_phys, contract, gravity_model)[1]
 
 
-# --- GradNorm loss balancing (Chen et al. 2018) ---
-# Equalises ‖∂L_U/∂W‖ and ‖∂L_a/∂W‖ at the last hidden layer.
-# Amortised: expensive autograd only every update_interval steps.
+# --- Gradient-norm-ratio loss balancing (training.losses.GradNormWeights) ---
+# Equalises ‖∂L_U/∂W‖ and ‖∂L_a/∂W‖ on the shared parameters; adapted from
+# Wang, Teng & Perdikaris (2020) learning-rate annealing, not GradNorm
+# (Chen et al. 2018) [LUNARIS-ALG-OPT-002].
 
 def fit_scaler_streaming(
     h5_path: Path,
