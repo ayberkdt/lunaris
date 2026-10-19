@@ -4,6 +4,8 @@
   reports its device memory as ``inf``, which the snapshot cast to ``int``
   (OverflowError). A non-finite reading now counts as unknown (0), as a
   failed memory query already did.
+* The host loop's step clock is ``k * dt_eff`` from the step index, not an
+  accumulated ``t += dt_eff``.
 
 The simulator runs the kernels in Python float64; these pin host-side
 bookkeeping, not NVVM code generation.
@@ -81,6 +83,46 @@ def test_diagnostics_snapshot_reads_the_simulators_unbounded_memory_as_unknown()
     diag = prop.diagnostics_snapshot()
     assert diag["gpu_free_mem_bytes"] == 0 and diag["gpu_total_mem_bytes"] == 0, diag
     assert prop.recommended_max_batch() >= 1
+    print("OK")
+    """
+    _assert_ok(_run_cudasim(script))
+
+
+def test_host_loop_clock_is_k_times_dt_not_a_running_sum() -> None:
+    """The step time handed to the kernel (ephemeris/frame lookup, impact time)
+    is ``k * dt_eff``. The loop kept ``t += dt_eff``, which on a step that is
+    not representable leaves ``k * dt_eff`` within a few dozen steps."""
+    script = """
+    from lunaris.common.batch_defs import build_fixed_step_grid_metadata
+
+    duration_s, output_dt_s, dt_s = 5000.0, 100.0, 7.0  # dt_eff = 100/14 s: not representable
+    dt_eff = float(build_fixed_step_grid_metadata(duration_s, output_dt_s, dt_s)["effective_dt_s"])
+
+    times = []
+
+    class _Recorder:
+        def __getitem__(self, _launch):
+            def _call(*args):
+                times.append(float(args[1]))
+            return _call
+
+    prop = point_mass_propagator(dt_s=dt_s)
+    bp._rk4_batch_kernel = _Recorder()
+    n = 2
+    one = np.ones(n)
+    prop.propagate(circular_states(n), one, one, one, one, duration_s, output_dt_s)
+
+    n_steps = len(times)
+    assert n_steps == 50 * 14, n_steps
+    expected = [float(k) * dt_eff for k in range(n_steps)]
+    assert times == expected  # exact, not approx
+    # the running sum the loop used to keep does leave k * dt_eff on this grid
+    t = 0.0
+    drifted = False
+    for k in range(n_steps):
+        drifted = drifted or (t != expected[k])
+        t += dt_eff
+    assert drifted, "the chosen grid no longer separates a running sum from k * dt_eff"
     print("OK")
     """
     _assert_ok(_run_cudasim(script))

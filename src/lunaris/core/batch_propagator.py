@@ -2438,6 +2438,7 @@ class GPUBatchPropagator:
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
         Y_out[0] = np.ascontiguousarray(Y0, dtype=np.float64)  # initial state = snapshot 0
         t_curr = 0.0
+        step_idx = 0  # the clock is step_idx * dt_eff, not a running sum (no drift)
         with cuda.gpus[self._device_id]:
             stream = cuda.stream()
             d_Y = cuda.to_device(np.ascontiguousarray(Y0, dtype=np.float64), stream=stream)
@@ -2521,7 +2522,8 @@ class GPUBatchPropagator:
                         np.float64(self._impact_alt_m),
                         np.int32(self._topo_pack["use_terrain"]),
                     )
-                    t_curr += dt_eff
+                    step_idx += 1
+                    t_curr = float(step_idx) * dt_eff
 
                 d_Y.copy_to_host(ary=Y_out[snap_idx + 1], stream=stream)
                 stream.synchronize()
