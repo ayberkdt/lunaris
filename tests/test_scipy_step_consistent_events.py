@@ -66,14 +66,14 @@ def test_circular_orbit_events_do_not_crash_root_finding(method: str) -> None:
 
 
 def test_unwrapped_events_reproduce_the_brentq_failure(monkeypatch) -> None:
-    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events: list(events))
+    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events, seeds=None: list(events))
     with pytest.raises(ValueError, match="different signs"):
         _run("RK45", _state(1.0))
 
 
 def test_wrapper_is_bit_identical_when_signs_are_consistent(monkeypatch) -> None:
     wrapped = _run("RK45", _state(1.05))
-    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events: list(events))
+    monkeypatch.setattr(scipy_runner, "_step_consistent_events", lambda events, seeds=None: list(events))
     plain = _run("RK45", _state(1.05))
     assert np.array_equal(wrapped.t, plain.t)
     assert np.array_equal(wrapped.y, plain.y)

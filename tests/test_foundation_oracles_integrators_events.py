@@ -9,11 +9,14 @@ All orbits: lunar point mass, inertial axes, SI units, solver time in seconds.
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
+from lunaris.core.propagation import propagate
 from lunaris.core.propagation.integrators.fixed_step import _accel_stepper
 from lunaris.core.propagation.integrators.rk import _rk4_step_full
 from lunaris.core.propagation.integrators.symplectic import _composed_step, _composition_weights
@@ -184,3 +187,86 @@ def test_outer_nested_weights_reach_nominal_order_control(levels, method, expect
     step = lambda t, y, h: _composed_step(_arc_accel, t, y, h, nested)  # noqa: E731
     order = _observed_order(step, _SWEEPS[method])
     assert abs(order - expected) < tol, f"outer-nested {method} observed order {order:.3f}"
+
+
+# -----------------------------------------------------------------------------
+# 2. / 3. Apsis events through propagate()
+# -----------------------------------------------------------------------------
+
+_EV_ORBIT = _Orbit(R + 2000e3, 0.25, math.radians(30), math.radians(40), math.radians(60), 0.0)
+_EV_Y0 = _EV_ORBIT.state(0.0)  # starts exactly at periapsis
+_T = _EV_ORBIT.period
+# Event-time tolerance: the root finder's own resolution is far below 1e-6 s;
+# 1e-6 s is ~1e-9 of the period T (~7 ks), i.e. well above float64 time round-off.
+_EVENT_TOL_S = 1e-6
+
+
+class _PointMassDynamics:
+    grav = None
+    ephem = None
+    flags = None
+
+    def build_rhs(self):
+        def rhs(_t, y):
+            state = np.asarray(y, dtype=np.float64)
+            out = np.empty_like(state)
+            out[:3] = state[3:6]
+            out[3:6] = _arc_accel(_t, state)
+            if state.size > 6:
+                out[6:] = 0.0
+            return out
+
+        return rhs
+
+
+def _cfg(method: str, max_step: float, **changes) -> PropagatorConfig:
+    return PropagatorConfig(
+        method=method, verbose=False, compute_2body_baseline=False,
+        use_nyquist_max_step=False, user_max_step_s=max_step,
+        events=EventConfig(detect_impact=False, enable_peri_apo_events=True), **changes,
+    )
+
+
+def _run(cfg: PropagatorConfig, duration: float, plan=None):
+    tc = TimeConfig(duration_s=duration, output_dt_s=_T / 40, samples_per_period=2, max_points_cap=10**6)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return propagate(_PointMassDynamics(), _EV_Y0, cfg, time_cfg=tc, maneuver_plan=plan)
+
+
+def _chunk_vs_unchunked(chunk_s: float | None):
+    # 3.2 periods, not 3: a periapsis exactly at the run's last instant is inside or just
+    # past it by rounding on any split of the run.
+    duration = 3.2 * _T
+    cfg = _cfg("DOP853", 60.0, chunk_s=chunk_s)
+    return _run(cfg, duration)
+
+
+def _assert_events_match_unchunked(chunk_s: float) -> None:
+    base = _chunk_vs_unchunked(None)
+    chunked = _chunk_vs_unchunked(chunk_s)
+    for k, name in ((0, "peri"), (1, "apo")):
+        ref = np.asarray(base.t_events[k])
+        got = np.asarray(chunked.t_events[k])
+        assert got.size == ref.size, f"{name}: {got} vs {ref}"
+        # _EVENT_TOL_S: the same root found in a differently split solve.
+        assert np.max(np.abs(got - ref), initial=0.0) < _EVENT_TOL_S
+
+
+def test_unchunked_apsis_events_match_the_oracle():
+    base = _chunk_vs_unchunked(None)
+    tp = _EV_ORBIT.apsis_times(1e-9, 3.2 * _T, "peri")
+    ta = _EV_ORBIT.apsis_times(0.0, 3.2 * _T, "apo")
+    np.testing.assert_allclose(base.t_events[0], tp, rtol=0.0, atol=_EVENT_TOL_S)
+    np.testing.assert_allclose(base.t_events[1], ta, rtol=0.0, atol=_EVENT_TOL_S)
+
+
+def test_chunked_run_at_half_period_keeps_apsis_events():
+    # Every chunk boundary is an apsis here. Each chunk used to read its start value as
+    # "on the surface" and drop it (0 of 3 periapsides, 0 of 3 apoapsides).
+    _assert_events_match_unchunked(_T / 2.0)
+
+
+@pytest.mark.parametrize("chunk_s", [_T / 4.0, 1000.0])
+def test_chunked_run_keeps_apsis_events_control(chunk_s):
+    _assert_events_match_unchunked(chunk_s)
