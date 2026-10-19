@@ -232,6 +232,51 @@ def test_torch_cuda_sh_policy_cpu_route_honours_unsupported_physics() -> None:
     assert "physics" in blocked.fallback_reason
 
 
+@pytest.mark.parametrize("numba_cuda", [True, False])
+def test_policy_does_not_send_an_adaptive_degree_run_to_the_full_degree_gpu_kernel(
+    monkeypatch: pytest.MonkeyPatch, numba_cuda: bool
+) -> None:
+    """The CPU engine blends the SH degree with altitude; the GPU kernels evaluate
+    the full degree everywhere: fall back, and say why."""
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
+
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: numba_cuda)
+    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: not numba_cuda)
+    monkeypatch.setattr(policy_mod, "_numba_cuda_sh_limits", lambda: (24, (24,)))
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="follow_mission", sh_degree=10)
+
+    assert resolve_batch_backend_policy(batch_cfg, _sim()).use_gpu
+    plan = resolve_batch_backend_policy(batch_cfg, _sim(adaptive=True))
+    assert plan.final_backend == BatchBackend.CPU and not plan.use_gpu
+    assert plan.fallback_applied is True
+    assert any("adaptive SH degree" in warning for warning in plan.warnings)
+    # Strict posture: refused at planning, never silently re-routed.
+    strict = SimpleNamespace(
+        use_gpu=True, gravity_mode_override="follow_mission", sh_degree=10,
+        sh_fallback_policy="error",
+    )
+    with pytest.raises(RuntimeError, match="adaptive SH degree|not supported"):
+        resolve_batch_backend_policy(strict, _sim(adaptive=True))
+
+
+def test_torch_cpu_sh_with_adaptive_gravity_is_refused_or_recorded_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lunaris.batch.backend_policy import resolve_batch_backend_policy
+
+    pytest.importorskip("torch")
+    _patch_no_cuda(monkeypatch)
+    with pytest.raises(RuntimeError, match="adaptive|not supported"):
+        resolve_batch_backend_policy(_torch_cfg("torch_cpu_sh", "error"), _sim(adaptive=True))
+    plan = resolve_batch_backend_policy(
+        _torch_cfg("torch_cpu_sh", "compatible_gpu"), _sim(adaptive=True)
+    )
+    assert plan.actual_backend == "cpu_sh"
+    assert plan.fallback_applied is True
+    assert "physics not supported" in plan.fallback_reason
+
+
 def test_torch_sh_preflight_refuses_adaptive_gravity() -> None:
     torch = pytest.importorskip("torch")
     from lunaris.core.torch_sh_propagator import TorchSHBatchPropagator, TorchSHPreflightError

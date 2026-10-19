@@ -932,7 +932,13 @@ def resolve_batch_backend_policy(
     # Numba kernel without importing the CUDA stack here.
     numba_unsupported = unsupported_force_models("numba_cuda_sh", flags) if flags is not None else ()
     torch_unsupported = unsupported_force_models("torch_cuda_sh", flags) if flags is not None else ()
-    fallback_policy = str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
+    # The GPU kernels evaluate the full requested degree everywhere; the CPU
+    # engine blends the degree with altitude when gravity.adaptive is on. The
+    # same configuration must not mean two different fields on two backends.
+    if sh_enabled and bool(getattr(getattr(gravity_cfg, "adaptive", None), "enabled", False)):
+        numba_unsupported = (*numba_unsupported, "adaptive SH degree")
+        torch_unsupported = (*torch_unsupported, "adaptive SH degree")
+    fallback_policy =str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
     # R29b (#3): paper-safe/strict/benchmark posture forces 'error' semantics so
     # a requested backend is never silently substituted at planning time.
     if fallback_forbidden(batch_cfg):
