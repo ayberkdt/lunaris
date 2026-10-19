@@ -109,7 +109,13 @@ def _step_consistent_events(
     give repeated roots at the start. Terminal events are not touched there: a
     start on the impact sphere moving inward stays an impact at the start.
     Ported from Sidera (commit 7e3deea4).
+
+    A step end where the event is exactly zero (a root that falls on it) is
+    reported as the smallest value past zero, on the side away from the
+    previous step end: the step that reaches the root reports it, and the next
+    step, which starts there, does not report it again.
     """
+    tiny = float(np.finfo(np.float64).tiny)
 
     def consistent(event: Callable[[float, np.ndarray], float]) -> Callable[[float, np.ndarray], float]:
         step_ends: list[tuple[float, float]] = []
@@ -145,6 +151,12 @@ def _step_consistent_events(
                     )
                     return value if same_side else end_value
             if frontier:
+                previous = step_ends[-1][1] if step_ends else math.nan
+                if float(value) == 0.0 and math.isfinite(previous) and previous != 0.0:
+                    # A root exactly on a step end belongs to the step that
+                    # reaches it: SciPy reads 0 as a crossing at the end of
+                    # that step and again at the start of the next.
+                    value = -math.copysign(tiny, previous)
                 step_ends.append((t_key, float(value)))
                 del step_ends[:-2]
             return value
