@@ -74,6 +74,13 @@ def make_altitude_stratified_split(
         if idx.size == 0:
             continue
         rng.shuffle(idx)
+        if idx.size < 2:
+            # Too few points in this altitude bin to hold out a val/test row
+            # without leaving the bin's training share empty; fold it into train
+            # entirely rather than raising (an outlier altitude bin should not
+            # abort the whole split) or dropping the row.
+            train_parts.append(idx)
+            continue
         _, n_val, n_test = _split_counts(idx.size, val_fraction, test_fraction)
         val_parts.append(idx[:n_val])
         test_parts.append(idx[n_val : n_val + n_test])
