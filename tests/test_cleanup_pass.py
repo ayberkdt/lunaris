@@ -18,7 +18,8 @@ def test_ablation_eval_commands_generation():
         "--train-data", "train.h5",
         "--test-data", "test.h5",
         "--ood-data", "ood.h5",
-        "--only", "baseline_single_siren"
+        "--only", "baseline_single_siren",
+        "--seeds", "42",
     ])
     entries = build_matrix(args)
     assert len(entries) == 1
