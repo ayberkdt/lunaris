@@ -364,7 +364,9 @@ def compute_impact_statistics(
     ----------
     result : BatchPropagationResult
     r_ref_m : float
-        Reference radius for lat/lon computation [m].
+        Not used: impact latitude and longitude are the directions of the
+        body-fixed impact positions, so no reference radius enters them. Kept
+        so existing callers keep working.
 
     Returns
     -------
@@ -564,7 +566,7 @@ def compute_ensemble_report(
         impact_status = IMPACT_DISABLED
     else:
         try:
-            imps = compute_impact_statistics(result, r_ref_m=r_ref_m)
+            imps = compute_impact_statistics(result)
             impact_status = IMPACT_EVALUATED
         except ValueError:
             # Detection was requested but the ensemble cannot support impact

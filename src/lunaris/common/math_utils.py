@@ -639,8 +639,8 @@ def nyquist_max_step_s(
     mu_m3s2: float,
     degree: int,
     r_min_alt_km: float,
-    safety_div: float = 5.0,
-    v_margin: float = 1.10,
+    safety_div: float = 4.0,  # PropagatorConfig.nyquist_safety_div
+    v_margin: float = 1.10,  # PropagatorConfig.nyquist_v_margin
 ) -> float:
     """
     Calculates the maximum integrator step size to avoid 'Aliasing' in high-degree

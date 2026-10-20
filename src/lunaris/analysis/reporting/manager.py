@@ -858,23 +858,13 @@ def plot_all(
 ) -> dict[str, Any]:
     """Orchestrate the full reporting pipeline (PNGs + PDF)."""
 
-    # --- Resolve defaults from visual_cfg (if present) ---
-    if visual_cfg is not None:
-        if save_pdf is None:
-            save_pdf = bool(getattr(visual_cfg, "save_pdf", True))
-        if save_png is None:
-            # support both names: save_pngs or save_png
-            save_png = bool(getattr(visual_cfg, "save_pngs", getattr(visual_cfg, "save_png", True)))
-        if dpi is None:
-            try:
-                dpi = int(getattr(visual_cfg, "default_dpi", 300))
-            except Exception:
-                dpi = 300
+    # --- Unset choices come from the run's VisualConfig (or its defaults) ---
+    from lunaris.core.config import VisualConfig
 
-    # --- Conservative fallbacks ---
-    save_pdf = True if save_pdf is None else bool(save_pdf)
-    save_png = True if save_png is None else bool(save_png)
-    dpi = 300 if dpi is None else int(dpi)
+    visual = visual_cfg if visual_cfg is not None else VisualConfig()
+    save_pdf = bool(visual.save_pdf) if save_pdf is None else bool(save_pdf)
+    save_png = bool(visual.save_pngs) if save_png is None else bool(save_png)
+    dpi = int(visual.default_dpi) if dpi is None else int(dpi)
 
     # --- Output directory ---
     if use_run_subdir:

@@ -881,8 +881,8 @@ def _compute_2body_baseline(
         return None
 
     method = _resolve_scipy_method(cfg.method)
-    rtol = float(getattr(cfg, "baseline_rtol", getattr(cfg, "rtol", 1e-9)))
-    atol = float(getattr(cfg, "baseline_atol", getattr(cfg, "atol", 1e-12)))
+    rtol = float(cfg.baseline_rtol)
+    atol = float(cfg.baseline_atol)
 
     sol = solve_ivp(
         fun=rhs2,
