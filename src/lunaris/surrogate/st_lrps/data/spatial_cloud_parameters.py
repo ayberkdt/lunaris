@@ -416,6 +416,13 @@ class CloudSuiteConfig:
             raise ValueError("boundary_mode must be 'strict' or 'soft'")
         if self.dtype not in ("float32", "float64"):
             raise ValueError("dtype must be 'float32' or 'float64'")
+        ood_low_lo = float(self.train_alt_min_km) - float(self.ood_margin_km)
+        if ood_low_lo < 0.0:
+            raise ValueError(
+                "ood_low band would extend below the lunar surface: "
+                f"train_alt_min_km={float(self.train_alt_min_km)} - ood_margin_km={float(self.ood_margin_km)} "
+                f"= {ood_low_lo} km < 0. Increase train_alt_min_km or decrease ood_margin_km."
+            )
 
     @property
     def ood_low_alt_min_km(self) -> float:
