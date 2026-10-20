@@ -320,10 +320,19 @@ def _evidence_taxonomy_block(
     paper-safe gate) can see whether the run carries model-error field evidence
     or only orbit-level trajectory error.
     """
+    # A column in the header is not a measurement: the benchmark pipeline
+    # writes "" for a missing extended metric instead of fabricating a value
+    # (benchmark_pipeline._standardize_scenario_rows). Counting a column whose
+    # every value is blank or non-finite would let a schema-only field_error
+    # column read as field-level evidence, so only names that carry a finite
+    # value in at least one row are classified.
     names: set[str] = set()
     for rows in (metrics_rows, scenario_rows, runtime_rows):
         for row in rows:
-            names.update(row.keys())
+            for key, value in row.items():
+                number = _to_float(value)
+                if number is not None and math.isfinite(number):
+                    names.add(key)
     # Drop obvious non-metric identity/label columns.
     names -= {"model", "reference", "scenario_id", "status", "backend", "device",
               "domain_warning", "n_scenarios", "n_steps"}

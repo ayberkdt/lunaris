@@ -561,8 +561,7 @@ def _validate_cache_compatibility(
     Returns a list of human-readable warnings (possibly empty). By default any
     incompatibility raises ``ValueError`` so stale trajectories are never
     silently reused; ``--allow-stale-cache`` downgrades every refusal to a
-    warning instead. A cache written before fingerprints existed is allowed
-    with a warning (the explicit field checks above still apply).
+    warning instead. A cache without a config fingerprint is refused too.
     """
     warnings: list[str] = []
     if getattr(args, "rebuild_metrics", False):
@@ -613,13 +612,15 @@ def _validate_cache_compatibility(
 
     # Deterministic fingerprint guard (Fix 5). Catches drift in cache-relevant
     # fields that are not in the explicit list above (e.g. gpu_rk4_dt_s_list and
-    # the ST-LRPS weight hash). Missing fingerprint => allow + warn.
+    # the ST-LRPS weight hash). A missing fingerprint is refused: without it the
+    # fields outside the explicit list cannot be checked at all.
     old_fp = old.get("config_fingerprint")
     new_fp = _config_fingerprint(args)
     if not old_fp:
-        warnings.append(
-            "Existing benchmark cache predates config fingerprints; reusing without a "
-            "fingerprint check. Re-run without --reuse-cache to stamp one."
+        _refuse(
+            "Existing benchmark cache carries no config fingerprint, so drift in fields "
+            "outside the explicit checks cannot be detected. Re-run without --reuse-cache "
+            "to stamp one (pass --allow-stale-cache to override)."
         )
     elif str(old_fp) != str(new_fp):
         _refuse(

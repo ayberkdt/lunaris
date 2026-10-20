@@ -620,6 +620,30 @@ def test_backend_random_sampling_remains_valid_within_bounds():
     assert all(s.raw_unit_sample is None for s in scenarios)
 
 
+def test_backend_random_sampling_rejects_only_invalid_geometry(monkeypatch):
+    """Ported from Sidera 85116f9c: a bug in the element helpers must surface,
+    not read as a rejected draw that biases the scenario distribution."""
+    import numpy as np
+
+    from lunaris.surrogate.st_lrps.evaluation._gravity_benchmark import compute
+
+    args = _sampling_args(sampling_method="random", random_scenarios=3)
+
+    def _invalid(*_a, **_k):
+        raise ValueError("invalid geometry")
+
+    monkeypatch.setattr(compute, "_state_from_elements", _invalid)
+    # ValueError is a rejected draw: no scenario survives the attempt budget.
+    assert compute.generate_random_scenarios(args, np.random.default_rng(0)) == []
+
+    def _bug(*_a, **_k):
+        raise RuntimeError("helper bug")
+
+    monkeypatch.setattr(compute, "_state_from_elements", _bug)
+    with pytest.raises(RuntimeError, match="helper bug"):
+        compute.generate_random_scenarios(args, np.random.default_rng(0))
+
+
 @pytest.mark.parametrize("method", ["lhs", "sobol"])
 def test_backend_space_filling_sampling_generates_valid_scenarios(method):
     pytest.importorskip("scipy.stats.qmc")
@@ -1593,7 +1617,7 @@ def test_backend_fingerprint_mismatch_default_raises_but_allow_stale_warns(tmp_p
     assert any(w.startswith("[allow-stale-cache]") for w in warnings)
 
 
-def test_backend_missing_fingerprint_allows_with_warning(tmp_path):
+def test_backend_matching_fingerprinted_cache_is_reused(tmp_path):
     from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1)
@@ -1601,15 +1625,33 @@ def test_backend_missing_fingerprint_allows_with_warning(tmp_path):
     cache_dir = tmp_path / "benchmark_cache"
     cgm._write_cache_manifest(args, cache_dir, scenarios, ["sh20"])
 
-    # Simulate a cache written before fingerprints existed.
+    assert cgm._validate_cache_compatibility(args, cache_dir) == []
+
+
+def test_backend_missing_fingerprint_is_refused_unless_allow_stale(tmp_path):
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=1)
+    scenarios = cgm.generate_validation_scenarios(args)
+    cache_dir = tmp_path / "benchmark_cache"
+    cgm._write_cache_manifest(args, cache_dir, scenarios, ["sh20"])
+
+    # A cache manifest without a fingerprint (e.g. written before fingerprints).
     path = cache_dir / "cache_manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     manifest.pop("config_fingerprint", None)
     path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    # Same config => field checks pass; missing fingerprint => allow + warn.
-    warnings = cgm._validate_cache_compatibility(args, cache_dir)
-    assert any("predates config fingerprints" in w for w in warnings)
+    # Same config => field checks pass; the missing fingerprint is refused.
+    with pytest.raises(ValueError, match="no config fingerprint"):
+        cgm._validate_cache_compatibility(args, cache_dir)
+
+    # --allow-stale-cache downgrades the refusal to a warning.
+    stale_ok = _sampling_args(random_scenarios=1, allow_stale_cache=True)
+    warnings = cgm._validate_cache_compatibility(stale_ok, cache_dir)
+    assert any(
+        w.startswith("[allow-stale-cache]") and "no config fingerprint" in w for w in warnings
+    )
 
 
 def test_backend_run_metadata_enriched_fields(tmp_path, monkeypatch):

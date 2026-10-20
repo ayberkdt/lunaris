@@ -325,3 +325,28 @@ def test_mu_override_matching_artifact_gm_loads(tmp_path, monkeypatch):
             run, mu_override=float(MU_MOON), device_preference="cpu"
         )
     assert provider.GM_m3s2 == pytest.approx(float(MU_MOON) * 1.0001)  # artifact GM wins
+
+
+@pytest.mark.parametrize("factor", [1.01, 0.99, 1.0006])
+def test_mu_override_outside_lunar_gm_tolerance_is_refused(tmp_path, monkeypatch, factor):
+    """Ported from Sidera 4a8784c1: the override-vs-artifact GM check uses the
+    strict lunar tolerance (LUNAR_GM_REL_TOL = 5e-4), not a 20% envelope."""
+    from lunaris.common.lunar_data import LUNAR_GM_REL_TOL
+
+    assert LUNAR_GM_REL_TOL == 5.0e-4
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
+    run = _make_legacy_run(tmp_path, resolved_mu=float(MU_MOON) * factor)
+    with pytest.raises(ValueError, match="mu_override"):
+        SurrogateGravityModel.from_model_dir(
+            run, mu_override=float(MU_MOON), device_preference="cpu"
+        )
+
+
+def test_mu_override_inside_lunar_gm_tolerance_loads(tmp_path, monkeypatch):
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
+    run = _make_legacy_run(tmp_path, resolved_mu=float(MU_MOON) * 1.0004)
+    with pytest.warns(RuntimeWarning, match="legacy"):
+        provider = SurrogateGravityModel.from_model_dir(
+            run, mu_override=float(MU_MOON), device_preference="cpu"
+        )
+    assert provider.GM_m3s2 == pytest.approx(float(MU_MOON) * 1.0004)

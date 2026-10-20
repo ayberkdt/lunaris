@@ -57,6 +57,28 @@ def test_classify_metric_returns_none_for_non_metric():
 
 
 @pytest.mark.parametrize(
+    "name",
+    ["metric_order", "numeric_tolerance", "eccentricity", "extended_metrics_source",
+     "fabric_score"],
+)
+def test_ric_marker_does_not_match_inside_other_words(name):
+    # "ric" (radial/in-track/cross-track) is a whole-token marker; these names
+    # only contain the three letters inside another word.
+    assert classify_metric(name) is None
+
+
+@pytest.mark.parametrize("name", ["ric_rms_radial_m", "ric_rms_along_m", "e_ric_m", "orbit.ric_rms_m"])
+def test_ric_marker_still_matches_real_ric_columns(name):
+    assert classify_metric(name) == TRAJECTORY_ERROR
+
+
+@pytest.mark.parametrize("name", ["accel_max_error_m_s2", "potential_error_m2_s2"])
+def test_extended_field_columns_are_field_evidence(name):
+    # Exact EXTENDED_SCENARIO_COLUMNS names the benchmark pipeline writes.
+    assert classify_metric(name) == MODEL_ERROR_FIELD
+
+
+@pytest.mark.parametrize(
     "name,expected",
     [
         ("field_error.accel_rms_m_s2", MODEL_ERROR_FIELD),

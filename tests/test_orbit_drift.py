@@ -149,6 +149,32 @@ def test_domain_tracking_total_accel_returns_the_runtimes_total_unchanged():
     accel = _DomainTrackingTotalAccel(_TotalOnlyRuntime(), strict_domain=False)
     out = accel(np.array([[RADIUS, 0.0, 0.0], [0.0, RADIUS, 0.0]]))
     np.testing.assert_array_equal(out, np.full((2, 3), 7.0e-3))
+    assert accel.domain_report()["domain_check_failures"] == 0
+
+
+class _BrokenDomainRuntime(_TotalOnlyRuntime):
+    def domain_status(self, r):
+        raise KeyError("domain_contract")
+
+
+def test_failed_domain_check_is_counted_not_read_as_in_domain():
+    from lunaris.surrogate.st_lrps.evaluation.orbit_drift import _DomainTrackingTotalAccel
+
+    accel = _DomainTrackingTotalAccel(_BrokenDomainRuntime(), strict_domain=False)
+    out = accel(np.array([[RADIUS, 0.0, 0.0], [0.0, RADIUS, 0.0]]))
+    np.testing.assert_array_equal(out, np.full((2, 3), 7.0e-3))
+    report = accel.domain_report()
+    assert report["evaluations"] == 2
+    assert report["domain_check_failures"] == 2
+    assert report["extrapolating_evaluations"] == 0
+
+
+def test_failed_domain_check_raises_under_strict_domain():
+    from lunaris.surrogate.st_lrps.evaluation.orbit_drift import _DomainTrackingTotalAccel
+
+    accel = _DomainTrackingTotalAccel(_BrokenDomainRuntime(), strict_domain=True)
+    with pytest.raises(RuntimeError, match="domain_status"):
+        accel(np.array([[RADIUS, 0.0, 0.0]]))
 
 
 def test_orbit_drift_runtime_uses_the_artifacts_own_base(tmp_path):

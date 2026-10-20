@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.lunar_data import LUNAR_GM_REL_TOL
 from lunaris.physics.spherical_harmonics import GravityModel
 from lunaris.physics.torch_spherical_harmonics import TorchSHGravityEvaluator
 from lunaris.surrogate.runtime.artifact import _find_checkpoint_for_run, _is_valid_surrogate_run
@@ -196,7 +197,9 @@ class SurrogateGravityModel:
             Optional mission-side overrides used when the artifact does not carry
             explicit central-body metadata. When the artifact does carry
             ``resolved_mu_si``, the artifact value is used and a ``mu_override``
-            more than 20% away from it raises ``ValueError``.
+            whose relative difference from it exceeds
+            :data:`~lunaris.common.lunar_data.LUNAR_GM_REL_TOL` (5e-4) raises
+            ``ValueError``.
         device_preference:
             ``"cpu"``, ``"cuda"``, or ``"auto"``. The desktop app defaults to
             CPU because solver RHS calls are fine-grained and frequent.
@@ -267,16 +270,18 @@ class SurrogateGravityModel:
         if mu_guess is None:
             mu_guess = mu_override if mu_override is not None else MU_MOON
         elif mu_override is not None:
-            # The artifact's own GM wins, so _validate_body_compatibility (which
-            # compares resolved_mu_si with GM_m3s2 == resolved_mu_si) can never
-            # fire; the caller's expected body GM must be checked here instead.
+            # The artifact's own GM wins and becomes GM_m3s2, so the GM check in
+            # _validate_body_compatibility (resolved_mu_si vs GM_m3s2) cannot
+            # fire on this path; the caller's expected body GM is checked here,
+            # with the strict lunar body-identity tolerance (a 20% envelope let
+            # a mismatched GM load).
             rel_err = abs(float(mu_guess) - float(mu_override)) / max(abs(float(mu_override)), 1.0)
-            if rel_err > 0.20:
+            if rel_err > LUNAR_GM_REL_TOL:
                 raise ValueError(
                     "mu_override does not match the surrogate artifact's resolved "
                     f"central-body GM: artifact resolved_mu_si={float(mu_guess):.6e} m^3/s^2, "
                     f"mu_override={float(mu_override):.6e} m^3/s^2 (relative difference "
-                    f"{rel_err:.3f} > 0.20). Run dir: {run_dir}"
+                    f"{rel_err:.2e} exceeds {LUNAR_GM_REL_TOL:.1e}). Run dir: {run_dir}"
                 )
 
         r_ref_guess = config.get("resolved_r_ref_m")
@@ -462,7 +467,7 @@ class SurrogateGravityModel:
         if resolved_mu is not None:
             resolved_mu = float(resolved_mu)
             rel_err = abs(resolved_mu - float(self.GM_m3s2)) / max(abs(float(self.GM_m3s2)), 1.0)
-            if rel_err > 0.20:
+            if rel_err > LUNAR_GM_REL_TOL:
                 raise ValueError(
                     "Surrogate gravity artifact central-body GM does not match the active simulation body. "
                     f"artifact={resolved_mu:.6e} m^3/s^2, active={float(self.GM_m3s2):.6e} m^3/s^2"

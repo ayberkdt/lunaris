@@ -231,3 +231,25 @@ def test_paper_safe_error_lists_every_violation_at_once():
     message = str(excinfo.value)
     for marker in ("field_error", "orbit_error", "runtime", "identity", "synthetic"):
         assert marker in message, marker
+
+
+@pytest.mark.parametrize(
+    "metrics",
+    [{}, {"accel_rms_mgal": ""}, {"accel_rms_mgal": float("nan")}, {"columns": []}],
+)
+def test_empty_or_non_finite_metric_mapping_is_not_present(metrics):
+    # {} or a mapping of only blank / non-finite values is no measurement.
+    block = build_error_decomposition_schema(field_error=metrics)
+    assert block["field_error"]["present"] is False
+
+
+@pytest.mark.parametrize("metrics", [{"accel_rms_mgal": 0.0}, {"columns": ["accel_rms_m_s2"]}])
+def test_finite_metric_or_column_list_is_present(metrics):
+    block = build_error_decomposition_schema(field_error=metrics)
+    assert block["field_error"]["present"] is True
+
+
+def test_paper_safe_rejects_empty_field_error_mapping():
+    block = _complete_block(field_error={})
+    with pytest.raises(ValueError, match="field_error"):
+        validate_paper_safe_error_decomposition(block)
