@@ -436,6 +436,34 @@ def _terminal_event_endpoint(
 
     return best
 
+#: Clearance [m] kept between the terrain-switch shell and the highest terrain
+#: point plus the impact altitude (covers float rounding of the radius formula).
+_HYBRID_SWITCH_MARGIN_M = 100.0
+
+
+def _hybrid_switch_alt_m(cfg: Any, topo_grid: Any, R_ref_m: float, impact_alt_m: float) -> float:
+    """Altitude above ``R_ref_m`` [m] below which the hybrid impact event samples the terrain.
+
+    Above the switch the event is ``alt_ref - impact_alt``, so the shell must
+    contain every point whose clearance over the terrain can reach
+    ``impact_alt``: with the configured 11 km and a 2 km impact altitude, a pass
+    over a summit 10.16 km above the 1738 km sphere (LDEM 64 ppd) was missed or
+    found only at the 11 km shell. When the grid exposes its radius envelope the
+    configured value is raised to ``r_terrain_max - R_ref + impact_alt + margin``
+    (never lowered, so a run whose configured switch already covers that is
+    unchanged).
+    """
+    configured = float(getattr(cfg, "hybrid_switch_alt_m", 11_000.0))
+    envelope = getattr(topo_grid, "radius_envelope_m", None)
+    if not callable(envelope):
+        return configured
+    r_terrain_max_m = float(envelope()[1])
+    if not np.isfinite(r_terrain_max_m):
+        return configured
+    needed = r_terrain_max_m - float(R_ref_m) + float(impact_alt_m) + _HYBRID_SWITCH_MARGIN_M
+    return max(configured, needed)
+
+
 def build_events(
     dynamics: DynamicsEngine,
     cfg: PropagatorConfig,
@@ -467,7 +495,7 @@ def build_events(
                     impact_alt_m=float(impact_alt_m),
                     topo=topo_grid,
                     r_i_to_bf=r_i_to_bf,
-                    switch_alt_m=float(getattr(cfg, "hybrid_switch_alt_m", 11_000.0)),
+                    switch_alt_m=_hybrid_switch_alt_m(cfg, topo_grid, float(R_ref), float(impact_alt_m)),
                     kind=str(getattr(cfg, "hybrid_kind", "bilinear")),
                     terminal=True,
                 )
