@@ -620,6 +620,30 @@ def test_backend_random_sampling_remains_valid_within_bounds():
     assert all(s.raw_unit_sample is None for s in scenarios)
 
 
+def test_backend_random_sampling_rejects_only_invalid_geometry(monkeypatch):
+    """Ported from Sidera 85116f9c: a bug in the element helpers must surface,
+    not read as a rejected draw that biases the scenario distribution."""
+    import numpy as np
+
+    from lunaris.surrogate.st_lrps.evaluation._gravity_benchmark import compute
+
+    args = _sampling_args(sampling_method="random", random_scenarios=3)
+
+    def _invalid(*_a, **_k):
+        raise ValueError("invalid geometry")
+
+    monkeypatch.setattr(compute, "_state_from_elements", _invalid)
+    # ValueError is a rejected draw: no scenario survives the attempt budget.
+    assert compute.generate_random_scenarios(args, np.random.default_rng(0)) == []
+
+    def _bug(*_a, **_k):
+        raise RuntimeError("helper bug")
+
+    monkeypatch.setattr(compute, "_state_from_elements", _bug)
+    with pytest.raises(RuntimeError, match="helper bug"):
+        compute.generate_random_scenarios(args, np.random.default_rng(0))
+
+
 @pytest.mark.parametrize("method", ["lhs", "sobol"])
 def test_backend_space_filling_sampling_generates_valid_scenarios(method):
     pytest.importorskip("scipy.stats.qmc")

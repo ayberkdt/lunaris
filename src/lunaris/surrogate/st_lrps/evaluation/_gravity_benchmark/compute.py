@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import logging
 import math
 import time
 from dataclasses import dataclass, replace
@@ -49,6 +50,8 @@ from .types import (
     GravityModelCache,
     Scenario,
 )
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # GPU batch comparison helpers
@@ -393,12 +396,22 @@ def propagate_gpu_batch_model(
             return torch.cat((v_i, a_i), dim=1)
 
     throttle = progress.StepThrottle(total_steps)
+    progress_failed = False
 
     def _emit_progress(step: int, elapsed: float) -> None:
-        if progress_cb is None:
+        # A broken progress display must not stop the propagation, but it is
+        # logged once instead of vanishing.
+        nonlocal progress_failed
+        if progress_cb is None or progress_failed:
             return
-        with contextlib.suppress(Exception):
+        try:
             progress_cb(int(step), total_steps, float(elapsed))
+        except Exception:
+            progress_failed = True
+            logger.warning(
+                "benchmark progress callback failed; progress reports stop here",
+                exc_info=True,
+            )
 
     if str(device).startswith("cuda"):
         torch.cuda.synchronize()
@@ -728,7 +741,10 @@ def generate_random_scenarios(
                 initial_state=state,
                 sampling_method="random",
             ))
-        except Exception:
+        except ValueError:
+            # A geometrically invalid draw, rejected by the element helpers.
+            # Any other exception is a bug: catching it here would turn it into
+            # a silent rejection that biases the scenario distribution.
             continue
 
     if len(scenarios) < n:
