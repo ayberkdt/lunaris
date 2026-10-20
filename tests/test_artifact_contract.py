@@ -357,3 +357,20 @@ def test_compatibility_report_a_sign_and_missing_envelope_branches():
     # Missing dataset provenance hashes -> warnings.
     rep3 = _contract().compatibility_report(_contract())
     assert any("dataset_sha256" in w for w in rep3["warnings"])
+
+
+@pytest.mark.parametrize(
+    ("meta", "expected"),
+    [
+        ({"alt_min_km": 0.0, "alt_max_km": 500.0}, (0.0, 500.0)),
+        ({"altitude_min_km": 0.0, "altitude_max_km": 500.0}, (0.0, 500.0)),
+        ({"alt_min_km": 100.0, "altitude_min_km": 50.0, "alt_max_km": 900.0}, (100.0, 900.0)),
+        ({"degree_min": 2}, (None, None)),
+    ],
+)
+def test_dataset_contract_from_config_keeps_a_zero_altitude_bound(meta, expected):
+    # `alt_min_km or altitude_min_km` turned a ground-level 0.0 km bound into None.
+    from lunaris.surrogate.st_lrps.shared.contracts import _dataset_contract_from_config
+
+    dataset = _dataset_contract_from_config({"dataset_meta": meta})
+    assert (dataset["altitude_min_km"], dataset["altitude_max_km"]) == expected

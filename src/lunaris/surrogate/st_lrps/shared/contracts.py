@@ -363,8 +363,16 @@ def _dataset_contract_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
         "mu_si": meta.get("mu_si") or config.get("resolved_mu_si") or config.get("mu_si"),
         "r_ref_m": meta.get("r_ref_m") or config.get("resolved_r_ref_m") or config.get("r_ref_m"),
         "a_sign": meta.get("a_sign") or config.get("resolved_a_sign") or config.get("a_sign"),
-        "altitude_min_km": meta.get("alt_min_km") or meta.get("altitude_min_km"),
-        "altitude_max_km": meta.get("alt_max_km") or meta.get("altitude_max_km"),
+        # `or` would turn a legitimate alt_min_km=0.0 (ground level) into the
+        # fallback (typically None, since the meta dict rarely carries both
+        # keys) because 0.0 is falsy; only fall back when the primary key is
+        # genuinely absent.
+        "altitude_min_km": (
+            meta.get("alt_min_km") if meta.get("alt_min_km") is not None else meta.get("altitude_min_km")
+        ),
+        "altitude_max_km": (
+            meta.get("alt_max_km") if meta.get("alt_max_km") is not None else meta.get("altitude_max_km")
+        ),
         "coordinate_frame": meta.get("coordinate_frame") or meta.get("frame") or MOON_FIXED_FRAME,
         "units": meta.get("units") or {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
         "generator_version": meta.get("generator_version") or meta.get("created_by"),
