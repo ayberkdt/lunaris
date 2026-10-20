@@ -937,10 +937,18 @@ def build_spice_tables(
             "(start_date). Move start_date earlier instead of using a negative t0_s."
         )
 
+    output_dt = _require_positive("output_dt_s", dt)
+    table_dt = min(output_dt, _MAX_TABLE_DT_S)
+    # A Yoshida composition samples the force up to 0.916 steps past tf, and the
+    # samplers extrapolate one table interval. While the table step was the
+    # output step that band covered any step <= output_dt; with the capped step
+    # the table runs on by the difference, so it still does. Runs with
+    # output_dt <= 60 s build exactly the same table as before.
+    pad_s = output_dt - table_dt
     return build_tables(
         start_utc=start_utc,
-        duration_s=t0_s + _require_positive("duration_s", time_cfg.duration_s),
-        output_dt_s=min(_require_positive("output_dt_s", dt), _MAX_TABLE_DT_S),
+        duration_s=t0_s + _require_positive("duration_s", time_cfg.duration_s) + pad_s,
+        output_dt_s=table_dt,
         kernels=spice_cfg.kernels,
         inertial_frame=str(spice_cfg.inertial_frame),
         fixed_frame=str(spice_cfg.fixed_frame),
