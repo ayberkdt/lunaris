@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import subprocess
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
@@ -13,8 +12,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.provenance import resolve_repo_commit, utc_now_iso
 from lunaris.common.provenance import sha256_file as _sha256_file
-from lunaris.common.provenance import utc_now_iso
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
 # Canonical target/frame/derivative-convention names live in
@@ -81,20 +80,15 @@ def stamp_hdf5_content_hash(path: str | Path, dataset_name: str = "data") -> Dat
 
 
 def _repo_commit_sha() -> str | None:
-    try:
-        root = Path(__file__).resolve().parents[5]
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=True,
-        )
-        value = completed.stdout.strip()
-        return value or None
-    except Exception:
-        return None
+    """Best-effort git commit SHA for dataset provenance.
+
+    Delegates to :func:`lunaris.common.provenance.resolve_repo_commit`, which
+    runs git with ``cwd`` pinned to the installed ``lunaris`` package directory.
+    The previous ``Path(__file__).resolve().parents[5]`` offset assumed an
+    editable source-tree checkout; from an installed wheel it resolves outside
+    the package entirely.
+    """
+    return resolve_repo_commit()
 
 
 def _json_default(value: Any) -> Any:

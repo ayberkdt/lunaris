@@ -705,7 +705,9 @@ class STLRPSTrainer:
         self.laplacian_requested: bool = _laplacian_requested(cfg)
         _lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
         if _lmode not in ("off", "diagnostic", "train"):
-            _lmode = "diagnostic"
+            raise ValueError(
+                f"laplacian_mode={_lmode!r} is not valid. Valid choices: off, diagnostic, train."
+            )
         self.laplacian_mode: str = _lmode
 
         # bfloat16 instead of float16: SIREN sin(w0 · x) overflows fp16 mantissa.
@@ -3802,7 +3804,9 @@ def _run_training_loop(session: _TrainingSession) -> str:
     _lap_requested = _laplacian_requested(cfg)
     _col_lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
     if _col_lmode not in ("off", "diagnostic", "train"):
-        _col_lmode = "diagnostic"
+        raise ValueError(
+            f"laplacian_mode={_col_lmode!r} is not valid. Valid choices: off, diagnostic, train."
+        )
     if not _lap_requested:
         logger.info("Laplacian: not requested (default) — no Laplacian diagnostics or regularization.")
     if _lap_requested and _col_lmode in ("diagnostic", "train"):
@@ -3933,6 +3937,7 @@ def _run_training_loop(session: _TrainingSession) -> str:
             try:
                 _kept_lines: list[str] = []
                 _dropped_rows = 0
+                _skipped_rows = 0
                 with open(log_path, encoding="utf-8") as _hf:
                     for _line in _hf:
                         _line = _line.strip()
@@ -3941,6 +3946,9 @@ def _run_training_loop(session: _TrainingSession) -> str:
                         try:
                             _prev_row = json.loads(_line)
                         except Exception:
+                            # The row is lost from training_history.csv and the
+                            # plots this resume rewrites: count it, say so below.
+                            _skipped_rows += 1
                             continue
                         # Resuming from an earlier snapshot re-trains the later
                         # epochs (0-based ``epoch`` >= start_epoch): drop their
@@ -3961,6 +3969,11 @@ def _run_training_loop(session: _TrainingSession) -> str:
                         _dropped_rows, int(start_epoch) + 1,
                     )
                 logger.info("[resume] loaded %s previous history rows (append mode).", len(history))
+                if _skipped_rows:
+                    logger.warning(
+                        "[resume] skipped %d malformed history line(s) in %s; those epochs are "
+                        "missing from the rewritten history and plots.", _skipped_rows, log_path,
+                    )
                 _hist_mode = "a"
             except Exception as _hexc:
                 logger.warning(
@@ -4017,8 +4030,12 @@ def _run_training_loop(session: _TrainingSession) -> str:
         _interrupt, lambda: _restore_stop_signal_handlers(_orig_handlers)
     )
     _orig_handlers = _install_stop_signal_handlers(_on_stop_signal)
+    # Restore the original stop-signal handlers when the loop exits, also when
+    # it raises, so a failed train() call never leaves its handlers installed.
+    _restore_handlers_on_exit = contextlib.ExitStack()
+    _restore_handlers_on_exit.callback(_restore_stop_signal_handlers, _orig_handlers)
 
-    with open(log_path, _hist_mode, encoding="utf-8") as logf:
+    with _restore_handlers_on_exit, open(log_path, _hist_mode, encoding="utf-8") as logf:
         for epoch in range(start_epoch, cfg.epochs):
             epoch_t0 = time.perf_counter()
             lr_scale = _lr_multiplier_for_epoch(
@@ -4357,9 +4374,6 @@ def _run_training_loop(session: _TrainingSession) -> str:
                     },
                 )
                 break
-
-    # Restore the original stop-signal handlers (best-effort).
-    _restore_stop_signal_handlers(_orig_handlers)
 
     _write_training_history_csv(history, layout.history_csv)
     _save_training_plots(history, outdir)

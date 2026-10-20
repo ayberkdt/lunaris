@@ -107,6 +107,20 @@ def test_plan_disabled_by_default():
     assert plan.epochs == []
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("periodic_eval_dataset", "tset", "periodic_eval_dataset='tset' is not a valid"),
+        ("periodic_eval_prefer_checkpoint", "bset", "periodic_eval_prefer_checkpoint='bset' is not a valid"),
+    ],
+)
+def test_plan_rejects_invalid_dataset_or_checkpoint_preference(field, value, match):
+    # A programmatic config typo used to be replaced by "val"/"last" silently,
+    # so periodic eval scored a different split or checkpoint than requested.
+    with pytest.raises(ValueError, match=match):
+        resolve_periodic_eval_plan(_cfg(periodic_eval_count=10, **{field: value}))
+
+
 def test_plan_count_enabled():
     plan = resolve_periodic_eval_plan(_cfg(periodic_eval_count=10))
     assert plan.enabled is True
