@@ -162,3 +162,25 @@ def test_maybe_autoinclude_lunar_fk_keeps_legacy_de440_fallback(tmp_path: Path) 
 
     assert out[0] == str(tf)
     assert out[1] == str(bpc)
+
+
+def test_a_requested_terrain_root_that_does_not_load_stops_the_run(tmp_path: Path) -> None:
+    """The CLI was asked for the terrain by name: flying the constant sphere instead must not pass silently."""
+    import argparse
+
+    import pytest
+
+    from lunaris.cli.common_args import init_surface_provider
+
+    empty = tmp_path / "topo"
+    empty.mkdir()
+    args = argparse.Namespace(ldem_root=empty, albedo_root=None, ldem_ppd=16)
+    with pytest.raises(FileNotFoundError, match=r"No \.lbl/\.txt labels found"):
+        init_surface_provider(args)
+
+    args = argparse.Namespace(ldem_root=None, albedo_root=empty, ldem_ppd=None)
+    with pytest.raises(FileNotFoundError):
+        init_surface_provider(args)
+
+    # No root requested: unchanged, no provider at all.
+    assert init_surface_provider(argparse.Namespace(ldem_root=None, albedo_root=None, ldem_ppd=None)) is None

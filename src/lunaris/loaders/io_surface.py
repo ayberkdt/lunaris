@@ -755,6 +755,7 @@ class TopographyGrid(TopographyProvider):
         self._lon_centers_deg = np.linspace(lon_w, lon_e, int(self.info.samples), dtype=np.float64)
 
         self._arr: npt.NDArray[np.generic] | None = None
+        self._radius_envelope: tuple[float, float] | None = None
         if mmap:
             self.open(mmap=True)
 
@@ -802,6 +803,16 @@ class TopographyGrid(TopographyProvider):
     # Geometry helpers
     # -------------------------------------------------------------------------
     @property
+    def lat_centers_deg(self) -> npt.NDArray[np.float64]:
+        """Pixel-centre latitudes [deg], one per raster line (storage order)."""
+        return self._lat_centers_deg
+
+    @property
+    def lon_centers_deg(self) -> npt.NDArray[np.float64]:
+        """Pixel-centre longitudes [deg], one per raster sample."""
+        return self._lon_centers_deg
+
+    @property
     def reference_radius_m(self) -> float:
         """
         Reference radius [m] implied by the product.
@@ -821,6 +832,23 @@ class TopographyGrid(TopographyProvider):
             return (sum(valid) / len(valid)) * 1_000.0
 
         return float(R_MOON_MEAN)
+
+    def radius_envelope_m(self) -> tuple[float, float]:
+        """Min/max surface radius [m] from the body centre over the whole raster.
+
+        The same envelope :func:`grid_topo_payload` hands the batch impact
+        kernels (``r_terrain_min_m`` / ``r_terrain_max_m``); computed once and
+        cached. Bilinear and nearest samples never leave it.
+        """
+        if self._radius_envelope is None:
+            self._radius_envelope = _topo_radius_envelope(
+                self.dn_km,
+                float(self.info.scaling_factor) * 1000.0,
+                float(self.info.offset_km) * 1000.0,
+                float(getattr(self.info, "missing_constant", float("nan"))),
+                default_m=float(R_MOON_MEAN),
+            )
+        return self._radius_envelope
 
     def altitude_above_reference_m(self, x_m: Number, y_m: Number, z_m: Number) -> float:
         """Altitude [m] above the product reference radius for a Cartesian point."""

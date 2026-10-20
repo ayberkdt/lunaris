@@ -293,3 +293,47 @@ def test_build_events_without_topo_is_pure_sphere():
     y = np.array([r, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
     ev = _impact_event(None)
     assert ev(0.0, y) == pytest.approx(alt_m)
+
+
+class _SummitTerrain(_FlatTerrain):
+    """Flat terrain that also reports its radius envelope, as TopographyGrid does."""
+
+    def radius_envelope_m(self) -> tuple[float, float]:
+        return self._r, self._r
+
+
+# Highest LDEM 64 ppd radius 1748.157 km = 10.157 km above the 1738.0 km sphere.
+_SUMMIT_ABOVE_REF_M = 10_157.0
+
+
+def test_hybrid_switch_altitude_covers_the_loaded_terrain_and_impact_altitude():
+    """A pass 11.5 km above the sphere clears a 10.157 km summit by 1.343 km: with
+    a 2 km impact altitude that is an impact, but the fixed 11 km switch kept the
+    event on the sphere branch (11.5 - 2 = +9.5 km) and the impact was missed."""
+    from lunaris.common.type_defs import EventConfig
+    from lunaris.core.propagation.events import _HYBRID_SWITCH_MARGIN_M, _hybrid_switch_alt_m
+
+    summit = _SummitTerrain(float(R_MOON) + _SUMMIT_ABOVE_REF_M)
+    cfg = PropagatorConfig(events=EventConfig(detect_impact=True, impact_alt_km=2.0))
+
+    switch = _hybrid_switch_alt_m(cfg, summit, float(R_MOON), 2000.0)
+    assert switch == pytest.approx(_SUMMIT_ABOVE_REF_M + 2000.0 + _HYBRID_SWITCH_MARGIN_M)
+
+    events = build_events(_FakeDynamics(), cfg, topo_grid=summit, add_stop_event=False)
+    ev = events[_find_event_index(events, "impact")]
+    y = np.array([float(R_MOON) + 11_500.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    assert ev(0.0, y) == pytest.approx(11_500.0 - _SUMMIT_ABOVE_REF_M - 2000.0)  # -657 m
+
+    # Default impact altitude 0: the envelope is inside 11 km, the configured value stays exactly.
+    assert _hybrid_switch_alt_m(PropagatorConfig(), summit, float(R_MOON), 0.0) == 11_000.0
+    # A larger configured switch is never lowered; a grid without an envelope keeps the configured value.
+    assert _hybrid_switch_alt_m(PropagatorConfig(hybrid_switch_alt_m=20_000.0), summit, float(R_MOON), 2000.0) == 20_000.0
+    assert _hybrid_switch_alt_m(cfg, _FlatTerrain(float(R_MOON) + _SUMMIT_ABOVE_REF_M), float(R_MOON), 2000.0) == 11_000.0
+
+
+def test_topography_grid_radius_envelope_matches_the_kernel_payload(tmp_path):
+    topo = _write_synthetic_ldem(tmp_path)
+    payload = grid_topo_payload(topo, r_moon_m=float(R_MOON))
+    assert topo.radius_envelope_m() == (payload["r_terrain_min_m"], payload["r_terrain_max_m"])
+    # DN max 1090 (m) on the 1737.4 km datum.
+    assert topo.radius_envelope_m()[1] == pytest.approx(1_737_400.0 + 1090.0)

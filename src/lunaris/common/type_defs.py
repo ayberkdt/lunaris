@@ -600,7 +600,10 @@ class PropagatorConfig:
     baseline_rtol: float = 1e-12
     baseline_atol: float = 1e-14
 
-    # Hybrid impact switch options (only if impact detection is enabled)
+    # Hybrid impact switch options (only if impact detection is enabled).
+    # hybrid_switch_alt_m is a floor: with a loaded terrain raster the CPU event
+    # raises it to cover the highest terrain point plus impact_alt_km
+    # (core.propagation.events._hybrid_switch_alt_m).
     hybrid_switch_alt_m: float = 11_000.0
     hybrid_kind: str = "bilinear"
 

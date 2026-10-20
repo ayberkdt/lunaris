@@ -173,6 +173,10 @@ def init_surface_provider(args: argparse.Namespace) -> Any | None:
         ldem_root=str(args.ldem_root) if args.ldem_root is not None else None,
         albedo_root=str(args.albedo_root) if args.albedo_root is not None else None,
         ldem_ppd=int(args.ldem_ppd) if args.ldem_ppd is not None else None,
+        # The roots were asked for by name: a product that does not load stops
+        # the run instead of flying the constant sphere / albedo under a run
+        # record that lists the root as used.
+        strict_io=True,
     )
 
 
