@@ -25,6 +25,11 @@ from lunaris.common.paths import data_dir_from_root, project_root_from_file
 MU_MOON_SI: float = float(MU_MOON)
 R_MOON_SI: float = float(R_MOON)
 
+#: Relative GM tolerance of a strict lunar body-identity check (see
+#: :func:`validate_lunar_contract`): admits rounded source conventions, rejects
+#: a 0.1% mismatch.
+LUNAR_GM_REL_TOL: float = 5.0e-4
+
 # Project root for editable checkouts; external data can be overridden by env.
 _REPO_ROOT = project_root_from_file(__file__)
 DEFAULT_LUNAR_GRAVITY_PATH = (
@@ -82,7 +87,7 @@ def validate_lunar_contract(
     *,
     mu_si: float | None = None,
     r_ref_m: float | None = None,
-    gm_rel_tol: float = 5.0e-4,
+    gm_rel_tol: float = LUNAR_GM_REL_TOL,
     radius_rel_tol: float = 6.0e-4,
 ) -> bool:
     """Validate the numeric core of a strict lunar artifact contract.
@@ -186,6 +191,7 @@ def looks_like_lunar_run_config(config: Mapping[str, Any]) -> bool:
 __all__ = [
     "MU_MOON_SI",
     "R_MOON_SI",
+    "LUNAR_GM_REL_TOL",
     "DEFAULT_LUNAR_GRAVITY_PATH",
     "resolve_lunar_gravity_path",
     "looks_lunar_like",
