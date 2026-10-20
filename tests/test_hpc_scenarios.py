@@ -284,3 +284,21 @@ def test_exit_75_is_reported_as_a_resumable_stop(tmp_path, monkeypatch, capsys):
     assert code == 75
     assert "STOPPED" in err and "--resume" in err
     assert "FAILED" not in err
+
+
+def test_restart_if_no_checkpoint_restarts_only_this_scenarios_own_directory(tmp_path):
+    """A task Slurm requeued before its first checkpoint (node failure, preemption)
+    reruns with --resume; its directory holds only the launcher's provenance."""
+    launcher = _load_launcher_module()
+    scenario_file = _SCENARIO_DIR / _SAMPLE_SCENARIO_FILE
+    name = _parse_lines(scenario_file)[0]["name"]
+    root = tmp_path / "training"
+    run_dir = root / name
+    run_dir.mkdir(parents=True)
+    (run_dir / "scenario.json").write_text(json.dumps({"name": name}), encoding="utf-8")
+    base = [str(scenario_file), "--index", "0", "--dry-run", "--resume", "--output-root", str(root),
+            "--train-data", "t.h5", "--val-data", "v.h5"]
+    assert launcher.main(base) == 2  # without the flag: refused, as before
+    assert launcher.main([*base, "--restart-if-no-checkpoint"]) == 0
+    (run_dir / "scenario.json").write_text(json.dumps({"name": "SomeOtherRun"}), encoding="utf-8")
+    assert launcher.main([*base, "--restart-if-no-checkpoint"]) == 2  # not ours: still refused

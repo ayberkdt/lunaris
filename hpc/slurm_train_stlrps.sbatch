@@ -55,5 +55,6 @@ lunaris_run_stoppable lunaris-train ${args[@]+"${args[@]}"} || rc=$?
 # architecture, so a bare --resume-from would fall back to default optimisation
 # settings (batch size, learning rate, loss weights).
 lunaris_drop_flag --resume-from 1 "$@"
-_resume_text="$(printf '%q ' ${LUNARIS_ARGS_OUT[@]+"${LUNARIS_ARGS_OUT[@]}"})"
+_resume_text=""
+if [[ ${#LUNARIS_ARGS_OUT[@]} -gt 0 ]]; then _resume_text="$(printf '%q ' "${LUNARIS_ARGS_OUT[@]}")"; fi
 lunaris_after_run "${rc}" "hpc/submit.sh train -- ${_resume_text}--resume-from ${run_dir:-<run_dir>}"

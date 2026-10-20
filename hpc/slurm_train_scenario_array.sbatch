@@ -79,7 +79,11 @@ resume_args=(${LUNARIS_ARGS_OUT[@]+"${LUNARIS_ARGS_OUT[@]}"})
 lunaris_drop_flag --force 0 ${resume_args[@]+"${resume_args[@]}"}
 resume_args=(${LUNARIS_ARGS_OUT[@]+"${LUNARIS_ARGS_OUT[@]}"})
 lunaris_drop_flag --resume 0 ${resume_args[@]+"${resume_args[@]}"}
-resume_args=(${LUNARIS_ARGS_OUT[@]+"${LUNARIS_ARGS_OUT[@]}"} --resume)
+resume_args=(${LUNARIS_ARGS_OUT[@]+"${LUNARIS_ARGS_OUT[@]}"})
+# --restart-if-no-checkpoint: a task requeued by Slurm itself (node failure,
+# preemption) before its first checkpoint starts again instead of being refused.
+lunaris_drop_flag --restart-if-no-checkpoint 0 ${resume_args[@]+"${resume_args[@]}"}
+resume_args=(${LUNARIS_ARGS_OUT[@]+"${LUNARIS_ARGS_OUT[@]}"} --resume --restart-if-no-checkpoint)
 
 args=("$@")
 # A requeued attempt (SLURM_RESTART_COUNT > 0) is such a continuation.

@@ -501,7 +501,10 @@ run. Two escape hatches:
   directory contains `checkpoints/ckpt_last.pt` (or `ckpt_best.pt`), the
   launcher relaunches with `--resume-from <run_dir>` instead of `--out`, so
   every array task continues from its own last completed epoch. Tasks without
-  a previous run start fresh. The original `scenario.json` provenance is kept;
+  a previous run start fresh. A directory that holds only this scenario's own
+  provenance and no checkpoint (a task Slurm requeued before its first save)
+  is refused unless `--restart-if-no-checkpoint` is also given; the requeued
+  array attempt passes it, so such a task restarts from scratch. The original `scenario.json` provenance is kept;
   each resume attempt adds timestamped `scenario_resume_command_*.txt` /
   `scenario_resume_environment_*.json` files.
 - `--force` (alias `--overwrite`): reuse the directory and OVERWRITE the run.

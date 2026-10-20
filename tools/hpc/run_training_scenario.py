@@ -333,6 +333,15 @@ def _environment_snapshot(scenario_file: Path, index: int) -> dict[str, Any]:
     }
 
 
+def _written_by_scenario(run_dir: Path, name: str) -> bool:
+    """True when ``run_dir/scenario.json`` was written by the scenario ``name``."""
+    try:
+        payload = json.loads((run_dir / "scenario.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("name") == name
+
+
 def _write_provenance(
     run_dir: Path,
     scenario: Mapping[str, Any],
@@ -418,6 +427,18 @@ def parse_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, l
         ),
     )
     ap.add_argument(
+        "--restart-if-no-checkpoint",
+        action="store_true",
+        default=False,
+        help=(
+            "With --resume: when the output directory holds no checkpoint but was "
+            "written by this same scenario (its scenario.json names it), start the "
+            "scenario again from scratch in it instead of refusing. Used by the "
+            "Slurm array template for a requeued attempt that stopped before its "
+            "first checkpoint."
+        ),
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -470,6 +491,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _assert_not_under_src(run_dir)
 
         resume_ckpt: Path | None = None
+        restart_in_place = False
         if args.resume:
             if args.force:
                 raise ScenarioError(
@@ -483,7 +505,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"got {scenario['entrypoint']!r}."
                 )
             resume_ckpt = find_resumable_checkpoint(run_dir)
-            if resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()):
+            if (
+                resume_ckpt is None
+                and args.restart_if_no_checkpoint
+                and _written_by_scenario(run_dir, name)
+            ):
+                print(
+                    f"[scenario] {run_dir} holds no checkpoint yet (stopped before its first "
+                    "save); restarting the scenario from scratch in it."
+                )
+                restart_in_place = True
+            elif resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()):
                 raise ScenarioError(
                     f"--resume requested but {run_dir} is non-empty and contains no "
                     "resumable checkpoint (checkpoints/ckpt_last.pt or ckpt_best.pt). "
@@ -512,7 +544,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("[scenario] DRY RUN: nothing launched.")
         return 0
 
-    if resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()) and not args.force:
+    if (
+        resume_ckpt is None
+        and not restart_in_place
+        and run_dir.exists()
+        and any(run_dir.iterdir())
+        and not args.force
+    ):
         print(
             f"[scenario] ERROR: output directory already exists and is not empty: "
             f"{run_dir}\n[scenario] Pass --force/--overwrite to reuse it, or "
