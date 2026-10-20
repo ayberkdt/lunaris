@@ -23,7 +23,7 @@ import numpy as np
 import torch
 
 from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
-from lunaris.common.provenance import sha256_file, utc_now_iso
+from lunaris.common.provenance import resolve_repo_commit, sha256_file, utc_now_iso
 from lunaris.surrogate.serialization import safe_torch_load
 from lunaris.surrogate.st_lrps.networks.models import (
     ARCH_SIGNATURE_FIELDS,
@@ -290,25 +290,12 @@ def resolve_git_commit() -> str | None:
     """Best-effort current git commit SHA for run provenance.
 
     The ``GIT_COMMIT`` environment variable wins so CI can pin provenance without
-    a working tree; otherwise we fall back to ``git rev-parse HEAD``. Returns
-    ``None`` when neither is available (e.g. running outside a checkout).
+    a working tree; otherwise ``git rev-parse HEAD`` runs with ``cwd`` pinned to
+    the installed ``lunaris`` package's own directory (not the caller's process
+    cwd, which could be inside an unrelated checkout and report its commit).
+    Returns ``None`` when neither is available (e.g. a wheel install).
     """
-    env_commit = _coerce_str_or_none(os.environ.get("GIT_COMMIT"))
-    if env_commit:
-        return env_commit
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except Exception:  # pragma: no cover - git missing / sandboxed
-        return None
-    if proc.returncode != 0:
-        return None
-    return _coerce_str_or_none(proc.stdout)
+    return resolve_repo_commit()
 
 
 def _resolve_cuda_versions() -> dict[str, Any]:
