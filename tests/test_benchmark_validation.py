@@ -642,3 +642,50 @@ def test_runtime_per_scenario_inconsistency_fails(tmp_path):
     report = validate_benchmark_outputs(out, expected_count=2)
     assert report["passed"] is False
     assert any("runtime_per_scenario_s" in e for e in report["errors"])
+
+
+# --- Field evidence needs a measured value, not only a header column ---------
+
+def _taxonomy_and_errors(scenario_rows: list[dict[str, str]]) -> tuple[dict, list[str]]:
+    from lunaris.surrogate.st_lrps.evaluation.benchmark_validation import (
+        _check_paper_safe_field_evidence,
+        _evidence_taxonomy_block,
+    )
+
+    evidence = {"paper_safe": True, "synthetic": False}
+    taxonomy = _evidence_taxonomy_block([], scenario_rows, [], evidence)
+    errors: list[str] = []
+    _check_paper_safe_field_evidence(evidence, taxonomy, errors, [], [])
+    return taxonomy, errors
+
+
+def test_paper_safe_blank_field_column_is_not_field_evidence():
+    # The header has a field-error column, but no row has a value in it: that
+    # is a schema slot, not a field measurement.
+    taxonomy, errors = _taxonomy_and_errors(
+        [{"rms_pos_err_km": "1.0", "accel_rms_m_s2": ""},
+         {"rms_pos_err_km": "2.0", "accel_rms_m_s2": ""}]
+    )
+    assert taxonomy["has_field_level_evidence"] is False
+    assert taxonomy["trajectory_error_only"] is True
+    assert "accel_rms_m_s2" not in taxonomy["categories"]["model_error_field"]["metrics"]
+    assert any("model_error_field" in e for e in errors), errors
+
+
+def test_paper_safe_non_finite_field_column_is_not_field_evidence():
+    taxonomy, errors = _taxonomy_and_errors(
+        [{"rms_pos_err_km": "1.0", "accel_rms_m_s2": "nan"}]
+    )
+    assert taxonomy["has_field_level_evidence"] is False
+    assert any("model_error_field" in e for e in errors), errors
+
+
+def test_paper_safe_field_column_with_one_finite_value_is_field_evidence():
+    taxonomy, errors = _taxonomy_and_errors(
+        [{"rms_pos_err_km": "1.0", "accel_rms_m_s2": ""},
+         {"rms_pos_err_km": "2.0", "accel_rms_m_s2": "3.5e-9"}]
+    )
+    assert taxonomy["has_field_level_evidence"] is True
+    assert taxonomy["trajectory_error_only"] is False
+    assert taxonomy["categories"]["model_error_field"]["metrics"] == ["accel_rms_m_s2"]
+    assert errors == []
