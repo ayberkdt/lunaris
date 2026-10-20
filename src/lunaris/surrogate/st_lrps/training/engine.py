@@ -3937,6 +3937,7 @@ def _run_training_loop(session: _TrainingSession) -> str:
             try:
                 _kept_lines: list[str] = []
                 _dropped_rows = 0
+                _skipped_rows = 0
                 with open(log_path, encoding="utf-8") as _hf:
                     for _line in _hf:
                         _line = _line.strip()
@@ -3945,6 +3946,9 @@ def _run_training_loop(session: _TrainingSession) -> str:
                         try:
                             _prev_row = json.loads(_line)
                         except Exception:
+                            # The row is lost from training_history.csv and the
+                            # plots this resume rewrites: count it, say so below.
+                            _skipped_rows += 1
                             continue
                         # Resuming from an earlier snapshot re-trains the later
                         # epochs (0-based ``epoch`` >= start_epoch): drop their
@@ -3965,6 +3969,11 @@ def _run_training_loop(session: _TrainingSession) -> str:
                         _dropped_rows, int(start_epoch) + 1,
                     )
                 logger.info("[resume] loaded %s previous history rows (append mode).", len(history))
+                if _skipped_rows:
+                    logger.warning(
+                        "[resume] skipped %d malformed history line(s) in %s; those epochs are "
+                        "missing from the rewritten history and plots.", _skipped_rows, log_path,
+                    )
                 _hist_mode = "a"
             except Exception as _hexc:
                 logger.warning(

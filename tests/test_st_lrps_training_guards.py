@@ -34,15 +34,9 @@ def test_trainer_rejects_an_invalid_laplacian_mode():
         _trainer(cfg)
 
 
-def test_stop_signal_handlers_are_restored_when_the_training_loop_raises(tmp_path, monkeypatch):
-    import signal
-
-    from dataset_pipeline_test_utils import write_toy_contract_h5
-    from lunaris.surrogate.st_lrps.training import engine
-
-    data_path = write_toy_contract_h5(tmp_path / "toy_train.h5", n=48)
-    cfg = TrainConfig(
-        data=str(data_path), out=str(tmp_path / "run"), epochs=1, batch_size=8,
+def _tiny_cfg(data_path, out_dir, **overrides) -> TrainConfig:
+    kwargs = dict(
+        data=str(data_path), out=str(out_dir), epochs=1, batch_size=8,
         num_workers=0, pin_memory=False, quick_check=True, max_train_batches=1,
         max_val_batches=1, activation="silu", hidden=8, depth=2, model_preset="custom",
         use_residual_blocks=False, n_bands=1, val_ratio=0.25, split_seed=11,
@@ -52,6 +46,18 @@ def test_stop_signal_handlers_are_restored_when_the_training_loop_raises(tmp_pat
         cache_rows=16, sampler_block_size=16, warmup_epochs=0, best_ckpt_start_epoch=0,
         log_every=0,
     )
+    kwargs.update(overrides)
+    return TrainConfig(**kwargs)
+
+
+def test_stop_signal_handlers_are_restored_when_the_training_loop_raises(tmp_path, monkeypatch):
+    import signal
+
+    from dataset_pipeline_test_utils import write_toy_contract_h5
+    from lunaris.surrogate.st_lrps.training import engine
+
+    data_path = write_toy_contract_h5(tmp_path / "toy_train.h5", n=48)
+    cfg = _tiny_cfg(data_path, tmp_path / "run")
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("injected failure inside the epoch loop")
@@ -67,6 +73,25 @@ def test_stop_signal_handlers_are_restored_when_the_training_loop_raises(tmp_pat
     finally:
         engine._restore_stop_signal_handlers(before)
     assert after == before
+
+
+def test_resume_counts_malformed_history_lines(tmp_path, caplog):
+    import logging
+
+    from dataset_pipeline_test_utils import write_toy_contract_h5
+    from lunaris.surrogate.st_lrps.training import engine
+
+    data_path = write_toy_contract_h5(tmp_path / "toy_train.h5", n=48)
+    run_dir = tmp_path / "run"
+    engine.train(_tiny_cfg(data_path, run_dir))
+    history = run_dir / "history.jsonl"
+    assert history.exists()
+    with history.open("a", encoding="utf-8") as handle:
+        handle.write('{"epoch": 7, "truncated\n')  # a half-written row from a killed run
+
+    caplog.set_level(logging.WARNING, logger=engine.logger.name)
+    engine.train(_tiny_cfg(data_path, run_dir, epochs=2, resume_from=str(run_dir)))
+    assert "skipped 1 malformed history line(s)" in caplog.text
 
 
 @pytest.mark.parametrize("mode", ["off", "diagnostic", "train", " Train "])
