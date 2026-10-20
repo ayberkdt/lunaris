@@ -341,7 +341,9 @@ def make_hybrid_impact_event(
     radius_sampler: Callable[[float, float], float] | None = None
     if use_topo:
         # Choose "nearest" only if explicitly requested; otherwise prefer continuous sampling.
-        prefer_nearest = ("near" in kind_l)
+        # (A substring test matched "bilinear", which contains "near", so the default
+        # bilinear request sampled nearest-neighbour and the event jumped at pixel edges.)
+        prefer_nearest = kind_l.startswith("near")
 
         if hasattr(topo, "sample_bilinear") or hasattr(topo, "sample_nearest"):
             bilinear = getattr(topo, "sample_bilinear", None)
