@@ -119,6 +119,25 @@ def test_altitude_stratified_folds_single_row_bin_into_train():
     assert np.array_equal(np.sort(assigned), np.arange(altitude.size))
 
 
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_altitude_stratified_rejects_non_finite_altitude(bad):
+    # A NaN altitude matches no bin edge and used to vanish from every split.
+    altitude = np.linspace(100.0, 300.0, 50)
+    altitude[3] = bad
+    with pytest.raises(ValueError, match=r"finite altitudes for every row; 1 row\(s\)"):
+        make_altitude_stratified_split(altitude, val_fraction=0.2, seed=0)
+
+
+@pytest.mark.parametrize("side", ["low", "high"])
+def test_ood_altitude_rejects_any_non_finite_altitude(side):
+    # A NaN altitude fails both `<= thr` and `>= thr`, so it used to land in
+    # train as if it were in-distribution.
+    altitude = np.linspace(100.0, 300.0, 50)
+    altitude[5] = np.nan
+    with pytest.raises(ValueError, match=r"finite altitudes for every row; 1 row\(s\)"):
+        make_ood_altitude_split(altitude, side=side, seed=0)
+
+
 def test_spatial_block_rejects_empty_positions():
     with pytest.raises(ValueError, match="non-empty position"):
         make_spatial_block_split(np.zeros((0, 3)), val_block_fraction=0.2, seed=0)

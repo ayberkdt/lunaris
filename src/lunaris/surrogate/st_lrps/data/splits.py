@@ -62,6 +62,12 @@ def make_altitude_stratified_split(
     altitude = np.asarray(altitude_km, dtype=np.float64).reshape(-1)
     if altitude.size == 0:
         raise ValueError("altitude array is empty")
+    if not np.all(np.isfinite(altitude)):
+        raise ValueError(
+            "altitude_stratified split requires finite altitudes for every row; "
+            f"{int((~np.isfinite(altitude)).sum())} row(s) are NaN/Inf. A NaN altitude compares "
+            "False against every bin edge, so it would otherwise be silently dropped from every split."
+        )
     rng = np.random.default_rng(int(seed))
     train_parts: list[np.ndarray] = []
     val_parts: list[np.ndarray] = []
@@ -193,6 +199,14 @@ def make_ood_altitude_split(
     finite = altitude[np.isfinite(altitude)]
     if finite.size == 0:
         raise ValueError("ood altitude split requires finite altitudes")
+    if finite.size != altitude.size:
+        # A NaN compares False against both `<= thr` and `>= thr`, so it would
+        # always land on the ~band_mask (train) side regardless of `side` --
+        # silently mislabeling an unmeasured altitude as "in-distribution".
+        raise ValueError(
+            "ood altitude split requires finite altitudes for every row; "
+            f"{int(altitude.size - finite.size)} row(s) are NaN/Inf."
+        )
 
     side_l = str(side).strip().lower()
     if side_l == "low":
