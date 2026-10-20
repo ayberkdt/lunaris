@@ -82,3 +82,32 @@ def test_bare_resume_restores_independent_train_and_val_files(tmp_path, monkeypa
     assert cfg.val_data == str(val)
     assert cfg.test_data == str(test)
     assert cfg.data in (None, str(train))
+
+
+def test_drift_does_not_hide_schedule_metric_or_runtime_settings():
+    prev = {"warmup_epochs": 5, "best_metric": "val_total_loss", "runtime_model_kind": "potential_autograd"}
+    cur = SimpleNamespace(warmup_epochs=0, best_metric="hybrid", runtime_model_kind="force_direct")
+    keys = [k for k, _, _ in resume_setting_drift(prev, cur)]
+    assert keys == ["best_metric", "runtime_model_kind", "warmup_epochs"]
+
+
+def test_a_repeated_stop_signal_within_the_grace_window_is_ignored():
+    import signal
+
+    from lunaris.surrogate.st_lrps.training.engine import build_stop_signal_handler
+
+    now = {"t": 100.0}
+    restored = []
+    interrupt: dict = {"flag": False}
+    handler = build_stop_signal_handler(
+        interrupt, lambda: restored.append(True), grace_s=5.0, clock=lambda: now["t"]
+    )
+    handler(int(signal.SIGTERM), None)  # Slurm's TERM: graceful stop
+    assert interrupt["flag"] is True
+    now["t"] = 101.0
+    handler(int(signal.SIGTERM), None)  # the relayed copy of the same stop: ignored
+    assert restored == []
+    now["t"] = 106.5
+    with pytest.raises(KeyboardInterrupt):  # a deliberate second stop: force-quit
+        handler(int(signal.SIGINT), None)
+    assert restored == [True]

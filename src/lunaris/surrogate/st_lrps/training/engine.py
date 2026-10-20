@@ -4008,26 +4008,14 @@ def _run_training_loop(session: _TrainingSession) -> str:
     # --signal=B:USR1@<sec>` as an early warning, so all three take the same
     # graceful path (see hpc/*.sbatch). Installing a handler requires the main
     # thread; if unavailable (e.g. tests in a worker thread) we fall back to
-    # plain KeyboardInterrupt.
-    import signal as _signal
-    _interrupt = {"flag": False}
+    # plain KeyboardInterrupt. A repeat within STOP_SIGNAL_REPEAT_GRACE_S is the
+    # same stop delivered twice and is ignored (build_stop_signal_handler).
+    _interrupt: dict[str, Any] = {"flag": False}
     _orig_handlers: dict[int, Any] = {}
 
-    def _on_stop_signal(_signum, _frame):  # pragma: no cover - signal timing dependent
-        if _interrupt["flag"]:
-            _restore_stop_signal_handlers(_orig_handlers)
-            raise KeyboardInterrupt
-        _interrupt["flag"] = True
-        try:
-            _name = _signal.Signals(_signum).name
-        except ValueError:
-            _name = str(_signum)
-        logger.warning(
-            "[interrupt] Stop requested (%s) — will finish the current epoch, save, and exit. Send "
-            "the signal again to force-quit.",
-            _name,
-        )
-
+    _on_stop_signal = build_stop_signal_handler(
+        _interrupt, lambda: _restore_stop_signal_handlers(_orig_handlers)
+    )
     _orig_handlers = _install_stop_signal_handlers(_on_stop_signal)
 
     with open(log_path, _hist_mode, encoding="utf-8") as logf:
@@ -4453,17 +4441,73 @@ def _run_training_loop(session: _TrainingSession) -> str:
     return run_status
 
 
+# A second stop signal this soon after the first is the same stop delivered
+# twice (scancel / preemption signal every process of the job, and the batch
+# shell relays the walltime TERM as well), not a request to force-quit.
+STOP_SIGNAL_REPEAT_GRACE_S = 5.0
+
+
+def build_stop_signal_handler(
+    interrupt: dict[str, Any],
+    restore_handlers: Any,
+    *,
+    grace_s: float = STOP_SIGNAL_REPEAT_GRACE_S,
+    clock: Any = time.monotonic,
+) -> Any:
+    """Return the trainer's SIGINT/SIGTERM/SIGUSR1 handler.
+
+    The first signal sets ``interrupt["flag"]``: the loop finishes the current
+    epoch, saves ckpt_last and exits 75. A repeat within ``grace_s`` seconds is
+    logged and ignored; a later one restores the original handlers and raises
+    KeyboardInterrupt (force-quit, the current epoch is not saved).
+    """
+    import signal as _signal
+
+    def _on_stop_signal(signum: int, _frame: Any) -> None:
+        try:
+            name = _signal.Signals(signum).name
+        except ValueError:
+            name = str(signum)
+        now = float(clock())
+        if interrupt.get("flag"):
+            if now - float(interrupt.get("first_signal_t", now)) < float(grace_s):
+                logger.warning(
+                    "[interrupt] %s repeated within %.0f s of the first stop signal; ignored "
+                    "(the stop is already in progress).",
+                    name, float(grace_s),
+                )
+                return
+            restore_handlers()
+            raise KeyboardInterrupt
+        interrupt["flag"] = True
+        interrupt["first_signal_t"] = now
+        logger.warning(
+            "[interrupt] Stop requested (%s) — will finish the current epoch, save, and exit. Send "
+            "the signal again after %.0f s to force-quit.",
+            name, float(grace_s),
+        )
+
+    return _on_stop_signal
+
+
 _RESUME_HINT_DROP_FLAGS = {
     "--resume-from": True, "--out": True, "--out-dir": True, "--epochs": True,
     "--overwrite": False,
 }
 # Config keys that legitimately change between the original run and its resume
 # (bookkeeping, I/O locations, the epoch target, the resume request itself) or
-# that are resolved from the dataset after the resume check runs.
+# that are resolved from the dataset after the resume check runs. Exact keys
+# where possible: a broad substring ("epochs", "time", "best_") would also hide
+# real settings such as warmup_epochs, runtime_model_kind or best_metric.
+_RESUME_DRIFT_IGNORED_KEYS = frozenset({
+    "epochs", "out", "data", "train_data", "val_data", "test_data", "ood_data",
+    "resume_from", "resume_checkpoint", "resume_nonstrict", "resume_append_history",
+    "altitude_min_km", "altitude_max_km", "degree_min", "degree_max",
+    "best_val_loss", "best_score", "best_epoch",
+})
 _RESUME_DRIFT_IGNORED_SUBSTRINGS = (
-    "resume", "epochs", "out", "data", "path", "hash", "sha256", "time", "created",
-    "commit", "best_", "dataset_meta", "split_manifest", "target_contract",
-    "altitude_", "degree_", "resolved_",
+    "_path", "hash", "sha256", "created", "commit", "_utc",
+    "dataset_meta", "split_manifest", "target_contract", "resolved_",
 )
 
 
@@ -4499,7 +4543,7 @@ def resume_setting_drift(
     locked_set = set(locked)
     drift: list[tuple[str, Any, Any]] = []
     for key in sorted(prev_cfg):
-        if key in locked_set or not hasattr(cfg, key):
+        if key in locked_set or key in _RESUME_DRIFT_IGNORED_KEYS or not hasattr(cfg, key):
             continue
         if any(part in key for part in _RESUME_DRIFT_IGNORED_SUBSTRINGS):
             continue
@@ -4552,5 +4596,5 @@ def train(cfg: TrainConfig) -> str:
 __all__ = [
     'STLRPSTrainer', 'train', 'set_seed', 'get_device',
     'exit_code_for_run_status', 'EXIT_CODE_INTERRUPTED', 'EXIT_CODE_FAILED',
-    'resume_command_hint', 'resume_setting_drift',
+    'resume_command_hint', 'resume_setting_drift', 'build_stop_signal_handler',
 ]
