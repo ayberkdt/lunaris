@@ -1558,12 +1558,18 @@ def _validate_grid_data(
     - 2D array with shape (n_rows, n_cols)
     - 1D flat array with size n_rows*n_cols
 
-    Returns a contiguous float64 array view/copy suitable for Numba kernels.
+    Returns a contiguous float32/float64 array suitable for Numba kernels. A
+    float32 grid (a memory-mapped LDEM raster) is passed through unconverted:
+    the kernels read four neighbours and promote each to float64 exactly, so the
+    sample is bit-identical to converting first, without copying the whole grid
+    per call (2.1 GB and ~1 s per sample for the 64 ppd LDEM).
     """
     if n_rows <= 0 or n_cols <= 0:
         raise ValueError(f"Invalid grid dims: {row_label}={n_rows}, {col_label}={n_cols}")
 
-    arr = np.asarray(data, dtype=np.float64)
+    arr = np.asarray(data)
+    if arr.dtype != np.float32 and arr.dtype != np.float64:
+        arr = arr.astype(np.float64)
     if arr.ndim == 2:
         if arr.shape[0] != n_rows or arr.shape[1] != n_cols:
             raise ValueError(f"2D {name} shape {arr.shape} != ({n_rows},{n_cols})")
