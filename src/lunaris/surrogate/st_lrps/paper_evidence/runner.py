@@ -753,7 +753,12 @@ def run_ablation_stage(
         argv += ["--train-data", str(ds["train_data"]), "--val-data", str(ds["val_data"])]
     elif ds.get("train_data"):
         argv += ["--train-data", str(ds["train_data"])]
-    argv += ["--out-root", out_root, "--seed", str(cfg.get("seed", 42)), "--matrix", str(cfg.get("matrix", "default"))]
+    # "seeds" (list) runs every arm once per seed; a legacy scalar "seed" runs one.
+    seeds = cfg.get("seeds") or [cfg.get("seed", 42)]
+    argv += ["--out-root", out_root, "--seeds", *(str(int(seed)) for seed in seeds)]
+    if cfg.get("split_seed") is not None:
+        argv += ["--split-seed", str(int(cfg["split_seed"]))]
+    argv += ["--matrix", str(cfg.get("matrix", "default"))]
     if cfg.get("epochs"):
         argv += ["--epochs", str(cfg["epochs"])]
     if cfg.get("run_eval_after_training"):

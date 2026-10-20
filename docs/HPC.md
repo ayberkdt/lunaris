@@ -398,17 +398,24 @@ The committed sweep files live under `hpc/scenarios/`:
 |------|-------------|---------|
 | `st_lrps_resume_denemesi_reproduction.jsonl` | `0-0` | Frozen reproduction of the successful May 2026 512x5, 2-band SH20 -> SH200 run |
 | `st_lrps_strong_model_production.jsonl` | `0-0` | Production strong-model run: TrainConfig defaults + `--run-preset paper` |
-| `st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl` | `0-6` | Cumulative scalar-potential ablation A0→A6 (mirrors `lunaris-ablation`) |
+| `st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl` | `0-20` | Ablation ladder A0→A6 × 3 seeds, generated from the `lunaris-ablation` registry |
 | `st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl` | `0-4` | A6-full architecture-size sweep (4×256 … 5×768) |
 | `st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl` | `0-6` | 5×512 direction-weight + input-encoding matrix |
 | `st_lrps_runtime_benchmark_smoke.jsonl` | `0-1` | CPU/CUDA timing smoke checks |
 
-> **A6 "FullRecommended" is not the production profile.** The ablation ladder
-> intentionally keeps `--model-preset baseline_raw` (raw XYZ input) and
-> `--direction-loss-weight 0.2` so each A-step isolates one component on a
-> fixed input representation. The production strong model instead uses the
-> TrainConfig defaults — the `recommended_physical_radial_decay` encoding and
-> direction weight 0.10 — via `st_lrps_strong_model_production.jsonl`.
+> **The ablation ladder ends at the production model.** A0–A5 train on raw
+> XYZ (`--model-preset baseline_raw`) and add one component per step at the
+> shipped loss settings (direction weight 0.1). A6 adds the
+> `recommended_physical_radial_decay` encoding, so A6 is the TrainConfig
+> default — the same configuration as `st_lrps_strong_model_production.jsonl`
+> without `--run-preset paper`. The file is generated from the
+> `lunaris-ablation` registry (`python tools/hpc/generate_ablation_scenarios.py`);
+> do not edit it by hand. Lines are seed-major: tasks 0–6 are one complete
+> ladder (seed 42), 7–13 seed 43, 14–20 seed 44. Every line sets the same
+> `--split-seed`, so all runs use one data split. Do not pass `--seed` or
+> `--split-seed` as a common flag: it would override every line.
+> The capacity and encoding/loss sweeps still use raw XYZ with direction
+> weight 0.2; they are separate studies, not the A6 model.
 
 > **Frozen reproduction versus current defaults.** The historical
 > `resume_denemesi` artifact used two frequency bands (`[13.7, 42.4]`) and
@@ -430,8 +437,8 @@ export TEST_DATA=/scratch/$USER/lunaris_data/datasets/test.h5
 export OOD_DATA=/scratch/$USER/lunaris_data/datasets/ood_high.h5
 export LUNARIS_OUTPUT_DIR=/scratch/$USER/lunaris_outputs
 
-# A0–A6 paper ablation (7 tasks)
-sbatch --array=0-6 hpc/slurm_train_scenario_array.sbatch \
+# A0–A6 paper ablation × 3 seeds (21 tasks; 0-6 is one complete ladder)
+sbatch --array=0-20 hpc/slurm_train_scenario_array.sbatch \
   hpc/scenarios/st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl \
   --train-data "$TRAIN_DATA" \
   --val-data "$VAL_DATA" \
