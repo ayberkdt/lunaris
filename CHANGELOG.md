@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: a cancelled or preempted training job could force-quit without saving.** `scancel` and preemption signal every process of the job while the batch shell also relays the TERM it receives, so the trainer saw two stop signals at once and the second force-quit (exit 130) before the current epoch was saved. A repeat within 5 s is now the same stop and is ignored; a later one still force-quits. The resume drift warning also no longer hides schedule, checkpoint-metric and runtime-kind settings (`warmup_epochs`, `best_metric`, `runtime_model_kind`, ...).
+
+- **Fixed: a scenario task requeued by Slurm before its first checkpoint was refused.** The requeued attempt ran the launcher with `--resume`, which refused the directory holding only the launcher's provenance. The launcher's new `--restart-if-no-checkpoint` restarts a scenario in a checkpoint-less directory its own `scenario.json` names, and the array template passes it on requeue; other directories are still refused. The single-job resume hint no longer prints an empty `''` argument.
+
+- **Fixed: capped ephemeris tables ended at tf.** With the 60 s table step, a Yoshida run with `output_dt_s` > 60 s and a step above ~65 s (Y8) sampled the force past the extrapolation band at tf and was refused when the tables were built exactly over the run (the CLI adds a 0.1 day buffer). The table now runs on by `output_dt_s - 60 s`; runs with `output_dt_s` <= 60 s build the same table as before.
+
 - **Fixed: the CPU terrain-impact event sampled the nearest pixel by default.** `make_hybrid_impact_event` chose nearest-neighbour when `"near" in kind`, which is true for the default `"bilinear"`, so the terrain clearance jumped at every pixel edge (75.1 m to -28.3 m within 2 ms of flight on the 64 ppd LDEM; the reported event sat at g = -28.3 m). Only a kind starting with `near` selects nearest now; the GPU terrain kernels already interpolate. **Default results change** for CPU terrain-impact times.
 
 - **Fixed: every terrain or albedo sample copied the whole raster.** `_validate_grid_data` converted the grid to float64 on each call: a 2.1 GB copy of the memory-mapped 64 ppd LDEM per sample, measured at 954 ms per sample, which made CPU terrain events inside the switch shell impractically slow. Float32 grids now pass through unconverted (0.1 ms per sample); the kernels promote the four neighbours exactly, so samples are bit-identical (5005 random and edge points, bilinear and nearest).

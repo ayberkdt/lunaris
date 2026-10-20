@@ -938,7 +938,7 @@ def resolve_batch_backend_policy(
     if sh_enabled and bool(getattr(getattr(gravity_cfg, "adaptive", None), "enabled", False)):
         numba_unsupported = (*numba_unsupported, "adaptive SH degree")
         torch_unsupported = (*torch_unsupported, "adaptive SH degree")
-    fallback_policy =str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
+    fallback_policy = str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
     # R29b (#3): paper-safe/strict/benchmark posture forces 'error' semantics so
     # a requested backend is never silently substituted at planning time.
     if fallback_forbidden(batch_cfg):
