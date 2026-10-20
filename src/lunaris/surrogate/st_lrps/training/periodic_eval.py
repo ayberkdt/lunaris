@@ -149,10 +149,16 @@ def resolve_periodic_eval_plan(cfg: Any, *, start_epoch: int = 1) -> PeriodicEva
 
     dataset = str(_cfg_get(cfg, "periodic_eval_dataset", "val") or "val").strip().lower()
     if dataset not in _VALID_DATASETS:
-        dataset = "val"
+        raise ValueError(
+            f"periodic_eval_dataset={dataset!r} is not a valid periodic-eval dataset. "
+            f"Valid choices: {', '.join(_VALID_DATASETS)}."
+        )
     prefer = str(_cfg_get(cfg, "periodic_eval_prefer_checkpoint", "last") or "last").strip().lower()
     if prefer not in _VALID_PREFER:
-        prefer = "last"
+        raise ValueError(
+            f"periodic_eval_prefer_checkpoint={prefer!r} is not a valid checkpoint preference. "
+            f"Valid choices: {', '.join(_VALID_PREFER)}."
+        )
 
     # Batch size: fall back to the training batch size when not explicitly set.
     pe_bs = _cfg_get(cfg, "periodic_eval_batch_size", None)

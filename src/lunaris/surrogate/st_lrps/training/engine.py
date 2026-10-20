@@ -705,7 +705,9 @@ class STLRPSTrainer:
         self.laplacian_requested: bool = _laplacian_requested(cfg)
         _lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
         if _lmode not in ("off", "diagnostic", "train"):
-            _lmode = "diagnostic"
+            raise ValueError(
+                f"laplacian_mode={_lmode!r} is not valid. Valid choices: off, diagnostic, train."
+            )
         self.laplacian_mode: str = _lmode
 
         # bfloat16 instead of float16: SIREN sin(w0 · x) overflows fp16 mantissa.
@@ -3802,7 +3804,9 @@ def _run_training_loop(session: _TrainingSession) -> str:
     _lap_requested = _laplacian_requested(cfg)
     _col_lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
     if _col_lmode not in ("off", "diagnostic", "train"):
-        _col_lmode = "diagnostic"
+        raise ValueError(
+            f"laplacian_mode={_col_lmode!r} is not valid. Valid choices: off, diagnostic, train."
+        )
     if not _lap_requested:
         logger.info("Laplacian: not requested (default) — no Laplacian diagnostics or regularization.")
     if _lap_requested and _col_lmode in ("diagnostic", "train"):
