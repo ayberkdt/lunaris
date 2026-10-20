@@ -322,3 +322,52 @@ def test_studio_parse_progress_never_raises(tab):
         if ln is None:
             continue
         tab._parse_progress(ln)
+
+
+# ---------------------------------------------------------------------------
+# Progress-callback failures are logged, not hidden (ported from Sidera 85116f9c)
+# ---------------------------------------------------------------------------
+
+
+def _point_mass_batch(monkeypatch, progress_cb):
+    import numpy as np
+
+    from lunaris.common.constants import MU_MOON
+    from lunaris.surrogate.st_lrps.evaluation._gravity_benchmark import compute
+
+    def _fake_accel(model_name, gravity_model, *, device, dtype):
+        mu = torch.tensor(float(MU_MOON), device=device, dtype=dtype)
+
+        def accel(pos_fixed):
+            r = torch.linalg.norm(pos_fixed, dim=1, keepdim=True).clamp_min(1.0)
+            return -mu * pos_fixed / (r ** 3)
+
+        return accel, "fake_pointmass"
+
+    monkeypatch.setattr(compute, "_make_gpu_accelerator", _fake_accel)
+    y0 = np.array([[1.90e6, 0.0, 0.0, 0.0, 1.60e3, 0.0]], dtype=np.float64)
+    return compute.propagate_gpu_batch_model(
+        "sh20", None, y0, duration_s=300.0, rk4_dt_s=10.0, output_dt_s=60.0, ephem=None,
+        device=torch.device("cpu"), dtype=torch.float64, dtype_name="float64",
+        frame_mode="identity_diagnostic", gpu_integrator="medium", progress_cb=progress_cb,
+    )
+
+
+def test_failing_progress_callback_is_logged_once_and_run_completes(monkeypatch, caplog):
+    import numpy as np
+
+    calls = []
+
+    def _broken(step, total, elapsed):
+        calls.append(step)
+        raise RuntimeError("display gone")
+
+    reference = _point_mass_batch(monkeypatch, None)
+    with caplog.at_level("WARNING"):
+        result = _point_mass_batch(monkeypatch, _broken)
+    assert result.status == "ok"
+    np.testing.assert_array_equal(result.y, reference.y)  # numbers unchanged
+    assert len(calls) == 1  # no further calls after the first failure
+    failures = [r for r in caplog.records if "progress callback failed" in r.getMessage()]
+    assert len(failures) == 1
+    assert failures[0].exc_info is not None

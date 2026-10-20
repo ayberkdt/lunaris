@@ -38,6 +38,12 @@ CANONICAL_METRIC_CATEGORIES: dict[str, str] = {
     "field_error.accel_rms_m_s2": MODEL_ERROR_FIELD,
     "field_error.accel_p95_m_s2": MODEL_ERROR_FIELD,
     "field_error.accel_max_m_s2": MODEL_ERROR_FIELD,
+    # Exact column names of the extended-metrics schema that benchmark_pipeline
+    # writes (EXTENDED_SCENARIO_COLUMNS in benchmark_validation.py). Listed here
+    # because the substring markers below ("accel_error", "accel_rms") do not
+    # match them, so these field-level metrics fell through unclassified.
+    "accel_max_error_m_s2": MODEL_ERROR_FIELD,
+    "potential_error_m2_s2": MODEL_ERROR_FIELD,
     "orbit_error.position_rms_m": TRAJECTORY_ERROR,
     "orbit_error.position_p95_m": TRAJECTORY_ERROR,
     "orbit_error.velocity_rms_m_s": TRAJECTORY_ERROR,
@@ -156,6 +162,19 @@ _CLASSIFY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+def _marker_present(lowered: str, marker: str) -> bool:
+    """True when ``marker`` occurs in ``lowered``.
+
+    The short marker "ric" (radial/in-track/cross-track) must match as a whole
+    underscore- or dot-delimited token: as a plain substring it also matches
+    unrelated names such as ``metric_order`` or ``numeric_tolerance``. Real RIC
+    columns (``ric_rms_radial_m``, ``e_ric_m``) carry "ric" as its own token.
+    """
+    if marker == "ric":
+        return "ric" in lowered.replace(".", "_").split("_")
+    return marker in lowered
+
+
 def classify_metric(name: str) -> str | None:
     """Return the evidence category for a metric/column name, or ``None``.
 
@@ -170,7 +189,7 @@ def classify_metric(name: str) -> str | None:
         if lowered.startswith(prefix):
             return category
     for category, markers in _CLASSIFY_RULES:
-        if any(marker in lowered for marker in markers):
+        if any(_marker_present(lowered, marker) for marker in markers):
             return category
     return None
 

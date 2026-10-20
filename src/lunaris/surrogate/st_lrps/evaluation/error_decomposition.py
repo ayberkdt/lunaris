@@ -30,6 +30,7 @@ never validate as paper-safe. Category descriptions are shared with
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -95,9 +96,37 @@ def _is_float64_dtype(value: Any) -> bool:
     return name in _PAPER_SAFE_FLOAT64_DTYPES
 
 
+def _has_finite_metric(metrics: Mapping[str, Any] | None) -> bool:
+    """True when ``metrics`` carries at least one finite numeric value.
+
+    A caller passing ``{}`` (or a dict of only non-numeric/blank values) is
+    not a measurement: ``metrics is not None`` used to mark an empty dict
+    present, which let a schema-only ``field_error={}`` block read as field
+    evidence.
+
+    ``benchmark_validation._category_metrics`` reports category membership as
+    ``{"columns": [...]}`` (column names that the evidence taxonomy already
+    filtered for a finite value); a non-empty column list counts as present.
+    """
+    if not metrics:
+        return False
+    for value in metrics.values():
+        if isinstance(value, list | tuple):
+            if len(value) > 0:
+                return True
+            continue
+        try:
+            fvalue = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(fvalue):
+            return True
+    return False
+
+
 def _metric_block(name: str, metrics: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
-        "present": metrics is not None,
+        "present": _has_finite_metric(metrics),
         "description": str(EVIDENCE_CATEGORIES[_BLOCK_CATEGORY[name]]["description"]),
         "metrics": dict(metrics) if metrics is not None else {},
     }

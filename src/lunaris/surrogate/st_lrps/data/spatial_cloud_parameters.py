@@ -416,6 +416,32 @@ class CloudSuiteConfig:
             raise ValueError("boundary_mode must be 'strict' or 'soft'")
         if self.dtype not in ("float32", "float64"):
             raise ValueError("dtype must be 'float32' or 'float64'")
+        ood_low_lo = float(self.train_alt_min_km) - float(self.ood_margin_km)
+        if ood_low_lo < 0.0:
+            raise ValueError(
+                "ood_low band would extend below the lunar surface: "
+                f"train_alt_min_km={float(self.train_alt_min_km)} - ood_margin_km={float(self.ood_margin_km)} "
+                f"= {ood_low_lo} km < 0. Increase train_alt_min_km or decrease ood_margin_km."
+            )
+        # train_stratified_uniform, val, and test all sample the identical
+        # [train_alt_min_km, train_alt_max_km] shell with the same "stratified_
+        # uniform" strategy (see run_suite_generation); a shared seed reproduces
+        # the same RNG stream, so val/test would silently repeat training rows.
+        same_shell_seeds = {
+            "train_uniform_seed": self.train_uniform_seed,
+            "val_seed": self.val_seed,
+            "test_seed": self.test_seed,
+        }
+        seen: dict[int, str] = {}
+        for name, seed_value in same_shell_seeds.items():
+            if seed_value in seen:
+                raise ValueError(
+                    f"{name} and {seen[seed_value]} both sample the train altitude shell "
+                    f"[{self.train_alt_min_km}, {self.train_alt_max_km}] km with seed={seed_value}; "
+                    "reusing the same seed across them produces duplicate/overlapping rows "
+                    "(e.g. validation rows repeating training rows). Use distinct seeds."
+                )
+            seen[seed_value] = name
 
     @property
     def ood_low_alt_min_km(self) -> float:

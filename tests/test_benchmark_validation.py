@@ -14,7 +14,14 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def _scenario_contract_fields() -> dict:
+def _scenario_contract_fields(*, field_evidence: bool = True) -> dict:
+    """Extended-column fixture.
+
+    ``accel_max_error_m_s2`` and ``potential_error_m2_s2`` are field-level
+    (model_error_field) columns: a finite value in them is a field-accuracy
+    measurement. Trajectory-only fixtures pass ``field_evidence=False`` so they
+    carry no field evidence instead of claiming it by accident.
+    """
     return {
         "trajectory_rms_km": 1.0,
         "final_pos_err_km": 1.1,
@@ -23,8 +30,8 @@ def _scenario_contract_fields() -> dict:
         "rms_vel_err_ms": 0.1,
         "final_vel_err_ms": 0.12,
         "energy_drift_rel": 1.0e-8,
-        "accel_max_error_m_s2": 1.0e-12,
-        "potential_error_m2_s2": 1.0e-6,
+        "accel_max_error_m_s2": 1.0e-12 if field_evidence else "",
+        "potential_error_m2_s2": 1.0e-6 if field_evidence else "",
         "impact_count": 0,
         "domain_exit_count": 0,
     }
@@ -41,7 +48,7 @@ def _runtime_contract_fields(total_runtime: float = 1.0) -> dict:
     }
 
 
-def _valid_dir(tmp_path: Path) -> Path:
+def _valid_dir(tmp_path: Path, *, field_evidence: bool = True) -> Path:
     out = tmp_path / "run"
     out.mkdir()
     (out / "figures").mkdir()
@@ -73,7 +80,7 @@ def _valid_dir(tmp_path: Path) -> Path:
                 "phase_lag_slope_s_per_day": -0.08,
                 "phase_corrected_rms_km": 0.05,
                 "phase_explained_fraction": 0.9,
-                **_scenario_contract_fields(),
+                **_scenario_contract_fields(field_evidence=field_evidence),
                 "status": "ok",
                 "domain_warning": "",
             }
@@ -201,7 +208,7 @@ def test_paper_safe_with_rotating_frame_mode_passes(tmp_path):
 def test_validation_report_includes_evidence_taxonomy(tmp_path):
     """The report self-describes its metric columns by evidence category so a
     trajectory-only run cannot be read as ST-LRPS field accuracy."""
-    out = _valid_dir(tmp_path)  # metrics are trajectory error only
+    out = _valid_dir(tmp_path, field_evidence=False)  # trajectory error only
     report = validate_benchmark_outputs(out, expected_count=1)
     tax = report["evidence_taxonomy"]
     assert tax["has_field_level_evidence"] is False
@@ -231,19 +238,19 @@ def _paper_safe_manifest(frame_mode: str = "moon_fixed_ephemeris") -> str:
 
 
 def test_paper_safe_explicit_trajectory_only_run_passes(tmp_path):
-    out = _valid_dir(tmp_path)  # metrics are trajectory error only
-    (out / "resolved_config.json").write_text(
-        json.dumps(
-            {
-                "name": "traj_paper",
-                "paper_safe": True,
-                "paper_safe_claim_type": "trajectory_only",
-            }
-        ),
-        encoding="utf-8",
-    )
+    out = _valid_dir(tmp_path, field_evidence=False)  # trajectory error only
+    config = {
+        "name": "traj_paper",
+        "paper_safe": True,
+        "paper_safe_claim_type": "trajectory_only",
+        # A trajectory-only run never measured the extended (incl. field-level)
+        # metrics, so it opts out of the "all extended columns finite" check
+        # instead of fabricating accel/potential error values.
+        "metrics": {"extended": False},
+    }
+    (out / "resolved_config.json").write_text(json.dumps(config), encoding="utf-8")
     (out / "benchmark_manifest.json").write_text(_paper_safe_manifest(), encoding="utf-8")
-    report = validate_benchmark_outputs(out, expected_count=1)
+    report = validate_benchmark_outputs(out, resolved_config=config, expected_count=1)
     # An explicit trajectory-only paper-safe run is labeled + warned, not failed.
     assert not any("field" in e.lower() for e in report["errors"]), report["errors"]
     assert report["evidence_taxonomy"]["trajectory_error_only"] is True
@@ -253,7 +260,7 @@ def test_paper_safe_explicit_trajectory_only_run_passes(tmp_path):
 def test_paper_safe_default_claim_fails_trajectory_only_run(tmp_path):
     """No claim_type -> strict default (full_surrogate_validation): a trajectory-
     only paper-safe run is rejected because it carries no field evidence."""
-    out = _valid_dir(tmp_path)
+    out = _valid_dir(tmp_path, field_evidence=False)
     (out / "resolved_config.json").write_text(
         json.dumps({"name": "traj_default", "paper_safe": True}),
         encoding="utf-8",
@@ -266,7 +273,7 @@ def test_paper_safe_default_claim_fails_trajectory_only_run(tmp_path):
 
 
 def test_error_decomposition_block_present_in_report(tmp_path):
-    out = _valid_dir(tmp_path)
+    out = _valid_dir(tmp_path, field_evidence=False)
     (out / "benchmark_manifest.json").write_text(_paper_safe_manifest(), encoding="utf-8")
     report = validate_benchmark_outputs(out, expected_count=1)
     block = report["error_decomposition"]
@@ -642,3 +649,63 @@ def test_runtime_per_scenario_inconsistency_fails(tmp_path):
     report = validate_benchmark_outputs(out, expected_count=2)
     assert report["passed"] is False
     assert any("runtime_per_scenario_s" in e for e in report["errors"])
+
+
+# --- Field evidence needs a measured value, not only a header column ---------
+
+def _taxonomy_and_errors(scenario_rows: list[dict[str, str]]) -> tuple[dict, list[str]]:
+    from lunaris.surrogate.st_lrps.evaluation.benchmark_validation import (
+        _check_paper_safe_field_evidence,
+        _evidence_taxonomy_block,
+    )
+
+    evidence = {"paper_safe": True, "synthetic": False}
+    taxonomy = _evidence_taxonomy_block([], scenario_rows, [], evidence)
+    errors: list[str] = []
+    _check_paper_safe_field_evidence(evidence, taxonomy, errors, [], [])
+    return taxonomy, errors
+
+
+def test_paper_safe_blank_field_column_is_not_field_evidence():
+    # The header has a field-error column, but no row has a value in it: that
+    # is a schema slot, not a field measurement.
+    taxonomy, errors = _taxonomy_and_errors(
+        [{"rms_pos_err_km": "1.0", "accel_rms_m_s2": ""},
+         {"rms_pos_err_km": "2.0", "accel_rms_m_s2": ""}]
+    )
+    assert taxonomy["has_field_level_evidence"] is False
+    assert taxonomy["trajectory_error_only"] is True
+    assert "accel_rms_m_s2" not in taxonomy["categories"]["model_error_field"]["metrics"]
+    assert any("model_error_field" in e for e in errors), errors
+
+
+def test_paper_safe_non_finite_field_column_is_not_field_evidence():
+    taxonomy, errors = _taxonomy_and_errors(
+        [{"rms_pos_err_km": "1.0", "accel_rms_m_s2": "nan"}]
+    )
+    assert taxonomy["has_field_level_evidence"] is False
+    assert any("model_error_field" in e for e in errors), errors
+
+
+def test_paper_safe_field_column_with_one_finite_value_is_field_evidence():
+    taxonomy, errors = _taxonomy_and_errors(
+        [{"rms_pos_err_km": "1.0", "accel_rms_m_s2": ""},
+         {"rms_pos_err_km": "2.0", "accel_rms_m_s2": "3.5e-9"}]
+    )
+    assert taxonomy["has_field_level_evidence"] is True
+    assert taxonomy["trajectory_error_only"] is False
+    assert taxonomy["categories"]["model_error_field"]["metrics"] == ["accel_rms_m_s2"]
+    assert errors == []
+
+
+def test_extended_field_columns_with_values_are_field_evidence(tmp_path):
+    # The pipeline's extended columns accel_max_error_m_s2 / potential_error_m2_s2
+    # are field-level metrics; with finite values they are field evidence.
+    report = validate_benchmark_outputs(_valid_dir(tmp_path), expected_count=1)
+    tax = report["evidence_taxonomy"]
+    assert tax["categories"]["model_error_field"]["metrics"] == [
+        "accel_max_error_m_s2", "potential_error_m2_s2",
+    ]
+    assert tax["has_field_level_evidence"] is True
+    assert tax["trajectory_error_only"] is False
+    assert report["error_decomposition"]["field_error"]["present"] is True
