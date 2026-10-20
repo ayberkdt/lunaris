@@ -401,3 +401,28 @@ def test_wheel_package_discovery_excludes_node_modules():
     )
     offenders = [p for p in found if "node_modules" in p]
     assert not offenders, f"node_modules packages discovered: {offenders}"
+
+
+def test_tracked_text_files_hold_no_control_characters():
+    """A shell heredoc once turned the regex ``\\b`` into a literal backspace
+    byte, which silently disabled a meta-gate pattern (seen in the Sidera
+    fork). Tracked text may hold tab, newline and carriage return, nothing
+    else below 0x20."""
+    root = get_project_root()
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True,
+        ).stdout.decode("utf-8").split("\0")
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("not a git checkout")
+    allowed = {"\t", "\n", "\r"}
+    hits = []
+    for rel in filter(None, listed):
+        try:
+            text = (root / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue  # binary or unreadable
+        bad = sorted({f"0x{ord(ch):02x}" for ch in text if ord(ch) < 0x20 and ch not in allowed})
+        if bad:
+            hits.append(f"{rel}: {', '.join(bad)}")
+    assert not hits, "Control characters in tracked text files:\n" + "\n".join(hits)
