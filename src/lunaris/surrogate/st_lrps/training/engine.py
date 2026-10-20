@@ -4021,8 +4021,12 @@ def _run_training_loop(session: _TrainingSession) -> str:
         _interrupt, lambda: _restore_stop_signal_handlers(_orig_handlers)
     )
     _orig_handlers = _install_stop_signal_handlers(_on_stop_signal)
+    # Restore the original stop-signal handlers when the loop exits, also when
+    # it raises, so a failed train() call never leaves its handlers installed.
+    _restore_handlers_on_exit = contextlib.ExitStack()
+    _restore_handlers_on_exit.callback(_restore_stop_signal_handlers, _orig_handlers)
 
-    with open(log_path, _hist_mode, encoding="utf-8") as logf:
+    with _restore_handlers_on_exit, open(log_path, _hist_mode, encoding="utf-8") as logf:
         for epoch in range(start_epoch, cfg.epochs):
             epoch_t0 = time.perf_counter()
             lr_scale = _lr_multiplier_for_epoch(
@@ -4361,9 +4365,6 @@ def _run_training_loop(session: _TrainingSession) -> str:
                     },
                 )
                 break
-
-    # Restore the original stop-signal handlers (best-effort).
-    _restore_stop_signal_handlers(_orig_handlers)
 
     _write_training_history_csv(history, layout.history_csv)
     _save_training_plots(history, outdir)

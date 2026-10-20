@@ -34,6 +34,41 @@ def test_trainer_rejects_an_invalid_laplacian_mode():
         _trainer(cfg)
 
 
+def test_stop_signal_handlers_are_restored_when_the_training_loop_raises(tmp_path, monkeypatch):
+    import signal
+
+    from dataset_pipeline_test_utils import write_toy_contract_h5
+    from lunaris.surrogate.st_lrps.training import engine
+
+    data_path = write_toy_contract_h5(tmp_path / "toy_train.h5", n=48)
+    cfg = TrainConfig(
+        data=str(data_path), out=str(tmp_path / "run"), epochs=1, batch_size=8,
+        num_workers=0, pin_memory=False, quick_check=True, max_train_batches=1,
+        max_val_batches=1, activation="silu", hidden=8, depth=2, model_preset="custom",
+        use_residual_blocks=False, n_bands=1, val_ratio=0.25, split_seed=11,
+        a_sign=1.0, gradnorm_mode="fixed", direction_loss_weight=0.0,
+        use_altitude_balanced_loss=False, use_radial_cross_loss=False,
+        preload_policy="never", auto_preload_mb=0.0, fit_rows=32, fit_chunk_rows=32,
+        cache_rows=16, sampler_block_size=16, warmup_epochs=0, best_ckpt_start_epoch=0,
+        log_every=0,
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("injected failure inside the epoch loop")
+
+    # The first statement of every epoch; raising here fails the loop after the
+    # stop-signal handlers were installed.
+    monkeypatch.setattr(engine, "_lr_multiplier_for_epoch", _boom)
+    before = {sig: signal.getsignal(sig) for sig in engine._stop_signal_list()}
+    try:
+        with pytest.raises(RuntimeError, match="injected failure"):
+            engine.train(cfg)
+        after = {sig: signal.getsignal(sig) for sig in engine._stop_signal_list()}
+    finally:
+        engine._restore_stop_signal_handlers(before)
+    assert after == before
+
+
 @pytest.mark.parametrize("mode", ["off", "diagnostic", "train", " Train "])
 def test_trainer_accepts_the_valid_laplacian_modes(mode):
     cfg = TrainConfig(data="x.h5", out="o", epochs=1, batch_size=8, laplacian_mode=mode, amp=False)
