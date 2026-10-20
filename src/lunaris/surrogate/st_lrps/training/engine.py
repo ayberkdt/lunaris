@@ -632,6 +632,7 @@ class _EpochState:
     total_rel: float = 0.0
     total_rel_a_mean: float = 0.0
     total_wtz_frac: float = 0.0
+    total_accel_sq_err: float = 0.0
     total_a_norm_mean: float = 0.0
     total_angular_mean_deg: float = 0.0
     total_col_lap_diag: float = 0.0
@@ -1056,6 +1057,7 @@ class STLRPSTrainer:
             "accel_factor": float(accel_factor),
             "grad_norm": 0.0,
             "nan_detected": True,
+            "accel_rmse_m_s2": float("nan"),
             "val_base_loss": float("nan"),
             "val_physics_loss": float("nan"),
             "val_total_loss": float("nan"),
@@ -1242,6 +1244,7 @@ class STLRPSTrainer:
         state.total_rel += float(stats.get("loss_rel", 0.0)) * n_b
         state.total_rel_a_mean += float(stats.get("rel_a_mean", 0.0)) * n_b
         state.total_wtz_frac += float(stats.get("wtz_frac", 0.0)) * n_b
+        state.total_accel_sq_err += float(stats.get("accel_sq_err", 0.0)) * n_b
         a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
         state.total_a_norm_mean += a_norm_b * n_b
         state.a_norm_max = max(state.a_norm_max, a_norm_b)
@@ -1386,6 +1389,8 @@ class STLRPSTrainer:
             "loss_rel": state.total_rel / samples_safe,
             "rel_a_mean": state.total_rel_a_mean / samples_safe,
             "wtz_frac": state.total_wtz_frac / samples_safe,
+            # Unweighted residual-acceleration RMS over the epoch's samples [m/s²].
+            "accel_rmse_m_s2": math.sqrt(max(0.0, state.total_accel_sq_err / samples_safe)),
             "loss_laplacian_diag": col_lap_diag_avg,
             "loss_laplacian_train": col_lap_train_avg,
             "lambda_laplacian_eff": col_lap_weight_eff,
