@@ -152,25 +152,34 @@ def test_domain_tracking_total_accel_returns_the_runtimes_total_unchanged():
 
 
 def test_orbit_drift_runtime_uses_the_artifacts_own_base(tmp_path):
-    """Real artifacts: a full-field model gets no extra monopole; an SH baseline is refused."""
+    """Real artifacts: a full-field model gets no extra monopole; an SH baseline
+    without its gravity file is refused."""
     from lunaris.surrogate.st_lrps.evaluation.orbit_drift import _runtime_total_accel
     from st_lrps_contract_test_utils import make_contract_run
 
     r = np.array([[RADIUS, 0.0, 0.0]])  # Moon-fixed, m
 
-    # Residual over an SH degree-20 baseline: the runtime cannot supply the
-    # baseline, so propagation is refused instead of silently using a point mass.
+    # Residual over an SH degree-20 baseline whose recorded source is not a
+    # file here: refused at load instead of silently using a point mass.
     sh_run = make_contract_run(tmp_path / "sh", degree_min=20, degree_max=60)
-    sh_accel, _, _ = _runtime_total_accel(str(sh_run["run_dir"]), "cpu")
+    with pytest.raises(FileNotFoundError, match="--gravity-file"):
+        _runtime_total_accel(str(sh_run["run_dir"]), "cpu")
+
+    # Without a caller base the runtime itself still refuses the SH baseline.
+    from lunaris.surrogate.st_lrps.evaluation.orbit_drift import _DomainTrackingTotalAccel
+    from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
+
+    runtime = load_surrogate_force_model(str(sh_run["run_dir"]), device="cpu")
     with pytest.raises(ValueError, match="base_accel_fn"):
-        sh_accel(r)
+        _DomainTrackingTotalAccel(runtime)(r)
 
     # Full field with no baseline: the zero-weight network's output is the total.
     # (The fixture builder only writes residual datasets, so the loaded runtime's
     # target contract is switched to the full-field semantics it would carry.)
     import dataclasses
 
-    full_accel, mu, _ = _runtime_total_accel(str(sh_run["run_dir"]), "cpu")
+    full_accel = _DomainTrackingTotalAccel(runtime)
+    mu = float(runtime.artifact_contract.mu_si)
     full_accel.runtime.target_contract = dataclasses.replace(
         full_accel.runtime.target_contract, target_mode="full", baseline_kind="none"
     )
@@ -189,3 +198,153 @@ def test_orbit_drift_runtime_uses_the_artifacts_own_base(tmp_path):
     np.testing.assert_allclose(
         full_accel(r), a_net - full_accel.runtime.mu_si * r / RADIUS ** 3, rtol=1e-12, atol=0
     )
+
+
+def _write_shadr(path, *, degree, gm_m3s2, radius_m, degree1=0.0):
+    """Small SHADR-format field: degree-1 terms ``degree1``, deterministic higher terms."""
+    rows = [f"{radius_m / 1e3!r}, {gm_m3s2 / 1e9!r}, 0, {degree}, {degree}, 1, 0, 0"]
+    for n in range(1, degree + 1):
+        for m in range(n + 1):
+            c = degree1 if n == 1 else (-1.0) ** (n + m) * 9.0e-5 / (n * n + m + 1)
+            s = 0.0 if m == 0 else (degree1 if n == 1 else 4.0e-5 / (n * n + 2 * m))
+            rows.append(f"{n}, {m}, {c!r}, {s!r}")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+def _stub_runtime(*, base_degree, dataset_contract, mu, r_ref, baseline_kind="spherical_harmonics"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        target_contract=SimpleNamespace(baseline_kind=baseline_kind, base_degree=base_degree),
+        artifact_contract=SimpleNamespace(
+            dataset_contract=dict(dataset_contract), mu_si=mu, r_ref_m=r_ref
+        ),
+    )
+
+
+def test_sh_base_matches_the_generator_label_convention(tmp_path):
+    """SH(base) + labels (base, target] is the full field: the base the residual excludes."""
+    import hashlib
+
+    from lunaris.physics.spherical_harmonics import (
+        GravityModel,
+        precompute_legendre_constants,
+        sh_potential_accel_batch_serial,
+    )
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+    from lunaris.surrogate.st_lrps.evaluation.orbit_drift import sh_base_accel_from_artifact
+
+    # Nonzero degree-1 terms: the base must carry degrees 1..base_degree, not 2..
+    path = _write_shadr(
+        tmp_path / "field.tab", degree=8, gm_m3s2=MU_MOON_SI, radius_m=R_MOON_SI, degree1=2.0e-6
+    )
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    runtime = _stub_runtime(
+        base_degree=3,
+        dataset_contract={"source_gravity_file_path": str(path), "source_gravity_file_sha256": sha},
+        mu=MU_MOON_SI,
+        r_ref=R_MOON_SI,
+    )
+    base_fn, info = sh_base_accel_from_artifact(runtime)
+    assert info["base_source"] == "gravity_file" and info["sha256_verified"] is True
+
+    rng = np.random.default_rng(3)
+    dirs = rng.normal(size=(16, 3))
+    r = RADIUS * dirs / np.linalg.norm(dirs, axis=1, keepdims=True)
+    full = GravityModel.from_file(str(path), requested_degree=8)
+    tables = precompute_legendre_constants(8)
+
+    def kernel(degree_min):
+        return sh_potential_accel_batch_serial(
+            r, full.c_coeffs, full.s_coeffs, *tables, full.mu, full.r_ref, 8, degree_min
+        )[1]
+
+    base = base_fn(r)
+    truth, labels = kernel(-1), kernel(3)
+    scale = float(np.max(np.linalg.norm(truth, axis=1)))
+    np.testing.assert_allclose(base + labels, truth, rtol=0, atol=1e-14 * scale)
+    # The degree-2..3 terms a point-mass base drops are present and not negligible.
+    point_mass = -MU_MOON_SI * r / np.linalg.norm(r, axis=1, keepdims=True) ** 3
+    assert np.min(np.linalg.norm(base - point_mass, axis=1)) > 1e-7 * scale
+
+
+def test_sh_base_refuses_a_file_that_is_not_the_labels_field(tmp_path):
+    import hashlib
+
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+    from lunaris.surrogate.st_lrps.evaluation.orbit_drift import sh_base_accel_from_artifact
+
+    path = _write_shadr(tmp_path / "field.tab", degree=4, gm_m3s2=MU_MOON_SI, radius_m=R_MOON_SI)
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def runtime(**contract):
+        return _stub_runtime(base_degree=3, dataset_contract=contract, mu=MU_MOON_SI, r_ref=R_MOON_SI)
+
+    with pytest.raises(ValueError, match="--gravity-file"):
+        sh_base_accel_from_artifact(runtime())
+    with pytest.raises(FileNotFoundError, match="--gravity-file"):
+        sh_base_accel_from_artifact(runtime(source_gravity_file_path=str(tmp_path / "elsewhere.tab")))
+    with pytest.raises(ValueError, match="sha256"):
+        sh_base_accel_from_artifact(
+            runtime(source_gravity_file_path=str(path), source_gravity_file_sha256="1" * 64)
+        )
+    # The override replaces a path from another machine; the sha still has to match.
+    _, info = sh_base_accel_from_artifact(
+        runtime(source_gravity_file_path="/cluster/data/field.tab", source_gravity_file_sha256=sha),
+        gravity_file=path,
+    )
+    assert info["gravity_file_overridden"] is True and info["sha256_verified"] is True
+
+    other_gm = _write_shadr(
+        tmp_path / "other_gm.tab", degree=4, gm_m3s2=MU_MOON_SI * 1.001, radius_m=R_MOON_SI
+    )
+    with pytest.raises(ValueError, match="GM"):
+        sh_base_accel_from_artifact(runtime(), gravity_file=other_gm)
+    other_radius = _write_shadr(
+        tmp_path / "other_r.tab", degree=4, gm_m3s2=MU_MOON_SI, radius_m=R_MOON_SI + 1000.0
+    )
+    with pytest.raises(ValueError, match="reference radius"):
+        sh_base_accel_from_artifact(runtime(), gravity_file=other_radius)
+
+    # A degree-0 or point-mass baseline is the runtime's own job.
+    pm_runtime = _stub_runtime(
+        base_degree=0, dataset_contract={}, mu=MU_MOON_SI, r_ref=R_MOON_SI
+    )
+    assert sh_base_accel_from_artifact(pm_runtime) == (
+        None,
+        {"baseline_kind": "spherical_harmonics", "base_degree": 0, "base_source": "runtime"},
+    )
+
+
+def test_orbit_drift_runtime_adds_the_sh_base_from_the_gravity_file(tmp_path):
+    """Real artifact over an SH(3) baseline: total = SH(3) from the file + network output."""
+    import hashlib
+
+    from lunaris.physics.spherical_harmonics import GravityModel
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+    from lunaris.surrogate.st_lrps.evaluation.orbit_drift import _runtime_total_accel
+    from st_lrps_contract_test_utils import make_contract_run
+
+    path = _write_shadr(tmp_path / "field.tab", degree=8, gm_m3s2=MU_MOON_SI, radius_m=R_MOON_SI)
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    plain = make_contract_run(tmp_path / "plain", degree_min=3, degree_max=8)
+    dataset_contract = {
+        **plain["cfg"]["artifact_contract"]["dataset_contract"],
+        "source_gravity_file_path": str(path),
+        "source_gravity_file_sha256": sha,
+    }
+    run = make_contract_run(
+        tmp_path / "sh3",
+        degree_min=3,
+        degree_max=8,
+        contract_overrides={"dataset_contract": dataset_contract},
+    )
+
+    accel, _, _ = _runtime_total_accel(str(run["run_dir"]), "cpu")
+    assert accel.base_info["sha256_verified"] is True
+    r = np.array([[RADIUS, 0.0, 0.0], [0.0, 0.6 * RADIUS, 0.8 * RADIUS]])
+    net = np.asarray(accel.runtime.predict_residual_accel_fixed(r), dtype=np.float64)
+    model = GravityModel.from_file(str(path), requested_degree=3)
+    base = np.stack([model.accel_fixed(p, degree=3) for p in r])
+    np.testing.assert_allclose(accel(r), base + net, rtol=1e-12, atol=0)
