@@ -803,6 +803,16 @@ class TopographyGrid(TopographyProvider):
     # Geometry helpers
     # -------------------------------------------------------------------------
     @property
+    def lat_centers_deg(self) -> npt.NDArray[np.float64]:
+        """Pixel-centre latitudes [deg], one per raster line (storage order)."""
+        return self._lat_centers_deg
+
+    @property
+    def lon_centers_deg(self) -> npt.NDArray[np.float64]:
+        """Pixel-centre longitudes [deg], one per raster sample."""
+        return self._lon_centers_deg
+
+    @property
     def reference_radius_m(self) -> float:
         """
         Reference radius [m] implied by the product.
