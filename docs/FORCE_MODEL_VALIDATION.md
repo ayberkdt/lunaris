@@ -90,8 +90,10 @@ and `srp_shadow_model_fidelity`; CPU/GPU SRP parity claims must account for it.
 
 ### 2.4 Selected 1PN relativity scope and ephemeris state consistency
 The relativity flag enables selected 1PN corrections: central-body
-Schwarzschild, external-body differential Schwarzschild, and de Sitter/geodetic
-terms when ephemeris tables are available. It is not full relativistic N-body
+Schwarzschild and the external-body de Sitter/geodetic term when ephemeris
+tables are available. The external-body differential Schwarzschild term is not
+added: its velocity-dependent part already carries the geodetic precession, so
+adding it to de Sitter counted that precession twice (IERS TN36 Eq. 10.12). It is not full relativistic N-body
 dynamics: EIH terms, Lense-Thirring frame dragging, J2-relativistic coupling,
 and clock/time-dilation models are outside the current scope. Batch manifests
 record this as `relativity_model=selected_1pn_corrections`.

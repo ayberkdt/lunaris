@@ -300,14 +300,12 @@ def _quat_normalize_kernel(q0: float, q1: float, q2: float, q3: float) -> tuple[
     Notes
     -----
     - Returns identity quaternion (1,0,0,0) if the norm is too small, preventing NaN/Inf.
-    - Includes a fast path if the quaternion is already unit length within tolerance,
-      avoiding an expensive sqrt() in stable cases.
+    - Always divides by the norm. A fast path that returned the input when
+      |n2 - 1| < 1e-12 left the nlerp blend of nearby table nodes up to 1e-12
+      short of unit length, and ``quat_rotate_vec`` then scaled the lunar
+      central gravity by that much near every node.
     """
     n2 = q0*q0 + q1*q1 + q2*q2 + q3*q3
-
-    # Fast check: avoid sqrt if already nearly unit length
-    if abs(n2 - 1.0) < EPS_1E12:
-        return q0, q1, q2, q3
 
     # Safety against division by ~0
     if n2 < EPS_1E30:
@@ -641,8 +639,8 @@ def nyquist_max_step_s(
     mu_m3s2: float,
     degree: int,
     r_min_alt_km: float,
-    safety_div: float = 5.0,
-    v_margin: float = 1.10,
+    safety_div: float = 4.0,  # PropagatorConfig.nyquist_safety_div
+    v_margin: float = 1.10,  # PropagatorConfig.nyquist_v_margin
 ) -> float:
     """
     Calculates the maximum integrator step size to avoid 'Aliasing' in high-degree
@@ -1430,7 +1428,12 @@ def wrap_lon_deg(lon_deg: float, west: float = 0.0, east: float = 360.0) -> floa
 
     x = lon_deg - west
     # Python/Numba `%` for floats yields a result with the sign of the divisor -> good here.
-    return (x % span) + west
+    # A tiny negative x rounds up to exactly span (-1e-20 % 360.0 == 360.0); that is
+    # the same longitude as west and is folded onto it to keep [west, east).
+    wrapped = x % span
+    if wrapped >= span:
+        wrapped = 0.0
+    return wrapped + west
 
 
 # Used by: surface_effects, dynamics
@@ -1555,12 +1558,18 @@ def _validate_grid_data(
     - 2D array with shape (n_rows, n_cols)
     - 1D flat array with size n_rows*n_cols
 
-    Returns a contiguous float64 array view/copy suitable for Numba kernels.
+    Returns a contiguous float32/float64 array suitable for Numba kernels. A
+    float32 grid (a memory-mapped LDEM raster) is passed through unconverted:
+    the kernels read four neighbours and promote each to float64 exactly, so the
+    sample is bit-identical to converting first, without copying the whole grid
+    per call (2.1 GB and ~1 s per sample for the 64 ppd LDEM).
     """
     if n_rows <= 0 or n_cols <= 0:
         raise ValueError(f"Invalid grid dims: {row_label}={n_rows}, {col_label}={n_cols}")
 
-    arr = np.asarray(data, dtype=np.float64)
+    arr = np.asarray(data)
+    if arr.dtype != np.float32 and arr.dtype != np.float64:
+        arr = arr.astype(np.float64)
     if arr.ndim == 2:
         if arr.shape[0] != n_rows or arr.shape[1] != n_cols:
             raise ValueError(f"2D {name} shape {arr.shape} != ({n_rows},{n_cols})")
@@ -1941,9 +1950,12 @@ def screening_orbital_elements_vec(
         )
     argp = np.arccos(np.clip(cos_argp, -1.0, 1.0))
     argp = np.where(e_vec[..., 2] < 0.0, 2.0 * np.pi - argp, argp)
-    # Near-equatorial fallback: longitude of periapsis (see docstring).
+    # Near-equatorial fallback: longitude of periapsis (see docstring), with
+    # the sign convention of _rv_to_coe_kernel: a retrograde orbit (h_z < 0)
+    # reports atan2(-e_y, e_x), so a screening drift has the kernel's sign.
     equatorial = nn <= 1e-12 * np.maximum(hn, 1.0)
-    lon_peri = np.mod(np.arctan2(e_vec[..., 1], e_vec[..., 0]), 2.0 * np.pi)
+    e_y = np.where(h[..., 2] < 0.0, -e_vec[..., 1], e_vec[..., 1])
+    lon_peri = np.mod(np.arctan2(e_y, e_vec[..., 0]), 2.0 * np.pi)
     argp = np.where(equatorial, lon_peri, argp)
     return a, e, inc, argp
 

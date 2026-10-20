@@ -61,8 +61,34 @@ def test_stop_does_not_block_and_the_child_is_killed(tmp_path) -> None:
     assert elapsed < 0.5, f"Stop blocked the GUI thread for {elapsed:.2f} s"
     assert not win.btn_stop.isEnabled()
 
-    deadline = time.perf_counter() + 8.0
+    # The force-kill timer fires after 2 s; the rest of the budget absorbs a
+    # fully loaded machine (the full suite once missed an 8 s budget).
+    deadline = time.perf_counter() + 30.0
     while not finished and time.perf_counter() < deadline:
         app.processEvents(QtCore.QEventLoop.AllEvents, 50)
     assert finished, "the child was never force-killed"
     assert any("forcing kill" in msg for _sev, msg in win.messages)
+
+
+def test_force_kill_happens_even_if_logging_fails(tmp_path) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    anchor = QtCore.QObject()
+    win = _window(tmp_path)
+
+    def broken_log(*_a, **_k):
+        raise AttributeError("log pane already torn down")
+
+    win._log_message = broken_log
+    proc = QtCore.QProcess(anchor)
+    finished: list[int] = []
+    proc.finished.connect(lambda code, _status: finished.append(code))
+    proc.start(sys.executable, ["-c", _CHILD])
+    assert proc.waitForStarted(5000)
+    assert proc.waitForReadyRead(10000)
+    win.process = proc
+
+    MainWindow._force_kill_if_still_running(win, proc)  # must not raise
+    deadline = time.perf_counter() + 30.0
+    while not finished and time.perf_counter() < deadline:
+        app.processEvents(QtCore.QEventLoop.AllEvents, 50)
+    assert finished, "a failing log write left the child running"

@@ -620,3 +620,35 @@ def test_precomputed_cuda_smoke(monkeypatch):
         frame_mode="precomputed_slerp", gpu_integrator="medium")
     assert res.status == "ok"
     assert np.isfinite(res.y).all()
+
+
+def test_batch_rk4_refuses_a_truth_its_labels_do_not_name(tmp_path):
+    """Ported from Sidera 4a8784c1.
+
+    The --batch-rk4 rows, plots and summary keys say SH200 DOP853; another truth
+    would mislabel every number, so it is refused before any propagation.
+    """
+    from types import SimpleNamespace
+
+    from lunaris.surrogate.st_lrps.evaluation._gravity_benchmark.modes import (
+        run_random_scenario_mode,
+    )
+
+    for truth, integ in (("sh120", "DOP853"), ("sh200", "RK45")):
+        args = SimpleNamespace(
+            output_dir=str(tmp_path), models="sh200,st_lrps", truth=truth,
+            truth_integrator=integ, batch_rk4=True, include_st_lrps=False,
+        )
+        with pytest.raises(ValueError, match="--batch-rk4 reports against SH200 DOP853 only"):
+            run_random_scenario_mode(args, None, None)
+
+
+def test_gpu_batch_rows_name_the_truth_they_were_compared_with():
+    """GPU-batch rows carry the actual truth name, not a hard-coded sh200_dop853."""
+    ds = _build(n=2)
+    truth = ds["truth"]
+    other = cgm.TruthTrajectorySet(
+        "sh160_rk45", truth.t_by_scenario, truth.y_by_scenario, truth.runtime_by_scenario
+    )
+    rows = cgm.compute_gpu_batch_metrics_for_model(ds["results"][0], other, ds["scenarios"], 1.0)
+    assert rows and {r["reference"] for r in rows} == {"sh160_rk45"}

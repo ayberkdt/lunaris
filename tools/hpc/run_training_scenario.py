@@ -28,6 +28,10 @@ Usage (driven by ``hpc/slurm_train_scenario_array.sbatch``)::
 Any argument the launcher does not recognise (everything after the JSONL path
 that is not a launcher option) is treated as a *common flag* and appended to the
 entrypoint command, so the same data/epoch flags apply to every array task.
+
+Exit status: the entrypoint's own. Status 75 (``EX_TEMPFAIL``) is the trainer's
+"stopped by SIGTERM/SIGUSR1 after saving ckpt_last" code; the launcher reports
+it as a resumable stop (relaunch with ``--resume``) instead of a failure.
 """
 
 from __future__ import annotations
@@ -69,6 +73,9 @@ REQUIRED_FIELDS: tuple[str, ...] = (
 # The launcher injects the output directory itself; scenarios and common flags
 # must not also set an output flag, or the run directory would be ambiguous.
 OUTPUT_FLAGS: tuple[str, ...] = ("--out", "--out-dir", "--output-dir", "--output")
+
+# Exit status of a training run stopped by SIGTERM/SIGUSR1 after it saved ckpt_last.
+EX_TEMPFAIL = 75
 
 # Filesystem-safe scenario name: starts alphanumeric, then word/dot/dash chars.
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -326,6 +333,15 @@ def _environment_snapshot(scenario_file: Path, index: int) -> dict[str, Any]:
     }
 
 
+def _written_by_scenario(run_dir: Path, name: str) -> bool:
+    """True when ``run_dir/scenario.json`` was written by the scenario ``name``."""
+    try:
+        payload = json.loads((run_dir / "scenario.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("name") == name
+
+
 def _write_provenance(
     run_dir: Path,
     scenario: Mapping[str, Any],
@@ -411,6 +427,18 @@ def parse_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, l
         ),
     )
     ap.add_argument(
+        "--restart-if-no-checkpoint",
+        action="store_true",
+        default=False,
+        help=(
+            "With --resume: when the output directory holds no checkpoint but was "
+            "written by this same scenario (its scenario.json names it), start the "
+            "scenario again from scratch in it instead of refusing. Used by the "
+            "Slurm array template for a requeued attempt that stopped before its "
+            "first checkpoint."
+        ),
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -463,6 +491,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _assert_not_under_src(run_dir)
 
         resume_ckpt: Path | None = None
+        restart_in_place = False
         if args.resume:
             if args.force:
                 raise ScenarioError(
@@ -476,7 +505,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"got {scenario['entrypoint']!r}."
                 )
             resume_ckpt = find_resumable_checkpoint(run_dir)
-            if resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()):
+            if (
+                resume_ckpt is None
+                and args.restart_if_no_checkpoint
+                and _written_by_scenario(run_dir, name)
+            ):
+                print(
+                    f"[scenario] {run_dir} holds no checkpoint yet (stopped before its first "
+                    "save); restarting the scenario from scratch in it."
+                )
+                restart_in_place = True
+            elif resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()):
                 raise ScenarioError(
                     f"--resume requested but {run_dir} is non-empty and contains no "
                     "resumable checkpoint (checkpoints/ckpt_last.pt or ckpt_best.pt). "
@@ -505,7 +544,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("[scenario] DRY RUN: nothing launched.")
         return 0
 
-    if resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()) and not args.force:
+    if (
+        resume_ckpt is None
+        and not restart_in_place
+        and run_dir.exists()
+        and any(run_dir.iterdir())
+        and not args.force
+    ):
         print(
             f"[scenario] ERROR: output directory already exists and is not empty: "
             f"{run_dir}\n[scenario] Pass --force/--overwrite to reuse it, or "
@@ -525,7 +570,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[scenario] provenance written -> {run_dir}")
     print(f"[scenario] launching {scenario['entrypoint']} ...")
     returncode = run_forwarding_signals(cmd, cwd=str(_repo_root()))
-    if returncode != 0:
+    if returncode == EX_TEMPFAIL:
+        print(
+            f"[scenario] STOPPED {name} by a signal after saving its checkpoint "
+            f"(exit {EX_TEMPFAIL}); relaunch the same command with --resume to continue.",
+            file=sys.stderr,
+        )
+    elif returncode != 0:
         print(
             f"[scenario] FAILED {name} (exit {returncode}).",
             file=sys.stderr,

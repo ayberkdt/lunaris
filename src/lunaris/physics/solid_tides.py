@@ -154,7 +154,7 @@ def solid_tide_potential_degree_numba(
 
 
 # The two acceleration kernels below are shared by strict callers (the dynamics
-# RHS) and by the fastmath wrapper ``third_body_effects.accel_solid_tide``.
+# RHS) and by the wrapper ``third_body_effects.accel_solid_tide``.
 # fastmath=False is explicit: Numba otherwise compiles a callee with the flags of
 # whichever caller compiles it first and caches that build on disk, so a
 # fastmath-first compile changed the strict RHS by up to 2.7e-15 relative.

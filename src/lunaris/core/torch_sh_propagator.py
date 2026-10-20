@@ -210,6 +210,18 @@ class TorchSHBatchPropagator:
                 + ". Route this run through batch_backend='auto' (CPU fallback) instead."
             )
 
+        # The evaluator flies the full degree everywhere; the CPU engine blends
+        # the degree with altitude when gravity.adaptive is on. Refuse rather
+        # than fly a different field than the one configured.
+        if (
+            flags is None or bool(getattr(flags, "enable_sh", True))
+        ) and bool(getattr(getattr(dynamics_engine, "gravity_adaptive", None), "enabled", False)):
+            raise TorchSHPreflightError(
+                "torch_cuda_sh evaluates the full requested degree everywhere; it cannot model "
+                "gravity.adaptive (altitude-dependent SH degree). Route this run through "
+                "batch_backend='auto' (CPU fallback) instead."
+            )
+
         # --- Gravity model + coefficient/degree preflight (task §8) ----------
         grav = getattr(dynamics_engine, "grav", None)
         if grav is None:

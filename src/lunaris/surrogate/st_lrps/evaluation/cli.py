@@ -3031,7 +3031,8 @@ def _a_sign_arg(text: str) -> float:
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser()
+    # allow_abbrev=False: a prefix of a flag must not silently bind to another option.
+    ap = argparse.ArgumentParser(allow_abbrev=False)
     ap.add_argument("--model-dir", "--run-dir", dest="model_dir", default=None, help="Directory containing config.json, scaler.json, and checkpoints/ckpt_best.pt or ckpt_last.pt. If omitted, auto-detects the newest lunar-compatible run near this script or via env ST_LRPS_MODEL_DIR.")
     ap.add_argument("--data", default=None, help="Test dataset path (.h5/.hdf5/.pt). If omitted, auto-detect the newest lunar-compatible dataset near model-dir.")
     ap.add_argument("--train-sample-data", default=None, help="Optional small training-sample dataset for publication summary.")

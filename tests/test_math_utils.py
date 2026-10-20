@@ -159,6 +159,23 @@ def test_wrap_lon_deg(lon, west, east, expected):
     assert_allclose(math_utils.wrap_lon_deg(lon, west=west, east=east), expected)
 
 
+# A negative longitude below half an ULP of 360 used to come back as 360.0.
+@pytest.mark.parametrize("lon_deg", [-1e-20, -3.4e-18, -1e-14])
+def test_wrap_lon_deg_stays_below_the_east_bound_for_tiny_negative_input(lon_deg):
+    wrapped = math_utils.wrap_lon_deg(lon_deg)  # default span [0, 360)
+    assert 0.0 <= wrapped < 360.0, wrapped
+
+
+@pytest.mark.parametrize("lon_deg", [-1e-13, -1e-10, -90.0, -360.0, 0.0, 359.9999999, 360.0, 720.0, 540.0])
+def test_wrap_lon_deg_lands_in_the_documented_range_for_ordinary_input(lon_deg):
+    assert 0.0 <= math_utils.wrap_lon_deg(lon_deg) < 360.0
+    assert -180.0 <= math_utils.wrap_lon_deg(lon_deg, -180.0, 180.0) < 180.0
+
+
+def test_wrap_lon_deg_keeps_nan():
+    assert math.isnan(math_utils.wrap_lon_deg(float("nan")))
+
+
 def test_latlon_from_xyz_m_basic_and_origin():
     R = 1737.4e3
 
@@ -264,6 +281,18 @@ def test_interp_quat_slerp_table_behavior():
     # empty table => identity
     out_empty = math_utils.interp_quat_slerp(0.1, 1.0, np.zeros((0, 4)))
     assert_allclose(out_empty, (1.0, 0.0, 0.0, 0.0), atol=0.0, rtol=0.0)
+
+
+@pytest.mark.parametrize("fraction", [0.001, 0.01, 0.02, 0.5, 0.99])
+def test_interp_quat_slerp_is_unit_for_nearby_nodes(fraction):
+    # The Moon's rotation over a 5 s table step (2.66e-6 rad/s): the nlerp
+    # blend falls short of unit length by up to 2 f (1 - f) (1 - dot), below
+    # 1e-12 near the nodes. The rotation scales vectors by |q|^2, so the
+    # quaternion must be unit to rounding (it was 1 - 4e-13 at f = 0.01).
+    q0 = axis_angle_quat(np.array([0.1, 0.2, 0.97]), 1.0)
+    q1 = axis_angle_quat(np.array([0.1, 0.2, 0.97]), 1.0 + 2.66e-6 * 5.0)
+    q = np.asarray(math_utils.interp_quat_slerp(fraction * 5.0, 5.0, np.vstack([q0, q1])))
+    assert abs(float(q @ q) - 1.0) < 1e-15  # abs: float64 rounding of a sum of four unit-scale squares
 
 
 # =============================================================================
@@ -1051,3 +1080,19 @@ def test_exactly_equatorial_retrograde_round_trip(ecc, angle):
     r2, v2 = coe_to_rv(a2, e2, inc2, raan2, argp2, nu2, _RT_MU)
     assert_allclose(r2, r, rtol=0.0, atol=1e-9 * np.linalg.norm(r))
     assert_allclose(v2, v, rtol=0.0, atol=1e-9 * np.linalg.norm(v))
+
+
+def test_screening_argp_of_an_equatorial_orbit_matches_the_kernel_for_both_senses():
+    """A retrograde equatorial orbit reports atan2(-e_y, e_x) in the kernel; the screening must agree."""
+    from lunaris.common.constants import MU_MOON, R_MOON
+
+    radius = R_MOON + 100e3
+    speed = math.sqrt(MU_MOON / radius) * 1.05  # eccentric
+    angle = math.radians(30.0)
+    r = np.array([radius * math.cos(angle), radius * math.sin(angle), 0.0])
+    for sense in (1.0, -1.0):  # prograde, retrograde (h_z < 0)
+        v = sense * speed * np.array([-math.sin(angle), math.cos(angle), 0.0]) + np.array([5.0, 0.0, 0.0])
+        argp_kernel = math_utils.rv_to_coe_select(r, v, MU_MOON, mode="coe6")[4]
+        argp_screen = math_utils.screening_orbital_elements_vec(r[None, :], v[None, :], MU_MOON)[3][0]
+        # abs_tol: float64 rounding of two atan2 evaluations of the same O(1) vector
+        assert math.isclose(argp_screen, argp_kernel, abs_tol=1e-12), (sense, argp_screen, argp_kernel)

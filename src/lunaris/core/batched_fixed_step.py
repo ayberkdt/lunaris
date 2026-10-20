@@ -481,15 +481,20 @@ def _propagate_chunk(
         impact_pos = torch.where(at_surface0.unsqueeze(1), state[:, :3], impact_pos)
         alive = alive & ~at_surface0
 
+    # The step clock is k * dt_eff, not a running sum: it feeds the force
+    # evaluation (ephemeris, orientation) and the impact times, and a sum drifts
+    # by ~1e-3 s over a year of non-representable steps. Bitwise equal to the sum
+    # wherever dt_eff is exactly representable (10 s, 1 s, 0.5 s ...).
     t_curr = 0.0
     global_step = 0
     snap_start = 0
 
     # Resume: restore the integrator state saved at a snapshot boundary. The
     # tensors round-trip through host arrays in their exact device dtype and
-    # ``t_curr`` is the saved float, so the continued RK4 arithmetic is
-    # identical to an uninterrupted run. A chunk saved as complete is filled
-    # from disk and skipped entirely.
+    # the clock is recomputed from the saved ``global_step`` (the saved
+    # ``t_curr`` of an older checkpoint may be a running sum), so the continued
+    # RK4 arithmetic is identical to an uninterrupted run. A chunk saved as
+    # complete is filled from disk and skipped entirely.
     if ckpt is not None:
         record = ckpt.load_chunk(a, b)
         if record is not None:
@@ -498,8 +503,8 @@ def _propagate_chunk(
             impact_step = ckpt.to_device(record.impact_step, dtype=torch.int64)
             impact_time = ckpt.to_device(record.impact_time, dtype=dtype)
             impact_pos = ckpt.to_device(record.impact_pos, dtype=dtype)
-            t_curr = float(record.t_curr)
             global_step = int(record.global_step)
+            t_curr = float(global_step) * dt_eff
             snap_start = int(record.snap_done)
             active_steps_acc = torch.as_tensor(
                 int(record.active_steps), dtype=torch.int64, device=device
@@ -527,7 +532,8 @@ def _propagate_chunk(
     # snapshot interval (one bounded host sync per snapshot for the gather
     # size); inside the interval the loop advances ONLY the compacted subset
     # with the same mask-based freeze/impact logic as before, so the hot loop
-    # keeps fixed shapes and stays free of per-step device-host syncs. RK4 and
+    # keeps fixed shapes and stays free of per-step device-host syncs (terrain
+    # impact detection syncs each step to size its envelope-gated rows). RK4 and
     # every provider are row-independent, so subsetting the sample axis is
     # bitwise-neutral; impacted samples stay frozen/terminal in the output.
     with torch.no_grad():
@@ -539,8 +545,8 @@ def _propagate_chunk(
                 # Everyone impacted: nothing advances; time bookkeeping keeps
                 # the identical step-by-step arithmetic for consistency.
                 for _ in range(steps_per_snap):
-                    t_curr += dt_eff
                     global_step += 1
+                    t_curr = float(global_step) * dt_eff
             else:
                 if full:
                     sub_state = state
@@ -562,8 +568,8 @@ def _propagate_chunk(
                     prev_state = sub_state
                     candidate = rk4_step(torch, provider, sub_state, t_curr, dt_eff)
                     sub_state = torch.where(sub_alive.unsqueeze(1), candidate, sub_state)
-                    t_curr += dt_eff
                     global_step += 1
+                    t_curr = float(global_step) * dt_eff
                     if detect_impact:
                         # Crossing of the step's cubic Hermite arc (both
                         # step-end positions and velocities), then replace the
@@ -578,7 +584,7 @@ def _propagate_chunk(
                             segment_hit, alpha = terrain_segment_intersection(
                                 prev_state[:, :3],
                                 sub_state[:, :3],
-                                t_prev_s=t_curr - dt_eff,
+                                t_prev_s=float(global_step - 1) * dt_eff,
                                 dt_s=dt_eff,
                                 frame=frame,
                                 topo=topo,

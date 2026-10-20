@@ -104,3 +104,80 @@ def test_only_selection_and_eval_commands(tmp_path):
     entries = ram.build_matrix(args)
     assert [e["name"] for e in entries] == ["A2_plus_multiscale"]
     assert entries[0]["eval_commands"], "eval commands should be generated when --run-eval-after-training is set"
+
+
+def _ablation_entry_with_evals(tmp_path):
+    args = ram.parse_args([
+        "--run-eval-after-training", "--eval-streaming", "--dry-run",
+        "--train-data", "train.h5", "--val-data", "val.h5",
+        "--test-data", "test.h5", "--ood-data", "ood.h5",
+        "--out-root", str(tmp_path / "abl"),
+        "--only", "A0_raw_siren_sobolev",
+    ])
+    return ram.build_matrix(args)[0]
+
+
+def test_ablation_eval_commands_are_accepted_by_the_real_eval_parser(monkeypatch, tmp_path):
+    """Regression (ported from Sidera 4a8784c1): the launcher passed --out-dir,
+    which the evaluator never accepted (argparse exit 2 under --run-eval-after-training)."""
+    import sys
+
+    pytest.importorskip("torch")
+    from lunaris.surrogate.st_lrps.evaluation.cli import parse_args as eval_parse_args
+
+    entry = _ablation_entry_with_evals(tmp_path)
+    assert len(entry["eval_commands"]) == 2
+    for cmd, split, data in zip(
+        entry["eval_commands"], ("test", "ood_high"), ("test.h5", "ood.h5"), strict=True
+    ):
+        assert cmd[1] == "-m" and cmd[2] == ram._EVALUATE_MODULE
+        monkeypatch.setattr(sys, "argv", ["lunaris-eval", *cmd[3:]])
+        ns = eval_parse_args()
+        assert ns.data == data
+        assert ns.streaming is True
+        assert ns.model_dir == entry["out_dir"]
+        assert ns.out.replace("\\", "/").endswith(f"evals/{split}")
+
+
+def test_ablation_train_command_is_accepted_by_the_real_training_parser(monkeypatch, tmp_path):
+    import sys
+
+    pytest.importorskip("torch")
+    from lunaris.surrogate.st_lrps.training.config import parse_args as train_parse_args
+
+    entry = _ablation_entry_with_evals(tmp_path)
+    cmd = entry["command"]
+    assert cmd[1] == "-m" and cmd[2] == ram._TRAIN_MODULE
+    monkeypatch.setattr(sys, "argv", ["lunaris-train", *cmd[3:]])
+    cfg = train_parse_args()
+    assert str(cfg.out) == entry["out_dir"]
+    assert cfg.train_data == "train.h5" and cfg.val_data == "val.h5"
+
+
+def test_ablation_summary_reads_the_keys_the_trainer_writes(tmp_path):
+    """param_count / training_time_s come from run_manifest compute_accounting;
+    the OOD column names the split it was read from."""
+    import json
+
+    entry = _ablation_entry_with_evals(tmp_path)
+    run_dir = tmp_path / "abl" / entry["name"]
+    (run_dir / "evals" / "ood_high").mkdir(parents=True)
+    (run_dir / "run_manifest.json").write_text(json.dumps({
+        "status": "completed",
+        "compute_accounting": {"n_params": 1234, "hardware": {"wall_clock_seconds": 56.5}},
+    }), encoding="utf-8")
+    (run_dir / "evals" / "ood_high" / "summary_metrics.json").write_text(
+        json.dumps([{"rmse_a_vec": 2.5e-5}]), encoding="utf-8"
+    )
+    row = ram._ablation_summary_row(entry)
+    assert row["param_count"] == 1234
+    assert row["training_time_s"] == 56.5
+    assert row["ood_high_rmse_a"] == 2.5e-5
+    assert row["ood_rmse_a"] == 2.5e-5 and row["ood_rmse_a_split"] == "ood_high"
+
+    md_path = tmp_path / "summary.md"
+    ram._write_summary_md(md_path, [row])
+    md = md_path.read_text(encoding="utf-8")
+    assert "final val base loss" in md
+    assert "2.5e-05 (ood_high)" in md
+    assert "| 1234 | 56.5 |" in md

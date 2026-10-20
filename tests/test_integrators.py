@@ -197,7 +197,9 @@ _RAW_ORDER_CASES = [
     ("RKN4", 50, 4.0, 0.4),
     ("RK4", 50, 4.0, 0.4),
     ("YOSHIDA6", 30, 6.0, 0.5),
-    ("YOSHIDA8", 10, 8.0, 0.6),
+    # 40, not 10: at 10 steps per period (h = 0.63) the outer-nested composition is not
+    # yet asymptotic (10->20 measures 5.56); 40->80 is the asymptotic regime.
+    ("YOSHIDA8", 40, 8.0, 0.6),
     ("RK8", 6, 8.0, 0.6),
 ]
 

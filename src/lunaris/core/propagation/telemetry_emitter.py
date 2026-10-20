@@ -40,6 +40,8 @@ INERTIAL_FRAME_LABEL = "moon_centered_inertial"
 
 _MAX_FAILURE_MESSAGE = 240
 _SINK_FAILURE_LIMIT = 5
+#: Trajectory lines written per stdout write / sink append (emit_trajectory).
+_TRAJECTORY_CHUNK_LINES = 1024
 
 
 def _bounded_failure(exc: Exception) -> tuple[str, str]:
@@ -117,6 +119,8 @@ class TelemetryEmitter:
         self._writer = writer if writer is not None else self._print_line
         self._trajectory_sequence = 0
         self._probe_sequence = 0
+        # (line, persist) pairs held while emit_trajectory writes a whole run.
+        self._pending: list[tuple[str, bool]] | None = None
         self._wall0 = time.perf_counter()
         self.diagnostics = TelemetryDiagnostics()
 
@@ -161,17 +165,39 @@ class TelemetryEmitter:
         except (TypeError, ValueError, OverflowError) as exc:
             self.diagnostics.record("serialization_failures", exc)
             return False
+        if self._pending is not None:
+            self._pending.append((line, bool(persist)))
+            if len(self._pending) >= _TRAJECTORY_CHUNK_LINES:
+                self._flush_pending()
+            return True
+        self._write_lines(line, 1)
+        if persist:
+            self._sink_write(line)
+        return True
+
+    def _write_lines(self, text: str, n_lines: int) -> None:
         try:
-            self._writer(line)
+            self._writer(text)
         except Exception as exc:
             # ``writer`` is an injected callback (stdout by default), so its
             # implementation can raise any ordinary Exception. This is one of
             # the few intentionally broad boundaries: telemetry must never
             # terminate an otherwise valid propagation.
-            self.diagnostics.record("writer_failures", exc)
-        if persist:
-            self._sink_write(line)
-        return True
+            for _ in range(n_lines):  # one failure per dropped sample line
+                self.diagnostics.record("writer_failures", exc)
+
+    def _flush_pending(self) -> None:
+        """Write the held trajectory lines: one stdout write and one sink append per chunk."""
+        pending, self._pending = self._pending or [], []
+        if not pending:
+            return
+        lines = [line for line, _persist in pending]
+        if self._writer == self._print_line:
+            self._write_lines("\n".join(lines), len(lines))
+        else:
+            for line in lines:  # an injected writer receives one protocol line per call
+                self._write_lines(line, 1)
+        self._sink_write_many([line for line, persist in pending if persist])
 
     def emit_rhs_probe(self, t_frame_s: float, y: np.ndarray) -> bool:
         """Emit a transient solver probe; never write it to ``telemetry.ndjson``."""
@@ -186,6 +212,16 @@ class TelemetryEmitter:
                 "sample_build_failures", ValueError("trajectory time/state shape mismatch")
             )
             return 0
+        # The rows arrive after the solver has finished: write them in chunks
+        # (one print and one sink append per chunk), not one open per row.
+        self._pending = []
+        try:
+            return self._emit_rows(times, table)
+        finally:
+            self._flush_pending()
+            self._pending = None
+
+    def _emit_rows(self, times: np.ndarray, table: np.ndarray) -> int:
         emitted = 0
         last_t: float | None = None
         for t_frame_s, state in zip(times, table, strict=True):
@@ -303,14 +339,18 @@ class TelemetryEmitter:
             return None, None
 
     def _sink_write(self, line: str) -> None:
-        if self._sink_path is None:
+        self._sink_write_many([line])
+
+    def _sink_write_many(self, lines: list[str]) -> None:
+        if self._sink_path is None or not lines:
             return
         try:
             # Open-per-write keeps the artifact crash-safe at telemetry
-            # cadence (seconds); after repeated failures the sink is disabled
-            # so a broken disk cannot slow the run down.
+            # cadence (seconds); a trajectory arrives in chunks of lines. After
+            # repeated failures the sink is disabled so a broken disk cannot
+            # slow the run down.
             with open(self._sink_path, "a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line + "\n")
+                handle.write("".join(line + "\n" for line in lines))
         except OSError as exc:
             self._sink_failures += 1
             self.diagnostics.record("sink_write_failures", exc)

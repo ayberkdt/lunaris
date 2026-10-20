@@ -1300,6 +1300,13 @@ def run_random_scenario_mode(
 
     models_str  = [m.strip().lower() for m in args.models.split(",") if m.strip()]
     truth_model = args.truth.strip().lower()
+    if args.batch_rk4 and _truth_cache_name(args) != "sh200_dop853":
+        # Its rows, plots and summary keys name SH200 DOP853 as the reference;
+        # with another truth they would mislabel every number. Refuse up front.
+        raise ValueError(
+            f"--batch-rk4 reports against SH200 DOP853 only; got --truth {args.truth} "
+            f"--truth-integrator {getattr(args, 'truth_integrator', 'DOP853')}"
+        )
     if args.include_st_lrps and "st_lrps" not in models_str:
         models_str.append("st_lrps")
     compare_models = [m for m in models_str if m != truth_model]

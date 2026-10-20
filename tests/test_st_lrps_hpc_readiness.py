@@ -26,6 +26,8 @@ import pytest
 pytest.importorskip("torch.nn")
 
 from lunaris.surrogate.st_lrps.training.engine import (
+    EXIT_CODE_FAILED,
+    EXIT_CODE_INTERRUPTED,
     _available_ram_mb,
     _cgroup_available_mb,
     _decide_preload,
@@ -33,6 +35,7 @@ from lunaris.surrogate.st_lrps.training.engine import (
     _restore_stop_signal_handlers,
     _slurm_mem_limit_mb,
     _stop_signal_list,
+    exit_code_for_run_status,
 )
 from lunaris.surrogate.st_lrps.training.preflight import (
     FAIL,
@@ -92,6 +95,27 @@ class TestStopSignals:
         assert interrupt["flag"] is True
         with pytest.raises(KeyboardInterrupt):
             on_stop(int(signal.SIGTERM), None)
+
+    def test_signal_stop_exits_ex_tempfail_and_a_normal_finish_exits_zero(self):
+        # A run stopped by a signal (ckpt_last saved, status "interrupted") must not
+        # read as COMPLETED to Slurm: EX_TEMPFAIL = 75. A NaN-stopped run is a
+        # failure (1); a normal finish stays 0.
+        assert EXIT_CODE_INTERRUPTED == 75
+        assert EXIT_CODE_FAILED == 1
+        assert exit_code_for_run_status("interrupted") == 75
+        assert exit_code_for_run_status("failed") == 1
+        assert exit_code_for_run_status("completed") == 0
+
+    def test_training_cli_main_returns_the_status_exit_code(self, monkeypatch):
+        from lunaris.surrogate.st_lrps.training import cli, config, engine
+
+        monkeypatch.setattr(config, "parse_args", lambda: object())
+        monkeypatch.setattr(engine, "train", lambda cfg: "interrupted")
+        assert cli.main() == 75
+        monkeypatch.setattr(engine, "train", lambda cfg: "failed")
+        assert cli.main() == 1
+        monkeypatch.setattr(engine, "train", lambda cfg: "completed")
+        assert cli.main() == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -251,9 +275,8 @@ class TestCudaVisibility:
 
     def test_shell_preflight_has_the_same_fail_closed_gpu_gate(self):
         text = (_REPO_ROOT / "hpc" / "preflight.sh").read_text(encoding="utf-8")
-        assert "LUNARIS_REQUIRE_CUDA" in text
-        assert "sys.exit(4)" in text
-        assert "${torch_rc} -eq 4" in text
+        assert "LUNARIS_REQUIRE_CUDA" in text and "LUNARIS_PREFLIGHT_REQUIRE_GPU" in text
+        assert "PREFLIGHT VERDICT: FAIL" in text
 
 
 # --------------------------------------------------------------------------- #

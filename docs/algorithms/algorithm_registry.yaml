@@ -1064,9 +1064,6 @@ entries:
         symbol: SirenMLP
         role: reference_implementation
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
-        symbol: SirenResBlock
-        role: torch_implementation
-      - path: src/lunaris/surrogate/st_lrps/networks/models.py
         symbol: siren_init_first_
         role: torch_implementation
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
@@ -1353,8 +1350,10 @@ entries:
     notes: ""
 
   - id: LUNARIS-ALG-OPT-002
-    slug: gradnorm_adaptive_loss_balancing
-    canonical_name: GradNorm adaptive multi-task loss balancing
+    slug: gradient_norm_ratio_loss_weighting
+    canonical_name: >-
+      Gradient-magnitude-ratio loss weighting (learning-rate annealing for
+      physics-informed networks)
     category: optimization
     domain: OPT
     status: active
@@ -1363,43 +1362,56 @@ entries:
     verification_status: verified_primary_source
     scientific_status: implemented_and_tested
     citation_keys:
-      - Chen2018GradNorm
+      - Wang2020GradientPathologies
     primary_reference:
-      type: inproceedings
-      citation_key: Chen2018GradNorm
+      type: article
+      citation_key: Wang2020GradientPathologies
       identifier_kind: official_url
       doi: null
       isbn: null
       report_number: null
       standard_number: null
-      official_url: https://arxiv.org/abs/1711.02257
+      official_url: https://arxiv.org/abs/2001.04536
       edition: null
       chapter: null
-      section: GradNorm gradient-magnitude balancing
-      equations: []
-      pages: null
+      section: Section 2.5, Algorithm 1 (learning rate annealing)
+      equations:
+        - "40"
+        - "41"
+      pages: "10"
       verification_notes: >-
-        Z. Chen, V. Badrinarayanan, C.-Y. Lee & A. Rabinovich, "GradNorm:
-        Gradient Normalization for Adaptive Loss Balancing in Deep Multitask
-        Networks", ICML 2018 (arXiv:1711.02257 verified). Lunaris ADAPTS GradNorm
-        to balance its gravity loss terms (value/derivative/auxiliary) by tuning
-        their gradient magnitudes on shared backbone parameters.
+        S. Wang, Y. Teng & P. Perdikaris, "Understanding and mitigating gradient
+        pathologies in physics-informed neural networks", arXiv:2001.04536v1
+        (preprint dated 2020-01-15); primary PDF read on 2026-10-20. Eq. 40 sets
+        the instantaneous weight to max|grad L_r| over mean|grad L_i|; Eq. 41
+        smooths it as lambda = (1 - alpha) lambda + alpha lambda_hat with the
+        recommended alpha = 0.9, optionally every 10 steps (p. 11). Lunaris
+        adapts this rule; it is NOT GradNorm (Chen et al. 2018), which learns
+        the weights by gradient descent on a gradient-norm loss with relative
+        inverse training rates. The registry cited GradNorm until 2026-10-20.
     symbols:
       - path: src/lunaris/surrogate/st_lrps/training/losses.py
         symbol: GradNormWeights
         role: torch_implementation
     mathematical_contract:
-      inputs: per-task losses and shared-parameter gradients
-      outputs: adaptively updated per-task loss weights
+      inputs: potential and acceleration losses and their gradients on the shared parameters
+      outputs: the acceleration-loss weight w_a (w_u fixed at 1)
       exact_or_approximate: adaptive_loss_weighting
       preserved_properties:
-        - balances gradient magnitudes across loss terms
+        - balances gradient magnitudes of the two loss terms
     lunaris_modifications:
-      - applied to Lunaris gravity loss terms and backbone parameter selection
+      - ratio of L2 norms ||grad L_U|| / ||grad L_a|| instead of max over mean of absolute entries
+      - default mode ntk_init computes the ratio once at the first valid step and freezes it (no NTK is computed; the name refers to the initialisation-time balancing)
+      - >-
+        dynamic mode is an Eq. 41-style moving average updated every
+        update_interval = 10 steps, but ema_beta = 0.9 weights the PREVIOUS
+        value (w = 0.9 w_old + 0.1 w_new), i.e. alpha = 0.1 in Eq. 41's
+        convention, not the paper's recommended alpha = 0.9
+      - the weight is clamped to [w_a_min, w_a_max] = [0.35, 4.0]
     assumptions:
       - a meaningful shared parameter set exists for gradient balancing
     limitations:
-      - adds a backward pass for the gradient-norm targets
+      - adds one backward pass per loss term at each weight update
     validation:
       - tests/test_st_lrps_baseline_gradnorm_domain.py
     see_also:
@@ -2583,6 +2595,9 @@ entries:
       - path: src/lunaris/core/torch_frame.py
         symbol: hermite_state
         role: torch_implementation
+      - path: src/lunaris/core/torch_frame.py
+        symbol: terrain_substep_count
+        role: torch_implementation
       - path: src/lunaris/core/batch_propagator.py
         symbol: _rk4_batch_kernel
         role: cuda_implementation
@@ -2600,6 +2615,7 @@ entries:
     lunaris_modifications:
       - the step is the cubic Hermite curve through both step-end states (the LUNARIS-ALG-INTP-002 basis), not the straight chord, which sags g dt^2/8 below the arc
       - the curve is sampled at 32 sub-steps (residual sub-chord sag g (dt/32)^2/8, 0.18 m for a low lunar orbit at dt = 30 s)
+      - in terrain mode, steps that pass the envelope gate use K = dt max|v| / (0.5 radius_const res) samples, rounded up to a multiple of 32 (the 32-sample grid stays a subset) and clamped to [32, 512], so the along-track spacing is at most half a map pixel (224 samples for a low lunar orbit at dt = 30 s on LDEM 64 ppd); the sphere path keeps 32
       - the whole-step chord and the outer maximum-terrain sphere act as conservative rejection gates
       - sphere crossings are refined by Newton steps clamped to the bracketing sub-interval
       - body-frame rotation is evaluated once at the step midpoint
@@ -2608,13 +2624,16 @@ entries:
       - the first resolved downward crossing within the fixed step is the impact
       - lunar rotation during one step is negligible relative to terrain relief
     limitations:
-      - terrain relief narrower than the sub-sample spacing (v dt / 32 along track) can be crossed between samples undetected
+      - an arc that dips below the terrain by less than G s / 2 between two samples (s the sample spacing, G the along-track gradient of the height residual) can go undetected; at half-pixel spacing that is the top quarter of a one-pixel spike
+      - past the 512-sample cap (arcs over 121 km per step on LDEM 64 ppd, i.e. dt > 72 s in low lunar orbit, or finer maps) the spacing grows to arc / 512
+      - the count uses the meridional grid spacing; east-west pixels shrink by cos(latitude), so near the poles a feature one longitude pixel wide is narrower than the spacing
       - the crossing state interpolates the integrator step ends, so its accuracy is bounded by the fixed-step truncation error
       - accuracy is bounded by the propagation step, raster, and midpoint-frame approximation
     validation:
       - tests/test_torch_terrain_freeze.py
       - tests/test_hermite_impact_detection.py
       - tests/test_terrain_multistep_descent.py
+      - tests/test_terrain_ridge_impact_resolution.py
     see_also:
       - LUNARIS-HEUR-EVT-001
       - LUNARIS-HEUR-INTP-001
@@ -2624,6 +2643,88 @@ entries:
       interpolation, elementary sphere intersection, Newton steps, and
       bisection. It is not presented as a published terrain collision
       algorithm.
+
+  - id: LUNARIS-HEUR-INT-001
+    slug: integrator_restart_at_shadow_contacts
+    canonical_name: >-
+      Adaptive-integrator restart at the shadow contacts of radiation pressure,
+      with a step cap across the penumbra
+    category: heuristic
+    domain: INT
+    status: active
+    added: "2026-10-20"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/core/propagation/scipy_runner.py
+        symbol: _solve_with_restarts
+        role: cpu_implementation
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: penumbra_max_step_s
+        role: cpu_implementation
+      - path: src/lunaris/core/dynamics/engine.py
+        symbol: DynamicsEngine.restart_plan
+        role: api_entry_point
+    mathematical_contract:
+      inputs: >-
+        the right-hand side, its contact functions g(t, y) (zero where the
+        apparent solar and occulter disks touch, for the Moon and, when
+        enabled, the Earth) and the step cap evaluated at each segment start
+      outputs: >-
+        the trajectory integrated in segments that end at the contacts; the
+        step that holds a contact is solved again from its exact start state
+        so the restart state is a step end; inside a penumbra the maximum step
+        is 2 a / omega / PENUMBRA_STEPS [s]
+      exact_or_approximate: approximate
+      preserved_properties:
+        - no accepted step contains a contact of the shadow factor
+        - the restart state is a step end, not an interpolated value
+        - user events see every time once and in order, as in a single solve
+        - a run without restart events is the single solve_ivp call it was before
+    lunaris_modifications:
+      - >-
+        Ported from Sidera (2ddf461e and the review fixes of fc6bae19) without
+        Sidera's dense-output stitching (the Lunaris SciPy path keeps none);
+        the contact functions use the float64 operations of the shadow kernel
+        _shadow_factor_conical.
+    assumptions:
+      - >-
+        the penumbra passage lasts about 2 a / omega, with a the apparent
+        solar radius and omega the spacecraft's angular rate about the
+        occulter (an underestimate at grazing geometry, where it is the
+        conservative side)
+    limitations:
+      - >-
+        Two roots of one contact function inside one step are not seen (a
+        grazing passage shorter than a step); that passage is integrated as
+        before.
+      - >-
+        Not covered: the kink of min(nu_moon, nu_earth) where the two shadow
+        factors cross inside overlapping penumbrae, the 1e-6 shadow-factor
+        floor, and the eclipse terms of albedo and thermal IR; the
+        fixed-step and batched paths do not use the plan.
+      - >-
+        The shadow factor grows like a power 3/2 of the time from a contact;
+        with 20 steps per penumbra a 100 km lunar orbit at an area-to-mass
+        ratio of 1 m^2/kg kept 1.4e-5 m after one revolution at rtol 1e-12
+        (3.5e-7 m with 80 steps), measured 2026-10-20.
+    validation:
+      - tests/test_propagation_restarts.py
+    see_also:
+      - LUNARIS-MODEL-RAD-001
+      - LUNARIS-HEUR-EVT-001
+    notes: >-
+      Lunaris' (and Sidera's) own measured rule; restarting an integrator at
+      located non-smooth points is common practice, but no single primary
+      source was verified for this form. Measured 2026-10-20 on a 100 km lunar
+      orbit with real ephemerides (SH degree 10, Sun and Earth, SRP at
+      A/m 0.1 m^2/kg, 8 h through the lunar eclipse of 2025-09-07): against a
+      DOP853 rtol 1e-13 run capped at 0.25 s, 0.18 m -> 3.5e-6 m at rtol 1e-10
+      and 7.3e-3 m -> 1.2e-6 m at rtol 1e-12, for 1.9 and 1.7 times the
+      right-hand-side evaluations.
 
   - id: LUNARIS-HEUR-INTP-001
     slug: periodic_planetary_grid_sampling_policy
@@ -2707,6 +2808,9 @@ entries:
       - path: src/lunaris/surrogate/st_lrps/networks/models.py
         symbol: PhysicalRadialDecayEncoding
         role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/networks/models.py
+        symbol: SirenResBlock
+        role: torch_implementation
     mathematical_contract:
       inputs: scaled coordinates (and radius) of the query point
       outputs: multi-band SIREN features / physics-motivated encodings
@@ -2718,6 +2822,11 @@ entries:
         w0 bands spaced in log-degree to match spherical-harmonic spatial
         frequencies (n/R_moon); radial-decay and real-SH-basis encodings that
         inject gravity structure into the input.
+      - >-
+        SirenResBlock: pre-norm residual SIREN block y = x + W2 sin(w0 (W1
+        LN(x) + b1)) + b2 with W2 and b2 zero-initialised, so each block starts
+        as the identity. The sine and the W1 init are SIREN's; the LayerNorm,
+        the skip path and the zero init are not in Sitzmann et al. (2020).
     assumptions:
       - the residual field spectrum is bounded by the target SH degree
     limitations:
@@ -3025,6 +3134,12 @@ entries:
       - path: src/lunaris/physics/solar_effects.py
         symbol: compute_srp_accel
         role: api_entry_point
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: conical_shadow_angles
+        role: numba_implementation
+      - path: src/lunaris/physics/solar_effects.py
+        symbol: conical_shadow_boundaries
+        role: cpu_implementation
       - path: src/lunaris/core/batch_propagator.py
         symbol: _srp_accel_cuda
         role: cuda_implementation
@@ -3337,6 +3452,15 @@ entries:
       - path: src/lunaris/core/batch_propagator.py
         symbol: _de_sitter_cuda
         role: cuda_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: external_1pn_components
+        role: numba_implementation
+      - path: src/lunaris/physics/relativity_effects.py
+        symbol: calc_external_1pn_accel
+        role: api_entry_point
+      - path: src/lunaris/core/batch_propagator.py
+        symbol: _external_1pn_cuda
+        role: cuda_implementation
     mathematical_contract:
       inputs: spacecraft velocity and the Moon->body position/velocity
       outputs: geodesic-precession acceleration (m/s^2)
@@ -3356,13 +3480,17 @@ entries:
       - LUNARIS-MODEL-REL-001
     notes: >-
       Sign is intentionally +2 Omega x v (prograde); a previous sign error was
-      corrected and is locked by the precession regression test.
+      corrected and is locked by the precession regression test. Since
+      2026-10-20 this is the whole external-body 1PN term the engines apply
+      (external_1pn_components, _external_1pn_cuda); the differential
+      Schwarzschild term (LUNARIS-MODEL-REL-003) was added on top until then
+      and counted the geodetic precession twice.
 
   - id: LUNARIS-MODEL-REL-003
     slug: external_body_differential_1pn
     canonical_name: >-
-      External-body differential first post-Newtonian correction
-      (Schwarzschild + de Sitter)
+      External-body differential Schwarzschild correction (barycentric-frame
+      form, not applied by the engines)
     category: physical_model
     domain: REL
     status: active
@@ -3388,25 +3516,17 @@ entries:
         - "10.12"
       pages: null
       verification_notes: >-
-        Combines the differential Schwarzschild correction (a_1PN(SC wrt body) -
-        a_1PN(Moon wrt body)) with the de Sitter term (LUNARIS-MODEL-REL-002),
-        both derived from IERS TN 36 Eq. 10.12. The differential Moon-centred
+        The differential Schwarzschild correction (a_1PN(SC wrt body) -
+        a_1PN(Moon wrt body)) applies the single-body Schwarzschild form of
+        IERS TN 36 Eq. 10.12 to the external body's field at the spacecraft and
+        at the Moon and differences them. The differential Moon-centred
         composition is a Lunaris adaptation of the single-body IERS forms.
     symbols:
       - path: src/lunaris/physics/relativity_effects.py
         symbol: external_schwarzschild_diff_components
         role: numba_implementation
-      - path: src/lunaris/physics/relativity_effects.py
-        symbol: external_1pn_components
-        role: numba_implementation
-      - path: src/lunaris/physics/relativity_effects.py
-        symbol: calc_external_1pn_accel
-        role: api_entry_point
       - path: src/lunaris/core/batch_propagator.py
         symbol: _external_schwarzschild_diff_cuda
-        role: cuda_implementation
-      - path: src/lunaris/core/batch_propagator.py
-        symbol: _external_1pn_cuda
         role: cuda_implementation
     mathematical_contract:
       inputs: spacecraft state and the external body Moon-centred state and mu
@@ -3422,10 +3542,18 @@ entries:
       - no Lense-Thirring; external Schwarzschild uses beta = gamma = 1
     validation:
       - tests/test_relativity_effects.py
+      - tests/test_de_sitter_precession.py
     see_also:
       - LUNARIS-MODEL-REL-001
       - LUNARIS-MODEL-REL-002
-    notes: ""
+    notes: >-
+      The engines added this term to the de Sitter term until 2026-10-20. Its
+      velocity-dependent part already precesses an orbit at the geodetic rate
+      (orbit-averaged over a rotating geometry: 0.994 of Omega_dS for either
+      term alone, 1.988 for the sum; tests/test_de_sitter_precession.py), so the
+      sum precessed a lunar orbit at twice that rate. It is kept as a
+      standalone kernel for a barycentric-frame composition, where it replaces
+      the de Sitter term.
 
   - id: LUNARIS-MODEL-TID-001
     slug: lunar_solid_tide_love_degree_2_3

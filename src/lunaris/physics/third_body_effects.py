@@ -65,7 +65,13 @@ import numpy.typing as npt
 from numba import njit
 from numpy.typing import ArrayLike
 
-from lunaris.common.constants import MU_EARTH, MU_SUN, R_EARTH_EQUATORIAL, R_MOON
+from lunaris.common.constants import (
+    J2_EARTH_EGM2008,
+    MU_EARTH,
+    MU_SUN,
+    R_EARTH_EQUATORIAL_EGM2008_M,
+    R_MOON,
+)
 from lunaris.common.type_defs import Vec3
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 
@@ -266,7 +272,7 @@ class LoveParams:
     apply_sun_tide: bool = True
 
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True, fastmath=False)
 def accel_solid_tide(
     rx: float, ry: float, rz: float,
     sx: float, sy: float, sz: float,
@@ -346,19 +352,22 @@ class EarthJ2Params:
     Attributes
     ----------
     j2_coeff
-        Earth's J2 coefficient (dimensionless). WGS-84 nominal is ~1.08263e-3.
+        Earth's J2 coefficient (dimensionless). Default: EGM2008
+        (``J2_EARTH_EGM2008``).
     r_eq_m
-        Earth's equatorial reference radius [m] used by the J2 model.
+        Earth's equatorial reference radius [m] the J2 coefficient is
+        normalised to. J2 and this radius come from the same model; the default
+        is EGM2008's own radius (``R_EARTH_EQUATORIAL_EGM2008_M``).
     spin_axis_i
         Earth's spin axis expressed in the inertial frame (allowed non-unit;
         it will be normalized once per call in the Python wrapper).
     """
-    j2_coeff: float = 1.082_626_68e-3
-    r_eq_m: float = R_EARTH_EQUATORIAL  # expects your constants SSOT
+    j2_coeff: float = J2_EARTH_EGM2008
+    r_eq_m: float = R_EARTH_EQUATORIAL_EGM2008_M
     spin_axis_i: tuple[float, float, float] = (0.0, 0.0, 1.0)
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def _normalize_axis_or_default(
     kx: float, ky: float, kz: float
 ) -> tuple[float, float, float]:
@@ -372,7 +381,7 @@ def _normalize_axis_or_default(
     return 0.0, 0.0, 1.0
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def _accel_j2_oblate_unit_k(
     x: float, y: float, z: float,
     mu: float, r_ref: float, j2: float,
@@ -413,7 +422,7 @@ def _accel_j2_oblate_unit_k(
     return ax, ay, az
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def accel_j2_oblate_diff_numba(
     rx: float, ry: float, rz: float,
     bx: float, by: float, bz: float,
@@ -437,7 +446,7 @@ def accel_j2_oblate_diff_numba(
     )
 
 
-@njit(cache=True, nogil=True, fastmath=True)
+@njit(cache=True, nogil=True, fastmath=False)
 def _accel_j2_oblate_diff_unit_k(
     rx: float, ry: float, rz: float,   # SC position wrt Moon (inertial)
     bx: float, by: float, bz: float,   # Earth position wrt Moon (inertial)

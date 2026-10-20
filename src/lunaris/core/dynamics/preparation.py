@@ -30,6 +30,7 @@ from lunaris.common.constants import (
     MU_SUN,
     R_EARTH_MEAN,
     R_MOON,
+    R_MOON_MEAN,
     SIGMA_SB,
     SOLAR_FLUX_1AU,
 )
@@ -198,9 +199,9 @@ def compute_requirements(
     albedo_model = str(getattr(alb_cfg, "albedo_model", "lambert_facets")).strip().lower()
 
     # Design (#4): there is intentionally no separate "external relativity"
-    # flag. The external-body Schwarzschild differential and the de Sitter
-    # geodetic term are the physically dominant relativistic effects for a
-    # lunar orbiter, but they can only be evaluated when Sun/Earth ephemeris
+    # flag. The external bodies' de Sitter geodetic terms are the physically
+    # dominant external relativistic effects for a lunar orbiter, but they can
+    # only be evaluated when Sun/Earth ephemeris
     # states are available. So they auto-enable whenever 1PN relativity is on
     # AND an ephemeris is present, and silently degrade to the central-body
     # Schwarzschild term alone otherwise. The body velocities they require are
@@ -663,8 +664,10 @@ def _quadrature_fields(cfg: Any) -> dict[str, Any]:
     )
     return {
         "integration": 1,
-        # The facets are built on the same sphere, so both integrations see one Moon.
-        "surface_radius_m": float(R_MOON),
+        # The facets are built on the same sphere, so both integrations see one Moon:
+        # the IAU mean sphere, the radius SRP uses for the Moon's own shadow (not the
+        # gravity field's 1738.0 km normalisation radius).
+        "surface_radius_m": float(R_MOON_MEAN),
         "cell_lat_count": 0,
         "cell_lon_count": 0,
         "quadrature_nodes": nodes,
@@ -693,7 +696,7 @@ def prepare_albedo(
     lat_count = int(getattr(cfg, "facet_lat_count", 18))
     lon_count = int(getattr(cfg, "facet_lon_count", 36))
     pos, normals, areas, lat_c, lon_c = build_latlon_facets(
-        lat_count, lon_count, radius_m=float(R_MOON)
+        lat_count, lon_count, radius_m=float(R_MOON_MEAN)
     )
 
     source = normalize_albedo_mode(getattr(cfg, "albedo_mode", "constant_albedo"))
@@ -753,7 +756,10 @@ def _prepare_albedo_simple(cfg: AlbedoConfig, surface_provider: Any) -> _AlbedoP
         )
 
     surf = extract_surface_provider_strict(surface_provider)
-    alb_const = float(surf.get("albedo_const", const))
+    # The configuration's constant fills cells without data and the no-map
+    # case, as on the lambert_facets path; the provider's value is only its
+    # default (catalog mean), which would override a user's --albedo-const.
+    alb_const = const
     alb_scale = float(surf.get("scale", 1.0))
     k_lambert = float(surf.get("k_lambert", klamb))
 
@@ -966,7 +972,7 @@ def prepare_thermal(
     lat_count = int(getattr(cfg, "facet_lat_count", 18))
     lon_count = int(getattr(cfg, "facet_lon_count", 36))
     pos, normals, areas, _lat, _lon = build_latlon_facets(
-        lat_count, lon_count, radius_m=float(R_MOON)
+        lat_count, lon_count, radius_m=float(R_MOON_MEAN)
     )
 
     temps: np.ndarray = np.zeros(1, dtype=np.float64)

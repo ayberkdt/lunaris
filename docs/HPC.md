@@ -33,19 +33,22 @@ what those scripts do and the individual workflows.
 # 1. Configure your cluster once: account, partition, modules, venv, storage.
 cp hpc/cluster.env.example hpc/cluster.env
 $EDITOR hpc/cluster.env
+#    Keep LF line endings: hpc/preflight.sh fails on a CRLF cluster.env.
 #    Pre-filled site profiles live in hpc/clusters/ (currently UHeM Altay):
 #    cp hpc/clusters/uhem_altay.env.example hpc/cluster.env
+#    The Altay profile marks values this repo cannot confirm with ">>> FILL IN",
+#    each with the command that finds the value (module avail, sinfo -s, ...).
 
-# 2. Build the headless environment once (creates a venv, installs .[hpc]).
+# 2. Build the headless environment once (CPython 3.11 only). Creates the venv at
+#    LUNARIS_VENV (default $HOME/venvs/lunaris) and installs the hash-pinned HPC
+#    lock, then the package. Nothing to copy back when the default path is used.
 bash hpc/setup_env.sh
-#    then paste the printed LUNARIS_VENV=... line into hpc/cluster.env
 
 # 3. Sanity-check, then submit. submit.sh injects partition/account/qos/gres
 #    from cluster.env, so you never edit those into the .sbatch files.
-#    Optional: LUNARIS_PREFLIGHT_VERIFY_DATA=1 bash hpc/preflight.sh runs the
-#    full strict data verification too (recommended before the first real job).
-#    On a GPU allocation, or with LUNARIS_REQUIRE_CUDA=1, CUDA visibility is a
-#    hard failure; on an unallocated login node it remains an informational warn.
+#    Run the preflight inside a short GPU allocation for its GPU checks (see
+#    "Pre-submit check" below). Optional: LUNARIS_PREFLIGHT_VERIFY_DATA=1 also
+#    runs the strict data verification (recommended before the first real job).
 bash hpc/preflight.sh
 hpc/submit.sh train -- \
     --data "$LUNARIS_DATA_DIR/datasets/st_lrps_cloud_suite.h5" \
@@ -72,6 +75,17 @@ Scheduler resources can also be centralized there with
 Leave them empty to keep each `.sbatch` default. Flags passed directly to
 `hpc/submit.sh` are appended last and override the site defaults.
 
+`env_template.sh` sets no shell options; each `.sbatch` sets `set -euo pipefail`
+before sourcing it. Failures it cannot recover from (a `module load` that fails,
+a missing venv, a per-job scratch directory that cannot be created) are collected
+in `LUNARIS_ENV_FAILS` and abort the job. `LUNARIS_ENV_STRICT=0` collects them
+without aborting; `hpc/preflight.sh` and `hpc/setup_env.sh` use that to report
+every problem. Threads follow `--cpus-per-task` (1 outside Slurm), and
+`LUNARIS_THREADS` overrides the OpenMP, MKL, OpenBLAS and numba thread counts
+together. Each job gets its own `TMPDIR` under `LUNARIS_SCRATCH_DIR` (default
+`${TMPDIR:-/tmp}`), plus a `NUMBA_CACHE_DIR` inside it unless one is already
+exported; the directory is removed when the job script exits.
+
 > **HDF5 on parallel filesystems.** `env_template.sh` exports
 > `HDF5_USE_FILE_LOCKING=FALSE` by default. HDF5 ≥ 1.10 takes POSIX file locks
 > on open, and Lustre/GPFS/NFS mounts commonly reject them with
@@ -84,8 +98,7 @@ Leave them empty to keep each `.sbatch` default. Flags passed directly to
 
 The recommended setup registers the package and its console commands
 (`lunaris-train`, `lunaris-eval`, `lunaris-benchmark`, `lunaris-batch`,
-`lunaris-batch`, …) in an
-isolated, GUI-free environment.
+`lunaris-data`, …) in an isolated, GUI-free environment.
 
 ### Option A: pip / virtual environment (recommended)
 
@@ -133,6 +146,13 @@ The lock pins every transitive dependency for **Linux + CPython 3.11** (the CI /
 paper-evidence target). See [`locks/README.md`](../locks/README.md) for the CUDA
 note and how to regenerate the locks after a dependency change.
 
+`hpc/setup_env.sh` performs this same install into `LUNARIS_VENV`, and stops
+unless the interpreter is CPython 3.11. The lock pins `torch==2.13.0`, built for
+CUDA 13, which needs an NVIDIA driver `>= 580` on the GPU nodes. For an older
+driver, run `LUNARIS_TORCH_INDEX_URL=<PyTorch wheel index for your driver> bash hpc/setup_env.sh`:
+torch then comes from that index, and the lock's torch, triton, `nvidia-*` and
+`cuda-*` pins are skipped.
+
 Verify the headless entry points are available:
 
 ```bash
@@ -150,11 +170,13 @@ framework at that location with `LUNARIS_DATA_DIR`. Generated outputs (training
 runs, evaluations, benchmarks) should also live on scratch, not in the source
 tree.
 
-`hpc/env_template.sh` sets scratch defaults that the Slurm jobs source:
+`hpc/env_template.sh` sets the storage defaults that the Slurm jobs source. They
+are `$HOME/lunaris_data` and `$HOME/lunaris_outputs`; point the variables at your
+scratch or project area in `hpc/cluster.env` (or export them before `sbatch`):
 
 ```bash
-export LUNARIS_DATA_DIR="${LUNARIS_DATA_DIR:-/scratch/$USER/lunaris_data}"
-export LUNARIS_OUTPUT_DIR="${LUNARIS_OUTPUT_DIR:-/scratch/$USER/lunaris_outputs}"
+export LUNARIS_DATA_DIR="${LUNARIS_DATA_DIR:-$HOME/lunaris_data}"
+export LUNARIS_OUTPUT_DIR="${LUNARIS_OUTPUT_DIR:-$HOME/lunaris_outputs}"
 ```
 
 Recommended scratch layout:
@@ -244,6 +266,31 @@ before submitting.
 | Orbit-level gravity benchmark / validation | `hpc/slurm_benchmark_gpu.sbatch` | `lunaris-benchmark` |
 | Batch propagation / injection dispersion ensembles | `hpc/slurm_batch_array.sbatch` | `lunaris-batch` |
 
+### Pre-submit check (`hpc/preflight.sh`)
+
+`hpc/preflight.sh` loads the environment the way a job does, runs every check,
+prints `PASS`, `WARN` or `FAIL` for each, and ends with one `PREFLIGHT VERDICT`.
+It exits 1 only when a check FAILED; warnings never change the exit code. It checks:
+
+- `hpc/cluster.env` exists and has LF line endings;
+- scheduler settings (`LUNARIS_PARTITION`, `LUNARIS_ACCOUNT`, `LUNARIS_QOS`) when `sbatch` is on PATH;
+- the venv: CPython 3.11, `import lunaris`, and the entry points `lunaris-train`, `lunaris-eval`, `lunaris-benchmark`, `lunaris-batch`, `lunaris-data`;
+- `numpy`, `h5py` and `torch` imports;
+- data under `LUNARIS_DATA_DIR` (the ephemeris kernels are required; the gravity file and HDF5 clouds are WARN), and the output directory (writable, free space);
+- with `LUNARIS_PREFLIGHT_VERIFY_DATA=1`, `lunaris-data verify --strict --runtime` (slow).
+
+The GPU checks are `nvidia-smi`, the torch CUDA build against the driver, a CUDA
+kernel launch, and numba's libNVVM (WARN only). They run when a GPU is visible or
+when one is required: `LUNARIS_PREFLIGHT_REQUIRE_GPU=1`, `LUNARIS_REQUIRE_CUDA=1`,
+or a Slurm GPU allocation (`SLURM_JOB_GPUS`, `SLURM_GPUS` or `SLURM_GPUS_ON_NODE`).
+When a GPU is required and none is visible, they FAIL; otherwise they are skipped
+with a WARN. Run it inside a short interactive GPU allocation on UHeM:
+
+```bash
+srun -p a100q --gres=gpu:1 --cpus-per-task=4 --time=00:10:00 --pty bash
+bash hpc/preflight.sh
+```
+
 ### 1. ST-LRPS training (primary workload)
 
 Training is the main HPC job. Submit it with the training template; extra
@@ -262,19 +309,53 @@ sbatch hpc/slurm_train_stlrps.sbatch \
 (`lunaris-train` is the `lunaris.surrogate.st_lrps.training.cli` entry point; run
 `lunaris-train --help` for the full flag list.)
 
-> **Walltime and interruption.** The training templates set
-> `#SBATCH --signal=B:TERM@600`, and the trainer treats SIGTERM (and SIGUSR1,
-> for sites that use `--signal=B:USR1@...`) exactly like Ctrl+C: it finishes
-> the current epoch, saves `ckpt_last.pt`, marks the run manifest
-> `interrupted` with a resume hint, and exits. Resume with
-> `lunaris-train --resume-from <run_dir> --epochs <total>` — or, for scenario
-> arrays, resubmit with `--resume` as a common flag.
+> **Walltime and interruption.** The training templates
+> (`slurm_train_stlrps.sbatch`, `slurm_train_scenario_array.sbatch`) send
+> `SIGTERM` to the batch shell 30 minutes before the walltime
+> (`#SBATCH --signal=B:TERM@1800`). The shell relays `TERM` and `USR1` to the
+> trainer, which treats them like Ctrl+C: it finishes the current epoch, saves
+> `ckpt_last.pt`, marks the run manifest `interrupted` with a resume hint, and
+> exits with status 75. The lead time must exceed one epoch plus its validation,
+> or the job is killed before it saves; for slow epochs raise it with
+> `LUNARIS_SIGNAL="B:TERM@3600"` in `hpc/cluster.env`. The templates also pass
+> `--requeue` and `--open-mode=append` (one log across restarts).
+
+The exit status of `lunaris-train` (a job's exit status is the same value):
+
+| Exit | Meaning |
+|------|---------|
+| `0` | run completed |
+| `75` (`EX_TEMPFAIL`) | stopped by a signal after `ckpt_last.pt` was saved; resumable |
+| `1` | run failed (NaN/Inf loss, aborted periodic evaluation), or an uncaught error |
+
+A non-zero exit is recorded by Slurm as a failed job, so an interrupted run is
+not reported as `COMPLETED`. The job prints the resume command on exit 75:
+
+- **Single training job:** use the command the job (and the trainer's interrupt
+  message) prints: the original arguments plus `--resume-from <run_dir>`, e.g.
+  `hpc/submit.sh train -- <original flags> --resume-from <run_dir> --epochs <total>`.
+  `--epochs` is the total target epoch count. Resume locks only the architecture
+  and scaler fields; optimisation settings (batch size, learning rate, loss
+  weights) come from the resuming command line, so a bare
+  `--resume-from <run_dir>` falls back to the defaults for them. The trainer logs
+  every setting that differs from the resumed run. A bare resume does restore the
+  run's data files (including independent `--train-data`/`--val-data` files).
+- **Scenario array:** resubmit the same array with `--resume` after the JSONL path.
+  Each task continues from its own `checkpoints/ckpt_last.pt` and starts fresh when
+  there is none. The launcher reports exit 75 as `STOPPED` (resumable), not `FAILED`.
+- **Automatic:** set `LUNARIS_AUTO_REQUEUE=1` in `hpc/cluster.env`, and a job that
+  exits 75 requeues itself with `scontrol requeue`. A single training job must name
+  its run directory with `--out-dir` (the template exits 64 otherwise). A requeued
+  attempt resumes from `<out-dir>/checkpoints/ckpt_last.pt`, or starts over with the
+  original arguments if that file is missing.
 
 > **One GPU per training job.** The trainer uses a single device (`cuda:0`);
 > there is no DDP/multi-GPU path. Requesting `--gres=gpu:2` wastes an
 > allocation. The templates also export `LUNARIS_REQUIRE_CUDA=1`, so a job
-> whose torch cannot see CUDA (wrong module, CPU-only wheel) fails at the
-> preflight gate instead of silently crawling through the walltime on CPU.
+> whose torch cannot see CUDA (wrong module, CPU-only wheel) fails the trainer's
+> own preflight check (`cuda_visibility`) instead of silently crawling through
+> the walltime on CPU. `--allow-preflight-fail` and `--skip-preflight` are the
+> escape hatches.
 
 > **Throughput hints (Linux compute nodes).** The Windows-only
 > HDF5-multiworker restriction does not apply on Linux: with the RAM-preload
@@ -399,8 +480,10 @@ sbatch --array=0-1 hpc/slurm_train_scenario_array.sbatch \
 ```
 
 **Output-directory naming.** Each task writes to
-`$LUNARIS_OUTPUT_DIR/training/<scenario_name>/` (falling back to
-`outputs/training/<scenario_name>/` when `LUNARIS_OUTPUT_DIR` is unset). Before
+`$LUNARIS_OUTPUT_DIR/training/<scenario_name>/`. The launcher falls back to
+`<repo root>/outputs/training/<scenario_name>/` only when neither `--output-root`
+nor `LUNARIS_OUTPUT_DIR` is set; the job templates always set `LUNARIS_OUTPUT_DIR`
+(default `$HOME/lunaris_outputs`). Before
 launching, the launcher writes `scenario.json`, `scenario_command.txt`, and
 `scenario_environment.json` into that directory for provenance. Outputs are never
 written under `src/`.
@@ -413,11 +496,15 @@ directory, where `%A` is the array job ID and `%a` the task ID.
 exists and is non-empty, so an accidental resubmission cannot clobber a finished
 run. Two escape hatches:
 
-- `--resume` (recommended after a walltime kill): when the task's output
+- `--resume` (recommended after a walltime kill; a requeued array attempt adds it
+  itself and drops `--overwrite`/`--force`): when the task's output
   directory contains `checkpoints/ckpt_last.pt` (or `ckpt_best.pt`), the
   launcher relaunches with `--resume-from <run_dir>` instead of `--out`, so
   every array task continues from its own last completed epoch. Tasks without
-  a previous run start fresh. The original `scenario.json` provenance is kept;
+  a previous run start fresh. A directory that holds only this scenario's own
+  provenance and no checkpoint (a task Slurm requeued before its first save)
+  is refused unless `--restart-if-no-checkpoint` is also given; the requeued
+  array attempt passes it, so such a task restarts from scratch. The original `scenario.json` provenance is kept;
   each resume attempt adds timestamped `scenario_resume_command_*.txt` /
   `scenario_resume_environment_*.json` files.
 - `--force` (alias `--overwrite`): reuse the directory and OVERWRITE the run.
@@ -459,21 +546,41 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
   --output-dir "$LUNARIS_OUTPUT_DIR/gravity_benchmark/<run_name>"
 ```
 
+`hpc/slurm_benchmark_gpu.sbatch` requests one GPU and checks CUDA before it starts
+(`LUNARIS_REQUIRE_CUDA` defaults to 1). It always appends `--require-st-lrps`, so
+the job fails rather than dropping ST-LRPS from the comparison when no valid model
+directory is found. Without `--out` or `--output-dir`, it writes to
+`$LUNARIS_OUTPUT_DIR/gravity_benchmark/<jobid>`. It sends SIGTERM 5 minutes before
+the walltime (`B:TERM@300`). The benchmark has no checkpoint of its own, but
+`--resume` skips scenarios already in `per_scenario_metrics.csv`; on a non-zero
+exit the job prints the command to continue with `--output-dir <dir> --resume`.
+
 ### 3. Batch propagation / injection dispersion ensembles
 
 ```bash
-sbatch hpc/slurm_batch_array.sbatch \
+hpc/submit.sh batch -- \
   --sampling-method sobol_scrambled \
   --batch-backend auto \
   --sh-degree 24
 ```
 
-As an array job (`#SBATCH --array=0-9`) the script derives a distinct RNG seed
-and an `--batch-output-path` per task, so the tasks run different ensembles and
-write to separate files under `$LUNARIS_OUTPUT_DIR/ensemble/batch_<task>.h5`
-instead of colliding on one output. To write elsewhere, override
-`LUNARIS_OUTPUT_DIR` (the batch CLI's own output flag is `--batch-output-path`,
-not `--out-dir`, which the batch path accepts but ignores).
+`hpc/submit.sh batch` requests a GPU only when the arguments ask for a GPU backend
+(`numba_cuda_sh`, `torch_cuda_sh`, `gpu_st_lrps_*`, or `auto` with `--use-gpu true`,
+which is the `lunaris-batch` default). Add `--gres=gpu:1` before `--` to force one.
+If `LUNARIS_GRES` is empty, `submit.sh` warns that no GPU is requested. Calling
+`sbatch` on the template directly skips this logic, since the template has no
+`--gres` line of its own.
+
+As an array job (`#SBATCH --array=0-9`, one CPU per task) the script sets each
+task's seed to your `--seed` (default 42) plus the task ID, and writes
+`$LUNARIS_OUTPUT_DIR/ensemble/batch_<arrayjob>_<task>.h5`, so a second submission
+never overwrites the first. The same base seed reproduces the same ensembles; use
+a base seed spaced by at least the array size for a new campaign. Unscrambled
+`--sampling-method sobol` is refused for array jobs, because it ignores the seed
+and every task would repeat one ensemble; use `sobol_scrambled`. The script's
+`--seed` and `--batch-output-path` take precedence over any you pass. To write
+elsewhere, set `LUNARIS_OUTPUT_DIR` (the batch CLI's own output flag is
+`--batch-output-path`, not `--out-dir`, which the batch path accepts but ignores).
 
 Sampling and backend selection are explicit and recorded in ensemble outputs:
 
@@ -509,7 +616,8 @@ Dataset/spatial-cloud generation (step 1) ships a dedicated CPU-only template,
 Because the generator is a numba/NumPy pipeline, that job requests no GPU:
 `submit.sh` skips the `LUNARIS_GRES` injection for it and prefers
 `LUNARIS_CPU_PARTITION` (when set in `cluster.env`) over the GPU queue in
-`LUNARIS_PARTITION`. ST-LRPS evaluation (step 3) still has no dedicated
+`LUNARIS_PARTITION`. Unless you pass `--workers`, the job uses `$SLURM_CPUS_PER_TASK`
+workers. ST-LRPS evaluation (step 3) still has no dedicated
 template — run it through the headless CLI, or copy one of the `.sbatch`
 files and swap in the relevant command:
 

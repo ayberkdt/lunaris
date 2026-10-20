@@ -9,6 +9,10 @@ internal consistency. This module instead pins the *physics*:
 2. **Direction** - integrating a lunar orbit with the de Sitter term in isolation,
    the orbit plane must precess **prograde** (about +Omega), i.e. ``a = +2 Omega x v``.
    A retrograde result (``-2 Omega x v``) fails this test.
+3. **Counted once** - with the external body circling the Moon, the external
+   1PN term the engines apply precesses the orbit at Omega, not 2 Omega: the
+   differential Schwarzschild term alone also precesses it at Omega, so the
+   two must not be summed (they were before this fix).
 
 The direction check is memory-independent: it does not rely on any quoted form of
 the IERS equation, only on the established fact that geodetic precession is
@@ -21,7 +25,12 @@ import numpy as np
 import pytest
 
 from lunaris.common.constants import C_LIGHT, MU_MOON, MU_SUN
-from lunaris.physics.relativity_effects import C_SQ, de_sitter_components
+from lunaris.physics.relativity_effects import (
+    C_SQ,
+    de_sitter_components,
+    external_1pn_components,
+    external_schwarzschild_diff_components,
+)
 
 _RAD_TO_MAS = 180.0 / np.pi * 3600.0 * 1000.0
 _SEC_PER_YEAR = 365.25 * 86400.0
@@ -54,7 +63,7 @@ def test_de_sitter_rate_matches_canonical_19_mas_per_year() -> None:
         float(body_v[0]), float(body_v[1]), float(body_v[2]),
         mu,
     ))
-    assert np.linalg.norm(a) == pytest.approx(2.0 * np.linalg.norm(omega) * np.linalg.norm(v), rel=1e-9)
+    assert np.linalg.norm(a) == pytest.approx(2.0 * np.linalg.norm(omega) * np.linalg.norm(v), rel=1e-9, abs=0.0)
 
 
 def test_de_sitter_precesses_the_orbit_prograde() -> None:
@@ -105,3 +114,62 @@ def test_de_sitter_precesses_the_orbit_prograde() -> None:
     # Prograde and correct magnitude (the retrograde sign bug gives -omega_mag).
     assert omega_p > 0.0
     assert omega_p == pytest.approx(omega_mag, rel=0.05)
+
+
+def _precession_rate_over_rotating_geometry(term) -> tuple[float, float]:
+    """Secular orbit-normal rate along Omega x h, in units of |Omega|, over two
+    revolutions of the external body about the Moon.
+
+    The body circles the Moon in the xy-plane (V^2 = mu/R, so the 1PN
+    parameters are mutually consistent; mu amplified for measurability) and
+    the polar lunar orbit has h = +x, perpendicular to Omega = +z. Only the
+    1PN term perturbs the Kepler orbit, so the round-off floor is far below
+    the measured rotation. Averaging over whole revolutions removes the
+    periodic (symmetric) part of the velocity coupling, which a fixed
+    geometry would not.
+    """
+    R, mu_body = 1.0e9, 9.0e19
+    V = float(np.sqrt(mu_body / R))
+    w = V / R
+    omega = 1.5 * mu_body * R * V / (C_SQ * R**3)
+
+    def accel(t: float, state: np.ndarray) -> np.ndarray:
+        c, s = np.cos(w * t), np.sin(w * t)
+        body = (-R * c, -R * s, 0.0)       # Moon -> body
+        body_v = (V * s, -V * c, 0.0)
+        r, v = state[:3], state[3:]
+        a = -MU_MOON * r / np.linalg.norm(r) ** 3 + np.array(term(*r, *v, *body, *body_v, mu_body))
+        return np.concatenate([v, a])
+
+    a0 = 2.0e6
+    y = np.array([0.0, a0, 0.0, 0.0, 0.0, np.sqrt(MU_MOON / a0)])
+    h0 = np.cross(y[:3], y[3:])
+    dt = 4.0
+    n = int(round(2 * (2 * np.pi / w) / dt))
+    t = 0.0
+    for _ in range(n):
+        k1 = accel(t, y)
+        k2 = accel(t + 0.5 * dt, y + 0.5 * dt * k1)
+        k3 = accel(t + 0.5 * dt, y + 0.5 * dt * k2)
+        k4 = accel(t + dt, y + dt * k3)
+        y = y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        t += dt
+    rate = (np.cross(y[:3], y[3:]) - h0) / (np.linalg.norm(h0) * t)
+    # Omega x h0 points along +y.
+    return float(rate[1] / omega), float(rate[2] / omega)
+
+
+def test_external_1pn_counts_the_geodetic_precession_once() -> None:
+    def differential(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu):
+        return external_schwarzschild_diff_components(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu)
+
+    def applied(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu):
+        return external_1pn_components(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu)
+
+    along_differential, _ = _precession_rate_over_rotating_geometry(differential)
+    along_applied, normal_applied = _precession_rate_over_rotating_geometry(applied)
+    # Measured 2026-10-20: 0.994 for each term alone and 1.988 for their sum
+    # (dt = 4 s RK4); 5 % separates once from twice by a factor 20.
+    assert along_differential == pytest.approx(1.0, abs=0.05)
+    assert along_applied == pytest.approx(1.0, abs=0.05)
+    assert abs(normal_applied) < 0.05

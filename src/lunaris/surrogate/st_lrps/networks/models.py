@@ -121,13 +121,16 @@ class SirenResBlock(nn.Module):
 
     Architecture::
 
-        y = x + W₂ · sin(w₀ · LN(W₁ x + b₁))
+        y = x + W₂ · sin(w₀ · (W₁ · LN(x) + b₁)) + b₂
 
     Design rationale
     ----------------
-    *Pre-norm*: LayerNorm is placed on the branch input (before the sine)
-    to keep sine arguments well-conditioned in deep networks, without touching
-    the skip path.  The skip carries the raw potential signal unmodified.
+    *Pre-norm*: LayerNorm is applied to the branch input, before the first
+    linear layer and the sine, to keep sine arguments well-conditioned in deep
+    networks, without touching the skip path.  The skip carries the raw
+    potential signal unmodified. The sine and the W₁ initialisation are
+    SIREN's; the LayerNorm, the skip path and the zero-initialised W₂ are
+    Lunaris's (a heuristic without a published source, LUNARIS-HEUR-ML-001).
 
     *Zero-init output*: W₂ starts at zero, making each block initially identity.
     Deep residual SIRENs therefore begin as shallow networks and progressively

@@ -31,6 +31,23 @@ LEGACY_BENCHMARK_DEGREE_MAX: int = STRONG_BENCHMARK_DEGREE_MAX
 LEGACY_BENCHMARK_ALT_MIN_KM: float = STRONG_BENCHMARK_ALT_MIN_KM
 LEGACY_BENCHMARK_ALT_MAX_KM: float = STRONG_BENCHMARK_ALT_MAX_KM
 
+
+def _available_cpu_count() -> int:
+    """CPUs this process may run on (its affinity mask), not the whole node.
+
+    On a cluster ``os.cpu_count()`` reports every core of the node while a
+    job is pinned to its allocation, so a worker pool sized from it
+    oversubscribes. ``os.sched_getaffinity`` is absent on Windows/macOS; there
+    the node count is the best available answer.
+    """
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is not None:
+        try:
+            return max(1, len(affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
 # =============================================================================
 # 1.                      SAMPLING ENUMS / HELPERS
 # =============================================================================
@@ -104,7 +121,7 @@ class SpatialCloudConfig:
     # Throughput / scaling
     # ----------------------------
     chunk_size: int = 50_000
-    workers: int = max(1, os.cpu_count() or 1)
+    workers: int = _available_cpu_count()
     no_multiprocessing: bool = False
 
     # ----------------------------
@@ -239,7 +256,7 @@ class SpatialCloudConfig:
             sampling_strategy=str(payload.get("sampling_strategy", SamplingStrategy.MIXED.value)),
             surface_bias_ratio=float(payload.get("surface_bias_ratio", 0.70)),
             chunk_size=int(payload.get("chunk_size", 50_000)),
-            workers=int(payload.get("workers", max(1, os.cpu_count() or 1))),
+            workers=int(payload.get("workers", _available_cpu_count())),
             no_multiprocessing=bool(payload.get("no_multiprocessing", False)),
             out_format=str(payload.get("out_format", "h5")),
             out_path=str(payload.get("out_path", "")),

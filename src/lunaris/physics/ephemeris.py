@@ -29,7 +29,9 @@ Responsibilities
      Path resolution may transparently accept these variants depending on the resolver config.
 
 2) Table generation (one-time)
-   - Samples SPICE at a fixed step `output_dt_s` over `duration_s`.
+   - Samples SPICE at a fixed step over `duration_s`: `output_dt_s` for
+     `build_tables`; `build_spice_tables` uses `min(output_dt_s, _MAX_TABLE_DT_S)`
+     (60 s) so the output grid never coarsens the force-model tables.
    - Uses a deterministic uniform grid: t[k] = k * dt, with the last sample
      guaranteed >= duration_s so runtime interpolation never clamps inside the
      requested propagation span.
@@ -894,6 +896,12 @@ def build_tables(
     )
 
 
+# The force-model tables (Sun, Earth, Moon orientation) are sampled at the output
+# step or this one, whichever is finer, so choosing a coarser output step does not
+# change the dynamics: the table interpolation error grows with the table step.
+_MAX_TABLE_DT_S = 60.0
+
+
 def build_spice_tables(
     time_cfg: TimeConfig,
     spice_cfg: SpiceBuildConfig,
@@ -929,10 +937,18 @@ def build_spice_tables(
             "(start_date). Move start_date earlier instead of using a negative t0_s."
         )
 
+    output_dt = _require_positive("output_dt_s", dt)
+    table_dt = min(output_dt, _MAX_TABLE_DT_S)
+    # A Yoshida composition samples the force up to 0.916 steps past tf, and the
+    # samplers extrapolate one table interval. While the table step was the
+    # output step that band covered any step <= output_dt; with the capped step
+    # the table runs on by the difference, so it still does. Runs with
+    # output_dt <= 60 s build exactly the same table as before.
+    pad_s = output_dt - table_dt
     return build_tables(
         start_utc=start_utc,
-        duration_s=t0_s + _require_positive("duration_s", time_cfg.duration_s),
-        output_dt_s=_require_positive("output_dt_s", dt),
+        duration_s=t0_s + _require_positive("duration_s", time_cfg.duration_s) + pad_s,
+        output_dt_s=table_dt,
         kernels=spice_cfg.kernels,
         inertial_frame=str(spice_cfg.inertial_frame),
         fixed_frame=str(spice_cfg.fixed_frame),
@@ -1222,8 +1238,9 @@ def _extrap_u_to_index_and_frac(u: float, n: int) -> tuple[int, float]:
     For ``u`` in ``[-1, 0)`` returns ``(0, u)`` and for ``u`` in ``(n-1, n]``
     returns ``(n-2, u-(n-2))``: the edge segment's cubic is continued instead of
     holding the end row. Yoshida compositions evaluate the force up to
-    0.92 steps before ``t0`` / after ``tf`` (``stage_time_overhang``); holding the
-    end row there froze the Moon attitude and Sun/Earth for that stage. Beyond
+    0.92 steps after ``tf`` (``stage_time_overhang``; the first step is a one-shot
+    DOP853 step, so nothing is sampled before ``t0``); holding the end row there
+    froze the Moon attitude and Sun/Earth for that stage. Beyond
     one interval it clamps exactly as before; inside the table it is identical.
     """
     if u < 0.0:
@@ -1513,7 +1530,7 @@ def get_ephem_state_with_velocity(
 ) -> tuple[float, float, float, float, float, float, float, float, float, float]:
     """Sample position/attitude using the schema-v2 position+velocity contract."""
     # The RHS sampler continues the edge segment one interval past the table:
-    # Yoshida stages evaluate the force before t0 / after tf (stage_time_overhang).
+    # Yoshida stages evaluate the force after tf (stage_time_overhang); before t0 only a caller that skips the one-shot first step.
     if use_hermite:
         sx, sy, sz = interp_vec3_hermite(t_s, dt_s, sun_tab_m, sun_velocity_tab_m_s, True)
         ex, ey, ez = interp_vec3_hermite(t_s, dt_s, earth_tab_m, earth_velocity_tab_m_s, True)

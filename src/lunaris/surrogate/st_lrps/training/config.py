@@ -63,10 +63,7 @@ class TrainConfig:
     """Hyperparameter configuration for the Physics-Informed Neural Network."""
 
     # Runtime marker (NOT a dataclass field — left unannotated so it is excluded
-    # from asdict()/serialization): set True by the CLI when --model-preset was
-    # passed explicitly, read by apply_model_preset to distinguish an explicit
-    # preset from the default.
-    _model_preset_explicit = False
+    # from asdict()/serialization).
     _altitude_bounds_explicit = False
 
     data: str
@@ -446,9 +443,6 @@ def apply_model_preset(cfg: TrainConfig) -> TrainConfig:
     active = {name for name in _ENCODING_FLAGS if bool(getattr(cfg, name, False))}
     implied_active = {name for name, value in implied.items() if value}
     if active and active != implied_active:
-        if not bool(getattr(cfg, "_model_preset_explicit", False)):
-            cfg.model_preset = "custom"
-            return cfg
         raise ValueError(
             f"model_preset={preset!r} conflicts with manual encoding flags {sorted(active)}. "
             "Use --model-preset custom for manual encoding ablations."
@@ -619,7 +613,9 @@ def parse_args() -> TrainConfig:
 
     ap = argparse.ArgumentParser(
         description="Sobolev scalar-potential surrogate training for residual lunar gravity",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        # A prefix of a flag must not silently bind to another option.
+        allow_abbrev=False,
     )
 
     # Data & Output
@@ -1334,17 +1330,19 @@ def parse_args() -> TrainConfig:
 
     a = ap.parse_args()
 
-    # Backward-compatible CLI behavior: older commands that directly selected
-    # an encoding flag should continue to work without also adding
-    # ``--model-preset custom``. If the preset was not explicitly supplied,
-    # positive manual encoding flags switch the config to custom.
+    # A manual encoding flag needs an explicitly named preset. These flags used
+    # to switch an unnamed (default) preset to "custom" silently, so one flag
+    # replaced the whole default architecture without a word in the command.
+    # Name the preset instead: --model-preset custom for manual encoding
+    # ablations, or the preset whose encoding the flag matches.
     argv_tokens = list(sys.argv[1:])
     preset_explicit = any(
         tok == "--model-preset" or tok.startswith("--model-preset=")
         for tok in argv_tokens
     )
-    manual_encoding_requested = any(
-        tok in {
+    manual_encoding_tokens = sorted({
+        tok for tok in argv_tokens
+        if tok in {
             "--use-fourier",
             "--use-sh-encoding",
             "--use-radial-separation",
@@ -1352,10 +1350,13 @@ def parse_args() -> TrainConfig:
             "--use-physical-radial-decay-encoding",
             "--use-real-sh-basis",
         }
-        for tok in argv_tokens
-    )
-    if manual_encoding_requested and not preset_explicit:
-        a.model_preset = "custom"
+    })
+    if manual_encoding_tokens and not preset_explicit:
+        ap.error(
+            f"manual encoding flag(s) {', '.join(manual_encoding_tokens)} need an explicit "
+            "--model-preset (use --model-preset custom for manual encoding ablations); "
+            f"without one the default preset {a.model_preset!r} would apply."
+        )
 
     # 0. Resume pre-resolution.
     # When --resume-from is given, default --data/--out from the previous run so
@@ -1373,13 +1374,30 @@ def parse_args() -> TrainConfig:
             except Exception as _e:  # pragma: no cover - defensive
                 print(f"[RESUME] Warning: could not read previous config.json: {_e}")
         # Infer data/out from the previous run when not explicitly provided.
+        # A run on independent files records ``data`` as a copy of its train
+        # file; restoring ``data`` alone would re-split that file with
+        # seeded_random and drop the validation file (the scaler provenance
+        # check then refuses the resume). Restore the files the run used.
         if a.data is None and a.train_data is None:
+            prev_train = prev_cfg.get("train_data_path") or prev_cfg.get("train_data")
+            prev_val = prev_cfg.get("val_data_path") or prev_cfg.get("val_data")
             prev_data = prev_cfg.get("data")
-            if prev_data:
+            if prev_train and prev_val:
+                a.train_data = str(prev_train)
+                a.val_data = a.val_data or str(prev_val)
+            elif prev_data:
                 a.data = str(prev_data)
             else:
-                a.train_data = a.train_data or prev_cfg.get("train_data_path") or prev_cfg.get("train_data")
-                a.val_data = a.val_data or prev_cfg.get("val_data_path") or prev_cfg.get("val_data")
+                a.train_data = prev_train
+                a.val_data = a.val_data or prev_val
+            for _attr, _keys in (
+                ("test_data", ("test_data_path", "test_data")),
+                ("ood_data", ("ood_data_path", "ood_data")),
+            ):
+                if getattr(a, _attr, None) is None:
+                    _prev = next((prev_cfg.get(k) for k in _keys if prev_cfg.get(k)), None)
+                    if _prev:
+                        setattr(a, _attr, str(_prev))
         if not a.out:
             a.out = str(resume_run_dir)
         print(f"[RESUME] Resuming run: {resume_run_dir}  (prefer={a.resume_checkpoint})")
@@ -1655,7 +1673,6 @@ def parse_args() -> TrainConfig:
         sys.exit(1)
     if cfg.ema_decay is not None and not (0.0 < float(cfg.ema_decay) < 1.0):
         raise ValueError(f"--ema-decay must be in (0, 1), got {cfg.ema_decay!r}")
-    cfg._model_preset_explicit = bool(preset_explicit)
     cfg._altitude_bounds_explicit = any(
         tok.split("=", 1)[0] in {"--altitude-min-km", "--altitude-max-km"}
         for tok in argv_tokens

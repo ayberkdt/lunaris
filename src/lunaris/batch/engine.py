@@ -217,7 +217,6 @@ def _force_model_fidelity_provenance(
                 "relativity_model": "selected_1pn_corrections",
                 "relativity_terms": [
                     "central_body_schwarzschild",
-                    "external_body_schwarzschild_differential_when_ephemeris_available",
                     "de_sitter_geodetic_when_ephemeris_available",
                 ],
                 "relativity_excluded_terms": [
@@ -339,6 +338,10 @@ class BatchPropagationEngine:
         done/total scenario counts, and ETA hints suitable for UI progress bars.
     """
 
+    # True when the template gravity was loaded above the mission degree for a
+    # GPU-path request; the CPU path then rebuilds it at the mission degree.
+    _gravity_degree_widened: bool = False
+
     def __init__(
         self,
         sim_cfg: Any,                       # config.SimConfig
@@ -425,9 +428,14 @@ class BatchPropagationEngine:
     # Internal: build dynamics engine from SimConfig
     # ----------------------------------------------------------------
 
-    def _build_dynamics(self) -> Any:
+    def _build_dynamics(self, *, mission_degree_only: bool = False) -> Any:
         """
         Lazily build a DynamicsEngine from the stored SimConfig.
+
+        ``mission_degree_only`` rebuilds the template at exactly the degree a
+        single run of the same SimConfig loads (the CPU path, which evaluates
+        the template's full degree), reusing the ephemeris already built for
+        the first template.
 
         The batch path intentionally reuses the same gravity / ephemeris bootstrap
         policy as the single-run path so users do not hit "works in Run, breaks
@@ -484,18 +492,23 @@ class BatchPropagationEngine:
                     # loader) so a high sh_degree is not rejected by the
                     # propagator preflight merely because the mission's nominal
                     # degree is lower. Pure-CPU runs keep the mission degree
-                    # unchanged so their physics is not silently altered.
+                    # unchanged so their physics is not silently altered; a GPU
+                    # request that ends on the CPU (no CUDA, init failure)
+                    # rebuilds the template at the mission degree
+                    # (``_build_propagator``).
                     batch_sh_degree = int(getattr(self._cfg, "sh_degree", 0) or 0)
                     numba_cuda_sh_path_requested = (
                         batch_backend in {"numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
                         or (batch_backend == "auto" and bool(getattr(self._cfg, "use_gpu", False)))
                     )
-                    if numba_cuda_sh_path_requested and batch_sh_degree > 0:
+                    if numba_cuda_sh_path_requested and batch_sh_degree > 0 and not mission_degree_only:
+                        mission_degree = requested_degree
                         requested_degree = (
                             batch_sh_degree
                             if requested_degree is None
                             else max(requested_degree, batch_sh_degree)
                         )
+                        self._gravity_degree_widened = requested_degree != mission_degree
 
                     # GravityModel already exposes the full dynamics gravity
                     # contract (degree_max, R_ref_m, GM_m3s2, Cnm ... ws).
@@ -510,7 +523,9 @@ class BatchPropagationEngine:
                     f"Error: {exc}"
                 ) from exc
 
-        if _need_ephemeris(cfg, topo_requested=topo_requested):
+        if mission_degree_only:
+            ephem_manager = getattr(self._dyn, "ephem", None)
+        if ephem_manager is None and _need_ephemeris(cfg, topo_requested=topo_requested):
             try:
                 ephem_manager = _build_ephemeris_manager(cfg)
             except Exception as exc:
@@ -816,6 +831,12 @@ class BatchPropagationEngine:
         # ----------------------------------------------------------------
         # CPU path (default / fallback)
         # ----------------------------------------------------------------
+        if self._gravity_degree_widened:
+            # The template was loaded at max(mission degree, sh_degree) for a
+            # GPU-path request that did not run there; the CPU flies the degree
+            # a single run of the same SimConfig flies.
+            self._dyn = self._build_dynamics(mission_degree_only=True)
+            self._gravity_degree_widened = False
         return CPUBatchPropagator(
             self._sim_cfg,
             self._cfg,
@@ -1266,6 +1287,10 @@ class BatchPropagationEngine:
             actual_sh_degree = backend_diag.get("actual_sh_degree", backend_diag.get("sh_degree"))
             if actual_sh_degree is None and _grav_model is not None:
                 actual_sh_degree = getattr(_grav_model, "effective_degree_max", getattr(_grav_model, "degree", None))
+                if actual_sh_degree is None and getattr(_grav_model, "model_kind", None) != "st_lrps":
+                    # The classic-SH field the CPU path flew (its adaptive
+                    # blend, when enabled, only lowers the degree below this).
+                    actual_sh_degree = getattr(_grav_model, "max_degree", None)
             actual_backend_name = str(
                 getattr(_plan, "actual_backend", _plan.final_backend.value)
             )

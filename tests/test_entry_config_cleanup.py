@@ -77,6 +77,12 @@ def test_config_has_no_module_level_default_instance() -> None:
 
 def test_entrypoints_do_not_call_load_default_config_at_import(monkeypatch) -> None:
     """Sabotage load_default_config; importing the entrypoints must still work."""
+    # main.py imports lunaris.cli.run, which binds load_default_config at import.
+    # Imported first under the sabotage, it would keep the sabotaged function in
+    # sys.modules after monkeypatch restores the attribute, and every later run in
+    # the process would fail. Import it with the real function; main.py's body
+    # still runs below.
+    import lunaris.cli.run  # noqa: F401
     import lunaris.core.config as config
 
     def _boom(*args, **kwargs):

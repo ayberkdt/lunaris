@@ -240,9 +240,14 @@ def select_classic_sh_backend(
     if req == "torch_cpu_sh":
         try:
             import torch  # noqa: F401  # availability probe only
-            return _decide("torch_cpu_sh")
         except ImportError:
             return _decide("torch_cpu_sh", applied=False, reason="PyTorch not importable for torch_cpu_sh", err=True)
+        if not torch_physics_ok:
+            reason = "requested physics not supported by torch_cpu_sh"
+            if str(fallback_policy or "").strip().lower() == "error":
+                return _decide("torch_cpu_sh", applied=False, reason=reason, err=True)
+            return _decide("cpu_sh", applied=True, reason=reason)
+        return _decide("torch_cpu_sh")
 
     # --- Explicit torch ------------------------------------------------------
     if req == "torch_cuda_sh":
@@ -252,6 +257,10 @@ def select_classic_sh_backend(
                 return _decide("torch_cuda_sh", applied=False,
                                reason="PyTorch CUDA unavailable for torch_cuda_sh", err=True)
             if policy == "cpu":
+                if not torch_physics_ok:
+                    return _decide("cpu_sh", applied=True,
+                                   reason="PyTorch CUDA unavailable for torch_cuda_sh and requested physics "
+                                          "not supported by torch_cpu_sh")
                 return _decide("torch_cpu_sh", applied=True,
                                reason="PyTorch CUDA unavailable for torch_cuda_sh; falling back to torch_cpu_sh")
             # compatible_gpu: no other compatible GPU exists, raise error
@@ -923,6 +932,12 @@ def resolve_batch_backend_policy(
     # Numba kernel without importing the CUDA stack here.
     numba_unsupported = unsupported_force_models("numba_cuda_sh", flags) if flags is not None else ()
     torch_unsupported = unsupported_force_models("torch_cuda_sh", flags) if flags is not None else ()
+    # The GPU kernels evaluate the full requested degree everywhere; the CPU
+    # engine blends the degree with altitude when gravity.adaptive is on. The
+    # same configuration must not mean two different fields on two backends.
+    if sh_enabled and bool(getattr(getattr(gravity_cfg, "adaptive", None), "enabled", False)):
+        numba_unsupported = (*numba_unsupported, "adaptive SH degree")
+        torch_unsupported = (*torch_unsupported, "adaptive SH degree")
     fallback_policy = str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
     # R29b (#3): paper-safe/strict/benchmark posture forces 'error' semantics so
     # a requested backend is never silently substituted at planning time.

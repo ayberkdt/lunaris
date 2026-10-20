@@ -82,13 +82,15 @@ MJD_J2000_TT: float = 51_544.5
 # 3.                            MOON PARAMETERS
 # =============================================================================
 
-# Lunar gravitational parameter mu = GM [m^3/s^2] (JPL DE440)
+# Lunar gravitational parameter mu = GM [m^3/s^2]: JPL DE440 (gm_de440.tpc
+# BODY301_GM = 4902.8001184575 km^3/s^2) truncated to 10 digits (9.3e-11 relative).
 MU_MOON: float = 4_902_800_118_000.0
 
-# Reference radius used in many lunar gravity/topography products [m]
+# Reference radius of the GRAIL lunar gravity fields [m] (JGGRX 1800F header:
+# 1738.0 km). Not the LOLA sphere: LDEM/LDAM rasters use OFFSET = 1737.4 km.
 R_MOON: float = 1_738_000.0
 
-# Mean lunar radius (useful for altitude-like quantities) [m]
+# Mean lunar radius [m] (pck00011 BODY301_RADII; also the LOLA rasters' sphere)
 R_MOON_MEAN: float = 1_737_400.0
 
 # Sidereal rotation rate of the Moon [rad/s]
@@ -99,25 +101,40 @@ OMEGA_MOON: float = 2.6616995e-06
 # 4.                            EARTH PARAMETERS
 # =============================================================================
 
-# Earth gravitational parameter [m^3/s^2] (Standard: 3.986004418e14)
+# Earth gravitational parameter [m^3/s^2]: the WGS-84 value 3.986004418e14, a
+# retained project convention; DE440 (gm_de440.tpc BODY399_GM) differs by 1.6e-8.
 MU_EARTH: float = 398_600_441_800_000.0
 
 # Earth Equatorial Radius (WGS-84 semi-major axis) [m]
 R_EARTH_EQUATORIAL: float = 6_378_137.0
 
-# Earth Mean Radius (Volumetric mean / IERS standard approx) [m]
-R_EARTH_MEAN: float = 6_371_000.0            # Often used for spherical approximation.
+# Earth mean radius, rounded to 6371 km [m]: a spherical-Earth convention of
+# this project, not the WGS-84 mean radius R1 = 6 371 008.771 m.
+R_EARTH_MEAN: float = 6_371_000.0
 
 # Earth Mean Angular Velocity of Rotation [rad/s]
 # Standard WGS-84 value: 7.2921150e-5 rad/s
 OMEGA_EARTH: float = 7.292_115_0e-5
+
+# Earth reference radius and dynamical form factor (J2) of EGM2008, the default
+# pair of the Earth-J2 third-body perturbation (EarthJ2Params). The radius
+# (6,378,136.3 m) differs from WGS-84's R_EARTH_EQUATORIAL (6,378,137.0 m) by
+# 0.7 m: a distinct model convention, so it is its own named constant. Both come
+# from the ICGEM EGM2008.gfc header and coefficients (fully normalized,
+# tide-free): radius 6378136.3 m and C20 = -0.484165143790815e-3, so
+# J2 = -sqrt(5) C20. The earlier 1.08262668e-3 was not EGM2008's (4.7e-7
+# relative off).
+R_EARTH_EQUATORIAL_EGM2008_M: float = 6_378_136.3
+J2_EARTH_EGM2008: float = 1.0826261738522227e-3
 
 
 # =============================================================================
 # 5.                             SOLAR SYSTEM
 # =============================================================================
 
-# Solar gravitational parameter [m^3/s^2]
+# Solar gravitational parameter [m^3/s^2]. Pre-DE440 value rounded to 12
+# digits; DE440 (gm_de440.tpc BODY10_GM) gives 1.3271244004127942e20, a
+# relative difference of 5.4e-12.
 MU_SUN: float = 1.32712440042e+20
 
 # IAU 2015 nominal solar radius [m]
@@ -188,20 +205,28 @@ CONSTANT_SOURCES: Final[Mapping[str, str]] = MappingProxyType({
     # --- Sun / solar system ---
     "R_SUN_MEAN": "IAU 2015 nominal solar radius",
     "AU": "IAU 2012 exact definition",
-    "MU_SUN": "JPL DE440 ephemeris (GM of Sun)",
+    "MU_SUN": "pre-DE440 GM of the Sun rounded to 12 digits (DE440 differs by 5.4e-12 relative)",
     "SOLAR_FLUX_1AU": "IAU 2015 Resolution B3 nominal total solar irradiance",
     "P_SUN_1AU": "Derived as SOLAR_FLUX_1AU / C_LIGHT",
 
     # --- Earth ---
-    "MU_EARTH": "JPL DE440 geocentric GM",
+    "MU_EARTH": "WGS-84 geocentric GM (retained project convention; DE440 BODY399_GM differs by 1.6e-8)",
     "R_EARTH_EQUATORIAL": "WGS-84 standards",
-    "R_EARTH_MEAN": "IERS/WGS-84 mean radius convention used in project",
+    "R_EARTH_MEAN": "6371 km rounded spherical-Earth convention (WGS-84 R1 is 6371008.771 m)",
     "OMEGA_EARTH": "IERS/WGS-84 nominal Earth rotation rate",
+    "R_EARTH_EQUATORIAL_EGM2008_M": (
+        "EGM2008 reference radius, ICGEM EGM2008.gfc header (radius 6378136.3 m); "
+        "distinct from WGS-84's R_EARTH_EQUATORIAL."
+    ),
+    "J2_EARTH_EGM2008": (
+        "-sqrt(5) * C20 of ICGEM EGM2008.gfc (fully normalized, tide-free, "
+        "C20 = -0.484165143790815e-3): https://icgem.gfz-potsdam.de/"
+    ),
 
     # --- Moon ---
-    "MU_MOON": "JPL DE440 / lunar gravity model reference (GM)",
-    "R_MOON": "LRO LOLA reference radius used by lunar products",
-    "R_MOON_MEAN": "Mean lunar radius (project reference / product convention)",
+    "MU_MOON": "JPL DE440 BODY301_GM truncated to 10 digits (9.3e-11 relative)",
+    "R_MOON": "GRAIL gravity-field reference radius (JGGRX 1800F header 1738.0 km); LOLA uses 1737.4 km",
+    "R_MOON_MEAN": "IAU mean lunar radius (pck00011 BODY301_RADII); the LOLA LDEM/LDAM OFFSET",
     "OMEGA_MOON": "Derived from lunar sidereal period (ω = 2π/T)",
 })
 
@@ -225,7 +250,7 @@ __all__ = (
 
     # 3. Lunar System (The Moon)
     "MU_MOON",                   # Lunar gravitational parameter GM [m^3/s^2]
-    "R_MOON",                    # Lunar reference/equatorial radius [m]
+    "R_MOON",                    # GRAIL gravity-field reference radius [m]
     "R_MOON_MEAN",               # Lunar mean volumetric radius [m]
     "OMEGA_MOON",                # Lunar mean rotation rate [rad/s]
 

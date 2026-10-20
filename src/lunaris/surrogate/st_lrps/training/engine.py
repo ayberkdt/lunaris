@@ -24,8 +24,10 @@ import logging
 import math
 import os
 import random
+import shlex
+import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -3031,6 +3033,16 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
                 "[resume] locked architecture/scaler fields to previous run: %s",
                 _locked_changed,
             )
+        _drifted = resume_setting_drift(_prev_cfg, cfg, locked=_RESUME_LOCKED_FIELDS)
+        if _drifted:
+            logger.warning(
+                "[resume] %d setting(s) differ from the resumed run and are taken from THIS "
+                "command line or its defaults: %s. Pass them explicitly to keep the run's "
+                "values (the interrupt message prints a full resume command).",
+                len(_drifted),
+                ", ".join(f"{k}: {old!r} -> {new!r}" for k, old, new in _drifted[:25])
+                + (" ..." if len(_drifted) > 25 else ""),
+            )
 
         # Continuation counters from the checkpoint.
         start_epoch = int(_resume_ckpt.get("epoch", -1)) + 1
@@ -3745,7 +3757,7 @@ def _restore_stop_signal_handlers(orig: Mapping[int, Any]) -> None:
             _signal.signal(sig, old)
 
 
-def _run_training_loop(session: _TrainingSession) -> None:
+def _run_training_loop(session: _TrainingSession) -> str:
     """Execute the Sobolev training loop (phase 11) for a built session.
 
     Unpacks the session into the same local names the original ``train()`` body
@@ -3996,26 +4008,14 @@ def _run_training_loop(session: _TrainingSession) -> None:
     # --signal=B:USR1@<sec>` as an early warning, so all three take the same
     # graceful path (see hpc/*.sbatch). Installing a handler requires the main
     # thread; if unavailable (e.g. tests in a worker thread) we fall back to
-    # plain KeyboardInterrupt.
-    import signal as _signal
-    _interrupt = {"flag": False}
+    # plain KeyboardInterrupt. A repeat within STOP_SIGNAL_REPEAT_GRACE_S is the
+    # same stop delivered twice and is ignored (build_stop_signal_handler).
+    _interrupt: dict[str, Any] = {"flag": False}
     _orig_handlers: dict[int, Any] = {}
 
-    def _on_stop_signal(_signum, _frame):  # pragma: no cover - signal timing dependent
-        if _interrupt["flag"]:
-            _restore_stop_signal_handlers(_orig_handlers)
-            raise KeyboardInterrupt
-        _interrupt["flag"] = True
-        try:
-            _name = _signal.Signals(_signum).name
-        except ValueError:
-            _name = str(_signum)
-        logger.warning(
-            "[interrupt] Stop requested (%s) — will finish the current epoch, save, and exit. Send "
-            "the signal again to force-quit.",
-            _name,
-        )
-
+    _on_stop_signal = build_stop_signal_handler(
+        _interrupt, lambda: _restore_stop_signal_handlers(_orig_handlers)
+    )
     _orig_handlers = _install_stop_signal_handlers(_on_stop_signal)
 
     with open(log_path, _hist_mode, encoding="utf-8") as logf:
@@ -4342,7 +4342,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
             if _interrupt["flag"]:
                 run_status = "interrupted"
                 _interrupt_done = int(epoch) + 1
-                _resume_hint = f"python -m lunaris.surrogate.st_lrps.training.cli --resume-from {outdir} --epochs {cfg.epochs}"
+                _resume_hint = resume_command_hint(sys.argv[1:], outdir, int(cfg.epochs))
                 logger.warning(
                     '[interrupt] Stopping after completed epoch %s. ckpt_last.pt is saved. Resume with:\n  %s',
                     _interrupt_done, _resume_hint,
@@ -4438,14 +4438,152 @@ def _run_training_loop(session: _TrainingSession) -> None:
             "eval_suggestion": eval_suggestion,
         },
     )
+    return run_status
 
 
-def train(cfg: TrainConfig) -> None:
+# A second stop signal this soon after the first is the same stop delivered
+# twice (scancel / preemption signal every process of the job, and the batch
+# shell relays the walltime TERM as well), not a request to force-quit.
+STOP_SIGNAL_REPEAT_GRACE_S = 5.0
+
+
+def build_stop_signal_handler(
+    interrupt: dict[str, Any],
+    restore_handlers: Any,
+    *,
+    grace_s: float = STOP_SIGNAL_REPEAT_GRACE_S,
+    clock: Any = time.monotonic,
+) -> Any:
+    """Return the trainer's SIGINT/SIGTERM/SIGUSR1 handler.
+
+    The first signal sets ``interrupt["flag"]``: the loop finishes the current
+    epoch, saves ckpt_last and exits 75. A repeat within ``grace_s`` seconds is
+    logged and ignored; a later one restores the original handlers and raises
+    KeyboardInterrupt (force-quit, the current epoch is not saved).
+    """
+    import signal as _signal
+
+    def _on_stop_signal(signum: int, _frame: Any) -> None:
+        try:
+            name = _signal.Signals(signum).name
+        except ValueError:
+            name = str(signum)
+        now = float(clock())
+        if interrupt.get("flag"):
+            if now - float(interrupt.get("first_signal_t", now)) < float(grace_s):
+                logger.warning(
+                    "[interrupt] %s repeated within %.0f s of the first stop signal; ignored "
+                    "(the stop is already in progress).",
+                    name, float(grace_s),
+                )
+                return
+            restore_handlers()
+            raise KeyboardInterrupt
+        interrupt["flag"] = True
+        interrupt["first_signal_t"] = now
+        logger.warning(
+            "[interrupt] Stop requested (%s) — will finish the current epoch, save, and exit. Send "
+            "the signal again after %.0f s to force-quit.",
+            name, float(grace_s),
+        )
+
+    return _on_stop_signal
+
+
+_RESUME_HINT_DROP_FLAGS = {
+    "--resume-from": True, "--out": True, "--out-dir": True, "--epochs": True,
+    "--overwrite": False,
+}
+# Config keys that legitimately change between the original run and its resume
+# (bookkeeping, I/O locations, the epoch target, the resume request itself) or
+# that are resolved from the dataset after the resume check runs. Exact keys
+# where possible: a broad substring ("epochs", "time", "best_") would also hide
+# real settings such as warmup_epochs, runtime_model_kind or best_metric.
+_RESUME_DRIFT_IGNORED_KEYS = frozenset({
+    "epochs", "out", "data", "train_data", "val_data", "test_data", "ood_data",
+    "resume_from", "resume_checkpoint", "resume_nonstrict", "resume_append_history",
+    "altitude_min_km", "altitude_max_km", "degree_min", "degree_max",
+    "best_val_loss", "best_score", "best_epoch",
+})
+_RESUME_DRIFT_IGNORED_SUBSTRINGS = (
+    "_path", "hash", "sha256", "created", "commit", "_utc",
+    "dataset_meta", "split_manifest", "target_contract", "resolved_",
+)
+
+
+def resume_command_hint(argv: Sequence[str], outdir: Any, epochs: int) -> str:
+    """Return the command that continues this run with the SAME settings.
+
+    Resume locks only the architecture/scaler fields; optimisation settings come
+    from the resuming command line. A bare ``--resume-from <run> --epochs N``
+    would therefore fall back to the global defaults (batch size, learning
+    rate, loss weights). The hint repeats this process's own arguments, minus
+    the output/resume/epoch flags, plus ``--resume-from`` and ``--epochs``.
+    """
+    kept: list[str] = []
+    skip = False
+    for tok in [str(t) for t in argv]:
+        if skip:
+            skip = False
+            continue
+        head = tok.split("=", 1)[0]
+        if head in _RESUME_HINT_DROP_FLAGS:
+            skip = _RESUME_HINT_DROP_FLAGS[head] and "=" not in tok
+            continue
+        kept.append(tok)
+    cmd = ["python", "-m", "lunaris.surrogate.st_lrps.training.cli", *kept,
+           "--resume-from", str(outdir), "--epochs", str(int(epochs))]
+    return shlex.join(cmd)
+
+
+def resume_setting_drift(
+    prev_cfg: Mapping[str, Any], cfg: Any, *, locked: Sequence[str] = ()
+) -> list[tuple[str, Any, Any]]:
+    """List (key, previous, current) for settings a resume silently changes."""
+    locked_set = set(locked)
+    drift: list[tuple[str, Any, Any]] = []
+    for key in sorted(prev_cfg):
+        if key in locked_set or key in _RESUME_DRIFT_IGNORED_KEYS or not hasattr(cfg, key):
+            continue
+        if any(part in key for part in _RESUME_DRIFT_IGNORED_SUBSTRINGS):
+            continue
+        prev, cur = prev_cfg.get(key), getattr(cfg, key)
+        if cur is None:
+            # Not resolved yet at this point (filled from the dataset later).
+            continue
+        if isinstance(cur, tuple):
+            cur = list(cur)
+        if prev != cur:
+            drift.append((key, prev, cur))
+    return drift
+
+
+EXIT_CODE_INTERRUPTED = 75  # EX_TEMPFAIL: stopped with ckpt_last.pt saved; resumable
+EXIT_CODE_FAILED = 1
+
+
+def exit_code_for_run_status(status: str) -> int:
+    """Map a finished run's status to the trainer's process exit code.
+
+    ``"interrupted"`` (stopped by SIGINT/SIGTERM/SIGUSR1 after the current epoch
+    was saved) exits :data:`EXIT_CODE_INTERRUPTED`, so a Slurm job stopped at its
+    time limit is not recorded as COMPLETED; ``"failed"`` (NaN/Inf loss, aborted
+    periodic evaluation) exits :data:`EXIT_CODE_FAILED`; ``"completed"`` exits 0.
+    """
+    if status == "interrupted":
+        return EXIT_CODE_INTERRUPTED
+    if status == "failed":
+        return EXIT_CODE_FAILED
+    return 0
+
+
+def train(cfg: TrainConfig) -> str:
     """Main execution pipeline: build the training session (setup phases 1-10),
-    then run the Sobolev training loop (phase 11)."""
+    then run the Sobolev training loop (phase 11). Returns the final run status
+    (``"completed"``, ``"interrupted"`` or ``"failed"``)."""
     try:
         session = build_training_session(cfg)
-        _run_training_loop(session)
+        return _run_training_loop(session)
     finally:
         _detach_run_logs()
 
@@ -4455,4 +4593,8 @@ def train(cfg: TrainConfig) -> None:
 # ---------------------------------------------------------------------------
 
 
-__all__ = ['STLRPSTrainer', 'train', 'set_seed', 'get_device']
+__all__ = [
+    'STLRPSTrainer', 'train', 'set_seed', 'get_device',
+    'exit_code_for_run_status', 'EXIT_CODE_INTERRUPTED', 'EXIT_CODE_FAILED',
+    'resume_command_hint', 'resume_setting_drift', 'build_stop_signal_handler',
+]

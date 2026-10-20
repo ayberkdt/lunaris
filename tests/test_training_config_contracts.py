@@ -71,18 +71,33 @@ def test_unknown_preset_is_rejected():
 
 def test_explicit_preset_with_conflicting_manual_flag_raises():
     cfg = _cfg(model_preset="baseline_raw", use_fourier=True)
-    cfg._model_preset_explicit = True  # user explicitly asked for the preset
     with pytest.raises(ValueError, match="conflicts with manual encoding"):
         apply_model_preset(cfg)
 
 
-def test_non_explicit_preset_with_manual_flag_downgrades_to_custom():
-    # When the preset was not explicitly requested, a manual encoding flag silently
-    # downgrades to 'custom' (preserving the manual choice) rather than erroring.
-    cfg = _cfg(model_preset="baseline_raw", use_fourier=True)
-    apply_model_preset(cfg)
-    assert cfg.model_preset == "custom"
-    assert cfg.use_fourier is True
+def test_default_preset_with_manual_flag_raises_instead_of_switching_to_custom():
+    # A manual encoding flag used to switch the (default) preset to 'custom'
+    # silently; the conflict is now refused (ported from Sidera 4a8784c1).
+    cfg = _cfg(use_fourier=True)
+    with pytest.raises(ValueError, match="conflicts with manual encoding"):
+        apply_model_preset(cfg)
+
+
+def test_cli_manual_encoding_flag_needs_an_explicit_preset(monkeypatch, capsys):
+    import sys
+
+    from lunaris.surrogate.st_lrps.training.config import parse_args
+
+    base = ["prog", "--data", "missing.h5", "--out", "o"]
+    monkeypatch.setattr(sys, "argv", [*base, "--use-radial-decay-encoding"])
+    with pytest.raises(SystemExit) as exc:
+        parse_args()
+    assert exc.value.code == 2
+    assert "--model-preset custom" in capsys.readouterr().err
+
+    monkeypatch.setattr(sys, "argv", [*base, "--model-preset", "custom", "--use-radial-decay-encoding"])
+    cfg = parse_args()
+    assert cfg.model_preset == "custom" and cfg.use_radial_decay_encoding is True
 
 
 def test_custom_preset_preserves_manual_encoding_choices():
@@ -135,3 +150,28 @@ def test_default_config_values_are_internally_consistent():
     # The default preset implies no manual encodings are active yet.
     assert _active_encodings(cfg) == set()
     assert cfg.model_preset in MODEL_PRESETS
+
+
+# =============================================================================
+# Command-line parsing
+# =============================================================================
+
+@pytest.mark.parametrize(
+    ("module", "argv"),
+    [
+        # --epoch is a unique prefix of --epochs; --mod of --model-dir.
+        ("lunaris.surrogate.st_lrps.training.config", ["--data", "d.h5", "--out", "o", "--epoch", "3"]),
+        ("lunaris.surrogate.st_lrps.evaluation.cli", ["--mod", "m", "--data", "d.h5"]),
+    ],
+)
+def test_trainer_and_evaluator_refuse_abbreviated_flags(monkeypatch, capsys, module, argv):
+    """A prefix of a flag must not silently bind to another option (allow_abbrev=False)."""
+    import importlib
+    import sys
+
+    parse_args = importlib.import_module(module).parse_args
+    monkeypatch.setattr(sys, "argv", ["prog", *argv])
+    with pytest.raises(SystemExit) as exc:
+        parse_args()
+    assert exc.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err

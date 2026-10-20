@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.constants import EPS_1E12, EPS_1E18, EPS_1E30
+from lunaris.common.constants import EPS_1E12, EPS_1E18, EPS_1E30, R_MOON
 
 
 class TorchFrameError(RuntimeError):
@@ -91,6 +91,26 @@ def line_sphere_alpha(p_prev: Any, p_curr: Any, r_impact: Any) -> Any:
 #: ``dt**4 * |d4r/dt4| / 384`` (about 3 mm for the same orbit and step).
 IMPACT_HERMITE_SUBSTEPS: int = 32
 
+#: Terrain mode: the largest allowed along-track spacing of the Hermite samples,
+#: as a fraction of the map's grid spacing ``radius_const * res``. The bilinear
+#: map is piecewise linear between grid lines, so a one-pixel spike of height
+#: ``h`` is a tent at least one pixel wide on each side of its peak along any
+#: track. With spacing ``<= 0.5`` pixel a sample lies within a quarter pixel of
+#: the peak and sees at least ``0.75 h``. More generally, an arc that dips
+#: below the terrain by more than ``G * spacing / 2`` is caught, where ``G`` is
+#: the along-track gradient of ``||p|| - terrain_r``. At ``K = 32`` a low lunar
+#: orbit at ``dt = 30 s`` samples every 1.6 km, more than three LDEM 64 ppd
+#: pixels (0.47 km).
+IMPACT_TERRAIN_SPACING_FRACTION: float = 0.5
+
+#: Terrain mode: cap on the per-step sample count. 512 keeps the 0.5-pixel
+#: spacing on an LDEM 64 ppd map (0.237 km) for arcs up to 121 km per step,
+#: i.e. ``dt <= 72 s`` at low-lunar-orbit speed (1.68 km/s) and ``dt <= 51 s``
+#: at lunar escape speed (2.38 km/s, the fastest bound arc near the surface).
+#: Longer steps or finer maps fall back to ``arc / 512`` spacing. The count
+#: applies only to steps that pass the terrain envelope gate.
+IMPACT_TERRAIN_SUBSTEPS_MAX: int = 512
+
 
 def _hermite_coeffs(
     p0: Any, v0: Any, p1: Any, v1: Any, dt_s: float
@@ -111,10 +131,49 @@ def _hermite_coeffs(
 
 
 def _hermite_points(coeffs: tuple[Any, Any, Any, Any], s: Any) -> Any:
-    """Hermite positions ``[N, M, 3]`` at the step fractions ``s`` ``[M]``."""
+    """Hermite positions ``[N, M, 3]`` at the step fractions ``s`` (``[M]`` or per-row ``[N, M]``)."""
     c0, c1, c2, c3 = (c.unsqueeze(1) for c in coeffs)
-    s = s.view(1, -1, 1)
+    s = s.view(1, -1, 1) if s.dim() == 1 else s.unsqueeze(2)
     return c0 + s * (c1 + s * (c2 + s * c3))
+
+
+def terrain_substep_count(
+    v_prev: Any,
+    v_curr: Any,
+    dt_s: float,
+    topo: dict[str, Any],
+    *,
+    n_sub: int = IMPACT_HERMITE_SUBSTEPS,
+    n_sub_max: int = IMPACT_TERRAIN_SUBSTEPS_MAX,
+) -> Any:
+    """Per-row Hermite sample count ``[N]`` (int64) for a terrain impact step.
+
+    ``K = arc / (IMPACT_TERRAIN_SPACING_FRACTION * radius_const * res)`` rounded
+    up to a multiple of ``n_sub`` and clamped to ``[n_sub, n_sub_max]`` (a
+    multiple of ``n_sub``). The multiple keeps the ``n_sub`` grid ``j / n_sub``
+    inside the finer one, so a step never finds its first at/below-terrain
+    sample later than at ``K = n_sub``. ``arc = dt * max(|v_prev|, |v_curr|)`` [m]
+    is the step's along-track length at the orbit radius. A step that passes
+    the terrain envelope is within the map's relief (about 10 km) of the
+    reference radius, so ``arc`` matches the ground-track length at that radius
+    to better than 1%. ``res`` is the map's grid spacing [deg]
+    (``res_deg``, both axes). Rows with a non-finite speed and maps without a
+    grid spacing get ``n_sub``. The numba_cuda_sh kernel computes the same
+    count in ``_rk4_batch_kernel``.
+    """
+    import torch
+
+    k_min = float(n_sub)
+    res_deg = float(topo.get("res_deg", 0.0))
+    if res_deg <= 0.0:
+        return torch.full((int(v_prev.shape[0]),), int(n_sub), dtype=torch.int64, device=v_prev.device)
+    r_ref = float(topo.get("radius_const_m", R_MOON))
+    spacing_m = IMPACT_TERRAIN_SPACING_FRACTION * r_ref * res_deg * (math.pi / 180.0)
+    speed = torch.maximum((v_prev * v_prev).sum(dim=1).sqrt(), (v_curr * v_curr).sum(dim=1).sqrt())
+    k_need = torch.ceil(float(dt_s) * speed / spacing_m / k_min) * k_min
+    # NaN compares False, so non-finite rows fall back to n_sub.
+    k = torch.where(k_need > k_min, k_need.clamp_max(float(n_sub_max)), k_need.new_full((), k_min))
+    return k.to(torch.int64)
 
 
 def _hermite_point_tangent(coeffs: tuple[Any, Any, Any, Any], s: Any) -> tuple[Any, Any]:
@@ -327,26 +386,32 @@ def terrain_segment_intersection(
     v_prev: Any = None,
     v_curr: Any = None,
     n_sub: int = IMPACT_HERMITE_SUBSTEPS,
+    n_sub_max: int = IMPACT_TERRAIN_SUBSTEPS_MAX,
 ) -> tuple[Any, Any]:
     """Terrain-aware analogue of :func:`hermite_sphere_intersection`.
 
     The step is the cubic Hermite curve through the step-end positions and
     velocities ``v_prev`` / ``v_curr`` (when they are omitted both tangents are
-    the chord direction and the curve *is* the straight chord). Three stages,
-    fully vectorised:
+    the chord direction and the curve *is* the straight chord). Three stages:
 
     1. **Outer envelope.** A step can only touch terrain if it reaches the
        bounding sphere ``r_terrain_max + impact_alt`` (max terrain height plus the
        altitude threshold). The whole-step chord lies below the arc, so rows
        whose chord misses this sphere cannot impact. A row that already starts
        inside the envelope (a descent lasting several steps) is examined too.
+       Only the rows through this gate are processed further (host syncs per
+       call size the subset and its sample count); the others return
+       ``hit = False``.
     2. **Hermite samples.** ``f(s) = ||p(s)|| - terrain_radius(lat, lon) -
-       impact_alt`` is evaluated at ``n_sub + 1`` fractions; the first sample at
-       or below the terrain marks the impact (a row starting at/below it enters
-       at ``alpha = 0``). Sampling the curve rather than only the step end also
-       catches a dip below the terrain between the step ends.
+       impact_alt`` is evaluated at ``K + 1`` fractions ``s = j / K``, with ``K``
+       per row from :func:`terrain_substep_count` (along-track spacing at most
+       :data:`IMPACT_TERRAIN_SPACING_FRACTION` of the map's grid spacing, ``K``
+       in ``[n_sub, n_sub_max]``), in blocks of ``n_sub + 1`` samples. The first
+       sample at or below the terrain marks the impact (a row starting at/below
+       it enters at ``alpha = 0``). Sampling the curve rather than only the step
+       end also catches a dip below the terrain between the step ends.
     3. **Terrain bisection** of ``f`` on the Hermite curve inside the bracketing
-       sub-interval (width ``1 / n_sub``; the default 27 halvings resolve
+       sub-interval (width ``1 / K``; the default 27 halvings resolve at least
        ``2**-32`` of the step, as the former 32 halvings of ``[0, 1]`` did).
 
     The sub-point latitude/longitude come from the body-fixed position; the
@@ -359,9 +424,13 @@ def terrain_segment_intersection(
     forms the crossing state on the same Hermite curve (:func:`hermite_state`),
     so position **and** velocity freeze on the terrain surface.
 
-    Limitations: terrain relief narrower than the sample spacing (``v dt /
-    n_sub`` along track, about 1.6 km for a low lunar orbit at ``dt = 30 s``) can
-    still be crossed between two samples without being detected.
+    Limitations: an arc that dips below the terrain by less than ``G * spacing
+    / 2`` between two samples (``G`` the along-track gradient of ``f``) can go
+    undetected; for a one-pixel spike that is the top quarter of its height.
+    Past the ``n_sub_max`` cap the spacing is ``arc / n_sub_max`` instead. East-
+    west grid spacing shrinks by ``cos(lat)`` while ``K`` uses the meridional
+    spacing, so near the poles a feature one longitude pixel wide is narrower
+    than the sample spacing.
     """
     import torch
 
@@ -379,6 +448,18 @@ def terrain_segment_intersection(
     starts_inside = torch.linalg.norm(p_prev, dim=1) <= r_outer
     hit_outer = hit_outer | starts_inside
 
+    n = int(p_prev.shape[0])
+    k_sub = int(n_sub)
+    one = p_prev.new_ones(n)
+    k_rows = terrain_substep_count(v_prev, v_curr, dt_s, topo, n_sub=k_sub, n_sub_max=n_sub_max)
+    # Host sync: the largest gated count sizes the sample blocks; 0 = no row gated.
+    k_max = int(torch.where(hit_outer, k_rows, torch.zeros_like(k_rows)).max()) if n else 0
+    if k_max == 0:
+        return torch.zeros_like(hit_outer), one
+    idx = torch.nonzero(hit_outer, as_tuple=False).squeeze(1)
+    g = int(idx.numel())
+    k_g = k_rows.index_select(0, idx)
+
     t_rep = float(t_prev_s) + 0.5 * float(dt_s)
     use_rot = frame is not None and bool(getattr(frame, "uses_rotation", False))
 
@@ -390,38 +471,54 @@ def terrain_segment_intersection(
         terrain_r = sample_topo_radius_torch(topo, lat, lon)
         return r - terrain_r - impact_alt
 
-    coeffs = _hermite_coeffs(p_prev, v_prev, p_curr, v_curr, dt_s)
+    coeffs = _hermite_coeffs(
+        p_prev.index_select(0, idx),
+        v_prev.index_select(0, idx),
+        p_curr.index_select(0, idx),
+        v_curr.index_select(0, idx),
+        dt_s,
+    )
     c0, c1, c2, c3 = coeffs
 
     def _f(alpha: Any) -> Any:
         s = alpha.unsqueeze(1)
         return _f_at(c0 + s * (c1 + s * (c2 + s * c3)))
 
-    n = int(p_prev.shape[0])
-    k_sub = int(n_sub)
-    s_grid = torch.linspace(0.0, 1.0, k_sub + 1, dtype=p_prev.dtype, device=p_prev.device)
-    q = _hermite_points(coeffs, s_grid)
-    below = (_f_at(q.reshape(-1, 3)) <= 0.0).view(n, k_sub + 1)
-
-    # Impact iff the envelope is reached and some Hermite sample is at/below
-    # the terrain; the first such sample closes the bracket.
-    bracket = hit_outer & below.any(dim=1)
-    k_first = below.to(torch.int32).argmax(dim=1)
+    # Samples s = j / K, j = 0..K, in blocks of n_sub + 1 (a single block when
+    # every gated row has K = n_sub); past a row's own K, s holds at 1. A true
+    # division keeps s = m / n_sub exact where j = m K / n_sub.
+    k_gf = k_g.to(p_prev.dtype)
+    found = torch.zeros(g, dtype=torch.bool, device=p_prev.device)
+    k_first = torch.zeros(g, dtype=torch.int64, device=p_prev.device)
+    for j0 in range(0, k_max + 1, k_sub + 1):
+        j = torch.arange(
+            j0, min(j0 + k_sub + 1, k_max + 1), dtype=p_prev.dtype, device=p_prev.device
+        )
+        s_blk = (j.unsqueeze(0) / k_gf.unsqueeze(1)).clamp_max(1.0)
+        q = _hermite_points(coeffs, s_blk)
+        below = (_f_at(q.reshape(-1, 3)) <= 0.0).view(g, -1)
+        # Impact iff some Hermite sample is at/below the terrain; the first
+        # such sample closes the bracket.
+        has = below.any(dim=1)
+        first = below.to(torch.int32).argmax(dim=1).to(torch.int64) + j0
+        k_first = torch.where(found | ~has, k_first, first)
+        found = found | has
     # A step that already starts at/below the terrain freezes at its start.
-    already = bracket & (k_first == 0)
+    already = found & (k_first == 0)
 
     k_f = k_first.to(p_prev.dtype)
-    lo = (k_f - 1.0).clamp_min(0.0) / k_sub
-    hi = k_f / k_sub
+    lo = (k_f - 1.0).clamp_min(0.0) / k_gf
+    hi = k_f / k_gf
     for _ in range(int(bisection_iters)):
         mid = 0.5 * (lo + hi)
         go_right = _f(mid) > 0.0
         lo = torch.where(go_right, mid, lo)
         hi = torch.where(go_right, hi, mid)
 
-    one = p_prev.new_ones(n)
-    alpha = torch.where(bracket, 0.5 * (lo + hi), one)
-    alpha = torch.where(already, torch.zeros_like(alpha), alpha)
+    alpha_g = torch.where(found, 0.5 * (lo + hi), p_prev.new_ones(g))
+    alpha_g = torch.where(already, torch.zeros_like(alpha_g), alpha_g)
+    bracket = torch.zeros_like(hit_outer).index_copy(0, idx, found)
+    alpha = one.index_copy(0, idx, alpha_g)
     return bracket, alpha
 
 
@@ -583,6 +680,8 @@ class TorchMoonFrame:
 
 __all__ = [
     "IMPACT_HERMITE_SUBSTEPS",
+    "IMPACT_TERRAIN_SPACING_FRACTION",
+    "IMPACT_TERRAIN_SUBSTEPS_MAX",
     "TorchFrameCache",
     "TorchFrameError",
     "TorchMoonFrame",
@@ -594,6 +693,7 @@ __all__ = [
     "quat_rotate_torch",
     "sample_topo_radius_torch",
     "terrain_segment_intersection",
+    "terrain_substep_count",
     "topo_latlon_deg",
     "topo_payload_to_torch",
 ]

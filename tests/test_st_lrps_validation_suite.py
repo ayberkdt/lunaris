@@ -295,3 +295,40 @@ def test_dataset_identity_verified_with_matching_hash(tmp_path):
     assert guard["method"] == "persisted_indices"
 
 
+
+
+def test_field_validation_compares_the_network_output_with_labels_in_its_own_space():
+    """A full-field dataset's labels still hold the point-mass base the network never predicts.
+
+    Ported from Sidera 4a8784c1: for target_mode="full" the network is trained on
+    labels minus the point-mass base (``u = a_sign mu / r``, ``a = -mu r / r^3``),
+    so field validation must compare against the same space; an SH baseline is
+    refused rather than compared against the full field.
+    """
+    from types import SimpleNamespace
+
+    from lunaris.surrogate.st_lrps.evaluation.validation_suite import _network_target_labels
+
+    xyz = np.array([[1.8e6, 0.0, 0.0], [0.0, 2.0e6, 0.0]])  # m, Moon-fixed
+    mu = 4.9e12  # m^3/s^2
+    r = np.linalg.norm(xyz, axis=1)
+    u_res = np.array([1.0, 2.0])  # m^2/s^2
+    a_res = np.array([[1e-4, 0.0, 0.0], [0.0, 2e-4, 0.0]])  # m/s^2
+
+    residual = SimpleNamespace(target_mode="residual", baseline_kind="spherical_harmonics", a_sign=1.0, mu_si=mu)
+    assert _network_target_labels(residual, xyz, u_res, a_res)[0] is u_res
+    no_base = SimpleNamespace(target_mode="full", baseline_kind="none", a_sign=1.0, mu_si=mu)
+    assert _network_target_labels(no_base, xyz, u_res, a_res)[1] is a_res
+
+    for a_sign in (1.0, -1.0):
+        u_full = u_res + a_sign * mu / r
+        a_full = a_res - mu * xyz / r[:, None] ** 3
+        full_pm = SimpleNamespace(target_mode="full", baseline_kind="point_mass", a_sign=a_sign, mu_si=mu)
+        u, a = _network_target_labels(full_pm, xyz, u_full, a_full)
+        # mu/r ~ 2.7e6 m^2/s^2; float64 cancellation leaves ~1e-9 relative -> 1e-6 abs is ample.
+        np.testing.assert_allclose(u, u_res, rtol=0, atol=1e-6)
+        np.testing.assert_allclose(a, a_res, rtol=0, atol=1e-15)
+
+    full_sh = SimpleNamespace(target_mode="full", baseline_kind="spherical_harmonics", a_sign=1.0, mu_si=mu)
+    with pytest.raises(ValueError, match="spherical_harmonics"):
+        _network_target_labels(full_sh, xyz, u_res, a_res)
