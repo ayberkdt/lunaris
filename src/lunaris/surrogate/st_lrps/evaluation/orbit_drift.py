@@ -391,14 +391,24 @@ class _DomainTrackingTotalAccel:
         self.base_info: dict[str, Any] = {}
         self.n_eval = 0
         self.n_extrapolating = 0
+        self.n_domain_check_failures = 0
 
     def __call__(self, r: np.ndarray) -> np.ndarray:
         r = np.asarray(r, dtype=np.float64).reshape(-1, 3)
         try:
             status = self.runtime.domain_status(r)
             extrapolating = bool(status.get("recommended_fallback"))
-        except Exception:
+        except Exception as exc:
+            # A failed domain_status() must not read as "in domain": under
+            # strict_domain fail loudly; otherwise count the unchecked
+            # positions so the summary shows them.
+            if self.strict_domain:
+                raise RuntimeError(
+                    "orbit_drift: domain_status() raised while checking "
+                    f"{r.shape[0]} position(s): {exc}"
+                ) from exc
             status, extrapolating = None, False
+            self.n_domain_check_failures += int(r.shape[0])
         self.n_eval += int(r.shape[0])
         if extrapolating:
             self.n_extrapolating += int(r.shape[0])
@@ -429,6 +439,7 @@ class _DomainTrackingTotalAccel:
             "evaluations": int(self.n_eval),
             "extrapolating_evaluations": int(self.n_extrapolating),
             "extrapolation_fraction": self.extrapolation_fraction,
+            "domain_check_failures": int(self.n_domain_check_failures),
             "strict_domain": self.strict_domain,
         }
 
