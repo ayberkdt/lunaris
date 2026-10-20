@@ -1,4 +1,8 @@
-"""Task 7 — ST-LRPS A0..A9 ablation suite."""
+"""Task 7 — ST-LRPS A0..A6 ablation ladder and the optional A8/A9 variants.
+
+The resolved-config ladder, seeds and summary statistics are covered in
+test_st_lrps_ablation_ladder.py.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ def _spec(name):
     return next(s for s in ram.ABLATION_REGISTRY if s.name == name)
 
 
-def test_a0_to_a9_specs_exist():
+def test_a0_to_a9_specs_exist_without_a7():
     names = {s.name for s in ram.ABLATION_REGISTRY}
     for expected in (
         "A0_raw_siren_sobolev",
@@ -21,11 +25,13 @@ def test_a0_to_a9_specs_exist():
         "A4_plus_direction",
         "A5_plus_radial_cross",
         "A6_full_recommended",
-        "A7_physical_radial_decay",
         "A8_real_sh_basis",
         "A9_additive_multiband",
     ):
         assert expected in names
+    # The old A7 (A6 + physical radial decay) was the shipped default itself.
+    assert "A7_physical_radial_decay" not in names
+    assert "physical_radial_decay_recommended" not in names
 
 
 def test_default_matrix_is_a0_to_a6():
@@ -44,6 +50,11 @@ def test_default_matrix_is_a0_to_a6():
 def test_cumulative_progression_adds_one_feature_each_step():
     a0 = _spec("A0_raw_siren_sobolev").cli_overrides
     assert "--no-residual-blocks" in a0 and "1" in a0 and "--direction-loss-weight" in a0
+    # A0..A5 train on raw xyz; A6 adds the shipped physical radial-decay encoding.
+    for name in ("A0_raw_siren_sobolev", "A1_plus_residual_blocks", "A2_plus_multiscale",
+                 "A3_plus_altitude_balanced", "A4_plus_direction", "A5_plus_radial_cross"):
+        flags = _spec(name).cli_overrides
+        assert flags[flags.index("--model-preset") + 1] == "baseline_raw", name
 
     # A1 turns residual blocks ON (still single band).
     a1 = _spec("A1_plus_residual_blocks").cli_overrides
@@ -59,23 +70,23 @@ def test_cumulative_progression_adds_one_feature_each_step():
     a3 = _spec("A3_plus_altitude_balanced").cli_overrides
     assert "--use-altitude-balanced-loss" in a3 and "--no-radial-cross-loss" in a3
 
-    # A4 turns direction loss ON.
+    # A4 turns direction loss ON at the shipped weight.
     a4 = _spec("A4_plus_direction").cli_overrides
-    assert a4[a4.index("--direction-loss-weight") + 1] == "0.2"
+    assert a4[a4.index("--direction-loss-weight") + 1] == "0.1"
     assert "--no-radial-cross-loss" in a4
 
     # A5 turns radial/cross loss ON -> full feature set.
     a5 = _spec("A5_plus_radial_cross").cli_overrides
     assert "--use-radial-cross-loss" in a5 and "--no-radial-cross-loss" not in a5
 
-    # A6 = recommended control, no overrides.
+    # A6 = shipped defaults, no overrides.
     assert _spec("A6_full_recommended").cli_overrides == []
 
 
 def test_matrix_all_includes_optional_encodings():
     args = ram.parse_args(["--train-data", "t.h5", "--val-data", "v.h5", "--matrix", "all", "--dry-run"])
     names = [e["name"] for e in ram.build_matrix(args)]
-    for optional in ("A7_physical_radial_decay", "A8_real_sh_basis", "A9_additive_multiband"):
+    for optional in ("A8_real_sh_basis", "A9_additive_multiband"):
         assert optional in names
 
 
@@ -102,7 +113,8 @@ def test_only_selection_and_eval_commands(tmp_path):
         ]
     )
     entries = ram.build_matrix(args)
-    assert [e["name"] for e in entries] == ["A2_plus_multiscale"]
+    assert {e["name"] for e in entries} == {"A2_plus_multiscale"}
+    assert len(entries) == len(ram.DEFAULT_SEEDS)
     assert entries[0]["eval_commands"], "eval commands should be generated when --run-eval-after-training is set"
 
 
@@ -112,7 +124,7 @@ def _ablation_entry_with_evals(tmp_path):
         "--train-data", "train.h5", "--val-data", "val.h5",
         "--test-data", "test.h5", "--ood-data", "ood.h5",
         "--out-root", str(tmp_path / "abl"),
-        "--only", "A0_raw_siren_sobolev",
+        "--only", "A0_raw_siren_sobolev", "--seeds", "42",
     ])
     return ram.build_matrix(args)[0]
 
@@ -160,7 +172,8 @@ def test_ablation_summary_reads_the_keys_the_trainer_writes(tmp_path):
     import json
 
     entry = _ablation_entry_with_evals(tmp_path)
-    run_dir = tmp_path / "abl" / entry["name"]
+    run_dir = tmp_path / "abl" / entry["name"] / "seed42"
+    assert entry["out_dir"] == str(run_dir)
     (run_dir / "evals" / "ood_high").mkdir(parents=True)
     (run_dir / "run_manifest.json").write_text(json.dumps({
         "status": "completed",
@@ -176,8 +189,10 @@ def test_ablation_summary_reads_the_keys_the_trainer_writes(tmp_path):
     assert row["ood_rmse_a"] == 2.5e-5 and row["ood_rmse_a_split"] == "ood_high"
 
     md_path = tmp_path / "summary.md"
-    ram._write_summary_md(md_path, [row])
+    ram._write_summary_md(md_path, ram._arm_rows([row]))
     md = md_path.read_text(encoding="utf-8")
-    assert "final val base loss" in md
-    assert "2.5e-05 (ood_high)" in md
-    assert "| 1234 | 56.5 |" in md
+    # val_loss_* depend on the arm's loss options; the table must not offer them.
+    assert "val base loss" not in md
+    assert "val accel RMSE [m/s²]" in md
+    assert "2.5e-05 (n=1) (ood_high)" in md
+    assert "| 1234 |" in md and "56.5 (n=1)" in md

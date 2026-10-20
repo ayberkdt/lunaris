@@ -36,7 +36,7 @@
 #       --data "$LUNARIS_DATA_DIR/datasets/st_lrps_cloud_suite.h5" \
 #       --out-dir "$LUNARIS_OUTPUT_DIR/training/run1"
 #
-#   hpc/submit.sh scenario --array=0-6 -- \
+#   hpc/submit.sh scenario --array=0-20 -- \
 #       hpc/scenarios/st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl \
 #       --train-data "$LUNARIS_DATA_DIR/datasets/train.h5" \
 #       --val-data   "$LUNARIS_DATA_DIR/datasets/val.h5" \

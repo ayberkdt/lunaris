@@ -175,17 +175,26 @@ python -m lunaris.surrogate.st_lrps.evaluation.validation_suite \
 
 ## 7. Ablation suite
 
-`evaluation/ablation.py` provides the cumulative A0..A6 progression (default
-matrix) plus optional A7/A8/A9 encoding variants:
+`evaluation/ablation.py` provides the A0..A6 ladder (default matrix) plus
+optional A8/A9 encoding variants. Each step changes one component, from raw
+xyz to the shipped model:
 
-* **A0** raw SIREN + Sobolev U/a only → **A1** +residual blocks → **A2**
+* **A0** raw-xyz SIREN + Sobolev U/a only → **A1** +residual blocks → **A2**
   +multi-scale → **A3** +altitude-balanced loss → **A4** +direction loss →
-  **A5** +radial/cross loss → **A6** full recommended (control).
-* **A7** physical radial-decay encoding, **A8** real-SH basis, **A9** additive
-  multi-band (non-default; run with `--matrix all` or `--only NAME`).
+  **A5** +radial/cross loss → **A6** +physical radial-decay encoding = the
+  shipped TrainConfig defaults (control).
+* **A8** real-SH basis instead of the A6 encoding, **A9** additive multi-band
+  (non-default; run with `--matrix all` or `--only NAME`). There is no A7:
+  the old A7 was the shipped default itself.
+* Every arm trains once per seed (`--seeds`, default 42 43 44). All runs share
+  one data split (`--split-seed`, default the first seed).
 
-Outputs include `st_lrps_ablation_summary.csv` / `.md` with parameter count,
-training time, best epoch, and validation/test/OOD metrics per ablation.
+Outputs: `ablation_summary.csv` / `.json` hold one row per run;
+`st_lrps_ablation_summary.csv` / `.md` hold one row per arm with mean ± sample
+std over its seeds. Compare arms on `val_accel_rmse_m_s2` (unweighted
+residual-acceleration RMS on the validation split at the best epoch, m/s²) and
+on the test/OOD RMSE. Do not compare arms on `val_loss_*` or the checkpoint
+score: the altitude-balanced option changes how those losses are averaged.
 
 > **Monitor-only contract:** checkpoint selection uses the validation metric
 > only; periodic evaluation runs *after* selection and never influences it.

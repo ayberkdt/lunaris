@@ -723,12 +723,21 @@ class SobolevLoss(nn.Module):
             altitude_min_km=altitude_min_km,
             altitude_max_km=altitude_max_km,
         )
+        # accel_sq_err: plain per-sample mean of |Δa_pred - Δa_true|² in m²/s⁴.
+        # No altitude balancing and no scaler, so it is comparable across runs
+        # whose loss options differ (ablation arms).
         _rel_diag = torch.stack(
-            [loss_rel_t.detach(), rel_err_sample.mean(), wtz_sample.float().mean()]
+            [
+                loss_rel_t.detach(),
+                rel_err_sample.mean(),
+                wtz_sample.float().mean(),
+                accel_err_phys_all.detach().pow(2).sum(dim=-1).mean(),
+            ]
         ).cpu().tolist()
         loss_rel_val = float(_rel_diag[0])
         rel_a_mean_val = float(_rel_diag[1])
         wtz_frac_val = float(_rel_diag[2])
+        accel_sq_err_val = float(_rel_diag[3])
 
         if is_train and allow_dynamic_weight_update and weights.needs_grad_compute():
             shared_params = _gradnorm_shared_params(model, weights._effective_mode())
@@ -913,6 +922,7 @@ class SobolevLoss(nn.Module):
             "loss_rel": loss_rel_val,
             "rel_a_mean": rel_a_mean_val,
             "wtz_frac": wtz_frac_val,
+            "accel_sq_err": accel_sq_err_val,
             # Laplacian metrics are mean((∇²U_phys)²) in PHYSICAL units [s⁻⁴]
             # (∇²U_phys in s⁻²), consistent with collocation_laplacian_loss (R25).
             "loss_laplacian": loss_lap_val,

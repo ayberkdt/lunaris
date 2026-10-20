@@ -75,8 +75,8 @@ training job also needs an explicit `--out-dir`. See
 Explicit options passed to `hpc/submit.sh` override those defaults.
 
 ```bash
-# Paper ablation A0–A6 as a 7-task array:
-hpc/submit.sh scenario --array=0-6 -- \
+# Paper ablation A0–A6 x 3 seeds as a 21-task array (0-6 is one full ladder):
+hpc/submit.sh scenario --array=0-20 -- \
     hpc/scenarios/st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl \
     --train-data "$LUNARIS_DATA_DIR/datasets/train.h5" \
     --val-data   "$LUNARIS_DATA_DIR/datasets/val.h5" \

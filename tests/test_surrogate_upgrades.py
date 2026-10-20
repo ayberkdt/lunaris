@@ -540,7 +540,7 @@ def test_ablation_command_generation_dry_run(tmp_path):
         if ab["name"] != "A6_full_recommended":
             assert ab["overrides"], ab["name"]
         assert isinstance(ab["command"], list) and ab["command"]
-        assert ab["seed"] == 7
+        assert ab["seed"] == 7 and ab["split_seed"] == 7
 
     assert all("expected_purpose" in ab for ab in manifest["ablations"])
     assert all("experimental" in ab for ab in manifest["ablations"])

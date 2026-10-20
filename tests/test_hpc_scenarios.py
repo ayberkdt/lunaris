@@ -23,7 +23,8 @@ _LAUNCHER = _REPO_ROOT / "tools" / "hpc" / "run_training_scenario.py"
 
 # Expected line counts per the task contract.
 _EXPECTED_COUNTS = {
-    "st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl": 7,
+    # A0..A6 x 3 seeds, generated from the ablation registry.
+    "st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl": 21,
     "st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl": 5,
     "st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl": 7,
 }
@@ -218,13 +219,13 @@ def test_dry_run_prints_command_without_launching(tmp_path):
     assert result.returncode == 0, result.stderr
     out = result.stdout
     assert "DRY RUN" in out
-    assert "PotentialAutograd_A0RawSirenSobolev" in out
+    assert "PotentialAutograd_A0_raw_siren_sobolev_Seed42" in out
     # Resolved command references the training module and the injected --out.
     assert "lunaris.surrogate.st_lrps.training.cli" in out
     assert "--out" in out
     assert "--train-data" in out and "dummy_train.h5" in out
     # Dry run must not create the run directory.
-    assert not (tmp_path / "training" / "PotentialAutograd_A0RawSirenSobolev_1Band_RawXYZ_NoAuxLosses_Seed42").exists()
+    assert not (tmp_path / "training" / "PotentialAutograd_A0_raw_siren_sobolev_Seed42").exists()
 
 
 def test_common_flag_output_override_is_rejected(tmp_path):
