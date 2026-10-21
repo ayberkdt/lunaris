@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**54 entries.**
+**56 entries.**
 
-Implementation class: adaptation (10), delegated_library (9), exact (16), exact_reformulation (1), heuristic (8), standard_implementation (10)
+Implementation class: adaptation (11), delegated_library (9), exact (16), exact_reformulation (1), heuristic (9), standard_implementation (10)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (8), verified_primary_source (42), verified_secondary_source (2)
+Verification status: identifier_verified_content_pending (2), unverifiable (9), verified_primary_source (43), verified_secondary_source (2)
 
 ## Index
 
@@ -38,6 +38,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (8), 
 | [`LUNARIS-ALG-OPT-001`](#lunarisalgopt001) | AdamW (decoupled weight decay) optimizer as delegated to PyTorch | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002) | Gradient-magnitude-ratio loss weighting (learning-rate annealing for physics-informed networks) | adaptation | verified_primary_source |
 | [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003) | Sobolev training (derivative-supervision loss) | adaptation | verified_primary_source |
+| [`LUNARIS-ALG-OPT-004`](#lunarisalgopt004) | Warmup-stable-decay learning-rate schedule with (1-sqrt) cooldown | adaptation | verified_primary_source |
 | [`LUNARIS-ALG-PHZ-001`](#lunarisalgphz001) | Tangential Gauss variational equation for along-track phase drift with RIC error decomposition | standard_implementation | verified_primary_source |
 | [`LUNARIS-ALG-SAMP-001`](#lunarisalgsamp001) | Scrambled Sobol low-discrepancy sequence sampling | delegated_library | verified_primary_source |
 | [`LUNARIS-ALG-SAMP-002`](#lunarisalgsamp002) | Latin hypercube sampling | delegated_library | verified_primary_source |
@@ -57,6 +58,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (8), 
 | [`LUNARIS-HEUR-INT-001`](#lunarisheurint001) | Adaptive-integrator restart at the shadow contacts of radiation pressure, with a step cap across the penumbra | heuristic | unverifiable |
 | [`LUNARIS-HEUR-INTP-001`](#lunarisheurintp001) | Latitude-clamped, longitude-periodic planetary grid sampling with missing-value fallback | heuristic | unverifiable |
 | [`LUNARIS-HEUR-ML-001`](#lunarisheurml001) | Multi-band SIREN variants and physics-informed input encodings (Lunaris-specific) | heuristic | unverifiable |
+| [`LUNARIS-HEUR-ML-002`](#lunarisheurml002) | Low-degree leakage penalty on the residual-potential error (Lunaris-specific) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-001`](#lunarisheursh001) | Pole-stable spherical-harmonic order truncation (stable-m limit) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-002`](#lunarisheursh002) | Degree-switched spherical-harmonic evaluation with a cubic-Hermite (smoothstep) altitude blend | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-003`](#lunarisheursh003) | Spectrum-weighted spherical-harmonic truncation-degree recommendation | adaptation | verified_primary_source |
@@ -1653,14 +1655,43 @@ Verification status: identifier_verified_content_pending (2), unverifiable (8), 
 - **Lunaris modifications**:
   - w0 bands spaced in log-degree to match spherical-harmonic spatial frequencies (n/R_moon); radial-decay and real-SH-basis encodings that inject gravity structure into the input.
   - SirenResBlock: pre-norm residual SIREN block y = x + W2 sin(w0 (W1 LN(x) + b1)) + b2 with W2 and b2 zero-initialised, so each block starts as the identity. The sine and the W1 init are SIREN's; the LayerNorm, the skip path and the zero init are not in Sitzmann et al. (2020).
+  - band_init="siren_first" gives every band the SIREN first-layer init U(+-1/n), so band k starts at frequency w0_k/n; the legacy init gives bands after the first the hidden-layer bound sqrt(6/n)/w0, whose w0 cancels and leaves every later band at one w0-independent frequency.
 - **Assumptions**:
   - the residual field spectrum is bounded by the target SH degree
 - **Limitations**:
   - Lunaris-specific composition; builds on SIREN (LUNARIS-ALG-ML-001) but the multi-band schedule and physics encodings are not a single published method. The real-SH basis follows the standard SH definition (LUNARIS-ALG-SH-001).
 - **Validated by**:
   - `tests/test_surrogate_architecture_upgrades.py`
+  - `tests/test_st_lrps_trajectory_aware.py`
 - **See also**: [`LUNARIS-ALG-ML-001`](#lunarisalgml001), [`LUNARIS-ALG-SH-001`](#lunarisalgsh001)
 - **Notes**: Heuristic architecture family; the SIREN backbone and Fourier features are registered separately with their primary sources.
+
+<a id="lunarisheurml002"></a>
+### LUNARIS-HEUR-ML-002 -- Low-degree leakage penalty on the residual-potential error (Lunaris-specific)
+
+- **Slug**: `low_degree_leakage_penalty`
+- **Category**: optimization | **Domain**: ML | **Status**: active
+- **Classification**: heuristic
+- **Verification**: unverifiable | **Scientific status**: implemented_and_tested
+- **Primary reference**: Lunaris-specific; no external primary reference.
+- **Mathematical contract**:
+  - Inputs: potential errors of batch samples below an altitude ceiling, their unit position vectors, and a degree cap L
+  - Outputs: sum of squared least-squares coefficients of the error on the 4pi real spherical harmonics of degree <= L (the sphere mean square of the projected error for uniform directions)
+  - Exactness: least_squares_projection
+  - Preserves: unbiased for non-uniform sample directions when the error is band-limited to L
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/training/losses.py` -- `low_degree_leakage` (torch_implementation)
+- **Lunaris modifications**:
+  - The residual of degrees > N_base has no content at degrees <= N_base on any sphere, so with L = N_base the projection measures pure model error; the penalty targets it because low-degree potential error is not averaged out along an orbit and drives along-track drift.
+- **Assumptions**:
+  - more samples below the ceiling than (L + 1)^2 basis functions per batch
+  - one coefficient set describes the error across the altitude band
+- **Limitations**:
+  - Content above degree L aliases into the estimate at about (L+1)^2 / M of its variance for M samples.
+  - No published source; its effect on trajectory error must be measured (screening campaign tools/st_lrps_doe.py, factor C).
+- **Validated by**:
+  - `tests/test_st_lrps_trajectory_aware.py`
+- **See also**: [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003), [`LUNARIS-ALG-SH-001`](#lunarisalgsh001)
 
 ## Optimization (OPT)
 
@@ -1746,6 +1777,35 @@ Verification status: identifier_verified_content_pending (2), unverifiable (8), 
   - `tests/test_surrogate_training_contracts.py`
 - **See also**: [`LUNARIS-ALG-OPT-002`](#lunarisalgopt002)
 - **Notes**: This is the core physics-supervision mechanism: matching accelerations as input-gradients of the learned potential.
+
+<a id="lunarisalgopt004"></a>
+### LUNARIS-ALG-OPT-004 -- Warmup-stable-decay learning-rate schedule with (1-sqrt) cooldown
+
+- **Slug**: `warmup_stable_decay_lr_schedule`
+- **Category**: optimization | **Domain**: OPT | **Status**: active
+- **Classification**: adaptation
+- **Verification**: verified_primary_source | **Scientific status**: implemented_and_tested
+- **Primary reference**: `Hagele2024ScalingBeyondFixed` -- H{\"a}gele, 2024. "Scaling Laws and Compute-Optimal Training Beyond Fixed Training Durations" (section Section 3.2, Experimental Comparison (Different cooldown schedules); pages 4; eq. (1-sqrt)) [OFFICIAL URL: https://arxiv.org/abs/2405.18392]
+- **Verification notes**: A. Hagele, E. Bakouch, A. Kosson, L. Ben Allal, L. Von Werra & M. Jaggi, "Scaling Laws and Compute-Optimal Training Beyond Fixed Training Durations", NeurIPS 2024 spotlight (arXiv:2405.18392); primary PDF read on 2026-10-22. Eq. (1-sqrt) defines the cooldown factor f(n, N, N_decay) = 1 - sqrt((n - (N - N_decay)) / N_decay) applied to a constant LR; Takeaway 2 reports it beats a linear cooldown and Fig. 5 that the benefit plateaus near a 20% cooldown. The constant-then-decay (WSD) schedule itself was introduced by S. Hu et al., "MiniCPM", arXiv:2404.06395 (abstract verified 2026-10-22).
+- **Mathematical contract**:
+  - Inputs: epoch index, run length, warm-up epochs, decay fraction, floor ratio
+  - Outputs: learning-rate multiplier
+  - Exactness: exact_schedule
+  - Preserves: constant base LR after warm-up until the cooldown starts
+  - Preserves: reaches the floor on the final epoch for any run length
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/training/engine.py` -- `_lr_multiplier_for_epoch` (torch_implementation)
+- **Lunaris modifications**:
+  - stepped per epoch, not per optimizer step
+  - the cooldown ends at min_lr_ratio instead of zero
+  - the cooldown length is a fraction of the post-warm-up epochs (default 20%)
+- **Assumptions**:
+  - the run length is known when the cooldown starts
+- **Limitations**:
+  - Evidence for the cooldown shape comes from language-model pre-training; for ST-LRPS it is used so that reduced-budget screening runs of equal length end annealed at the same point of their schedule.
+- **Validated by**:
+  - `tests/test_st_lrps_trajectory_aware.py`
+- **See also**: [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003)
 
 ## Numerical utilities (NUM)
 

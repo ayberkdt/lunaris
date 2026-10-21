@@ -1475,6 +1475,73 @@ entries:
       This is the core physics-supervision mechanism: matching accelerations as
       input-gradients of the learned potential.
 
+  - id: LUNARIS-ALG-OPT-004
+    slug: warmup_stable_decay_lr_schedule
+    canonical_name: >-
+      Warmup-stable-decay learning-rate schedule with (1-sqrt) cooldown
+    category: optimization
+    domain: OPT
+    status: active
+    added: "2026-10-22"
+    implementation_class: adaptation
+    verification_status: verified_primary_source
+    scientific_status: implemented_and_tested
+    citation_keys:
+      - Hagele2024ScalingBeyondFixed
+      - Hu2024MiniCPM
+    primary_reference:
+      type: inproceedings
+      citation_key: Hagele2024ScalingBeyondFixed
+      identifier_kind: official_url
+      doi: null
+      isbn: null
+      report_number: null
+      standard_number: null
+      official_url: https://arxiv.org/abs/2405.18392
+      edition: null
+      chapter: null
+      section: Section 3.2, Experimental Comparison (Different cooldown schedules)
+      equations:
+        - "(1-sqrt)"
+      pages: "4"
+      verification_notes: >-
+        A. Hagele, E. Bakouch, A. Kosson, L. Ben Allal, L. Von Werra & M. Jaggi,
+        "Scaling Laws and Compute-Optimal Training Beyond Fixed Training
+        Durations", NeurIPS 2024 spotlight (arXiv:2405.18392); primary PDF
+        read on 2026-10-22. Eq. (1-sqrt) defines the cooldown factor
+        f(n, N, N_decay) = 1 - sqrt((n - (N - N_decay)) / N_decay) applied to a
+        constant LR; Takeaway 2 reports it beats a linear cooldown and Fig. 5
+        that the benefit plateaus near a 20% cooldown. The constant-then-decay
+        (WSD) schedule itself was introduced by S. Hu et al., "MiniCPM",
+        arXiv:2404.06395 (abstract verified 2026-10-22).
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/training/engine.py
+        symbol: _lr_multiplier_for_epoch
+        role: torch_implementation
+    mathematical_contract:
+      inputs: epoch index, run length, warm-up epochs, decay fraction, floor ratio
+      outputs: learning-rate multiplier
+      exact_or_approximate: exact_schedule
+      preserved_properties:
+        - constant base LR after warm-up until the cooldown starts
+        - reaches the floor on the final epoch for any run length
+    lunaris_modifications:
+      - stepped per epoch, not per optimizer step
+      - the cooldown ends at min_lr_ratio instead of zero
+      - the cooldown length is a fraction of the post-warm-up epochs (default 20%)
+    assumptions:
+      - the run length is known when the cooldown starts
+    limitations:
+      - >-
+        Evidence for the cooldown shape comes from language-model pre-training;
+        for ST-LRPS it is used so that reduced-budget screening runs of equal
+        length end annealed at the same point of their schedule.
+    validation:
+      - tests/test_st_lrps_trajectory_aware.py
+    see_also:
+      - LUNARIS-ALG-OPT-003
+    notes: ""
+
   - id: LUNARIS-ALG-PHZ-001
     slug: tangential_gauss_ve_phase_drift
     canonical_name: >-
@@ -2827,6 +2894,11 @@ entries:
         LN(x) + b1)) + b2 with W2 and b2 zero-initialised, so each block starts
         as the identity. The sine and the W1 init are SIREN's; the LayerNorm,
         the skip path and the zero init are not in Sitzmann et al. (2020).
+      - >-
+        band_init="siren_first" gives every band the SIREN first-layer init
+        U(+-1/n), so band k starts at frequency w0_k/n; the legacy init gives
+        bands after the first the hidden-layer bound sqrt(6/n)/w0, whose w0
+        cancels and leaves every later band at one w0-independent frequency.
     assumptions:
       - the residual field spectrum is bounded by the target SH degree
     limitations:
@@ -2837,12 +2909,65 @@ entries:
         (LUNARIS-ALG-SH-001).
     validation:
       - tests/test_surrogate_architecture_upgrades.py
+      - tests/test_st_lrps_trajectory_aware.py
     see_also:
       - LUNARIS-ALG-ML-001
       - LUNARIS-ALG-SH-001
     notes: >-
       Heuristic architecture family; the SIREN backbone and Fourier features are
       registered separately with their primary sources.
+
+  - id: LUNARIS-HEUR-ML-002
+    slug: low_degree_leakage_penalty
+    canonical_name: >-
+      Low-degree leakage penalty on the residual-potential error
+      (Lunaris-specific)
+    category: optimization
+    domain: ML
+    status: active
+    added: "2026-10-22"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/training/losses.py
+        symbol: low_degree_leakage
+        role: torch_implementation
+    mathematical_contract:
+      inputs: >-
+        potential errors of batch samples below an altitude ceiling, their unit
+        position vectors, and a degree cap L
+      outputs: >-
+        sum of squared least-squares coefficients of the error on the 4pi real
+        spherical harmonics of degree <= L (the sphere mean square of the
+        projected error for uniform directions)
+      exact_or_approximate: least_squares_projection
+      preserved_properties:
+        - unbiased for non-uniform sample directions when the error is band-limited to L
+    lunaris_modifications:
+      - >-
+        The residual of degrees > N_base has no content at degrees <= N_base on
+        any sphere, so with L = N_base the projection measures pure model
+        error; the penalty targets it because low-degree potential error is
+        not averaged out along an orbit and drives along-track drift.
+    assumptions:
+      - more samples below the ceiling than (L + 1)^2 basis functions per batch
+      - one coefficient set describes the error across the altitude band
+    limitations:
+      - >-
+        Content above degree L aliases into the estimate at about (L+1)^2 / M
+        of its variance for M samples.
+      - >-
+        No published source; its effect on trajectory error must be measured
+        (screening campaign tools/st_lrps_doe.py, factor C).
+    validation:
+      - tests/test_st_lrps_trajectory_aware.py
+    see_also:
+      - LUNARIS-ALG-OPT-003
+      - LUNARIS-ALG-SH-001
+    notes: ""
 
   - id: LUNARIS-HEUR-SH-001
     slug: pole_stable_order_truncation
