@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 from collections.abc import Mapping
@@ -12,7 +13,6 @@ import torch
 import torch.nn as nn
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
-from lunaris.surrogate.st_lrps.networks.models import real_sh_basis_4pi
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import (
     ScalerPack,
@@ -110,6 +110,72 @@ def _radial_cross_components(
     cross = torch.linalg.norm(err_vec - radial.unsqueeze(-1) * r_hat, dim=-1)
     return radial, cross
 
+@functools.lru_cache(maxsize=16)
+def _real_sh_tables(lmax: int, device: str, dtype: torch.dtype) -> tuple[torch.Tensor, ...]:
+    """Recurrence coefficients and column gather indices for degree ``lmax``."""
+    L = int(lmax)
+    a = torch.zeros((L + 1, L + 1), dtype=torch.float64)
+    b = torch.zeros((L + 1, L + 1), dtype=torch.float64)
+    seed = torch.zeros((L + 1, L + 1), dtype=torch.float64)   # row l: sectoral seed at m = l
+    sec = 1.0
+    seed[0, 0] = 1.0
+    for mm in range(1, L + 1):
+        sec *= math.sqrt((2 * mm + 1) / (2 * mm))
+        seed[mm, mm] = sec
+    for ll in range(1, L + 1):
+        for mm in range(ll):
+            a[ll, mm] = math.sqrt((2 * ll - 1) * (2 * ll + 1) / ((ll - mm) * (ll + mm)))
+            if ll - 2 >= mm:
+                b[ll, mm] = math.sqrt(
+                    (2 * ll + 1) * (ll + mm - 1) * (ll - mm - 1) / ((2 * ll - 3) * (ll - mm) * (ll + mm))
+                )
+    # Column layout of real_sh_basis_4pi: per degree l, (l, 0) then cos/sin pairs.
+    cols = [
+        col
+        for ll in range(L + 1)
+        for col in [(ll, 0, 0, 1.0)]
+        + [(ll, mm, k, math.sqrt(2.0)) for mm in range(1, ll + 1) for k in (0, 1)]
+    ]
+    l_idx, m_idx, kind, weight = (list(v) for v in zip(*cols, strict=True))
+    dev = torch.device(device)
+    return (
+        a.to(dev, dtype), b.to(dev, dtype), seed.to(dev, dtype),
+        torch.tensor(l_idx, device=dev), torch.tensor(m_idx, device=dev),
+        torch.tensor(kind, device=dev), torch.tensor(weight, device=dev, dtype=dtype),
+        torch.arange(L + 1, device=dev, dtype=dtype),
+    )
+
+
+def real_sh_basis_vectorized(n: torch.Tensor, lmax: int) -> torch.Tensor:
+    """Same columns as :func:`~lunaris.surrogate.st_lrps.networks.models.real_sh_basis_4pi`,
+    vectorised over the order ``m`` (one recurrence step per degree).
+
+    The loss evaluates the basis on every training batch; the reference
+    implementation launches one small kernel per ``(l, m)`` pair. Here
+    ``sinθ^m cos(mφ)`` and ``sinθ^m sin(mφ)`` come from ``atan2`` and powers
+    (zero at the poles for ``m >= 1``), the fully normalised column recurrence
+    ``Q_l = a_l t Q_{l-1} - b_l Q_{l-2}`` runs on all orders at once, and the
+    columns are assembled with one gather.
+    """
+
+    L = int(lmax)
+    a, b, seed, l_idx, m_idx, kind, weight, m = _real_sh_tables(L, str(n.device), n.dtype)
+    nx, ny, t = n[:, 0:1], n[:, 1:2], n[:, 2:3]
+    s_pow = torch.sqrt(nx * nx + ny * ny).pow(m)       # (M, L+1); 0**0 = 1
+    phi = torch.atan2(ny, nx) * m
+    trig = torch.stack((s_pow * torch.cos(phi), s_pow * torch.sin(phi)), dim=1)   # (M, 2, L+1)
+
+    q_prev2 = torch.zeros_like(s_pow)
+    q_prev = seed[0].expand_as(s_pow)
+    rows = [q_prev]
+    for ll in range(1, L + 1):
+        q = (a[ll] * t) * q_prev - b[ll] * q_prev2 + seed[ll]
+        rows.append(q)
+        q_prev2, q_prev = q_prev, q
+    q_all = torch.stack(rows, dim=1)                   # (M, L+1, L+1): [l, m]
+    return weight * q_all[:, l_idx, m_idx] * trig[:, kind, m_idx]
+
+
 def low_degree_leakage(
     err: torch.Tensor,
     unit: torch.Tensor,
@@ -133,11 +199,13 @@ def low_degree_leakage(
     m = int(err.shape[0])
     if m <= n_basis:
         return err.new_zeros(())
-    basis = real_sh_basis_4pi(unit.detach().to(torch.float64), int(lmax))      # (M, K)
-    gram = basis.T @ basis / float(m)
+    # Basis and Gram in float32 (the Gram is well conditioned for M >> K);
+    # the K x K solve in float64 via Cholesky.
+    basis = real_sh_basis_vectorized(unit.detach().to(torch.float32), int(lmax))  # (M, K)
+    gram = (basis.T @ basis / float(m)).to(torch.float64)
     gram = gram + float(ridge) * torch.eye(n_basis, dtype=gram.dtype, device=gram.device)
-    rhs = basis.T @ err.to(torch.float64).reshape(-1, 1) / float(m)
-    coeff = torch.linalg.solve(gram, rhs)
+    rhs = (basis.T @ err.to(torch.float32).reshape(-1, 1) / float(m)).to(torch.float64)
+    coeff = torch.cholesky_solve(rhs, torch.linalg.cholesky(gram))
     return coeff.square().sum().to(err.dtype)
 
 @dataclass

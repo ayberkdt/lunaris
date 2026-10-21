@@ -30,8 +30,12 @@ from lunaris.surrogate.st_lrps.training.losses import (
     GradNormWeights,
     SobolevLoss,
     low_degree_leakage,
+    real_sh_basis_vectorized,
 )
 from lunaris.surrogate.st_lrps.training.metrics import HISTORY_FIELDNAMES, flatten_epoch_metrics
+
+# The leakage basis and Gram matrix are float32 (only the K x K solve is float64).
+_LEAK_RTOL = 1e-5
 
 
 def _unit(n: int, seed: int) -> torch.Tensor:
@@ -61,6 +65,16 @@ def test_real_sh_basis_is_orthonormal_to_degree_25_by_quadrature():
     np.testing.assert_allclose(gram, 4.0 * np.pi * np.eye(gram.shape[0]), atol=1e-11)
 
 
+@pytest.mark.parametrize("lmax", [0, 1, 4, 25, 40])
+def test_vectorised_loss_basis_matches_the_reference_basis_including_poles(lmax):
+    unit = _unit(2000, 9)
+    unit[:3] = torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]], dtype=torch.float64)
+    ref = real_sh_basis_4pi(unit, lmax)
+    fast = real_sh_basis_vectorized(unit, lmax)
+    assert fast.shape == ref.shape
+    assert float((fast - ref).abs().max()) < 1e-12
+
+
 def test_encoder_output_is_unchanged_by_the_basis_refactor():
     x = torch.randn(7, 3, dtype=torch.float64)
     r = x.norm(dim=-1, keepdim=True)
@@ -82,7 +96,7 @@ def _low_field(unit: torch.Tensor, lmax: int) -> tuple[torch.Tensor, float]:
 def test_leakage_recovers_the_low_degree_power_exactly():
     unit = _unit(4000, 0)
     field, power = _low_field(unit, 25)
-    assert float(low_degree_leakage(field, unit, 25)) == pytest.approx(power, rel=1e-6)
+    assert float(low_degree_leakage(field, unit, 25)) == pytest.approx(power, rel=_LEAK_RTOL)
 
 
 def test_leakage_is_unbiased_for_non_uniform_directions():
@@ -90,7 +104,7 @@ def test_leakage_is_unbiased_for_non_uniform_directions():
     unit[:, 2] = unit[:, 2].abs().sqrt() * torch.sign(unit[:, 2])  # crowd the poles
     unit = unit / unit.norm(dim=-1, keepdim=True)
     field, power = _low_field(unit, 25)
-    assert float(low_degree_leakage(field, unit, 25)) == pytest.approx(power, rel=1e-6)
+    assert float(low_degree_leakage(field, unit, 25)) == pytest.approx(power, rel=_LEAK_RTOL)
 
 
 def test_leakage_of_a_pure_high_degree_field_is_the_sampling_floor():
@@ -163,7 +177,7 @@ def test_leakage_is_logged_on_validation_and_enters_training_only_when_weighted(
     _, val = loss(model, x, u, a, weights, is_train=False, low_degree_alt_max_km=1000.0)
     # Constant scaled error 0.5 without radial normalisation: the degree-0
     # projection is exactly 0.5 (4pi-normalised Y_00 = 1), so the power is 0.25.
-    assert val["loss_low_degree"] == pytest.approx(0.25, rel=1e-6)
+    assert val["loss_low_degree"] == pytest.approx(0.25, rel=_LEAK_RTOL)
 
     off, train_off = loss(model, x, u, a, weights, is_train=True, low_degree_alt_max_km=1000.0)
     assert train_off["loss_low_degree"] == 0.0
@@ -171,8 +185,8 @@ def test_leakage_is_logged_on_validation_and_enters_training_only_when_weighted(
         model, x, u, a, weights, is_train=True,
         low_degree_lambda=2.0, low_degree_alt_max_km=1000.0,
     )
-    assert train_on["loss_low_degree"] == pytest.approx(0.25, rel=1e-6)
-    assert float(on - off) == pytest.approx(2.0 * 0.25, rel=1e-6)
+    assert train_on["loss_low_degree"] == pytest.approx(0.25, rel=_LEAK_RTOL)
+    assert float(on - off) == pytest.approx(2.0 * 0.25, rel=_LEAK_RTOL)
     on.backward()
     assert model.c.grad is not None and float(model.c.grad) != 0.0
 
@@ -182,7 +196,7 @@ def test_leakage_radial_power_normalises_by_the_envelope():
     kw = {"is_train": False, "low_degree_alt_max_km": 150.0, "low_degree_lmax": 2}
     _, plain = loss(_Bias(0.5), x, u, a, weights, **kw)
     _, normed = loss(_Bias(0.5), x, u, a, weights, low_degree_radial_power=26.0, **kw)
-    assert (alt < 150.0).sum() > 9 and plain["loss_low_degree"] == pytest.approx(0.25, rel=1e-6)
+    assert (alt < 150.0).sum() > 9 and plain["loss_low_degree"] == pytest.approx(0.25, rel=_LEAK_RTOL)
     # Below 150 km rho**-26 lies between 1.27e1 and 4.25e1 (factor > 10 in power).
     assert normed["loss_low_degree"] > 10.0 * plain["loss_low_degree"]
 
