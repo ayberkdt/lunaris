@@ -111,8 +111,9 @@ FACTORS: tuple[Factor, ...] = (
          "--laplacian-every-n-batches", "4"),
         "The residual potential is harmonic; the shipped model violates Laplace by "
         "~0.6% at 100-150 km. Mean lap^2 is 8.8e-23 s^-4 on the 40-epoch H1 checkpoint "
-        "(total loss 3e-6) and 6.2e-24 on Plan D (7e-8): 1e16 every 4th batch is ~10% "
-        "of the loss at screening fidelity and ~30% at convergence.",
+        "(total loss 3e-6) and 6.2e-24 on Plan D (7e-8). At 1e16 the penalty is 29% "
+        "(screening) and 89% (converged) of the loss on the batches where it is applied, "
+        "i.e. ~7% and ~22% averaged over every 4th batch.",
     ),
     Factor(
         "F", "altitude_balance",
