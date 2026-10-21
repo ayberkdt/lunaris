@@ -313,12 +313,14 @@ def test_new_flags_reach_the_train_config(monkeypatch):
         "--lr-schedule", "wsd", "--lr-decay-fraction", "0.3",
         "--low-degree-loss-weight", "0.5", "--low-degree-lmax", "12",
         "--low-degree-alt-max-km", "350", "--potential-metric-alt-max-km", "250",
+        "--low-degree-radial-power", "26",
         "--u-center", "zero", "--band-init", "siren_first",
     ])
     cfg = parse_args()
     assert (cfg.lr_schedule_mode, cfg.lr_decay_fraction) == ("wsd", 0.3)
     assert (cfg.low_degree_loss_weight, cfg.low_degree_lmax) == (0.5, 12)
     assert (cfg.low_degree_alt_max_km, cfg.potential_metric_alt_max_km) == (350.0, 250.0)
+    assert cfg.low_degree_radial_power == 26.0
     assert (cfg.u_center, cfg.band_init) == ("zero", "siren_first")
 
 
@@ -330,4 +332,5 @@ def test_defaults_keep_the_shipped_recipe(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["lunaris-train", "--train-data", "t.h5", "--val-data", "v.h5"])
     cfg = parse_args()
     assert (cfg.lr_schedule_mode, cfg.u_center, cfg.band_init) == ("cosine", "mean", "legacy")
-    assert cfg.low_degree_loss_weight == 0.0
+    assert (cfg.low_degree_loss_weight, cfg.low_degree_radial_power) == (0.0, 0.0)
+    assert cfg.low_degree_alt_max_km == cfg.potential_metric_alt_max_km == 300.0

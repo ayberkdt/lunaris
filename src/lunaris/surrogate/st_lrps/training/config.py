@@ -218,12 +218,15 @@ class TrainConfig:
     # potential error onto those harmonics is pure model error. It is also the
     # part of the error that integrates into along-track drift instead of
     # averaging out. The penalty is the mean square of the least-squares
-    # projection of the envelope-normalised potential error onto the real
-    # spherical harmonics of degree <= low_degree_lmax, fitted on the batch
-    # samples below low_degree_alt_max_km. 0 = off; validation always logs it.
+    # projection of the scaled potential error, divided by
+    # rho**low_degree_radial_power (0 = physical weighting, which keeps the
+    # lowest altitudes dominant), onto the real spherical harmonics of degree
+    # <= low_degree_lmax, fitted on the batch samples below
+    # low_degree_alt_max_km. 0 = off; validation always logs it.
     low_degree_loss_weight: float = 0.0
     low_degree_lmax: int = 25
-    low_degree_alt_max_km: float = 400.0
+    low_degree_alt_max_km: float = 300.0
+    low_degree_radial_power: float = 0.0
     # Altitude ceiling of the low-altitude potential RMSE metric
     # (val_u_low_rmse_m2_s2), the field quantity that sets orbit-energy error.
     potential_metric_alt_max_km: float = 300.0
@@ -881,6 +884,10 @@ def parse_args() -> TrainConfig:
                            help="Highest harmonic degree of the leakage projection (normally the base degree).")
     group_dir.add_argument("--low-degree-alt-max-km", type=float, default=_TC_DEFAULTS["low_degree_alt_max_km"],
                            help="Only batch samples below this altitude enter the leakage projection.")
+    group_dir.add_argument("--low-degree-radial-power", type=float,
+                           default=_TC_DEFAULTS["low_degree_radial_power"],
+                           help="Divide the potential error by rho**p before the projection "
+                                "(0 = physical weighting, default).")
     group_dir.add_argument("--potential-metric-alt-max-km", type=float,
                            default=_TC_DEFAULTS["potential_metric_alt_max_km"],
                            help="Altitude ceiling of the logged low-altitude potential RMSE (m^2/s^2).")
@@ -1638,6 +1645,7 @@ def parse_args() -> TrainConfig:
         low_degree_loss_weight=float(max(0.0, a.low_degree_loss_weight)),
         low_degree_lmax=int(a.low_degree_lmax),
         low_degree_alt_max_km=float(a.low_degree_alt_max_km),
+        low_degree_radial_power=float(max(0.0, a.low_degree_radial_power)),
         potential_metric_alt_max_km=float(a.potential_metric_alt_max_km),
         relative_loss_floor_abs=float(max(0.0, a.relative_loss_floor_abs)),
         output_envelope_power=float(max(0.0, a.output_envelope_power)),

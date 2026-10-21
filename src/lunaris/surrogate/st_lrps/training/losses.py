@@ -688,7 +688,7 @@ class SobolevLoss(nn.Module):
         laplacian_mode: str = "diagnostic",
         low_degree_lambda: float = 0.0,
         low_degree_lmax: int = 25,
-        low_degree_alt_max_km: float = 400.0,
+        low_degree_alt_max_km: float = 300.0,
         low_degree_radial_power: float = 0.0,
         potential_metric_alt_max_km: float = 300.0,
     ) -> tuple[torch.Tensor, dict[str, Any]]:

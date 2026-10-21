@@ -1010,8 +1010,8 @@ class STLRPSTrainer:
                 laplacian_mode=self.laplacian_mode,
                 low_degree_lambda=float(getattr(self.cfg, "low_degree_loss_weight", 0.0)),
                 low_degree_lmax=int(getattr(self.cfg, "low_degree_lmax", 25)),
-                low_degree_alt_max_km=float(getattr(self.cfg, "low_degree_alt_max_km", 400.0)),
-                low_degree_radial_power=_low_degree_radial_power(self.cfg),
+                low_degree_alt_max_km=float(getattr(self.cfg, "low_degree_alt_max_km", 300.0)),
+                low_degree_radial_power=float(getattr(self.cfg, "low_degree_radial_power", 0.0)),
                 potential_metric_alt_max_km=float(getattr(self.cfg, "potential_metric_alt_max_km", 300.0)),
             )
 
@@ -1479,18 +1479,6 @@ def _lr_multiplier_for_epoch(
     progress = min(1.0, max(0.0, (epoch_i - warmup_i) / float(denom)))
     cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
     return float(min_ratio + (1.0 - min_ratio) * cosine)
-
-def _low_degree_radial_power(cfg: Any) -> float:
-    """Radial normalisation power of the leakage projection.
-
-    The output-envelope power when an envelope is used (the projection then
-    acts on the backbone's own output space), else ``degree_min + 1``.
-    """
-    p = float(getattr(cfg, "output_envelope_power", 0.0) or 0.0)
-    if p > 0.0:
-        return p
-    degree_min = getattr(cfg, "degree_min", None)
-    return float(int(degree_min) + 1) if degree_min is not None and int(degree_min) >= 0 else 0.0
 
 def _lr_schedule_kind(cfg: Any) -> str:
     """Manifest/checkpoint name of the configured LR schedule."""
