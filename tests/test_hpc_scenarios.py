@@ -27,6 +27,9 @@ _EXPECTED_COUNTS = {
     "st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl": 21,
     "st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl": 5,
     "st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl": 7,
+    # 2^(6-3) screening design + 2 anchors, and its fold-over (tools/st_lrps_doe.py).
+    "st_lrps_trajectory_doe_phase1.jsonl": 10,
+    "st_lrps_trajectory_doe_foldover.jsonl": 7,
 }
 
 _REQUIRED_FIELDS = ("name", "entrypoint", "description", "runtime_model_kind", "flags")
