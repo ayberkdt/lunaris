@@ -137,3 +137,25 @@ def test_run_env_puts_this_checkout_first(monkeypatch):
     monkeypatch.setenv("PYTHONPATH", "elsewhere")
     path = doe._train_env()["PYTHONPATH"].split(__import__("os").pathsep)
     assert path[0] == str(_REPO_ROOT / "src") and path[1] == "elsewhere"
+
+
+@pytest.mark.parametrize(("stage", "epochs"), [("confirm", 200), ("final", 800)])
+def test_promoted_runs_train_on_full_data_with_the_chosen_levels(monkeypatch, tmp_path, stage, epochs):
+    pytest.importorskip("torch")
+    from lunaris.surrogate.st_lrps.training.config import parse_args
+
+    levels = doe.parse_levels("ABcDef")
+    run = doe.promoted_run(levels, stage, seed=43)
+    monkeypatch.setattr(sys, "argv", ["lunaris-train", *doe._command(run, tmp_path, tmp_path)[3:]])
+    cfg = parse_args()
+    assert cfg.epochs == epochs and cfg.max_train_batches is None and cfg.max_val_batches is None
+    assert (cfg.seed, cfg.split_seed) == (43, doe.SEED)
+    assert (cfg.best_metric, cfg.ema_decay, cfg.lr_schedule_mode) == ("potential_low", 0.999, "wsd")
+    assert (cfg.w_u, cfg.low_degree_loss_weight, cfg.band_init) == (10.0, 0.0, "siren_first")
+
+
+def test_levels_string_is_validated():
+    assert doe.parse_levels("abcdef") == dict.fromkeys(doe.FACTOR_KEYS, -1)
+    for bad in ("ABCDE", "ABCDEG", "AACDEF"):
+        with pytest.raises(ValueError, match="levels"):
+            doe.parse_levels(bad)

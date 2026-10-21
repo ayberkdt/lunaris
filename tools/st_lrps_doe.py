@@ -25,6 +25,7 @@ Sub-commands::
     python tools/st_lrps_doe.py commands --data-dir DIR --out-root DIR [--phase ...]
     python tools/st_lrps_doe.py run      --data-dir DIR --out-root DIR [--phase ...] [--only NAME ...]
     python tools/st_lrps_doe.py analyze  --out-root DIR [--phase ...] [--at final|best]
+    python tools/st_lrps_doe.py promote  --levels ABcDef --stage confirm|final --data-dir DIR --out-root DIR
 
 ``run`` trains sequentially and skips runs whose ``history.jsonl`` already
 reaches the final epoch; it puts this checkout's ``src`` first on
@@ -156,6 +157,27 @@ FIDELITY_FLAGS: tuple[str, ...] = (
 )
 FIDELITY_EPOCHS = 48
 
+# Promotion stages for the winning levels. "confirm" (stage B) trains on the
+# full data for 200 epochs; "final" (stage C) repeats the 800-epoch shipped
+# budget. Both end in a 20% (1-sqrt) cooldown, average weights, and select the
+# checkpoint on the low-altitude potential RMS.
+STAGE_FLAGS: dict[str, tuple[str, ...]] = {
+    "confirm": (
+        "--epochs", "200", "--warmup-epochs", "5", "--lr-schedule", "wsd", "--lr-decay-fraction", "0.2",
+        "--min-lr-ratio", "0.01", "--potential-only-epochs", "5", "--accel-ramp-epochs", "20",
+        "--accel-min-factor", "0.05", "--direction-loss-start-epoch", "10", "--direction-loss-ramp-epochs", "20",
+        "--checkpoint-settle-epochs", "5", "--best-ckpt-start-epoch", "-1", "--patience", "1000",
+        "--ema-decay", "0.999", "--best-metric", "potential_low", "--periodic-eval-count", "5",
+    ),
+    "final": (
+        "--epochs", "800", "--warmup-epochs", "5", "--lr-schedule", "wsd", "--lr-decay-fraction", "0.2",
+        "--min-lr-ratio", "0.01", "--potential-only-epochs", "10", "--accel-ramp-epochs", "80",
+        "--accel-min-factor", "0.05", "--direction-loss-start-epoch", "30", "--direction-loss-ramp-epochs", "70",
+        "--checkpoint-settle-epochs", "5", "--best-ckpt-start-epoch", "-1", "--patience", "1000",
+        "--ema-decay", "0.999", "--best-metric", "potential_low", "--periodic-eval-count", "10",
+    ),
+}
+
 # Responses read from history.jsonl. "log" responses are analysed as log10.
 RESPONSES: tuple[tuple[str, bool], ...] = (
     ("val_u_low_rmse_m2_s2", True),     # primary: orbit-energy (phase) proxy
@@ -248,6 +270,26 @@ def design_runs(phase: str) -> list[Run]:
     p1 = [r for r in runs if r.phase == "phase1"]
     fo = [r for r in runs if r.phase == "foldover"] + [r for r in runs if r.name == ANCHOR_CORRECTED]
     return {"phase1": p1, "foldover": fo, "all": p1 + fo}[phase]
+
+
+def parse_levels(text: str) -> dict[str, int]:
+    """``"ABcDef"`` (upper case = + level) -> ``{"A": 1, "B": 1, "C": -1, ...}``."""
+    if len(text) != len(FACTOR_KEYS) or text.upper() != "".join(FACTOR_KEYS):
+        raise ValueError(f"levels must spell {''.join(FACTOR_KEYS)} with case marking +/-, got {text!r}")
+    return {ch.upper(): (1 if ch.isupper() else -1) for ch in text}
+
+
+def promoted_run(levels: dict[str, int], stage: str, seed: int = SEED) -> Run:
+    """Full-data run of one level combination at a promotion stage."""
+    if stage not in STAGE_FLAGS:
+        raise ValueError(f"stage must be one of {sorted(STAGE_FLAGS)}, got {stage!r}")
+    i = BASE_FLAGS.index("--seed")
+    base = BASE_FLAGS[: i + 1] + (str(seed),) + BASE_FLAGS[i + 2 :]
+    return Run(
+        f"DoE_{stage}_{_signs(levels)}_Seed{seed}", stage, levels,
+        base + CORRECTION_FLAGS + _factor_flags(levels) + STAGE_FLAGS[stage],
+        f"Promoted {_signs(levels)} at stage {stage}.",
+    )
 
 
 def render_scenarios(phase: str) -> str:
@@ -431,6 +473,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         p.add_argument("--out-root", type=Path, required=True)
         p.add_argument("--phase", default="phase1", choices=["phase1", "foldover", "all"])
         p.add_argument("--only", nargs="*", default=None, help="run names to include")
+    p_pr = sub.add_parser("promote", help="print the full-data command for chosen levels")
+    p_pr.add_argument("--levels", required=True, help="e.g. ABcDef (upper case = + level)")
+    p_pr.add_argument("--stage", required=True, choices=sorted(STAGE_FLAGS))
+    p_pr.add_argument("--seed", type=int, default=SEED)
+    p_pr.add_argument("--data-dir", type=Path, required=True)
+    p_pr.add_argument("--out-root", type=Path, required=True)
     p_an = sub.add_parser("analyze")
     p_an.add_argument("--out-root", type=Path, required=True)
     p_an.add_argument("--phase", default="phase1", choices=["phase1", "foldover", "all"])
@@ -458,6 +506,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 path.write_text(text, encoding="utf-8")
                 print(f"wrote {path.relative_to(REPO_ROOT)}")
         return 1 if bad else 0
+    if a.cmd == "promote":
+        run = promoted_run(parse_levels(a.levels), a.stage, a.seed)
+        print(subprocess.list2cmdline(_command(run, a.data_dir, a.out_root)))
+        return 0
     if a.cmd in ("commands", "run"):
         runs = [r for r in build_runs(a.phase) if not a.only or r.name in a.only]
         for r in runs:
