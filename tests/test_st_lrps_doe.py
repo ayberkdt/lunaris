@@ -197,3 +197,17 @@ def test_levels_string_is_validated():
     for bad in ("ABCDE", "ABCDEG", "AACDEF"):
         with pytest.raises(ValueError, match="levels"):
             doe.parse_levels(bad)
+
+
+def test_arc_proxy_becomes_the_primary_response(monkeypatch, tmp_path):
+    planted = {}
+    for run in doe.build_runs("all"):
+        if not run.levels:
+            continue
+        _write_history(tmp_path / run.name, 1e-3 * (1.0 + _noise(run.name)), epochs=doe.FIDELITY_EPOCHS)
+        planted[run.name] = 10.0 ** (-1.0 - 0.25 * run.levels["B"] + _noise(run.name))
+    monkeypatch.setattr(doe, "_arc_proxy_rms", lambda run_dir, proxy, device: planted[Path(run_dir).name])
+    report = doe.analyze(tmp_path, "all", "final", arc_proxy=tmp_path / "proxy")
+    assert report["primary_response"] == "arc_proxy_rms_m"
+    assert report["effects"]["arc_proxy_rms_m"]["effects"]["B"] == pytest.approx(-0.5, abs=0.02)
+    assert report["recommended_levels"]["B"] == +1

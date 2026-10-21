@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import itertools
 import json
 import math
@@ -452,7 +453,34 @@ def is_orthogonal(levels: list[dict[str, int]]) -> bool:
 DECISION_T = 2.0
 
 
-def analyze(out_root: Path, phase: str, at: str) -> dict:
+def _arc_proxy_rms(run_dir: Path, proxy: Path, device: str) -> float:
+    """RMS predicted along-track error [m] from tools/st_lrps_arc_proxy.py, cached per run."""
+    cache = run_dir / "evals" / "arc_proxy.json"
+    if cache.is_file():
+        rep = json.loads(cache.read_text(encoding="utf-8"))
+        if Path(rep["summary"].get("proxy_dir", "")) == Path(proxy):
+            return float(rep["summary"]["rms_along_track_m"])
+    spec = importlib.util.spec_from_file_location("st_lrps_arc_proxy", REPO_ROOT / "tools" / "st_lrps_arc_proxy.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    rep = module.score_run(Path(proxy), run_dir, device)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(rep, indent=1), encoding="utf-8")
+    return float(rep["summary"]["rms_along_track_m"])
+
+
+def analyze(
+    out_root: Path, phase: str, at: str, arc_proxy: Path | None = None, device: str = "cuda"
+) -> dict:
+    """Main effects of the screening responses.
+
+    With ``arc_proxy`` (a ``tools/st_lrps_arc_proxy.py build`` directory) every
+    complete run is also scored at trajectory level: the RMS over the proxy's
+    reference orbits of the predicted along-track error at the final time,
+    for the checkpoint the runtime loads. That becomes the primary response.
+    """
+    responses = ((("arc_proxy_rms_m", True),) if arc_proxy else ()) + RESPONSES
     design = {r.name for r in design_runs(phase)}
     runs = build_runs(phase) if phase != "foldover" else build_runs("all")
     rows: list[dict] = []
@@ -470,6 +498,8 @@ def analyze(out_root: Path, phase: str, at: str) -> dict:
                  "epoch": int(pick.get("epoch", -1)) + 1, **{k: r.levels.get(k, 0) for k in FACTOR_KEYS}}
         for key, _ in RESPONSES:
             entry[key] = pick.get(key)
+        if arc_proxy and entry["status"] == "complete":
+            entry["arc_proxy_rms_m"] = _arc_proxy_rms(out_root / r.name, Path(arc_proxy), device)
         rows.append(entry)
 
     design_rows = [
@@ -484,7 +514,7 @@ def analyze(out_root: Path, phase: str, at: str) -> dict:
         return report
     levels = [r.levels for r, _ in design_rows]
     report["orthogonal"] = is_orthogonal(levels)
-    for key, log in RESPONSES:
+    for key, log in responses:
         y = [_response_value(e, key, log) for _, e in design_rows]
         if not all(math.isfinite(v) for v in y):
             report["effects"][key] = {"log10": log, "error": "non-finite response in a design run"}
@@ -500,7 +530,8 @@ def analyze(out_root: Path, phase: str, at: str) -> dict:
             "t_ratio": {k: (v / pse if pse > 0 else float("nan")) for k, v in main.items()},
             "multiplier_plus_vs_minus": ({k: 10.0 ** v for k, v in main.items()} if log else None),
         }
-    primary = report["effects"].get(RESPONSES[0][0], {})
+    primary = report["effects"].get(responses[0][0], {})
+    report["primary_response"] = responses[0][0]
     if "effects" in primary:
         # +1 / -1 only where |t| >= DECISION_T; 0 = no evidence either way.
         report["recommended_levels"] = {
@@ -514,7 +545,7 @@ def _write_report(report: dict, out_root: Path) -> Path:
     tag = f"doe_{report['phase']}_{report['at']}"
     (out_root / f"{tag}_effects.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     with open(out_root / f"{tag}_runs.csv", "w", newline="", encoding="utf-8") as fh:
-        keys = ["name", "status", "epoch", *FACTOR_KEYS, *(k for k, _ in RESPONSES)]
+        keys = ["name", "status", "epoch", *FACTOR_KEYS, "arc_proxy_rms_m", *(k for k, _ in RESPONSES)]
         w = csv.DictWriter(fh, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         for row in report["runs"]:
@@ -540,7 +571,8 @@ def _write_report(report: dict, out_root: Path) -> Path:
         lines.append("")
     if report.get("recommended_levels"):
         rec = report["recommended_levels"]
-        lines.append("Levels supported by the primary response (|t| >= 2; '?' = no evidence): "
+        lines.append(f"Levels supported by the primary response {report.get('primary_response')} "
+                     "(|t| >= 2; '?' = no evidence): "
                      + ", ".join(f"{k}{'+' if v > 0 else '-' if v < 0 else '?'}" for k, v in rec.items()))
     path = out_root / f"{tag}_effects.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -575,6 +607,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_an.add_argument("--out-root", type=Path, required=True)
     p_an.add_argument("--phase", default="phase1", choices=["phase1", "foldover", "all"])
     p_an.add_argument("--at", default="final", choices=["final", "best"])
+    p_an.add_argument("--arc-proxy", type=Path, default=None,
+                      help="tools/st_lrps_arc_proxy.py build directory; adds the trajectory-level primary response")
+    p_an.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
 
     if a.cmd == "design":
@@ -634,7 +669,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"[fail] {r.name} exit {rc}; see {r.name}.log")
                 return rc
         return 0
-    report = analyze(a.out_root, a.phase, a.at)
+    report = analyze(a.out_root, a.phase, a.at, a.arc_proxy, a.device)
     path = _write_report(report, a.out_root)
     print(path.read_text(encoding="utf-8"))
     return 0

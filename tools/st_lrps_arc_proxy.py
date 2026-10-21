@@ -174,7 +174,11 @@ def build(args: argparse.Namespace) -> int:
 
     bench = Path(args.benchmark_dir)
     meta = json.loads((bench / "run_metadata.json").read_text(encoding="utf-8-sig"))
-    cfg = build_base_config(parse_args(list(meta["argv"])))
+    argv = [str(a) for a in meta["argv"]]
+    # The recorded argv may start with the program path (".../lunaris-benchmark").
+    while argv and not argv[0].startswith("-"):
+        argv = argv[1:]
+    cfg = build_base_config(parse_args(argv))
     ephem = EphemerisManager.from_time_and_spice(cfg.time, cfg.spice)
     series = bench / "benchmark_cache" / "models" / args.series
     ids = sorted(int(p.stem.split("_")[1]) for p in series.glob("scenario_*.npz"))[: args.orbits]
@@ -228,12 +232,13 @@ def score_arrays(a_model: np.ndarray, a_true: np.ndarray, weight: np.ndarray) ->
     return float(np.sum(weight * (np.asarray(a_model, dtype=np.float64) - a_true)))
 
 
-def score(args: argparse.Namespace) -> int:
+def score_run(proxy: Path, run_dir: Path, device: str = "cuda") -> dict:
+    """Per-orbit predicted along-track errors and their summary for one run."""
     from lunaris.surrogate.st_lrps.runtime.canonical_runtime import load_surrogate_force_model
 
-    proxy = Path(args.proxy)
+    proxy = Path(proxy)
     manifest = json.loads((proxy / "proxy_manifest.json").read_text(encoding="utf-8"))
-    rt = load_surrogate_force_model(Path(args.run_dir), device=args.device)
+    rt = load_surrogate_force_model(Path(run_dir), device=device)
     rows = []
     for p in sorted(proxy.glob("orbit_*.npz")):
         z = np.load(p)
@@ -242,13 +247,19 @@ def score(args: argparse.Namespace) -> int:
                      "along_track_m": score_arrays(a_nn, z["a_true"], z["weight"])})
     s = np.array([r["along_track_m"] for r in rows])
     summary = {
-        "run_dir": str(args.run_dir), "orbits": len(rows), "duration_days": manifest["duration_s"] / 86400.0,
+        "run_dir": str(run_dir), "proxy_dir": str(proxy), "orbits": len(rows),
+        "duration_days": manifest["duration_s"] / 86400.0,
         "rms_along_track_m": float(math.sqrt(np.mean(s**2))),
         "median_abs_along_track_m": float(np.median(np.abs(s))),
         "p95_abs_along_track_m": float(np.percentile(np.abs(s), 95)),
         "max_abs_along_track_m": float(np.max(np.abs(s))),
     }
-    report = {"summary": summary, "orbits": rows}
+    return {"summary": summary, "orbits": rows}
+
+
+def score(args: argparse.Namespace) -> int:
+    report = score_run(Path(args.proxy), Path(args.run_dir), args.device)
+    summary = report["summary"]
     out = Path(args.out) if args.out else Path(args.run_dir) / "evals" / "arc_proxy.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
