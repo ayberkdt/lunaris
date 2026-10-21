@@ -124,6 +124,11 @@ class TrainConfig:
     t_max: int | None = 390
     warmup_epochs: int = 5
     min_lr_ratio: float = 0.05
+    # "cosine" (default): warm-up then cosine decay to min_lr_ratio over t_max.
+    # "wsd": warm-up, constant LR, then a (1 - sqrt) cooldown to min_lr_ratio
+    # over the last lr_decay_fraction of the post-warm-up epochs; t_max unused.
+    lr_schedule_mode: str = "cosine"
+    lr_decay_fraction: float = 0.2
     patience: int = 30
 
     # Loss weighting
@@ -207,6 +212,21 @@ class TrainConfig:
     # A term > 1 means the prediction is worse than predicting zero residual.
     relative_loss_weight: float = 0.0
     relative_loss_floor_abs: float = 1e-8   # m/s², noise floor of the ratio
+
+    # Low-degree leakage penalty. The residual of degrees > base_degree has no
+    # content at degrees <= base_degree on any sphere, so the projection of the
+    # potential error onto those harmonics is pure model error. It is also the
+    # part of the error that integrates into along-track drift instead of
+    # averaging out. The penalty is the mean square of the least-squares
+    # projection of the envelope-normalised potential error onto the real
+    # spherical harmonics of degree <= low_degree_lmax, fitted on the batch
+    # samples below low_degree_alt_max_km. 0 = off; validation always logs it.
+    low_degree_loss_weight: float = 0.0
+    low_degree_lmax: int = 25
+    low_degree_alt_max_km: float = 400.0
+    # Altitude ceiling of the low-altitude potential RMSE metric
+    # (val_u_low_rmse_m2_s2), the field quantity that sets orbit-energy error.
+    potential_metric_alt_max_km: float = 300.0
 
     # Output radial-decay envelope: ΔU_scaled = rho**p · NN(x), rho = r_ref / r.
     # 0 = off (plain output, as in earlier artifacts). output_envelope_auto
@@ -317,6 +337,9 @@ class TrainConfig:
     # Multi-scale composition: "concat_shared" (parallel bands -> concat -> shared
     # trunk, default) or "additive" (per-band trunks summed: dU = sum_k dU_k).
     multiscale_mode: str = "concat_shared"
+    # First-layer init of the concat_shared bands: "legacy" | "siren_first"
+    # (see networks.models.MultiScaleSirenMLP).
+    band_init: str = "legacy"
 
     # Harmonic degree range of the dataset. Resolved from HDF5 metadata by the
     # engine BEFORE the model is built, then persisted to config.json and the
@@ -333,6 +356,9 @@ class TrainConfig:
     # target_scale_multiplier * RMS, which is far more robust. x scaling is
     # always origin-fixed max-radius and is NOT affected by these.
     u_scale_mode: str = "hybrid"   # "max" | "rms" | "hybrid"
+    # "mean" subtracts the train-sample mean of dU; "zero" keeps dU uncentred
+    # (see shared.scaling.fit_scaler_streaming).
+    u_center: str = "mean"
     a_scale_mode: str = "hybrid"
     target_scale_multiplier: float = 6.0
 
@@ -756,6 +782,12 @@ def parse_args() -> TrainConfig:
                            help="Linear learning-rate warm-up duration before cosine decay.")
     group_opt.add_argument("--min-lr-ratio", type=float, default=_TC_DEFAULTS["min_lr_ratio"],
                            help="Final cosine-decay learning-rate ratio relative to the base LR.")
+    group_opt.add_argument("--lr-schedule", dest="lr_schedule_mode", choices=["cosine", "wsd"],
+                           default=_TC_DEFAULTS["lr_schedule_mode"],
+                           help="'cosine' (warm-up + cosine over --t-max) or 'wsd' (warm-up, constant, "
+                                "then a 1-sqrt cooldown over the last --lr-decay-fraction of the run).")
+    group_opt.add_argument("--lr-decay-fraction", type=float, default=_TC_DEFAULTS["lr_decay_fraction"],
+                           help="WSD only: fraction of the post-warm-up epochs spent in the cooldown.")
     group_opt.add_argument("--patience", type=int, default=_TC_DEFAULTS["patience"],
                            help="Early-stopping patience measured on validation total loss.")
     amp_group = group_opt.add_mutually_exclusive_group()
@@ -842,6 +874,16 @@ def parse_args() -> TrainConfig:
                                 "sample (0 = off). Values > 1 per sample mean 'worse than predicting zero'.")
     group_dir.add_argument("--relative-loss-floor-abs", type=float, default=_TC_DEFAULTS["relative_loss_floor_abs"],
                            help="Noise floor (m/s^2) added in quadrature to ||a_true|| in the relative loss.")
+    group_dir.add_argument("--low-degree-loss-weight", type=float, default=_TC_DEFAULTS["low_degree_loss_weight"],
+                           help="Weight of the low-degree leakage penalty (projection of the potential "
+                                "error onto degrees <= --low-degree-lmax). 0 = off.")
+    group_dir.add_argument("--low-degree-lmax", type=int, default=_TC_DEFAULTS["low_degree_lmax"],
+                           help="Highest harmonic degree of the leakage projection (normally the base degree).")
+    group_dir.add_argument("--low-degree-alt-max-km", type=float, default=_TC_DEFAULTS["low_degree_alt_max_km"],
+                           help="Only batch samples below this altitude enter the leakage projection.")
+    group_dir.add_argument("--potential-metric-alt-max-km", type=float,
+                           default=_TC_DEFAULTS["potential_metric_alt_max_km"],
+                           help="Altitude ceiling of the logged low-altitude potential RMSE (m^2/s^2).")
     group_dir.add_argument("--hybrid-relative-beta", type=float, default=_TC_DEFAULTS["hybrid_relative_beta"],
                            help="Weight of val_loss_rel in the 'hybrid_rel' best-checkpoint metric.")
     group_dir.add_argument("--output-envelope-power", type=float, default=_TC_DEFAULTS["output_envelope_power"],
@@ -1142,6 +1184,11 @@ def parse_args() -> TrainConfig:
                             help="Multi-scale composition when n_bands>1: 'concat_shared' "
                                  "(parallel bands -> concat -> shared trunk, default) or "
                                  "'additive' (per-band trunks summed; experimental).")
+    group_pinn.add_argument("--band-init", choices=["legacy", "siren_first"],
+                            default=_TC_DEFAULTS.get("band_init", "legacy"),
+                            help="First-layer init of the multi-scale bands: 'legacy' (bands after the "
+                                 "first start at a w0-independent frequency) or 'siren_first' (band k "
+                                 "starts at w0_k/n_in).")
     group_pinn.add_argument("--grad-accumulation-steps", type=int, default=_TC_DEFAULTS["grad_accumulation_steps"],
                             help="Accumulate gradients over N batches before optimizer step. "
                                  "Effective batch = batch_size × N. (default: 1 = no accumulation)")
@@ -1152,6 +1199,10 @@ def parse_args() -> TrainConfig:
                               default=_TC_DEFAULTS.get("u_scale_mode", "hybrid"),
                               help="Isometric scale rule for the residual potential target "
                                    "(default: hybrid = robust to outliers).")
+    group_scaler.add_argument("--u-center", choices=["mean", "zero"],
+                              default=_TC_DEFAULTS.get("u_center", "mean"),
+                              help="Centre of the residual-potential target: 'mean' (train-sample mean, "
+                                   "default) or 'zero' (uncentred; use with an output envelope).")
     group_scaler.add_argument("--a-scale-mode", choices=["max", "rms", "hybrid"],
                               default=_TC_DEFAULTS.get("a_scale_mode", "hybrid"),
                               help="Isometric scale rule for the residual acceleration target "
@@ -1539,6 +1590,8 @@ def parse_args() -> TrainConfig:
         t_max=a.t_max,
         warmup_epochs=max(0, int(a.warmup_epochs)),
         min_lr_ratio=float(a.min_lr_ratio),
+        lr_schedule_mode=str(a.lr_schedule_mode),
+        lr_decay_fraction=float(a.lr_decay_fraction),
         patience=max(1, int(a.patience)),
         w_u=a.w_u,
         w_a=a.w_a,
@@ -1582,6 +1635,10 @@ def parse_args() -> TrainConfig:
         direction_loss_ramp_epochs=max(1, int(a.direction_loss_ramp_epochs)),
         direction_loss_floor_abs=float(a.direction_loss_floor_abs),
         relative_loss_weight=float(max(0.0, a.relative_loss_weight)),
+        low_degree_loss_weight=float(max(0.0, a.low_degree_loss_weight)),
+        low_degree_lmax=int(a.low_degree_lmax),
+        low_degree_alt_max_km=float(a.low_degree_alt_max_km),
+        potential_metric_alt_max_km=float(a.potential_metric_alt_max_km),
         relative_loss_floor_abs=float(max(0.0, a.relative_loss_floor_abs)),
         output_envelope_power=float(max(0.0, a.output_envelope_power)),
         output_envelope_auto=bool(a.output_envelope_auto),
@@ -1618,6 +1675,7 @@ def parse_args() -> TrainConfig:
         real_sh_include_radial=bool(a.real_sh_include_radial),
         use_residual_blocks=bool(a.use_residual_blocks),
         n_bands=max(1, int(a.n_bands)),
+        band_init=str(a.band_init),
         multiscale_mode=str(a.multiscale_mode),
         grad_accumulation_steps=max(1, int(a.grad_accumulation_steps)),
         best_metric=str(a.best_metric),
@@ -1626,6 +1684,7 @@ def parse_args() -> TrainConfig:
         save_epoch_snapshots=bool(a.save_epoch_snapshots),
         epoch_snapshot_every=max(1, int(a.epoch_snapshot_every)),
         u_scale_mode=str(a.u_scale_mode),
+        u_center=str(a.u_center),
         a_scale_mode=str(a.a_scale_mode),
         target_scale_multiplier=float(a.target_scale_multiplier),
         allow_dataset_validation_fail=bool(a.allow_dataset_validation_fail),

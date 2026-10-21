@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+from lunaris.surrogate.st_lrps.networks.models import real_sh_basis_4pi
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import (
     ScalerPack,
@@ -108,6 +109,36 @@ def _radial_cross_components(
     radial = torch.sum(err_vec * r_hat, dim=-1)
     cross = torch.linalg.norm(err_vec - radial.unsqueeze(-1) * r_hat, dim=-1)
     return radial, cross
+
+def low_degree_leakage(
+    err: torch.Tensor,
+    unit: torch.Tensor,
+    lmax: int,
+    *,
+    ridge: float = 1e-8,
+) -> torch.Tensor:
+    """Mean square of the degree ``<= lmax`` part of a scalar error field.
+
+    Fits ``err ≈ Σ c_k Y_k(unit)`` by least squares over the samples, with
+    ``Y_k`` the 4π-normalized real spherical harmonics of degree ``<= lmax``,
+    and returns ``Σ c_k²``. For uniformly distributed directions this is the
+    sphere mean of the squared projection, ``(1/4π)∫(P_L err)² dΩ``; the least
+    squares fit (instead of a Monte-Carlo inner product) keeps the estimate
+    unbiased when the batch directions are not uniform. Gradients flow through
+    ``err`` only. ``ridge`` (relative to the mean Gram diagonal) guards the
+    solve when the sample count is close to the number of basis functions.
+    """
+
+    n_basis = (int(lmax) + 1) ** 2
+    m = int(err.shape[0])
+    if m <= n_basis:
+        return err.new_zeros(())
+    basis = real_sh_basis_4pi(unit.detach().to(torch.float64), int(lmax))      # (M, K)
+    gram = basis.T @ basis / float(m)
+    gram = gram + float(ridge) * torch.eye(n_basis, dtype=gram.dtype, device=gram.device)
+    rhs = basis.T @ err.to(torch.float64).reshape(-1, 1) / float(m)
+    coeff = torch.linalg.solve(gram, rhs)
+    return coeff.square().sum().to(err.dtype)
 
 @dataclass
 class GradNormWeights:
@@ -655,9 +686,20 @@ class SobolevLoss(nn.Module):
         laplacian_subset_size: int = 512,
         laplacian_n_hutchinson: int = 4,
         laplacian_mode: str = "diagnostic",
+        low_degree_lambda: float = 0.0,
+        low_degree_lmax: int = 25,
+        low_degree_alt_max_km: float = 400.0,
+        low_degree_radial_power: float = 0.0,
+        potential_metric_alt_max_km: float = 300.0,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """
         Compute the staged Sobolev objective and its reference metrics.
+
+        The low-degree leakage term (``low_degree_lambda > 0``) penalises the
+        projection of the potential error, divided by ``rho**low_degree_radial_power``,
+        onto the harmonics of degree ``<= low_degree_lmax`` (see
+        :func:`low_degree_leakage`). It is always computed on validation
+        batches so arms with and without the term report the same diagnostic.
 
         ``accel_factor`` affects only the optimisation loss returned as the
         first tuple item. The stats dictionary additionally contains
@@ -681,7 +723,8 @@ class SobolevLoss(nn.Module):
         delta_u_scaled_pred = model(x_scaled)
 
         delta_u_scaled_true = self.scale_u(delta_u_true)
-        delta_u_sample_sq = (delta_u_scaled_pred - delta_u_scaled_true).squeeze(-1) ** 2
+        delta_u_scaled_err = (delta_u_scaled_pred - delta_u_scaled_true).squeeze(-1)
+        delta_u_sample_sq = delta_u_scaled_err ** 2
         mse_u = self._maybe_balance(
             delta_u_sample_sq,
             x_phys,
@@ -880,8 +923,47 @@ class SobolevLoss(nn.Module):
             else:
                 loss_lap_diag = loss_lap_val
 
+        # Low-altitude potential error in m²/s² (sums, so the engine can pool
+        # them over the epoch). Below a few hundred km this error sets the
+        # orbit-energy and hence along-track error of the propagation.
+        r_norm_all = torch.linalg.norm(x_phys, dim=-1)
+        alt_km_all = (r_norm_all - self.r_ref_m) / 1000.0
+        with torch.no_grad():
+            u_low_mask = alt_km_all < float(potential_metric_alt_max_km)
+            u_err_phys = delta_u_scaled_err.detach() * self.u_scale.squeeze(0)
+            _u_low_diag = torch.stack(
+                [u_err_phys[u_low_mask].double().square().sum(), u_low_mask.double().sum()]
+            ).cpu().tolist()
+        u_low_sq_sum_val = float(_u_low_diag[0])
+        u_low_count_val = float(_u_low_diag[1])
+
+        low_degree_lambda = float(max(0.0, low_degree_lambda))
+        loss_low_t: torch.Tensor | None = None
+        loss_low_val = 0.0
+        if low_degree_lambda > 0.0 or not is_train:
+            ld_mask = alt_km_all < float(low_degree_alt_max_km)
+            r_ld = r_norm_all[ld_mask].clamp_min(1e-9)
+            err_ld = delta_u_scaled_err[ld_mask]
+            if float(low_degree_radial_power) > 0.0:
+                err_ld = err_ld / (self.r_ref_m / r_ld).pow(float(low_degree_radial_power))
+            if low_degree_lambda > 0.0 and is_train:
+                loss_low_t = low_degree_leakage(err_ld, x_phys[ld_mask] / r_ld.unsqueeze(-1), low_degree_lmax)
+                loss_low_val = float(loss_low_t.detach().cpu().item())
+            else:
+                with torch.no_grad():
+                    loss_low_val = float(
+                        low_degree_leakage(
+                            err_ld.detach(), x_phys[ld_mask] / r_ld.unsqueeze(-1), low_degree_lmax
+                        ).cpu().item()
+                    )
+
         loss_ref = (w_u * mse_u) + (w_a * mse_a)
         loss_opt = (w_u * mse_u) + (effective_w_a * mse_a)
+        if loss_low_t is not None:
+            loss_ref = loss_ref + (low_degree_lambda * loss_low_t)
+            loss_opt = loss_opt + (low_degree_lambda * loss_low_t)
+        elif low_degree_lambda > 0.0:
+            loss_ref = loss_ref + low_degree_lambda * loss_low_val
         if dir_loss_active and loss_dir_t is not None:
             loss_ref = loss_ref + (lambda_dir * loss_dir_t)
             loss_opt = loss_opt + (lambda_dir * loss_dir_t)
@@ -923,6 +1005,9 @@ class SobolevLoss(nn.Module):
             "rel_a_mean": rel_a_mean_val,
             "wtz_frac": wtz_frac_val,
             "accel_sq_err": accel_sq_err_val,
+            "loss_low_degree": loss_low_val,
+            "u_low_sq_sum": u_low_sq_sum_val,
+            "u_low_count": u_low_count_val,
             # Laplacian metrics are mean((∇²U_phys)²) in PHYSICAL units [s⁻⁴]
             # (∇²U_phys in s⁻²), consistent with collocation_laplacian_loss (R25).
             "loss_laplacian": loss_lap_val,

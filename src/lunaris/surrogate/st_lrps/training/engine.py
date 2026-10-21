@@ -633,6 +633,9 @@ class _EpochState:
     total_rel_a_mean: float = 0.0
     total_wtz_frac: float = 0.0
     total_accel_sq_err: float = 0.0
+    total_low_degree: float = 0.0
+    total_u_low_sq: float = 0.0
+    total_u_low_count: float = 0.0
     total_a_norm_mean: float = 0.0
     total_angular_mean_deg: float = 0.0
     total_col_lap_diag: float = 0.0
@@ -1005,6 +1008,11 @@ class STLRPSTrainer:
                 laplacian_subset_size=int(self.cfg.laplacian_subset_size),
                 laplacian_n_hutchinson=int(getattr(self.cfg, "n_hutchinson_samples", 4)),
                 laplacian_mode=self.laplacian_mode,
+                low_degree_lambda=float(getattr(self.cfg, "low_degree_loss_weight", 0.0)),
+                low_degree_lmax=int(getattr(self.cfg, "low_degree_lmax", 25)),
+                low_degree_alt_max_km=float(getattr(self.cfg, "low_degree_alt_max_km", 400.0)),
+                low_degree_radial_power=_low_degree_radial_power(self.cfg),
+                potential_metric_alt_max_km=float(getattr(self.cfg, "potential_metric_alt_max_km", 300.0)),
             )
 
     def _validate_numerics(
@@ -1058,6 +1066,8 @@ class STLRPSTrainer:
             "grad_norm": 0.0,
             "nan_detected": True,
             "accel_rmse_m_s2": float("nan"),
+            "u_low_rmse_m2_s2": float("nan"),
+            "loss_low_degree": float("nan"),
             "val_base_loss": float("nan"),
             "val_physics_loss": float("nan"),
             "val_total_loss": float("nan"),
@@ -1245,6 +1255,9 @@ class STLRPSTrainer:
         state.total_rel_a_mean += float(stats.get("rel_a_mean", 0.0)) * n_b
         state.total_wtz_frac += float(stats.get("wtz_frac", 0.0)) * n_b
         state.total_accel_sq_err += float(stats.get("accel_sq_err", 0.0)) * n_b
+        state.total_low_degree += float(stats.get("loss_low_degree", 0.0)) * n_b
+        state.total_u_low_sq += float(stats.get("u_low_sq_sum", 0.0))
+        state.total_u_low_count += float(stats.get("u_low_count", 0.0))
         a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
         state.total_a_norm_mean += a_norm_b * n_b
         state.a_norm_max = max(state.a_norm_max, a_norm_b)
@@ -1391,6 +1404,12 @@ class STLRPSTrainer:
             "wtz_frac": state.total_wtz_frac / samples_safe,
             # Unweighted residual-acceleration RMS over the epoch's samples [m/s²].
             "accel_rmse_m_s2": math.sqrt(max(0.0, state.total_accel_sq_err / samples_safe)),
+            # Unweighted residual-potential RMS below potential_metric_alt_max_km [m²/s²].
+            "u_low_rmse_m2_s2": (
+                math.sqrt(state.total_u_low_sq / state.total_u_low_count)
+                if state.total_u_low_count > 0 else float("nan")
+            ),
+            "loss_low_degree": state.total_low_degree / samples_safe,
             "loss_laplacian_diag": col_lap_diag_avg,
             "loss_laplacian_train": col_lap_train_avg,
             "lambda_laplacian_eff": col_lap_weight_eff,
@@ -1421,9 +1440,18 @@ def _lr_multiplier_for_epoch(
     warmup_epochs: int,
     min_lr_ratio: float,
     t_max: int | None,
+    schedule: str = "cosine",
+    decay_fraction: float = 0.2,
 ) -> float:
     """
-    Warm up linearly, then decay with a cosine schedule to ``min_lr_ratio``.
+    Warm up linearly, then decay to ``min_lr_ratio``.
+
+    ``"cosine"`` decays with a cosine over ``t_max``. ``"wsd"``
+    (warmup-stable-decay) holds the base LR and spends the last
+    ``decay_fraction`` of the post-warm-up epochs in a ``1 - sqrt(progress)``
+    cooldown that reaches ``min_lr_ratio`` on the final epoch; ``t_max`` is
+    ignored. A WSD run of any length ends annealed, so short runs of different
+    lengths are compared at the same point of their schedule.
     """
 
     epoch_i = max(0, int(epoch))
@@ -1434,12 +1462,39 @@ def _lr_multiplier_for_epoch(
     if warmup_i > 0 and epoch_i < warmup_i:
         return float((epoch_i + 1) / warmup_i)
 
+    if schedule == "wsd":
+        post = max(1, total_i - warmup_i)
+        n_decay = max(1, min(post, int(round(float(decay_fraction) * post))))
+        decay_start = total_i - n_decay
+        if epoch_i < decay_start:
+            return 1.0
+        progress = min(1.0, (epoch_i - decay_start + 1) / float(n_decay))
+        return float(min_ratio + (1.0 - min_ratio) * (1.0 - math.sqrt(progress)))
+    if schedule != "cosine":
+        raise ValueError(f"lr schedule must be 'cosine' or 'wsd', got {schedule!r}")
+
     decay_total = int(t_max) if t_max is not None else total_i
     decay_total = max(warmup_i + 1, decay_total)
     denom = max(1, decay_total - warmup_i - 1)
     progress = min(1.0, max(0.0, (epoch_i - warmup_i) / float(denom)))
     cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
     return float(min_ratio + (1.0 - min_ratio) * cosine)
+
+def _low_degree_radial_power(cfg: Any) -> float:
+    """Radial normalisation power of the leakage projection.
+
+    The output-envelope power when an envelope is used (the projection then
+    acts on the backbone's own output space), else ``degree_min + 1``.
+    """
+    p = float(getattr(cfg, "output_envelope_power", 0.0) or 0.0)
+    if p > 0.0:
+        return p
+    degree_min = getattr(cfg, "degree_min", None)
+    return float(int(degree_min) + 1) if degree_min is not None and int(degree_min) >= 0 else 0.0
+
+def _lr_schedule_kind(cfg: Any) -> str:
+    """Manifest/checkpoint name of the configured LR schedule."""
+    return "warmup_stable_decay" if str(getattr(cfg, "lr_schedule_mode", "cosine")) == "wsd" else "warmup_cosine"
 
 def _apply_lr_multiplier(optimizer: torch.optim.Optimizer, multiplier: float) -> None:
     for group in optimizer.param_groups:
@@ -2165,6 +2220,7 @@ def _fit_residual_scalers(
             target_scale_multiplier=float(getattr(cfg, "target_scale_multiplier", 6.0)),
             target_contract=target_contract,
             indices=(None if independent_val else train_indices),
+            u_center=str(getattr(cfg, "u_center", "mean")),
             split_provenance=scaler_split_provenance,
             gravity_model=_maybe_load_baseline_gravity_model(meta, target_contract),
         )
@@ -3026,7 +3082,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             "use_radial_separation", "radial_append_raw",
             "use_radial_decay_encoding", "radial_decay_max_power", "radial_decay_append_raw",
             "use_real_sh_basis", "real_sh_degree", "real_sh_append_raw", "real_sh_include_radial",
-            "u_scale_mode", "a_scale_mode", "target_scale_multiplier",
+            "u_scale_mode", "u_center", "a_scale_mode", "target_scale_multiplier",
             "use_si", "dataset_name", "split_seed", "val_ratio", "seed",
         )
         _locked_changed = []
@@ -3569,7 +3625,8 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             "x_mean_policy": "origin_fixed",
             "x_scale_policy": "max_norm_from_origin",
             "lr_schedule": {
-                "kind": "warmup_cosine",
+                "kind": _lr_schedule_kind(cfg),
+                "lr_decay_fraction": float(getattr(cfg, "lr_decay_fraction", 0.2)),
                 "warmup_epochs": int(cfg.warmup_epochs),
                 "min_lr_ratio": float(cfg.min_lr_ratio),
                 "t_max": (int(cfg.t_max) if cfg.t_max is not None else None),
@@ -4049,6 +4106,8 @@ def _run_training_loop(session: _TrainingSession) -> str:
                 warmup_epochs=cfg.warmup_epochs,
                 min_lr_ratio=cfg.min_lr_ratio,
                 t_max=cfg.t_max,
+                schedule=str(getattr(cfg, "lr_schedule_mode", "cosine")),
+                decay_fraction=float(getattr(cfg, "lr_decay_fraction", 0.2)),
             )
             _apply_lr_multiplier(opt, lr_scale)
             _ldir_log = _direction_loss_factor(epoch, cfg)
@@ -4158,7 +4217,7 @@ def _run_training_loop(session: _TrainingSession) -> str:
             ckpt_config["epochs_since_improvement"] = int(epochs_without_improve)
 
             scheduler_state = {
-                "kind": "warmup_cosine",
+                "kind": _lr_schedule_kind(cfg),
                 "epoch": int(epoch),
                 "warmup_epochs": int(cfg.warmup_epochs),
                 "min_lr_ratio": float(cfg.min_lr_ratio),
