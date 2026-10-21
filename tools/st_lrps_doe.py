@@ -112,9 +112,9 @@ FACTORS: tuple[Factor, ...] = (
          "--laplacian-every-n-batches", "4"),
         "The residual potential is harmonic; the shipped model violates Laplace by "
         "~0.6% at 100-150 km. Mean lap^2 is 8.8e-23 s^-4 on the 40-epoch H1 checkpoint "
-        "(total loss 3e-6) and 6.2e-24 on Plan D (7e-8). At 1e16 the penalty is 29% "
-        "(screening) and 89% (converged) of the loss on the batches where it is applied, "
-        "i.e. ~7% and ~22% averaged over every 4th batch.",
+        "(total loss 3e-6) and 6.2e-24 on Plan D (7e-8). At 1e16 the penalty is 0.29x "
+        "(screening) and 0.89x (converged) the rest of the loss on the batches where it is "
+        "applied (23% and 47% of their total), ~7% and ~19% averaged over every 4th batch.",
     ),
     Factor(
         "F", "altitude_balance",
@@ -357,22 +357,44 @@ def _is_complete(run_dir: Path, epochs: int = FIDELITY_EPOCHS) -> bool:
 FLAGS_FILE = "doe_flags.json"
 
 
-def _recorded_flags(run_dir: Path) -> list[str] | None:
+def _launch_record(run: Run, data_dir: Path) -> dict:
+    return {"flags": list(run.flags), "data_dir": str(Path(data_dir).resolve())}
+
+
+def _recorded_launch(run_dir: Path) -> dict | None:
     path = run_dir / FLAGS_FILE
     if not path.is_file():
         return None
-    return list(json.loads(path.read_text(encoding="utf-8")))
+    rec = json.loads(path.read_text(encoding="utf-8"))
+    return rec if isinstance(rec, dict) else None
 
 
-def plan_launch(run: Run, run_dir: Path) -> str:
+def resume_command(run: Run, data_dir: Path, run_dir: Path) -> list[str]:
+    """Resume with every design flag repeated.
+
+    The trainer locks only architecture and scaler fields on resume; loss
+    weights, schedule and batch caps come from this command line, so a bare
+    ``--resume-from`` would finish the run with defaults and corrupt the design
+    point. ``--out`` is replaced by ``--resume-from``.
+    """
+    data = [tok for flag, fname in DATA_FILES.items() for tok in (flag, str(Path(data_dir) / fname))]
+    return [sys.executable, "-m", TRAIN_MODULE, *data, *run.flags,
+            "--resume-from", str(run_dir), "--epochs", str(FIDELITY_EPOCHS)]
+
+
+def plan_launch(run: Run, run_dir: Path, data_dir: Path | None = None) -> str:
     """``"skip"``, ``"resume"``, ``"start"`` or ``"stale"`` for one screening run.
 
     A run directory is reused only if it was launched with exactly this run's
-    flags (recorded in ``doe_flags.json`` at launch); anything else is stale.
+    flags and data directory (recorded in ``doe_flags.json`` at launch);
+    anything else is stale.
     """
     if not run_dir.exists():
         return "start"
-    if _recorded_flags(run_dir) != list(run.flags):
+    rec = _recorded_launch(run_dir)
+    if rec is None or rec.get("flags") != list(run.flags):
+        return "stale"
+    if data_dir is not None and rec.get("data_dir") != str(Path(data_dir).resolve()):
         return "stale"
     if _is_complete(run_dir):
         return "skip"
@@ -457,18 +479,28 @@ def lenth_margin_t(n_contrasts: int) -> float:
     return float(student_t.ppf(0.975, max(1.0, n_contrasts / 3.0)))
 
 
-def _arc_proxy_rms(run_dir: Path, proxy: Path, device: str) -> float:
-    """RMS predicted along-track error [m] from tools/st_lrps_arc_proxy.py, cached per run."""
-    cache = run_dir / "evals" / "arc_proxy.json"
-    if cache.is_file():
-        rep = json.loads(cache.read_text(encoding="utf-8"))
-        if Path(rep["summary"].get("proxy_dir", "")) == Path(proxy):
-            return float(rep["summary"]["rms_along_track_m"])
+def _arc_proxy_module():
     spec = importlib.util.spec_from_file_location("st_lrps_arc_proxy", REPO_ROOT / "tools" / "st_lrps_arc_proxy.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    rep = module.score_run(Path(proxy), run_dir, device)
+    return module
+
+
+def _arc_proxy_rms(run_dir: Path, proxy: Path, device: str, prefer: str = "last") -> float:
+    """RMS predicted along-track error [m] of the ``prefer`` checkpoint, cached per run.
+
+    The cache is reused only for the same proxy content (manifest hash) and
+    the same checkpoint file (name, size and mtime).
+    """
+    module = _arc_proxy_module()
+    key = module.cache_key(Path(proxy), Path(run_dir), prefer)
+    cache = run_dir / "evals" / f"arc_proxy_{prefer}.json"
+    if cache.is_file():
+        rep = json.loads(cache.read_text(encoding="utf-8"))
+        if rep["summary"].get("cache_key") == key:
+            return float(rep["summary"]["rms_along_track_m"])
+    rep = module.score_run(Path(proxy), run_dir, device, prefer=prefer)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(rep, indent=1), encoding="utf-8")
     return float(rep["summary"]["rms_along_track_m"])
@@ -503,7 +535,10 @@ def analyze(
         for key, _ in RESPONSES:
             entry[key] = pick.get(key)
         if arc_proxy and entry["status"] == "complete":
-            entry["arc_proxy_rms_m"] = _arc_proxy_rms(out_root / r.name, Path(arc_proxy), device)
+            # Score the checkpoint the other responses describe.
+            entry["arc_proxy_rms_m"] = _arc_proxy_rms(
+                out_root / r.name, Path(arc_proxy), device, "last" if at == "final" else "best"
+            )
         rows.append(entry)
 
     design_rows = [
@@ -652,7 +687,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(subprocess.list2cmdline(cmd))
                 continue
             run_dir = a.out_root / r.name
-            action = plan_launch(r, run_dir)
+            action = plan_launch(r, run_dir, a.data_dir)
             if action == "skip":
                 print(f"[skip] {r.name} (complete, same flags)")
                 continue
@@ -661,11 +696,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                       f"(or has no checkpoint to resume); move it away and rerun.")
                 return 2
             if action == "resume":
-                cmd = [sys.executable, "-m", TRAIN_MODULE, "--resume-from", str(run_dir),
-                       "--epochs", str(FIDELITY_EPOCHS)]
+                cmd = resume_command(r, a.data_dir, run_dir)
             else:
                 run_dir.mkdir(parents=True, exist_ok=True)
-                (run_dir / FLAGS_FILE).write_text(json.dumps(list(r.flags)), encoding="utf-8")
+                (run_dir / FLAGS_FILE).write_text(
+                    json.dumps(_launch_record(r, a.data_dir)), encoding="utf-8"
+                )
             print(f"[{action}] {r.name}  (log: {a.out_root / (r.name + '.log')})", flush=True)
             a.out_root.mkdir(parents=True, exist_ok=True)
             with open(a.out_root / f"{r.name}.log", "a", encoding="utf-8") as log:

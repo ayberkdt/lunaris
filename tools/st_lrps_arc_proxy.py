@@ -89,6 +89,12 @@ def along_track_unit(r: np.ndarray, v: np.ndarray) -> np.ndarray:
     return np.cross(c / np.linalg.norm(c), r_hat)
 
 
+def half_grid_keep(n_half: int) -> int:
+    """Largest length <= n_half that is 1 mod 4: an odd half-step grid whose
+    every-other subgrid is also odd (Simpson on the full step, mid-steps for RK4)."""
+    return n_half - ((n_half - 1) % 4)
+
+
 def simpson_weights(n: int, h: float) -> np.ndarray:
     """Composite Simpson weights for n (odd) uniformly spaced samples."""
     if n < 3 or n % 2 == 0:
@@ -143,10 +149,10 @@ def adjoint_velocity_sensitivity(gradients_half: np.ndarray, c: np.ndarray, h: f
 def _sh_eval(xyz: np.ndarray, tables: tuple, nmax: int, nmin: int) -> tuple[np.ndarray, np.ndarray]:
     from lunaris.physics.spherical_harmonics import sh_potential_accel_batch_serial
 
-    C, S, a_nm, b_nm, diag_f, subdiag_f, k_ratio = tables
+    C, S, a_nm, b_nm, diag_f, subdiag_f, k_ratio, mu, r_ref = tables
     u, a = sh_potential_accel_batch_serial(
         np.ascontiguousarray(xyz, dtype=np.float64), C, S, a_nm, b_nm, diag_f, subdiag_f, k_ratio,
-        MU_SI, R_REF_M, nmax, nmin,
+        mu, r_ref, nmax, nmin,
     )
     return np.asarray(u).reshape(-1), np.asarray(a).reshape(-1, 3)
 
@@ -185,19 +191,24 @@ def build(args: argparse.Namespace) -> int:
     ids = ids[args.orbit_offset : args.orbit_offset + args.orbits]
     if not ids:
         raise SystemExit(f"no scenario_*.npz under {series}")
-    C, S, _ = load_coeffs_from_ssot(degree_max=args.ref_degree, gfc_path=None)
-    tables = (C, S, *precompute_legendre_constants(args.ref_degree))
+    C, S, coeff_meta = load_coeffs_from_ssot(degree_max=args.ref_degree, gfc_path=None)
+    mu = float(coeff_meta.get("mu_si", MU_SI))
+    r_ref = float(coeff_meta.get("r_ref_m", R_REF_M))
+    tables = (C, S, *precompute_legendre_constants(args.ref_degree), mu, r_ref)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     rows = []
     for sid in ids:
         t0 = time.time()
         z = np.load(series / f"scenario_{sid:06d}.npz", allow_pickle=True)
+        frame = str(z["frame_mode"].item()) if "frame_mode" in z.files else "missing"
+        if frame != "moon_fixed_ephemeris":
+            raise SystemExit(f"scenario {sid}: frame_mode {frame!r}; the proxy needs moon_fixed_ephemeris caches")
         t, r, v = (z[k].astype(np.float64) for k in ("t", "position", "velocity"))
         # Half-step grid for the adjoint's mid-step gradients; the quadrature
         # grid is every other sample and needs an odd count (Simpson).
         th, rh, vh = hermite_resample(t, r, v, 0.5 * args.step)
-        keep = len(th) if (len(th) - 1) % 4 == 0 else len(th) - ((len(th) - 1) % 4)
+        keep = half_grid_keep(len(th))
         th, rh, vh = th[:keep], rh[:keep], vh[:keep]
         rot_h = np.stack([quat_to_matrix(ephem.get_inertial_to_fixed_rotation(float(x))) for x in th])
         r_fix_h = np.einsum("nij,nj->ni", rot_h, rh)
@@ -210,7 +221,7 @@ def build(args: argparse.Namespace) -> int:
         np.savez_compressed(
             out / f"orbit_{sid:06d}.npz",
             r_fix=r_fix, a_true=a_true, weight=w_fix.astype(np.float64),
-            hp_km=float(np.min(np.linalg.norm(rr, axis=1)) - R_REF_M) / 1e3,
+            hp_km=float(np.min(np.linalg.norm(rr, axis=1)) - r_ref) / 1e3,
         )
         rows.append({"sid": sid, "points": len(tt), "seconds": round(time.time() - t0, 1)})
         print(f"orbit {sid:4d}: {len(tt)} points ({time.time() - t0:.1f} s)", flush=True)
@@ -235,13 +246,25 @@ def score_arrays(a_model: np.ndarray, a_true: np.ndarray, weight: np.ndarray) ->
     return float(np.sum(weight * (np.asarray(a_model, dtype=np.float64) - a_true)))
 
 
-def score_run(proxy: Path, run_dir: Path, device: str = "cuda") -> dict:
-    """Per-orbit predicted along-track errors and their summary for one run."""
+def cache_key(proxy: Path, run_dir: Path, prefer: str) -> str:
+    """Identity of a score: proxy manifest content and the scored checkpoint file."""
+    import hashlib
+
+    manifest = (Path(proxy) / "proxy_manifest.json").read_bytes()
+    ckpt = Path(run_dir) / "checkpoints" / f"ckpt_{prefer}.pt"
+    stat = ckpt.stat() if ckpt.is_file() else None
+    ident = f"{hashlib.sha256(manifest).hexdigest()}|{ckpt.name}|"
+    ident += f"{stat.st_size}|{stat.st_mtime_ns}" if stat else "missing"
+    return hashlib.sha256(ident.encode("utf-8")).hexdigest()
+
+
+def score_run(proxy: Path, run_dir: Path, device: str = "cuda", prefer: str = "best") -> dict:
+    """Per-orbit predicted along-track errors and their summary for one checkpoint of a run."""
     from lunaris.surrogate.st_lrps.runtime.canonical_runtime import load_surrogate_force_model
 
     proxy = Path(proxy)
     manifest = json.loads((proxy / "proxy_manifest.json").read_text(encoding="utf-8"))
-    rt = load_surrogate_force_model(Path(run_dir), device=device)
+    rt = load_surrogate_force_model(Path(run_dir), device=device, prefer=prefer)
     rows = []
     files = sorted(proxy.glob("orbit_*.npz"))
     for i, p in enumerate(files, start=1):
@@ -252,7 +275,8 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda") -> dict:
                      "along_track_m": score_arrays(a_nn, z["a_true"], z["weight"])})
     s = np.array([r["along_track_m"] for r in rows])
     summary = {
-        "run_dir": str(run_dir), "proxy_dir": str(proxy), "orbits": len(rows),
+        "run_dir": str(run_dir), "proxy_dir": str(proxy), "checkpoint": prefer,
+        "cache_key": cache_key(proxy, Path(run_dir), prefer), "orbits": len(rows),
         "duration_days": manifest["duration_s"] / 86400.0,
         "rms_along_track_m": float(math.sqrt(np.mean(s**2))),
         "median_abs_along_track_m": float(np.median(np.abs(s))),
@@ -263,7 +287,7 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda") -> dict:
 
 
 def score(args: argparse.Namespace) -> int:
-    report = score_run(Path(args.proxy), Path(args.run_dir), args.device)
+    report = score_run(Path(args.proxy), Path(args.run_dir), args.device, prefer=args.checkpoint)
     summary = report["summary"]
     out = Path(args.out) if args.out else Path(args.run_dir) / "evals" / "arc_proxy.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -291,6 +315,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     s.add_argument("--proxy", required=True)
     s.add_argument("--run-dir", required=True)
     s.add_argument("--device", default="cuda")
+    s.add_argument("--checkpoint", default="best", choices=["best", "last"])
     s.add_argument("--out", default=None)
     a = ap.parse_args(argv)
     return build(a) if a.cmd == "build" else score(a)

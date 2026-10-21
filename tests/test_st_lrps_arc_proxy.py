@@ -93,6 +93,36 @@ def test_simpson_weights_integrate_cubics_exactly_and_need_an_odd_count():
         ap.simpson_weights(20, 0.1)
 
 
+def test_quaternion_matrix_matches_the_repository_rotation_convention():
+    from lunaris.common.math_utils import quat_rotate_np
+
+    q = np.array([0.9, 0.1, -0.3, 0.2])
+    q /= np.linalg.norm(q)
+    v = np.array([1.0, -2.0, 0.5])
+    np.testing.assert_allclose(ap.quat_to_matrix(q) @ v, quat_rotate_np(q, v), atol=1e-14)
+
+
+@pytest.mark.parametrize("n", range(5, 60))
+def test_half_grid_keep_gives_odd_grids_for_simpson_and_rk4(n):
+    keep = ap.half_grid_keep(n)
+    assert n - 3 <= keep <= n and keep % 4 == 1
+    assert len(range(0, keep, 2)) % 2 == 1
+
+
+def test_cache_key_tracks_the_proxy_and_the_checkpoint(tmp_path):
+    proxy = tmp_path / "proxy"
+    proxy.mkdir()
+    (proxy / "proxy_manifest.json").write_text('{"step_s": 5}', encoding="utf-8")
+    run = tmp_path / "run"
+    (run / "checkpoints").mkdir(parents=True)
+    (run / "checkpoints" / "ckpt_last.pt").write_bytes(b"a")
+    k1 = ap.cache_key(proxy, run, "last")
+    assert ap.cache_key(proxy, run, "last") == k1
+    (proxy / "proxy_manifest.json").write_text('{"step_s": 10}', encoding="utf-8")
+    assert ap.cache_key(proxy, run, "last") != k1
+    assert ap.cache_key(proxy, run, "best") != ap.cache_key(proxy, run, "last")
+
+
 def test_quaternion_matrix_is_a_rotation():
     q = np.array([0.9, 0.1, -0.3, 0.2])
     q /= np.linalg.norm(q)

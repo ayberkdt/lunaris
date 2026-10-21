@@ -150,20 +150,37 @@ def test_incomplete_designs_are_not_analysed(tmp_path):
 def test_launch_plan_reuses_only_runs_with_identical_flags(tmp_path):
     run = doe.design_runs("phase1")[0]
     run_dir = tmp_path / run.name
-    assert doe.plan_launch(run, run_dir) == "start"
+    data = tmp_path / "data"
+    assert doe.plan_launch(run, run_dir, data) == "start"
     run_dir.mkdir()
-    assert doe.plan_launch(run, run_dir) == "stale"          # no flag record
-    (run_dir / doe.FLAGS_FILE).write_text(json.dumps(list(run.flags)), encoding="utf-8")
-    assert doe.plan_launch(run, run_dir) == "stale"          # nothing to resume from
+    assert doe.plan_launch(run, run_dir, data) == "stale"    # no launch record
+    (run_dir / doe.FLAGS_FILE).write_text(json.dumps(doe._launch_record(run, data)), encoding="utf-8")
+    assert doe.plan_launch(run, run_dir, data) == "stale"    # nothing to resume from
     (run_dir / "checkpoints").mkdir()
     (run_dir / "checkpoints" / "ckpt_last.pt").write_bytes(b"x")
-    assert doe.plan_launch(run, run_dir) == "resume"
+    assert doe.plan_launch(run, run_dir, data) == "resume"
+    assert doe.plan_launch(run, run_dir, tmp_path / "other_data") == "stale"
     (run_dir / "history.jsonl").write_text(
         "\n".join(json.dumps({"epoch": e}) for e in range(doe.FIDELITY_EPOCHS)), encoding="utf-8"
     )
-    assert doe.plan_launch(run, run_dir) == "skip"
-    (run_dir / doe.FLAGS_FILE).write_text(json.dumps(list(run.flags) + ["--x"]), encoding="utf-8")
-    assert doe.plan_launch(run, run_dir) == "stale"
+    assert doe.plan_launch(run, run_dir, data) == "skip"
+    record = doe._launch_record(run, data)
+    record["flags"] = record["flags"] + ["--x"]
+    (run_dir / doe.FLAGS_FILE).write_text(json.dumps(record), encoding="utf-8")
+    assert doe.plan_launch(run, run_dir, data) == "stale"
+
+
+def test_resume_repeats_every_design_flag(monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    from lunaris.surrogate.st_lrps.training.config import parse_args
+
+    run = next(r for r in doe.design_runs("phase1") if r.levels["C"] > 0 and r.levels["E"] > 0)
+    cmd = doe.resume_command(run, tmp_path / "data", tmp_path / run.name)
+    assert "--out" not in cmd and cmd[cmd.index("--resume-from") + 1] == str(tmp_path / run.name)
+    monkeypatch.setattr(sys, "argv", ["lunaris-train", *cmd[3:]])
+    cfg = parse_args()
+    assert cfg.low_degree_loss_weight == 100.0 and cfg.laplacian_mode == "train"
+    assert (cfg.max_train_batches, cfg.lr_schedule_mode, cfg.epochs) == (488, "wsd", doe.FIDELITY_EPOCHS)
 
 
 def test_lenth_margin_matches_the_published_critical_values():
@@ -212,8 +229,15 @@ def test_arc_proxy_becomes_the_primary_response(monkeypatch, tmp_path):
             continue
         _write_history(tmp_path / run.name, 1e-3 * (1.0 + _noise(run.name)), epochs=doe.FIDELITY_EPOCHS)
         planted[run.name] = 10.0 ** (-1.0 - 0.25 * run.levels["B"] + _noise(run.name))
-    monkeypatch.setattr(doe, "_arc_proxy_rms", lambda run_dir, proxy, device: planted[Path(run_dir).name])
+    seen = set()
+
+    def fake(run_dir, proxy, device, prefer):
+        seen.add(prefer)
+        return planted[Path(run_dir).name]
+
+    monkeypatch.setattr(doe, "_arc_proxy_rms", fake)
     report = doe.analyze(tmp_path, "all", "final", arc_proxy=tmp_path / "proxy")
     assert report["primary_response"] == "arc_proxy_rms_m"
     assert report["effects"]["arc_proxy_rms_m"]["effects"]["B"] == pytest.approx(-0.5, abs=0.02)
     assert report["recommended_levels"]["B"] == +1
+    assert seen == {"last"}       # --at final scores the final checkpoint

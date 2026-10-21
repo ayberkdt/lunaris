@@ -1448,6 +1448,7 @@ class STLRPSTrainer:
             "arc_s_rms_m": (
                 math.sqrt(state.total_arc_sq / state.arc_terms) if state.arc_terms > 0 else float("nan")
             ),
+            "low_degree_batches": int(state.low_degree_batches),
             "loss_low_degree": (
                 state.total_low_degree / state.low_degree_batches
                 if state.low_degree_batches > 0 else float("nan")
@@ -4154,6 +4155,18 @@ def _run_training_loop(session: _TrainingSession) -> str:
             if _ldir_log > 0.0 or epoch == cfg.direction_loss_start_epoch:
                 logger.info("[epoch %s] effective lambda_dir=%.4e", epoch+1, _ldir_log)
             tr = trainer.run_epoch(train_loader, is_train=True,  epoch=epoch, max_batches=cfg.max_train_batches)
+            if (
+                float(getattr(cfg, "low_degree_loss_weight", 0.0) or 0.0) > 0.0
+                and int(tr.get("low_degree_batches", 0) or 0) == 0
+                and not tr.get("nan_detected", False)
+            ):
+                raise RuntimeError(
+                    "--low-degree-loss-weight > 0 but the leakage term did not apply on any "
+                    f"training batch of epoch {epoch + 1}: no batch had 2 x 4 x (lmax+1)^2 = "
+                    f"{8 * (int(cfg.low_degree_lmax) + 1) ** 2} samples below "
+                    f"{cfg.low_degree_alt_max_km} km. Lower --low-degree-lmax or raise "
+                    "--low-degree-alt-max-km / --batch-size."
+                )
             _total_train_samples += int(tr.get("samples_seen", 0))
 
             # Epoch-level explosion detection: save failure manifest and stop on NaN.

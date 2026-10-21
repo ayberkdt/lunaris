@@ -1014,10 +1014,10 @@ class SobolevLoss(nn.Module):
         r_norm_all = torch.linalg.norm(x_phys, dim=-1)
         alt_km_all = (r_norm_all - self.r_ref_m) / 1000.0
         with torch.no_grad():
-            u_low_mask = alt_km_all < float(potential_metric_alt_max_km)
-            u_err_phys = delta_u_scaled_err.detach() * self.u_scale.squeeze(0)
-            u_low_sq_sum_t = u_err_phys[u_low_mask].square().sum()
-            u_low_count_t = u_low_mask.sum().to(u_low_sq_sum_t.dtype)
+            u_low_mask = (alt_km_all < float(potential_metric_alt_max_km)).double()
+            u_err_phys = delta_u_scaled_err.detach().double() * float(self.u_scale.squeeze(0))
+            u_low_sq_sum_t = (u_err_phys.square() * u_low_mask).sum()
+            u_low_count_t = u_low_mask.sum()
 
         low_degree_lambda = float(max(0.0, low_degree_lambda))
         if low_degree_lambda > 0.0 and int(low_degree_lmax) <= 0:
@@ -1059,9 +1059,10 @@ class SobolevLoss(nn.Module):
         _loss_diag = torch.stack(
             [
                 loss_ref.detach(), loss_opt.detach(), mse_u.detach(), mse_a.detach(),
-                u_low_sq_sum_t.to(mse_u.dtype), u_low_count_t.to(mse_u.dtype), _low.to(mse_u.dtype),
+                _low.to(mse_u.dtype),
             ]
         ).cpu().tolist()
+        _u_low = torch.stack([u_low_sq_sum_t, u_low_count_t]).cpu().tolist()
         stats = {
             "loss": float(_loss_diag[0]),
             "loss_ref": float(_loss_diag[0]),
@@ -1086,9 +1087,9 @@ class SobolevLoss(nn.Module):
             "rel_a_mean": rel_a_mean_val,
             "wtz_frac": wtz_frac_val,
             "accel_sq_err": accel_sq_err_val,
-            "loss_low_degree": (float(_loss_diag[6]) if loss_low_t is not None else None),
-            "u_low_sq_sum": float(_loss_diag[4]),
-            "u_low_count": float(_loss_diag[5]),
+            "loss_low_degree": (float(_loss_diag[4]) if loss_low_t is not None else None),
+            "u_low_sq_sum": float(_u_low[0]),
+            "u_low_count": float(_u_low[1]),
             # Laplacian metrics are mean((∇²U_phys)²) in PHYSICAL units [s⁻⁴]
             # (∇²U_phys in s⁻²), consistent with collocation_laplacian_loss (R25).
             "loss_laplacian": loss_lap_val,
