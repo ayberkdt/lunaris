@@ -219,6 +219,8 @@ def build(args: argparse.Namespace) -> int:
         "duration_s": float(tt[-1]), "orbits": rows,
         "quantity": "first-order along-track position error at the final time [m]",
     }, indent=1), encoding="utf-8")
+    print(f"wrote {len(rows)} orbit(s) to {out}. Next: python tools/st_lrps_arc_proxy.py score "
+          f"--proxy {out} --run-dir <training run>")
     return 0
 
 
@@ -240,7 +242,9 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda") -> dict:
     manifest = json.loads((proxy / "proxy_manifest.json").read_text(encoding="utf-8"))
     rt = load_surrogate_force_model(Path(run_dir), device=device)
     rows = []
-    for p in sorted(proxy.glob("orbit_*.npz")):
+    files = sorted(proxy.glob("orbit_*.npz"))
+    for i, p in enumerate(files, start=1):
+        print(f"scoring orbit {i}/{len(files)}", file=sys.stderr, flush=True)
         z = np.load(p)
         a_nn = np.asarray(rt.predict_residual_accel(z["r_fix"]), dtype=np.float64).reshape(-1, 3)
         rows.append({"sid": int(p.stem.split("_")[1]), "hp_km": float(z["hp_km"]),
@@ -264,13 +268,15 @@ def score(args: argparse.Namespace) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(json.dumps(summary, indent=1))
+    print(f"RMS predicted along-track error {summary['rms_along_track_m']:.3g} m over "
+          f"{summary['orbits']} orbit(s); per-orbit values in {out}")
     return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("build")
+    b = sub.add_parser("build", help="store reference arcs, true residual and adjoint weights")
     b.add_argument("--benchmark-dir", required=True)
     b.add_argument("--series", default="sh200", help="reference series under benchmark_cache/models")
     b.add_argument("--out", required=True)
@@ -278,7 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     b.add_argument("--step", type=float, default=5.0, help="resampling step [s]")
     b.add_argument("--base-degree", type=int, default=25)
     b.add_argument("--ref-degree", type=int, default=200)
-    s = sub.add_parser("score")
+    s = sub.add_parser("score", help="predicted along-track error of one training run")
     s.add_argument("--proxy", required=True)
     s.add_argument("--run-dir", required=True)
     s.add_argument("--device", default="cuda")

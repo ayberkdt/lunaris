@@ -166,6 +166,12 @@ def test_launch_plan_reuses_only_runs_with_identical_flags(tmp_path):
     assert doe.plan_launch(run, run_dir) == "stale"
 
 
+def test_lenth_margin_matches_the_published_critical_values():
+    # Lenth (1989): t_0.975 on m/3 df; 7 contrasts -> ~3.76, 15 contrasts -> ~2.57.
+    assert doe.lenth_margin_t(7) == pytest.approx(3.76, abs=0.02)
+    assert doe.lenth_margin_t(15) == pytest.approx(2.571, abs=0.002)
+
+
 def test_lenth_pse_ignores_one_active_effect():
     effects = [0.01, -0.02, 0.015, -0.01, 0.02, 1.0]
     assert doe.lenth_pse(effects) < 0.05

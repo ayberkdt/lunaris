@@ -450,7 +450,11 @@ def is_orthogonal(levels: list[dict[str, int]]) -> bool:
                for i, c1 in enumerate(cols) for c2 in cols[i + 1:])
 
 
-DECISION_T = 2.0
+def lenth_margin_t(n_contrasts: int) -> float:
+    """Lenth's individual 95% margin of error in PSE units: t_0.975 with m/3 df."""
+    from scipy.stats import t as student_t
+
+    return float(student_t.ppf(0.975, max(1.0, n_contrasts / 3.0)))
 
 
 def _arc_proxy_rms(run_dir: Path, proxy: Path, device: str) -> float:
@@ -524,6 +528,7 @@ def analyze(
         main = {k: contrasts[k] for k in FACTOR_KEYS}
         report["effects"][key] = {
             "log10": log,
+            "t_critical": lenth_margin_t(len(contrasts)),
             "effects": main,
             "alias_contrasts": {k: v for k, v in contrasts.items() if k not in FACTOR_KEYS},
             "lenth_pse": pse,
@@ -533,9 +538,9 @@ def analyze(
     primary = report["effects"].get(responses[0][0], {})
     report["primary_response"] = responses[0][0]
     if "effects" in primary:
-        # +1 / -1 only where |t| >= DECISION_T; 0 = no evidence either way.
+        # +1 / -1 only beyond Lenth's 95% margin of error; 0 = no evidence either way.
         report["recommended_levels"] = {
-            k: ((+1 if v < 0 else -1) if abs(primary["t_ratio"][k]) >= DECISION_T else 0)
+            k: ((+1 if v < 0 else -1) if abs(primary["t_ratio"][k]) >= primary["t_critical"] else 0)
             for k, v in primary["effects"].items()
         }
     return report
@@ -560,19 +565,20 @@ def _write_report(report: dict, out_root: Path) -> Path:
             continue
         scale = "log10" if block["log10"] else "linear"
         lines += [f"## {key} ({scale}); Lenth PSE {block['lenth_pse']:.3g} over "
-                  f"{len(block['effects']) + len(block['alias_contrasts'])} contrasts", ""]
+                  f"{len(block['effects']) + len(block['alias_contrasts'])} contrasts, "
+                  f"95% margin |t| >= {block['t_critical']:.2f}", ""]
         for f in FACTORS:
             e = block["effects"][f.key]
             t = block["t_ratio"][f.key]
             mult = block["multiplier_plus_vs_minus"]
             tail = f", x{mult[f.key]:.3g} going - to +" if mult else ""
-            flag = "  <- |t| >= 2" if abs(t) >= DECISION_T else ""
+            flag = "  <- beyond the 95% margin" if abs(t) >= block["t_critical"] else ""
             lines.append(f"- {f.key} {f.name}: effect {e:+.3g}, t {t:+.2f}{tail}{flag}")
         lines.append("")
     if report.get("recommended_levels"):
         rec = report["recommended_levels"]
         lines.append(f"Levels supported by the primary response {report.get('primary_response')} "
-                     "(|t| >= 2; '?' = no evidence): "
+                     "(beyond Lenth's 95% margin; '?' = no evidence): "
                      + ", ".join(f"{k}{'+' if v > 0 else '-' if v < 0 else '?'}" for k, v in rec.items()))
     path = out_root / f"{tag}_effects.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -591,8 +597,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_design.add_argument("--phase", default="all", choices=["phase1", "foldover", "all"])
     p_scen = sub.add_parser("scenarios", help="write (or --check) the HPC scenario files")
     p_scen.add_argument("--check", action="store_true")
-    for name in ("commands", "run"):
-        p = sub.add_parser(name)
+    for name, help_text in (("commands", "print the training commands of a phase"),
+                            ("run", "train a phase sequentially, skipping complete runs")):
+        p = sub.add_parser(name, help=help_text)
         p.add_argument("--data-dir", type=Path, required=True)
         p.add_argument("--out-root", type=Path, required=True)
         p.add_argument("--phase", default="phase1", choices=["phase1", "foldover", "all"])
@@ -603,7 +610,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_pr.add_argument("--seed", type=int, default=SEED)
     p_pr.add_argument("--data-dir", type=Path, required=True)
     p_pr.add_argument("--out-root", type=Path, required=True)
-    p_an = sub.add_parser("analyze")
+    p_an = sub.add_parser("analyze", help="main effects of a phase; writes doe_<phase>_<at>_effects.*")
     p_an.add_argument("--out-root", type=Path, required=True)
     p_an.add_argument("--phase", default="phase1", choices=["phase1", "foldover", "all"])
     p_an.add_argument("--at", default="final", choices=["final", "best"])
@@ -659,7 +666,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 run_dir.mkdir(parents=True, exist_ok=True)
                 (run_dir / FLAGS_FILE).write_text(json.dumps(list(r.flags)), encoding="utf-8")
-            print(f"[{action}] {r.name}", flush=True)
+            print(f"[{action}] {r.name}  (log: {a.out_root / (r.name + '.log')})", flush=True)
             a.out_root.mkdir(parents=True, exist_ok=True)
             with open(a.out_root / f"{r.name}.log", "a", encoding="utf-8") as log:
                 rc = subprocess.run(
@@ -668,10 +675,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             if rc != 0:
                 print(f"[fail] {r.name} exit {rc}; see {r.name}.log")
                 return rc
+        if a.cmd == "run":
+            print(f"done: {len(runs)} run(s) of {a.phase} complete in {a.out_root}. "
+                  f"Next: python tools/st_lrps_doe.py analyze --out-root {a.out_root} --phase {a.phase} "
+                  "--arc-proxy <proxy dir>")
         return 0
     report = analyze(a.out_root, a.phase, a.at, a.arc_proxy, a.device)
     path = _write_report(report, a.out_root)
     print(path.read_text(encoding="utf-8"))
+    rec = report.get("recommended_levels")
+    if report.get("incomplete_design"):
+        print(f"Next: finish the {len(report['incomplete_design'])} missing run(s) with the run sub-command.")
+    elif rec and any(v != 0 for v in rec.values()):
+        levels = "".join(k if v > 0 else k.lower() for k, v in rec.items())
+        print(f"Next: python tools/st_lrps_doe.py promote --levels {levels} --stage confirm "
+              "--data-dir <dir> --out-root <dir>  ('?' factors set to -; check them first)")
+    else:
+        print("Next: no factor passed Lenth's margin; run the fold-over (--phase foldover) before promoting.")
     return 0
 
 
