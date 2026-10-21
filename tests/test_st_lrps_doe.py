@@ -131,3 +131,9 @@ def test_incomplete_runs_are_left_out_of_the_effects(tmp_path):
 def test_lenth_pse_ignores_one_active_effect():
     effects = [0.01, -0.02, 0.015, -0.01, 0.02, 1.0]
     assert doe.lenth_pse(effects) < 0.05
+
+
+def test_run_env_puts_this_checkout_first(monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", "elsewhere")
+    path = doe._train_env()["PYTHONPATH"].split(__import__("os").pathsep)
+    assert path[0] == str(_REPO_ROOT / "src") and path[1] == "elsewhere"

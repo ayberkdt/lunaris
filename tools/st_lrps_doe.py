@@ -27,7 +27,9 @@ Sub-commands::
     python tools/st_lrps_doe.py analyze  --out-root DIR [--phase ...] [--at final|best]
 
 ``run`` trains sequentially and skips runs whose ``history.jsonl`` already
-reaches the final epoch. ``analyze`` reads only ``history.jsonl``.
+reaches the final epoch; it puts this checkout's ``src`` first on
+``PYTHONPATH`` so a worktree trains its own code, not an editable install
+of another checkout. ``analyze`` reads only ``history.jsonl``.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics
 import subprocess
 import sys
@@ -98,11 +101,12 @@ FACTORS: tuple[Factor, ...] = (
     Factor(
         "E", "harmonic_penalty",
         ("--laplacian-mode", "diagnostic"),
-        ("--laplacian-mode", "train", "--laplacian-weight", "1e14",
-         "--laplacian-every-n-batches", "10"),
+        ("--laplacian-mode", "train", "--laplacian-weight", "1e16",
+         "--laplacian-every-n-batches", "4"),
         "The residual potential is harmonic; the shipped model violates Laplace by "
-        "~0.6% at 100-150 km. Weight 1e14 s^4 puts the penalty at ~10% of the "
-        "converged base loss (mean lap^2 = 6.2e-24 s^-4 on the Plan D checkpoint).",
+        "~0.6% at 100-150 km. Mean lap^2 is 8.8e-23 s^-4 on the 40-epoch H1 checkpoint "
+        "(total loss 3e-6) and 6.2e-24 on Plan D (7e-8): 1e16 every 4th batch is ~10% "
+        "of the loss at screening fidelity and ~30% at convergence.",
     ),
     Factor(
         "F", "altitude_balance",
@@ -273,6 +277,13 @@ def render_scenarios(phase: str) -> str:
 def _command(run: Run, data_dir: Path, out_root: Path) -> list[str]:
     data = [tok for flag, fname in DATA_FILES.items() for tok in (flag, str(data_dir / fname))]
     return [sys.executable, "-m", TRAIN_MODULE, *data, *run.flags, "--out", str(out_root / run.name)]
+
+
+def _train_env() -> dict[str, str]:
+    env = dict(os.environ)
+    src = str(REPO_ROOT / "src")
+    env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return env
 
 
 def _history(run_dir: Path) -> list[dict]:
@@ -460,7 +471,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[run ] {r.name}", flush=True)
             a.out_root.mkdir(parents=True, exist_ok=True)
             with open(a.out_root / f"{r.name}.log", "w", encoding="utf-8") as log:
-                rc = subprocess.run(cmd, cwd=REPO_ROOT, stdout=log, stderr=subprocess.STDOUT, check=False).returncode
+                rc = subprocess.run(
+                    cmd, cwd=REPO_ROOT, env=_train_env(), stdout=log, stderr=subprocess.STDOUT, check=False
+                ).returncode
             if rc != 0:
                 print(f"[fail] {r.name} exit {rc}; see {r.name}.log")
                 return rc
