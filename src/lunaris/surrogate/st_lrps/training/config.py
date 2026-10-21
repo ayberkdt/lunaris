@@ -252,6 +252,7 @@ class TrainConfig:
     # "val_base_loss": validation U + acceleration MSE only.
     # "direction_loss": val direction loss only (experimental, not recommended alone).
     # "hybrid_rel": hybrid + hybrid_relative_beta * val_loss_rel (relative acceleration loss).
+    # "potential_low": val_u_low_rmse_m2_s2 (low-altitude potential RMS, the orbit-energy proxy).
     best_metric: str = "hybrid"
     hybrid_direction_alpha: float = 0.30
     hybrid_relative_beta: float = 0.30
@@ -906,7 +907,8 @@ def parse_args() -> TrainConfig:
     group_dir.add_argument("--checkpoint-settle-epochs", type=int, default=_TC_DEFAULTS["checkpoint_settle_epochs"],
                            help="Additional settled epochs after the direction-loss ramp before auto best-checkpoint tracking starts.")
     group_dir.add_argument("--best-metric",
-                           choices=["val_total_loss", "val_base_loss", "total_loss", "direction_loss", "hybrid", "hybrid_rel"],
+                           choices=["val_total_loss", "val_base_loss", "total_loss", "direction_loss", "hybrid",
+                                    "hybrid_rel", "potential_low"],
                            default=_TC_DEFAULTS['best_metric'],
                            help="Metric used for best-checkpoint selection. "
                                 "'hybrid': val_base_loss + alpha * val_loss_dir (default). "

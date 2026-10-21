@@ -14,7 +14,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_BEST_METRICS = ("val_total_loss", "val_base_loss", "hybrid", "direction_loss", "hybrid_rel")
+SUPPORTED_BEST_METRICS = (
+    "val_total_loss", "val_base_loss", "hybrid", "direction_loss", "hybrid_rel", "potential_low",
+)
 LOWER_IS_BETTER = True
 
 _WARNED_ALIASES: set[str] = set()
@@ -130,6 +132,10 @@ def _val_physics_loss(stats: Mapping[str, Any], *, base: float, total: float) ->
     return float(total - base)
 
 
+def _val_u_low_rmse(stats: Mapping[str, Any]) -> float | None:
+    return _metric(stats, "val_u_low_rmse_m2_s2", fallback_keys=("u_low_rmse_m2_s2",))
+
+
 def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:
     """Human-readable formula for the canonical checkpoint score."""
     metric = normalize_best_metric(best_metric)
@@ -140,6 +146,8 @@ def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:
         return "val_base_loss"
     if metric == "direction_loss":
         return "val_loss_dir"
+    if metric == "potential_low":
+        return "val_u_low_rmse_m2_s2"
     if metric == "hybrid_rel":
         beta = float(_cfg_get(cfg, "hybrid_relative_beta", 0.30))
         return f"val_base_loss + {alpha:.2f} * val_loss_dir + {beta:.2f} * val_loss_rel"
@@ -173,7 +181,9 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
     """Compute the scalar score used for best-checkpoint selection.
 
     Supported canonical ``best_metric`` values are ``val_total_loss``,
-    ``val_base_loss``, ``hybrid``, and ``direction_loss``. The historical
+    ``val_base_loss``, ``hybrid``, ``direction_loss``, ``hybrid_rel`` and
+    ``potential_low`` (the unweighted low-altitude residual-potential RMS,
+    the field quantity that sets orbit-energy and along-track error). The historical
     ``total_loss`` value is accepted as an alias for ``val_total_loss`` with a
     warning.
     """
@@ -198,6 +208,14 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
         score = base + alpha * loss_dir
     elif metric == "hybrid_rel":
         score = base + alpha * loss_dir + beta * loss_rel
+    elif metric == "potential_low":
+        u_low = _val_u_low_rmse(val_stats)
+        if u_low is None:
+            raise KeyError(
+                "best_metric='potential_low' needs val_u_low_rmse_m2_s2; the validation set "
+                "has no samples below potential_metric_alt_max_km."
+            )
+        score = u_low
     else:  # pragma: no cover - normalize_best_metric guards this.
         raise ValueError(metric)
 

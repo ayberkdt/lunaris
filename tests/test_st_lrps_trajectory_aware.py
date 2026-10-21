@@ -334,3 +334,19 @@ def test_defaults_keep_the_shipped_recipe(monkeypatch):
     assert (cfg.lr_schedule_mode, cfg.u_center, cfg.band_init) == ("cosine", "mean", "legacy")
     assert (cfg.low_degree_loss_weight, cfg.low_degree_radial_power) == (0.0, 0.0)
     assert cfg.low_degree_alt_max_km == cfg.potential_metric_alt_max_km == 300.0
+
+
+def test_potential_low_checkpoint_metric_scores_the_low_altitude_potential_rmse():
+    from lunaris.surrogate.st_lrps.training.metrics import (
+        checkpoint_formula,
+        compute_checkpoint_score,
+    )
+
+    stats = {"val_total_loss": 1.0, "val_loss_u": 0.1, "val_loss_a": 0.2, "u_low_rmse_m2_s2": 7.5e-4}
+    score, report = compute_checkpoint_score(stats, {"best_metric": "potential_low"})
+    assert score == 7.5e-4 and report["formula"] == checkpoint_formula("potential_low")
+    with pytest.raises(ValueError, match="not finite"):
+        compute_checkpoint_score({**stats, "u_low_rmse_m2_s2": float("nan")}, {"best_metric": "potential_low"})
+    with pytest.raises(KeyError, match="potential_low"):
+        compute_checkpoint_score({k: v for k, v in stats.items() if k != "u_low_rmse_m2_s2"},
+                                 {"best_metric": "potential_low"})
