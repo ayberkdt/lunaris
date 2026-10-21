@@ -94,6 +94,7 @@ from lunaris.surrogate.st_lrps.networks.models import (
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract, resolve_dataset_hash
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
+from lunaris.surrogate.st_lrps.training.arc_loss import ArcLossTerm, residual_accel_fn
 from lunaris.surrogate.st_lrps.training.checkpoint_manager import (
     BestCheckpointTracker,
     resolve_best_ckpt_start_epoch,
@@ -634,6 +635,8 @@ class _EpochState:
     total_wtz_frac: float = 0.0
     total_accel_sq_err: float = 0.0
     total_low_degree: float = 0.0
+    total_arc_sq: float = 0.0
+    arc_terms: int = 0
     low_degree_batches: int = 0
     total_u_low_sq: float = 0.0
     total_u_low_count: float = 0.0
@@ -673,6 +676,22 @@ class STLRPSTrainer:
         self.model = model
         self.loss_fn = loss_fn
         self.optimizer = optimizer
+        self.arc_loss: ArcLossTerm | None = None
+        if float(getattr(cfg, "arc_loss_weight", 0.0) or 0.0) > 0.0:
+            if not getattr(cfg, "arc_loss_data", None):
+                raise ValueError("--arc-loss-weight > 0 needs --arc-loss-data")
+            self.arc_loss = ArcLossTerm(
+                cfg.arc_loss_data,
+                orbits_per_step=int(cfg.arc_loss_orbits),
+                subsample=int(cfg.arc_loss_subsample),
+                s_ref_m=float(cfg.arc_loss_s_ref_m),
+                seed=int(getattr(cfg, "seed", 0) or 0),
+                expected_base_degree=getattr(cfg, "degree_min", None),
+                expected_ref_degree=getattr(cfg, "degree_max", None),
+            )
+            self._arc_accel = residual_accel_fn(model, loss_fn)
+            logger.info("Arc loss: %d orbits from %s, weight %.3g every %d steps",
+                        len(self.arc_loss.orbits), cfg.arc_loss_data, cfg.arc_loss_weight, cfg.arc_loss_every)
         self.weights = weights
         self.device = device
         self.cfg = cfg
@@ -896,6 +915,18 @@ class STLRPSTrainer:
                                 collocation_applied=True,
                                 collocation_train_scalar=col_lap_scalar,
                             )
+
+                    if (
+                        self.arc_loss is not None
+                        and is_accum_boundary
+                        and state.optimizer_steps_done % int(self.cfg.arc_loss_every) == 0
+                    ):
+                        # One unscaled arc term per optimizer step (like the
+                        # collocation Laplacian above).
+                        arc_t, arc_stats = self.arc_loss.term(self._arc_accel, self.device, xb.dtype)
+                        scaled_loss = scaled_loss + float(self.cfg.arc_loss_weight) * arc_t
+                        state.total_arc_sq += float(arc_stats["arc_s_sq_mean_m2"])
+                        state.arc_terms += 1
 
                     self._backward_step(
                         state,
@@ -1412,6 +1443,10 @@ class STLRPSTrainer:
             "u_low_rmse_m2_s2": (
                 math.sqrt(state.total_u_low_sq / state.total_u_low_count)
                 if state.total_u_low_count > 0 else float("nan")
+            ),
+            # RMS of the exact along-track errors of the arc-loss orbits [m].
+            "arc_s_rms_m": (
+                math.sqrt(state.total_arc_sq / state.arc_terms) if state.arc_terms > 0 else float("nan")
             ),
             "loss_low_degree": (
                 state.total_low_degree / state.low_degree_batches

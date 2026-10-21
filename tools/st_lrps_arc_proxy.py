@@ -181,7 +181,8 @@ def build(args: argparse.Namespace) -> int:
     cfg = build_base_config(parse_args(argv))
     ephem = EphemerisManager.from_time_and_spice(cfg.time, cfg.spice)
     series = bench / "benchmark_cache" / "models" / args.series
-    ids = sorted(int(p.stem.split("_")[1]) for p in series.glob("scenario_*.npz"))[: args.orbits]
+    ids = sorted(int(p.stem.split("_")[1]) for p in series.glob("scenario_*.npz"))
+    ids = ids[args.orbit_offset : args.orbit_offset + args.orbits]
     if not ids:
         raise SystemExit(f"no scenario_*.npz under {series}")
     C, S, _ = load_coeffs_from_ssot(degree_max=args.ref_degree, gfc_path=None)
@@ -281,6 +282,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     b.add_argument("--series", default="sh200", help="reference series under benchmark_cache/models")
     b.add_argument("--out", required=True)
     b.add_argument("--orbits", type=int, default=32)
+    b.add_argument("--orbit-offset", type=int, default=0,
+                   help="skip this many cached orbits (keeps arc-loss training orbits disjoint from evaluation ones)")
     b.add_argument("--step", type=float, default=5.0, help="resampling step [s]")
     b.add_argument("--base-degree", type=int, default=25)
     b.add_argument("--ref-degree", type=int, default=200)

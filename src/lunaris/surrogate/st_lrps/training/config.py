@@ -230,6 +230,16 @@ class TrainConfig:
     low_degree_lmax: int = 0
     low_degree_alt_max_km: float = 300.0
     low_degree_radial_power: float = 0.0
+    # Adjoint-weighted arc loss (training.arc_loss): first-order along-track
+    # error of reference orbits stored by tools/st_lrps_arc_proxy.py build.
+    # Applied once per arc_loss_every optimizer steps on arc_loss_orbits orbits.
+    # The orbits must be disjoint from those used to evaluate the model.
+    arc_loss_data: str | None = None
+    arc_loss_weight: float = 0.0
+    arc_loss_every: int = 50
+    arc_loss_orbits: int = 2
+    arc_loss_subsample: int = 4096
+    arc_loss_s_ref_m: float = 1.0
     # Altitude ceiling of the low-altitude potential RMSE metric
     # (val_u_low_rmse_m2_s2), the field quantity that sets orbit-energy error.
     potential_metric_alt_max_km: float = 300.0
@@ -900,6 +910,19 @@ def parse_args() -> TrainConfig:
                            default=_TC_DEFAULTS["low_degree_radial_power"],
                            help="Divide the potential error by rho**p before the projection "
                                 "(0 = physical weighting, default).")
+    group_dir.add_argument("--arc-loss-data", type=str, default=_TC_DEFAULTS["arc_loss_data"],
+                           help="tools/st_lrps_arc_proxy.py build directory of TRAINING orbits for the "
+                                "adjoint-weighted arc loss (disjoint from evaluation orbits).")
+    group_dir.add_argument("--arc-loss-weight", type=float, default=_TC_DEFAULTS["arc_loss_weight"],
+                           help="Weight of the arc loss, 1/2 mean s^2 / s_ref^2 (s in m). 0 = off.")
+    group_dir.add_argument("--arc-loss-every", type=int, default=_TC_DEFAULTS["arc_loss_every"],
+                           help="Optimizer steps between arc-loss applications.")
+    group_dir.add_argument("--arc-loss-orbits", type=int, default=_TC_DEFAULTS["arc_loss_orbits"],
+                           help="Orbits per arc-loss application.")
+    group_dir.add_argument("--arc-loss-subsample", type=int, default=_TC_DEFAULTS["arc_loss_subsample"],
+                           help="Points per orbit in the gradient estimate.")
+    group_dir.add_argument("--arc-loss-s-ref-m", type=float, default=_TC_DEFAULTS["arc_loss_s_ref_m"],
+                           help="Along-track error scale [m] of the arc loss.")
     group_dir.add_argument("--potential-metric-alt-max-km", type=float,
                            default=_TC_DEFAULTS["potential_metric_alt_max_km"],
                            help="Altitude ceiling of the logged low-altitude potential RMSE (m^2/s^2).")
@@ -1660,6 +1683,12 @@ def parse_args() -> TrainConfig:
         low_degree_alt_max_km=float(a.low_degree_alt_max_km),
         low_degree_radial_power=float(max(0.0, a.low_degree_radial_power)),
         potential_metric_alt_max_km=float(a.potential_metric_alt_max_km),
+        arc_loss_data=(str(a.arc_loss_data) if a.arc_loss_data else None),
+        arc_loss_weight=float(max(0.0, a.arc_loss_weight)),
+        arc_loss_every=max(1, int(a.arc_loss_every)),
+        arc_loss_orbits=max(1, int(a.arc_loss_orbits)),
+        arc_loss_subsample=max(1, int(a.arc_loss_subsample)),
+        arc_loss_s_ref_m=float(a.arc_loss_s_ref_m),
         relative_loss_floor_abs=float(max(0.0, a.relative_loss_floor_abs)),
         output_envelope_power=float(max(0.0, a.output_envelope_power)),
         output_envelope_auto=bool(a.output_envelope_auto),
