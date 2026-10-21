@@ -87,43 +87,61 @@ def test_encoder_output_is_unchanged_by_the_basis_refactor():
 # --------------------------------------------------------------------------- #
 
 
-def _low_field(unit: torch.Tensor, lmax: int) -> tuple[torch.Tensor, float]:
+def _low_field(unit: torch.Tensor, lmax: int = 12) -> tuple[torch.Tensor, float]:
     coeff = torch.zeros((lmax + 1) ** 2, dtype=torch.float64)
-    coeff[[0, 3, 10, 200, 600]] = torch.tensor([0.3, -0.2, 0.1, 0.05, 0.02], dtype=torch.float64)
+    coeff[[0, 3, 10, 100, 150]] = torch.tensor([0.3, -0.2, 0.1, 0.05, 0.02], dtype=torch.float64)
     return real_sh_basis_4pi(unit, lmax) @ coeff, float(coeff.square().sum())
+
+
+def _out_of_span_field(unit: torch.Tensor, seed: int) -> torch.Tensor:
+    """Degrees 13..30 only: no content at degree <= 12, unit-order variance."""
+    y = real_sh_basis_4pi(unit, 30)[:, 13**2:]
+    g = torch.Generator().manual_seed(seed)
+    return y @ (torch.randn(y.shape[1], generator=g, dtype=torch.float64) / y.shape[1] ** 0.5)
 
 
 def test_leakage_recovers_the_low_degree_power_exactly():
     unit = _unit(4000, 0)
-    field, power = _low_field(unit, 25)
-    assert float(low_degree_leakage(field, unit, 25)) == pytest.approx(power, rel=_LEAK_RTOL)
+    field, power = _low_field(unit)
+    assert float(low_degree_leakage(field, unit, 12)) == pytest.approx(power, rel=_LEAK_RTOL)
 
 
-def test_leakage_is_unbiased_for_non_uniform_directions():
+def test_leakage_is_exact_for_non_uniform_directions():
     unit = _unit(4000, 1)
     unit[:, 2] = unit[:, 2].abs().sqrt() * torch.sign(unit[:, 2])  # crowd the poles
     unit = unit / unit.norm(dim=-1, keepdim=True)
-    field, power = _low_field(unit, 25)
-    assert float(low_degree_leakage(field, unit, 25)) == pytest.approx(power, rel=_LEAK_RTOL)
+    field, power = _low_field(unit)
+    assert float(low_degree_leakage(field, unit, 12)) == pytest.approx(power, rel=_LEAK_RTOL)
 
 
-def test_leakage_of_a_pure_high_degree_field_is_the_sampling_floor():
-    # A degree-40 field has no degree <= 25 content; the least-squares fit on
-    # M samples picks up only aliasing of order (K / M) * variance.
-    unit = _unit(6000, 2)
-    y40 = real_sh_basis_4pi(unit, 40)[:, 40**2:]
-    g = torch.Generator().manual_seed(3)
-    field = y40 @ (0.05 * torch.randn(y40.shape[1], generator=g, dtype=torch.float64))
-    k_over_m = 26**2 / 6000
-    assert float(low_degree_leakage(field, unit, 25)) < 2.0 * k_over_m * float(field.var())
+def test_cross_fit_removes_the_aliasing_bias_of_a_single_fit():
+    # M = 1600 samples, K = 169: a single least-squares fit of a field with no
+    # degree <= 12 content returns about K/(M-K) of its variance (~0.12); the
+    # cross-fitted estimate has expectation zero.
+    m, k = 1600, 13**2
+    cross, single, var = [], [], []
+    for trial in range(20):
+        unit = _unit(m, 100 + trial)
+        field = _out_of_span_field(unit, 200 + trial)
+        cross.append(float(low_degree_leakage(field, unit, 12)))
+        basis = real_sh_basis_4pi(unit, 12)
+        coeff = torch.linalg.lstsq(basis, field.reshape(-1, 1)).solution
+        single.append(float(coeff.square().sum()))
+        var.append(float(field.var()))
+    mean_var = sum(var) / len(var)
+    assert sum(single) / len(single) > 0.5 * k / (m - k) * mean_var
+    assert abs(sum(cross) / len(cross)) < 0.02 * mean_var
 
 
-def test_leakage_needs_more_samples_than_basis_functions_and_is_differentiable():
+def test_leakage_skips_small_batches_and_is_differentiable():
     unit = _unit(4000, 4)
-    assert float(low_degree_leakage(torch.ones(10, dtype=torch.float64), unit[:10], 25)) == 0.0
-    field, _ = _low_field(unit, 25)
+    # 4 samples per basis function per half: 2 * 4 * 169 = 1352 needed.
+    assert low_degree_leakage(torch.ones(1351, dtype=torch.float64), unit[:1351], 12) is None
+    field, _ = _low_field(unit)
     field = field.clone().requires_grad_(True)
-    low_degree_leakage(field, unit, 25).backward()
+    out = low_degree_leakage(field, unit, 12)
+    assert out is not None
+    out.backward()
     assert field.grad is not None and torch.isfinite(field.grad).all() and field.grad.abs().sum() > 0
 
 
@@ -132,7 +150,7 @@ def test_leakage_needs_more_samples_than_basis_functions_and_is_differentiable()
 # --------------------------------------------------------------------------- #
 
 
-def _loss_fixture(n: int = 1200):
+def _loss_fixture(n: int = 4000):
     sc = ScalerPack(
         x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=2.7e6),
         u=IsometricScaleParams(mean=[0.0], scale=10.0),
@@ -174,19 +192,21 @@ def test_low_altitude_potential_rmse_is_physical_and_altitude_limited():
 def test_leakage_is_logged_on_validation_and_enters_training_only_when_weighted():
     loss, weights, x, u, a, _ = _loss_fixture()
     model = _Bias(0.5)
-    _, val = loss(model, x, u, a, weights, is_train=False, low_degree_alt_max_km=1000.0)
+    kw = {"low_degree_alt_max_km": 1000.0, "low_degree_lmax": 2}
+    _, val = loss(model, x, u, a, weights, is_train=False, **kw)
     # Constant scaled error 0.5 without radial normalisation: the degree-0
     # projection is exactly 0.5 (4pi-normalised Y_00 = 1), so the power is 0.25.
     assert val["loss_low_degree"] == pytest.approx(0.25, rel=_LEAK_RTOL)
+    _, val_off = loss(model, x, u, a, weights, is_train=False, low_degree_alt_max_km=1000.0)
+    assert val_off["loss_low_degree"] is None   # lmax 0 (default): diagnostic off
 
-    off, train_off = loss(model, x, u, a, weights, is_train=True, low_degree_alt_max_km=1000.0)
-    assert train_off["loss_low_degree"] == 0.0
-    on, train_on = loss(
-        model, x, u, a, weights, is_train=True,
-        low_degree_lambda=2.0, low_degree_alt_max_km=1000.0,
-    )
+    off, train_off = loss(model, x, u, a, weights, is_train=True, **kw)
+    assert train_off["loss_low_degree"] is None
+    on, train_on = loss(model, x, u, a, weights, is_train=True, low_degree_lambda=2.0, **kw)
     assert train_on["loss_low_degree"] == pytest.approx(0.25, rel=_LEAK_RTOL)
     assert float(on - off) == pytest.approx(2.0 * 0.25, rel=_LEAK_RTOL)
+    with pytest.raises(ValueError, match="low_degree_lmax"):
+        loss(model, x, u, a, weights, is_train=True, low_degree_lambda=2.0)
     on.backward()
     assert model.c.grad is not None and float(model.c.grad) != 0.0
 
@@ -348,6 +368,7 @@ def test_defaults_keep_the_shipped_recipe(monkeypatch):
     assert (cfg.lr_schedule_mode, cfg.u_center, cfg.band_init) == ("cosine", "mean", "legacy")
     assert (cfg.low_degree_loss_weight, cfg.low_degree_radial_power) == (0.0, 0.0)
     assert cfg.low_degree_alt_max_km == cfg.potential_metric_alt_max_km == 300.0
+    assert cfg.low_degree_lmax == 0
 
 
 def test_potential_low_checkpoint_metric_scores_the_low_altitude_potential_rmse():
@@ -359,7 +380,7 @@ def test_potential_low_checkpoint_metric_scores_the_low_altitude_potential_rmse(
     stats = {"val_total_loss": 1.0, "val_loss_u": 0.1, "val_loss_a": 0.2, "u_low_rmse_m2_s2": 7.5e-4}
     score, report = compute_checkpoint_score(stats, {"best_metric": "potential_low"})
     assert score == 7.5e-4 and report["formula"] == checkpoint_formula("potential_low")
-    with pytest.raises(ValueError, match="not finite"):
+    with pytest.raises(ValueError, match="needs a finite"):
         compute_checkpoint_score({**stats, "u_low_rmse_m2_s2": float("nan")}, {"best_metric": "potential_low"})
     with pytest.raises(KeyError, match="potential_low"):
         compute_checkpoint_score({k: v for k, v in stats.items() if k != "u_low_rmse_m2_s2"},

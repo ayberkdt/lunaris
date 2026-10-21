@@ -88,7 +88,8 @@ def test_every_run_is_accepted_by_the_real_training_parser(monkeypatch, tmp_path
         assert cfg.w_u == (10.0 if lv["A"] > 0 else 1.0)
         assert cfg.direction_loss_weight == (0.02 if lv["B"] > 0 else 0.1)
         assert cfg.relative_loss_weight == (0.01 if lv["B"] > 0 else 0.05)
-        assert cfg.low_degree_loss_weight == (10.0 if lv["C"] > 0 else 0.0)
+        assert cfg.low_degree_loss_weight == (100.0 if lv["C"] > 0 else 0.0)
+        assert cfg.low_degree_lmax == 12
         assert cfg.band_init == ("siren_first" if lv["D"] > 0 else "legacy")
         assert cfg.laplacian_mode == ("train" if lv["E"] > 0 else "diagnostic")
         assert cfg.use_altitude_balanced_loss is (lv["F"] < 0)
@@ -104,28 +105,65 @@ def _write_history(run_dir: Path, value: float, *, epochs: int) -> None:
     (run_dir / "history.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
 
-def test_analysis_recovers_planted_effects_and_recommends_their_signs(tmp_path):
-    # log10 response = -3 + 0.3*A - 0.2*C  ->  effects A = +0.6, C = -0.4, rest 0.
+def _noise(name: str) -> float:
+    """Deterministic +-0.01 pseudo-noise per run so Lenth's PSE is non-zero."""
+    return 0.01 * ((sum(map(ord, name)) % 7) - 3) / 3.0
+
+
+def test_analysis_recovers_planted_effects_and_recommends_only_supported_levels(tmp_path):
+    # log10 response = -3 + 0.3*A - 0.2*C + noise  ->  effects A = +0.6, C = -0.4.
     for run in doe.build_runs("all"):
         if not run.levels:
             continue
-        y = -3.0 + 0.3 * run.levels["A"] - 0.2 * run.levels["C"]
+        y = -3.0 + 0.3 * run.levels["A"] - 0.2 * run.levels["C"] + _noise(run.name)
         _write_history(tmp_path / run.name, 10.0**y, epochs=doe.FIDELITY_EPOCHS)
     report = doe.analyze(tmp_path, "all", "final")
-    eff = report["effects"]["val_u_low_rmse_m2_s2"]["effects"]
-    assert eff["A"] == pytest.approx(0.6) and eff["C"] == pytest.approx(-0.4)
-    for k in "BDEF":
-        assert eff[k] == pytest.approx(0.0, abs=1e-12)
-    assert report["recommended_levels"]["A"] == -1 and report["recommended_levels"]["C"] == +1
+    assert report["orthogonal"] is True
+    block = report["effects"]["val_u_low_rmse_m2_s2"]
+    assert block["effects"]["A"] == pytest.approx(0.6, abs=0.02)
+    assert block["effects"]["C"] == pytest.approx(-0.4, abs=0.02)
+    assert len(block["effects"]) + len(block["alias_contrasts"]) == 15
+    rec = report["recommended_levels"]
+    assert (rec["A"], rec["C"]) == (-1, +1)
+    assert all(rec[k] == 0 for k in "BDEF")
     assert doe._write_report(report, tmp_path).is_file()
 
 
-def test_incomplete_runs_are_left_out_of_the_effects(tmp_path):
+def test_phase1_analysis_uses_seven_orthogonal_contrasts(tmp_path):
     for run in doe.design_runs("phase1"):
-        _write_history(tmp_path / run.name, 1e-3, epochs=doe.FIDELITY_EPOCHS - 1)
+        _write_history(tmp_path / run.name, 10.0 ** (-3.0 + _noise(run.name)), epochs=doe.FIDELITY_EPOCHS)
+    block = doe.analyze(tmp_path, "phase1", "final")["effects"]["val_u_low_rmse_m2_s2"]
+    assert len(block["effects"]) + len(block["alias_contrasts"]) == 7
+
+
+def test_incomplete_designs_are_not_analysed(tmp_path):
+    runs = doe.design_runs("phase1")
+    for run in runs[:-1]:
+        _write_history(tmp_path / run.name, 1e-3, epochs=doe.FIDELITY_EPOCHS)
+    _write_history(tmp_path / runs[-1].name, 1e-3, epochs=doe.FIDELITY_EPOCHS - 1)
     report = doe.analyze(tmp_path, "phase1", "final")
-    assert report["effects"] == {}
-    assert {row["status"] for row in report["runs"] if row["name"].startswith("DoE_P1_R")} == {"partial"}
+    assert report["effects"] == {} and report["incomplete_design"] == [runs[-1].name]
+    assert "recommended_levels" not in report
+    assert "incomplete" in doe._write_report(report, tmp_path).read_text(encoding="utf-8")
+
+
+def test_launch_plan_reuses_only_runs_with_identical_flags(tmp_path):
+    run = doe.design_runs("phase1")[0]
+    run_dir = tmp_path / run.name
+    assert doe.plan_launch(run, run_dir) == "start"
+    run_dir.mkdir()
+    assert doe.plan_launch(run, run_dir) == "stale"          # no flag record
+    (run_dir / doe.FLAGS_FILE).write_text(json.dumps(list(run.flags)), encoding="utf-8")
+    assert doe.plan_launch(run, run_dir) == "stale"          # nothing to resume from
+    (run_dir / "checkpoints").mkdir()
+    (run_dir / "checkpoints" / "ckpt_last.pt").write_bytes(b"x")
+    assert doe.plan_launch(run, run_dir) == "resume"
+    (run_dir / "history.jsonl").write_text(
+        "\n".join(json.dumps({"epoch": e}) for e in range(doe.FIDELITY_EPOCHS)), encoding="utf-8"
+    )
+    assert doe.plan_launch(run, run_dir) == "skip"
+    (run_dir / doe.FLAGS_FILE).write_text(json.dumps(list(run.flags) + ["--x"]), encoding="utf-8")
+    assert doe.plan_launch(run, run_dir) == "stale"
 
 
 def test_lenth_pse_ignores_one_active_effect():

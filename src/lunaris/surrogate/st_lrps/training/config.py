@@ -222,9 +222,12 @@ class TrainConfig:
     # rho**low_degree_radial_power (0 = physical weighting, which keeps the
     # lowest altitudes dominant), onto the real spherical harmonics of degree
     # <= low_degree_lmax, fitted on the batch samples below
-    # low_degree_alt_max_km. 0 = off; validation always logs it.
+    # low_degree_alt_max_km (cross-fitted, see training.losses.low_degree_leakage).
+    # low_degree_lmax = 0 turns the term and its validation diagnostic off;
+    # it must not exceed the dataset's base degree. 12 keeps the fit well
+    # conditioned with ~2k low-altitude samples per 8192 batch.
     low_degree_loss_weight: float = 0.0
-    low_degree_lmax: int = 25
+    low_degree_lmax: int = 0
     low_degree_alt_max_km: float = 300.0
     low_degree_radial_power: float = 0.0
     # Altitude ceiling of the low-altitude potential RMSE metric
@@ -631,6 +634,13 @@ _TC_DEFAULTS: dict = {
 }
 
 
+def _validated_decay_fraction(value: Any) -> float:
+    frac = float(value)
+    if not (0.0 < frac <= 1.0):
+        raise ValueError(f"--lr-decay-fraction must be in (0, 1], got {frac}")
+    return frac
+
+
 def _default_outdir(base: Path) -> Path:
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return base / "outputs" / "training" / f"st_lrps_train_{ts}"
@@ -882,7 +892,8 @@ def parse_args() -> TrainConfig:
                            help="Weight of the low-degree leakage penalty (projection of the potential "
                                 "error onto degrees <= --low-degree-lmax). 0 = off.")
     group_dir.add_argument("--low-degree-lmax", type=int, default=_TC_DEFAULTS["low_degree_lmax"],
-                           help="Highest harmonic degree of the leakage projection (normally the base degree).")
+                           help="Highest harmonic degree of the leakage projection, <= the base degree "
+                                "(0 = term and validation diagnostic off).")
     group_dir.add_argument("--low-degree-alt-max-km", type=float, default=_TC_DEFAULTS["low_degree_alt_max_km"],
                            help="Only batch samples below this altitude enter the leakage projection.")
     group_dir.add_argument("--low-degree-radial-power", type=float,
@@ -1600,7 +1611,7 @@ def parse_args() -> TrainConfig:
         warmup_epochs=max(0, int(a.warmup_epochs)),
         min_lr_ratio=float(a.min_lr_ratio),
         lr_schedule_mode=str(a.lr_schedule_mode),
-        lr_decay_fraction=float(a.lr_decay_fraction),
+        lr_decay_fraction=_validated_decay_fraction(a.lr_decay_fraction),
         patience=max(1, int(a.patience)),
         w_u=a.w_u,
         w_a=a.w_a,
@@ -1645,7 +1656,7 @@ def parse_args() -> TrainConfig:
         direction_loss_floor_abs=float(a.direction_loss_floor_abs),
         relative_loss_weight=float(max(0.0, a.relative_loss_weight)),
         low_degree_loss_weight=float(max(0.0, a.low_degree_loss_weight)),
-        low_degree_lmax=int(a.low_degree_lmax),
+        low_degree_lmax=max(0, int(a.low_degree_lmax)),
         low_degree_alt_max_km=float(a.low_degree_alt_max_km),
         low_degree_radial_power=float(max(0.0, a.low_degree_radial_power)),
         potential_metric_alt_max_km=float(a.potential_metric_alt_max_km),

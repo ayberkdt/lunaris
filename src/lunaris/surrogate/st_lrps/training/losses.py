@@ -182,31 +182,46 @@ def low_degree_leakage(
     lmax: int,
     *,
     ridge: float = 1e-8,
-) -> torch.Tensor:
-    """Mean square of the degree ``<= lmax`` part of a scalar error field.
+    min_samples_per_basis: float = 4.0,
+) -> torch.Tensor | None:
+    """Cross-fitted mean square of the degree ``<= lmax`` part of a scalar error field.
 
-    Fits ``err ≈ Σ c_k Y_k(unit)`` by least squares over the samples, with
-    ``Y_k`` the 4π-normalized real spherical harmonics of degree ``<= lmax``,
-    and returns ``Σ c_k²``. For uniformly distributed directions this is the
-    sphere mean of the squared projection, ``(1/4π)∫(P_L err)² dΩ``; the least
-    squares fit (instead of a Monte-Carlo inner product) keeps the estimate
-    unbiased when the batch directions are not uniform. Gradients flow through
-    ``err`` only. ``ridge`` (relative to the mean Gram diagonal) guards the
-    solve when the sample count is close to the number of basis functions.
+    The samples are split into two halves (even and odd rows). Each half is
+    fitted by least squares, ``err ≈ Σ c_k Y_k(unit)``, with ``Y_k`` the
+    4π-normalized real spherical harmonics of degree ``<= lmax``
+    (K = (lmax+1)² functions), and the estimate is ``Σ c_k^A c_k^B``.
+
+    A single fit returns ``Σ c_k²``, which also picks up the error content
+    above ``lmax``: the aliased part is about ``K/(M-K)`` times that content's
+    variance, and the fit is ill-conditioned when M approaches K. The two
+    halves alias independently, so their product has expectation ``‖c‖²``,
+    the sphere mean square of the projected error. The least-squares fit
+    (rather than a Monte-Carlo inner product) keeps this right for
+    non-uniform directions. A single estimate can be negative when the true
+    content is near zero.
+
+    Returns ``None`` (term skipped) unless each half has at least
+    ``min_samples_per_basis * K`` samples. ``ridge`` is relative to the mean
+    Gram diagonal. Gradients flow through ``err`` only.
     """
 
     n_basis = (int(lmax) + 1) ** 2
     m = int(err.shape[0])
-    if m <= n_basis:
-        return err.new_zeros(())
-    # Basis and Gram in float32 (the Gram is well conditioned for M >> K);
-    # the K x K solve in float64 via Cholesky.
+    if m // 2 < float(min_samples_per_basis) * n_basis:
+        return None
+    # Basis and Gram in float32 (well conditioned for M >> K); the K x K
+    # solves in float64 via Cholesky.
     basis = real_sh_basis_vectorized(unit.detach().to(torch.float32), int(lmax))  # (M, K)
-    gram = (basis.T @ basis / float(m)).to(torch.float64)
-    gram = gram + float(ridge) * torch.eye(n_basis, dtype=gram.dtype, device=gram.device)
-    rhs = (basis.T @ err.to(torch.float32).reshape(-1, 1) / float(m)).to(torch.float64)
-    coeff = torch.cholesky_solve(rhs, torch.linalg.cholesky(gram))
-    return coeff.square().sum().to(err.dtype)
+    e32 = err.to(torch.float32).reshape(-1, 1)
+    coeffs = []
+    for half in (slice(0, None, 2), slice(1, None, 2)):
+        y = basis[half]
+        gram = (y.T @ y / float(y.shape[0])).to(torch.float64)
+        eye = torch.eye(n_basis, dtype=gram.dtype, device=gram.device)
+        gram = gram + float(ridge) * torch.diagonal(gram).mean() * eye
+        rhs = (y.T @ e32[half] / float(y.shape[0])).to(torch.float64)
+        coeffs.append(torch.cholesky_solve(rhs, torch.linalg.cholesky(gram)))
+    return (coeffs[0] * coeffs[1]).sum().to(err.dtype)
 
 @dataclass
 class GradNormWeights:
@@ -755,7 +770,7 @@ class SobolevLoss(nn.Module):
         laplacian_n_hutchinson: int = 4,
         laplacian_mode: str = "diagnostic",
         low_degree_lambda: float = 0.0,
-        low_degree_lmax: int = 25,
+        low_degree_lmax: int = 0,
         low_degree_alt_max_km: float = 300.0,
         low_degree_radial_power: float = 0.0,
         potential_metric_alt_max_km: float = 300.0,
@@ -766,8 +781,10 @@ class SobolevLoss(nn.Module):
         The low-degree leakage term (``low_degree_lambda > 0``) penalises the
         projection of the potential error, divided by ``rho**low_degree_radial_power``,
         onto the harmonics of degree ``<= low_degree_lmax`` (see
-        :func:`low_degree_leakage`). It is always computed on validation
-        batches so arms with and without the term report the same diagnostic.
+        :func:`low_degree_leakage`). With ``low_degree_lmax > 0`` it is also
+        computed on validation batches, so arms with and without the term report
+        the same diagnostic; ``stats["loss_low_degree"]`` is ``None`` when the
+        term is off or the batch had too few samples below the ceiling.
 
         ``accel_factor`` affects only the optimisation loss returned as the
         first tuple item. The stats dictionary additionally contains
@@ -999,39 +1016,31 @@ class SobolevLoss(nn.Module):
         with torch.no_grad():
             u_low_mask = alt_km_all < float(potential_metric_alt_max_km)
             u_err_phys = delta_u_scaled_err.detach() * self.u_scale.squeeze(0)
-            _u_low_diag = torch.stack(
-                [u_err_phys[u_low_mask].double().square().sum(), u_low_mask.double().sum()]
-            ).cpu().tolist()
-        u_low_sq_sum_val = float(_u_low_diag[0])
-        u_low_count_val = float(_u_low_diag[1])
+            u_low_sq_sum_t = u_err_phys[u_low_mask].square().sum()
+            u_low_count_t = u_low_mask.sum().to(u_low_sq_sum_t.dtype)
 
         low_degree_lambda = float(max(0.0, low_degree_lambda))
+        if low_degree_lambda > 0.0 and int(low_degree_lmax) <= 0:
+            raise ValueError("low_degree_lambda > 0 needs low_degree_lmax > 0")
         loss_low_t: torch.Tensor | None = None
-        loss_low_val = 0.0
-        if low_degree_lambda > 0.0 or not is_train:
+        if int(low_degree_lmax) > 0 and (low_degree_lambda > 0.0 or not is_train):
             ld_mask = alt_km_all < float(low_degree_alt_max_km)
             r_ld = r_norm_all[ld_mask].clamp_min(1e-9)
             err_ld = delta_u_scaled_err[ld_mask]
             if float(low_degree_radial_power) > 0.0:
                 err_ld = err_ld / (self.r_ref_m / r_ld).pow(float(low_degree_radial_power))
-            if low_degree_lambda > 0.0 and is_train:
-                loss_low_t = low_degree_leakage(err_ld, x_phys[ld_mask] / r_ld.unsqueeze(-1), low_degree_lmax)
-                loss_low_val = float(loss_low_t.detach().cpu().item())
+            unit_ld = x_phys[ld_mask] / r_ld.unsqueeze(-1)
+            if is_train:
+                loss_low_t = low_degree_leakage(err_ld, unit_ld, low_degree_lmax)
             else:
                 with torch.no_grad():
-                    loss_low_val = float(
-                        low_degree_leakage(
-                            err_ld.detach(), x_phys[ld_mask] / r_ld.unsqueeze(-1), low_degree_lmax
-                        ).cpu().item()
-                    )
+                    loss_low_t = low_degree_leakage(err_ld.detach(), unit_ld, low_degree_lmax)
 
         loss_ref = (w_u * mse_u) + (w_a * mse_a)
         loss_opt = (w_u * mse_u) + (effective_w_a * mse_a)
-        if loss_low_t is not None:
+        if loss_low_t is not None and low_degree_lambda > 0.0:
             loss_ref = loss_ref + (low_degree_lambda * loss_low_t)
             loss_opt = loss_opt + (low_degree_lambda * loss_low_t)
-        elif low_degree_lambda > 0.0:
-            loss_ref = loss_ref + low_degree_lambda * loss_low_val
         if dir_loss_active and loss_dir_t is not None:
             loss_ref = loss_ref + (lambda_dir * loss_dir_t)
             loss_opt = loss_opt + (lambda_dir * loss_dir_t)
@@ -1046,8 +1055,12 @@ class SobolevLoss(nn.Module):
             loss_opt = loss_opt + (float(laplacian_lambda) * loss_lap_t)
             loss_ref = loss_ref + (float(laplacian_lambda) * loss_lap_t)
 
+        _low = loss_low_t.detach() if loss_low_t is not None else mse_u.new_zeros(())
         _loss_diag = torch.stack(
-            [loss_ref.detach(), loss_opt.detach(), mse_u.detach(), mse_a.detach()]
+            [
+                loss_ref.detach(), loss_opt.detach(), mse_u.detach(), mse_a.detach(),
+                u_low_sq_sum_t.to(mse_u.dtype), u_low_count_t.to(mse_u.dtype), _low.to(mse_u.dtype),
+            ]
         ).cpu().tolist()
         stats = {
             "loss": float(_loss_diag[0]),
@@ -1073,9 +1086,9 @@ class SobolevLoss(nn.Module):
             "rel_a_mean": rel_a_mean_val,
             "wtz_frac": wtz_frac_val,
             "accel_sq_err": accel_sq_err_val,
-            "loss_low_degree": loss_low_val,
-            "u_low_sq_sum": u_low_sq_sum_val,
-            "u_low_count": u_low_count_val,
+            "loss_low_degree": (float(_loss_diag[6]) if loss_low_t is not None else None),
+            "u_low_sq_sum": float(_loss_diag[4]),
+            "u_low_count": float(_loss_diag[5]),
             # Laplacian metrics are mean((∇²U_phys)²) in PHYSICAL units [s⁻⁴]
             # (∇²U_phys in s⁻²), consistent with collocation_laplacian_loss (R25).
             "loss_laplacian": loss_lap_val,

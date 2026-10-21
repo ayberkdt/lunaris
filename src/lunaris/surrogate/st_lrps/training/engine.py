@@ -634,6 +634,7 @@ class _EpochState:
     total_wtz_frac: float = 0.0
     total_accel_sq_err: float = 0.0
     total_low_degree: float = 0.0
+    low_degree_batches: int = 0
     total_u_low_sq: float = 0.0
     total_u_low_count: float = 0.0
     total_a_norm_mean: float = 0.0
@@ -1009,7 +1010,7 @@ class STLRPSTrainer:
                 laplacian_n_hutchinson=int(getattr(self.cfg, "n_hutchinson_samples", 4)),
                 laplacian_mode=self.laplacian_mode,
                 low_degree_lambda=float(getattr(self.cfg, "low_degree_loss_weight", 0.0)),
-                low_degree_lmax=int(getattr(self.cfg, "low_degree_lmax", 25)),
+                low_degree_lmax=int(getattr(self.cfg, "low_degree_lmax", 0)),
                 low_degree_alt_max_km=float(getattr(self.cfg, "low_degree_alt_max_km", 300.0)),
                 low_degree_radial_power=float(getattr(self.cfg, "low_degree_radial_power", 0.0)),
                 potential_metric_alt_max_km=float(getattr(self.cfg, "potential_metric_alt_max_km", 300.0)),
@@ -1255,7 +1256,10 @@ class STLRPSTrainer:
         state.total_rel_a_mean += float(stats.get("rel_a_mean", 0.0)) * n_b
         state.total_wtz_frac += float(stats.get("wtz_frac", 0.0)) * n_b
         state.total_accel_sq_err += float(stats.get("accel_sq_err", 0.0)) * n_b
-        state.total_low_degree += float(stats.get("loss_low_degree", 0.0)) * n_b
+        if stats.get("loss_low_degree") is not None:
+            # Per-batch cross-fitted estimate; batches too small to fit are skipped.
+            state.total_low_degree += float(stats["loss_low_degree"])
+            state.low_degree_batches += 1
         state.total_u_low_sq += float(stats.get("u_low_sq_sum", 0.0))
         state.total_u_low_count += float(stats.get("u_low_count", 0.0))
         a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
@@ -1409,7 +1413,10 @@ class STLRPSTrainer:
                 math.sqrt(state.total_u_low_sq / state.total_u_low_count)
                 if state.total_u_low_count > 0 else float("nan")
             ),
-            "loss_low_degree": state.total_low_degree / samples_safe,
+            "loss_low_degree": (
+                state.total_low_degree / state.low_degree_batches
+                if state.low_degree_batches > 0 else float("nan")
+            ),
             "loss_laplacian_diag": col_lap_diag_avg,
             "loss_laplacian_train": col_lap_train_avg,
             "lambda_laplacian_eff": col_lap_weight_eff,
@@ -2690,6 +2697,13 @@ def _build_model_and_optim(
             "Output envelope: dU_scaled = rho^%g * NN(x), rho = r_ref/r (r_ref=%.1f m)",
             float(cfg.output_envelope_power), float(cfg.resolved_r_ref_m),
         )
+    _ld_lmax = int(getattr(cfg, "low_degree_lmax", 0) or 0)
+    if _ld_lmax > 0 and _ld_lmax > int(cfg.degree_min):
+        raise ValueError(
+            f"--low-degree-lmax {_ld_lmax} exceeds the dataset base degree {cfg.degree_min}; "
+            "the residual has real content above the base degree, so the leakage term would "
+            "penalise signal, not error."
+        )
     if cfg.activation.lower() == "sine" and int(getattr(cfg, "n_bands", 1)) > 1:
         if cfg.degree_max <= 0:
             raise ValueError(
@@ -3614,7 +3628,10 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             "x_scale_policy": "max_norm_from_origin",
             "lr_schedule": {
                 "kind": _lr_schedule_kind(cfg),
-                "lr_decay_fraction": float(getattr(cfg, "lr_decay_fraction", 0.2)),
+                **(
+                    {"lr_decay_fraction": float(getattr(cfg, "lr_decay_fraction", 0.2))}
+                    if _lr_schedule_kind(cfg) == "warmup_stable_decay" else {}
+                ),
                 "warmup_epochs": int(cfg.warmup_epochs),
                 "min_lr_ratio": float(cfg.min_lr_ratio),
                 "t_max": (int(cfg.t_max) if cfg.t_max is not None else None),

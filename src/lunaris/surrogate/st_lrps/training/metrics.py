@@ -133,7 +133,17 @@ def _val_physics_loss(stats: Mapping[str, Any], *, base: float, total: float) ->
 
 
 def _val_u_low_rmse(stats: Mapping[str, Any]) -> float | None:
-    return _metric(stats, "val_u_low_rmse_m2_s2", fallback_keys=("u_low_rmse_m2_s2",))
+    for key in ("u_low_rmse_m2_s2", "val_u_low_rmse_m2_s2"):
+        value = stats.get(key)
+        if value is not None:
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError(
+                    "best_metric='potential_low' needs a finite val_u_low_rmse_m2_s2; the "
+                    "validation set has no samples below potential_metric_alt_max_km."
+                )
+            return value
+    return None
 
 
 def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:

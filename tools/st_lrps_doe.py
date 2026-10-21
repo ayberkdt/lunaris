@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import math
 import os
@@ -89,9 +90,13 @@ FACTORS: tuple[Factor, ...] = (
     ),
     Factor(
         "C", "low_degree_leakage",
-        ("--low-degree-loss-weight", "0.0"), ("--low-degree-loss-weight", "10.0"),
-        "23% of the 100-150 km potential-error power sits in degrees <= 25, where the "
-        "residual is zero; low degrees transfer most strongly into along-track drift.",
+        ("--low-degree-loss-weight", "0.0"), ("--low-degree-loss-weight", "100.0"),
+        "Cross-fitted on Plan D, 20% of the 100-150 km potential-error power sits in "
+        "degrees <= 25 (5.6% in <= 12), where the residual is zero; low degrees transfer "
+        "most strongly into along-track drift. The trained term uses L = 12 (K = 169) "
+        "so ~2.3k samples below 300 km per batch give a well-conditioned fit; weight 100 "
+        "is ~10% of the loss at screening fidelity (2.5e-9 per batch on the 40-epoch H1 "
+        "checkpoint against a 3e-6 total).",
     ),
     Factor(
         "D", "band_init",
@@ -134,6 +139,8 @@ BASE_FLAGS: tuple[str, ...] = (
     "--direction-loss-floor-abs", "1e-7", "--relative-loss-floor-abs", "1e-8",
     "--best-metric", "hybrid_rel", "--hybrid-relative-beta", "0.3",
     "--fit-rows", "2000000", "--num-workers", "4", "--pin-memory",
+    # Every run logs the cross-fitted leakage diagnostic at the same L.
+    "--low-degree-lmax", "12",
 )
 CORRECTION_FLAGS: tuple[str, ...] = (
     "--u-center", "zero", "--gradnorm-mode", "fixed", "--w-a", "2.0",
@@ -182,7 +189,7 @@ STAGE_FLAGS: dict[str, tuple[str, ...]] = {
 RESPONSES: tuple[tuple[str, bool], ...] = (
     ("val_u_low_rmse_m2_s2", True),     # primary: orbit-energy (phase) proxy
     ("val_accel_rmse_m_s2", True),      # field accuracy, unweighted
-    ("val_loss_low_degree", True),      # leakage diagnostic
+    ("val_loss_low_degree", False),     # leakage diagnostic (cross-fitted, can be <= 0)
     ("val_angular_mean_deg", True),
     ("val_wtz_frac", False),            # constraint: must stay ~0
 )
@@ -340,9 +347,34 @@ def _history(run_dir: Path) -> list[dict]:
     return rows
 
 
-def _is_complete(run_dir: Path) -> bool:
+def _is_complete(run_dir: Path, epochs: int = FIDELITY_EPOCHS) -> bool:
     rows = _history(run_dir)
-    return bool(rows) and int(rows[-1].get("epoch", -1)) + 1 >= FIDELITY_EPOCHS
+    return bool(rows) and int(rows[-1].get("epoch", -1)) + 1 >= epochs
+
+
+FLAGS_FILE = "doe_flags.json"
+
+
+def _recorded_flags(run_dir: Path) -> list[str] | None:
+    path = run_dir / FLAGS_FILE
+    if not path.is_file():
+        return None
+    return list(json.loads(path.read_text(encoding="utf-8")))
+
+
+def plan_launch(run: Run, run_dir: Path) -> str:
+    """``"skip"``, ``"resume"``, ``"start"`` or ``"stale"`` for one screening run.
+
+    A run directory is reused only if it was launched with exactly this run's
+    flags (recorded in ``doe_flags.json`` at launch); anything else is stale.
+    """
+    if not run_dir.exists():
+        return "start"
+    if _recorded_flags(run_dir) != list(run.flags):
+        return "stale"
+    if _is_complete(run_dir):
+        return "skip"
+    return "resume" if (run_dir / "checkpoints" / "ckpt_last.pt").is_file() else "stale"
 
 
 # --------------------------------------------------------------------------- #
@@ -381,6 +413,44 @@ def estimate_effects(levels: list[dict[str, int]], y: list[float]) -> dict[str, 
     return effects
 
 
+def contrast_effects(levels: list[dict[str, int]], y: list[float]) -> dict[str, float]:
+    """Effects of every distinct product contrast of the design columns.
+
+    For a regular two-level fraction of n runs these are n - 1 mutually
+    orthogonal contrasts: the six main effects plus their alias chains (one
+    for the 8-run fraction, nine for the 16-run fold-over combination).
+    Lenth's PSE is computed over all of them, as the method intends.
+    """
+    n = len(levels)
+    seen: dict[tuple[int, ...], str] = {}
+    for size in range(1, len(FACTOR_KEYS) + 1):
+        for combo in itertools.combinations(FACTOR_KEYS, size):
+            col = tuple(math.prod(lv[k] for k in combo) for lv in levels)
+            if all(v == 1 for v in col) or all(v == -1 for v in col):
+                continue
+            key = col if col[0] > 0 else tuple(-v for v in col)
+            if key not in seen:
+                seen[key] = "".join(combo) if col[0] > 0 else "-" + "".join(combo)
+    effects = {}
+    for col, label in seen.items():
+        sign = -1.0 if label.startswith("-") else 1.0
+        name = label.lstrip("-")
+        effects[name] = sign * 2.0 * sum(c * yi for c, yi in zip(col, y, strict=True)) / n
+    return effects
+
+
+def is_orthogonal(levels: list[dict[str, int]]) -> bool:
+    """True when every pair of factor columns is balanced and orthogonal."""
+    cols = [[lv[k] for lv in levels] for k in FACTOR_KEYS]
+    if any(sum(c) != 0 for c in cols):
+        return False
+    return all(sum(a * b for a, b in zip(c1, c2, strict=True)) == 0
+               for i, c1 in enumerate(cols) for c2 in cols[i + 1:])
+
+
+DECISION_T = 2.0
+
+
 def analyze(out_root: Path, phase: str, at: str) -> dict:
     design = {r.name for r in design_runs(phase)}
     runs = build_runs(phase) if phase != "foldover" else build_runs("all")
@@ -405,22 +475,37 @@ def analyze(out_root: Path, phase: str, at: str) -> dict:
         (r, e) for r, e in zip(runs, rows, strict=True) if r.name in design and e.get("status") == "complete"
     ]
     report: dict = {"phase": phase, "at": at, "runs": rows, "effects": {}}
-    if len(design_rows) >= 4:
-        levels = [r.levels for r, _ in design_rows]
-        for key, log in RESPONSES:
-            y = [_response_value(e, key, log) for _, e in design_rows]
-            eff = estimate_effects(levels, y)
-            pse = lenth_pse(list(eff.values()))
-            report["effects"][key] = {
-                "log10": log,
-                "effects": eff,
-                "lenth_pse": pse,
-                "t_ratio": {k: (v / pse if pse and math.isfinite(pse) and pse > 0 else float("nan"))
-                            for k, v in eff.items()},
-                "multiplier_plus_vs_minus": ({k: 10.0 ** v for k, v in eff.items()} if log else None),
-            }
-        primary = report["effects"].get(RESPONSES[0][0], {}).get("effects", {})
-        report["recommended_levels"] = {k: (+1 if v < 0 else -1) for k, v in primary.items() if math.isfinite(v)}
+    missing = sorted(design - {r.name for r, _ in design_rows})
+    if missing:
+        # An incomplete fraction is no longer orthogonal: main effects would
+        # silently absorb aliased effects. Report nothing rather than that.
+        report["incomplete_design"] = missing
+        return report
+    levels = [r.levels for r, _ in design_rows]
+    report["orthogonal"] = is_orthogonal(levels)
+    for key, log in RESPONSES:
+        y = [_response_value(e, key, log) for _, e in design_rows]
+        if not all(math.isfinite(v) for v in y):
+            report["effects"][key] = {"log10": log, "error": "non-finite response in a design run"}
+            continue
+        contrasts = contrast_effects(levels, y)
+        pse = lenth_pse(list(contrasts.values()))
+        main = {k: contrasts[k] for k in FACTOR_KEYS}
+        report["effects"][key] = {
+            "log10": log,
+            "effects": main,
+            "alias_contrasts": {k: v for k, v in contrasts.items() if k not in FACTOR_KEYS},
+            "lenth_pse": pse,
+            "t_ratio": {k: (v / pse if pse > 0 else float("nan")) for k, v in main.items()},
+            "multiplier_plus_vs_minus": ({k: 10.0 ** v for k, v in main.items()} if log else None),
+        }
+    primary = report["effects"].get(RESPONSES[0][0], {})
+    if "effects" in primary:
+        # +1 / -1 only where |t| >= DECISION_T; 0 = no evidence either way.
+        report["recommended_levels"] = {
+            k: ((+1 if v < 0 else -1) if abs(primary["t_ratio"][k]) >= DECISION_T else 0)
+            for k, v in primary["effects"].items()
+        }
     return report
 
 
@@ -434,22 +519,28 @@ def _write_report(report: dict, out_root: Path) -> Path:
         for row in report["runs"]:
             w.writerow(row)
     lines = [f"# DoE {report['phase']} at {report['at']} epoch", ""]
+    if report.get("incomplete_design"):
+        lines.append("Design incomplete; effects not estimated. Missing or unfinished runs:")
+        lines += [f"- {name}" for name in report["incomplete_design"]]
     for key, block in report["effects"].items():
-        lines.append(f"## {key} ({'log10' if block['log10'] else 'linear'}), Lenth PSE = {block['lenth_pse']:.3g}")
-        lines.append("")
-        lines.append("| factor | name | effect (+ minus -) | t = effect/PSE | x multiplier |")
-        lines.append("|---|---|---|---|---|")
+        if "error" in block:
+            lines += [f"## {key}", "", f"- {block['error']}", ""]
+            continue
+        scale = "log10" if block["log10"] else "linear"
+        lines += [f"## {key} ({scale}); Lenth PSE {block['lenth_pse']:.3g} over "
+                  f"{len(block['effects']) + len(block['alias_contrasts'])} contrasts", ""]
         for f in FACTORS:
-            if f.key not in block["effects"]:
-                continue
             e = block["effects"][f.key]
-            mult = block["multiplier_plus_vs_minus"][f.key] if block["multiplier_plus_vs_minus"] else float("nan")
-            lines.append(f"| {f.key} | {f.name} | {e:+.3g} | {block['t_ratio'][f.key]:+.2f} | {mult:.3g} |")
+            t = block["t_ratio"][f.key]
+            mult = block["multiplier_plus_vs_minus"]
+            tail = f", x{mult[f.key]:.3g} going - to +" if mult else ""
+            flag = "  <- |t| >= 2" if abs(t) >= DECISION_T else ""
+            lines.append(f"- {f.key} {f.name}: effect {e:+.3g}, t {t:+.2f}{tail}{flag}")
         lines.append("")
     if report.get("recommended_levels"):
         rec = report["recommended_levels"]
-        lines.append("Recommended levels on the primary response: "
-                     + ", ".join(f"{k}{'+' if v > 0 else '-'}" for k, v in rec.items()))
+        lines.append("Levels supported by the primary response (|t| >= 2; '?' = no evidence): "
+                     + ", ".join(f"{k}{'+' if v > 0 else '-' if v < 0 else '?'}" for k, v in rec.items()))
     path = out_root / f"{tag}_effects.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -517,12 +608,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             if a.cmd == "commands":
                 print(subprocess.list2cmdline(cmd))
                 continue
-            if _is_complete(a.out_root / r.name):
-                print(f"[skip] {r.name} (complete)")
+            run_dir = a.out_root / r.name
+            action = plan_launch(r, run_dir)
+            if action == "skip":
+                print(f"[skip] {r.name} (complete, same flags)")
                 continue
-            print(f"[run ] {r.name}", flush=True)
+            if action == "stale":
+                print(f"[stale] {run_dir} exists but was not launched with this run's flags "
+                      f"(or has no checkpoint to resume); move it away and rerun.")
+                return 2
+            if action == "resume":
+                cmd = [sys.executable, "-m", TRAIN_MODULE, "--resume-from", str(run_dir),
+                       "--epochs", str(FIDELITY_EPOCHS)]
+            else:
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / FLAGS_FILE).write_text(json.dumps(list(r.flags)), encoding="utf-8")
+            print(f"[{action}] {r.name}", flush=True)
             a.out_root.mkdir(parents=True, exist_ok=True)
-            with open(a.out_root / f"{r.name}.log", "w", encoding="utf-8") as log:
+            with open(a.out_root / f"{r.name}.log", "a", encoding="utf-8") as log:
                 rc = subprocess.run(
                     cmd, cwd=REPO_ROOT, env=_train_env(), stdout=log, stderr=subprocess.STDOUT, check=False
                 ).returncode
