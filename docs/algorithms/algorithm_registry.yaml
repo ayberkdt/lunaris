@@ -2969,6 +2969,64 @@ entries:
       - LUNARIS-ALG-SH-001
     notes: ""
 
+  - id: LUNARIS-HEUR-ML-003
+    slug: adjoint_weighted_arc_loss
+    canonical_name: >-
+      Adjoint-weighted arc loss and trajectory-aware checkpoint selection
+      (Lunaris-specific)
+    category: optimization
+    domain: ML
+    status: active
+    added: "2026-10-22"
+    implementation_class: heuristic
+    verification_status: unverifiable
+    scientific_status: implemented_and_tested
+    citation_keys: []
+    primary_reference: null
+    symbols:
+      - path: src/lunaris/surrogate/st_lrps/training/arc_loss.py
+        symbol: ArcLossTerm
+        role: torch_implementation
+      - path: src/lunaris/surrogate/st_lrps/training/arc_loss.py
+        symbol: residual_accel_fn
+        role: torch_implementation
+    mathematical_contract:
+      inputs: >-
+        stored reference arcs (body-fixed positions, true residual acceleration,
+        quadrature-weighted adjoint velocity sensitivities of the along-track
+        error at the final time, from tools/st_lrps_arc_proxy.py)
+      outputs: >-
+        first-order along-track errors s_k of the surrogate per arc; a loss term
+        with expected gradient grad(1/2 mean_k s_k^2 / s_ref^2) and a validation
+        metric (geometric mean of |s_k|)
+      exact_or_approximate: first_order_linearisation
+      preserved_properties:
+        - linear in the surrogate acceleration error, so the stored weights are model independent
+    lunaris_modifications:
+      - >-
+        The adjoint of the trajectory linearised around a reference arc (base-field
+        gravity gradient through the analytic degree) turns a propagation-level error
+        into a weighted sum over stored points; exact values are computed without a
+        parameter graph and the gradient uses an unbiased subsample estimate.
+    assumptions:
+      - first-order (linear) response of the trajectory to the residual-field error
+      - the stored arcs are representative of the orbits the model will serve
+    limitations:
+      - >-
+        Integrator error of the propagated comparison is not modelled; below ~150 km
+        perilune the proxy and RK4 dt 15 s propagations agree less (Pearson 0.60, n = 8)
+        than above (0.98-0.99).
+      - >-
+        One scalar per arc is a weak constraint; arcs used for training, checkpoint
+        selection and evaluation must be disjoint. No training result yet.
+    validation:
+      - tests/test_st_lrps_arc_loss.py
+      - tests/test_st_lrps_arc_proxy.py
+    see_also:
+      - LUNARIS-ALG-OPT-003
+      - LUNARIS-ALG-PHZ-001
+    notes: ""
+
   - id: LUNARIS-HEUR-SH-001
     slug: pole_stable_order_truncation
     canonical_name: Pole-stable spherical-harmonic order truncation (stable-m limit)

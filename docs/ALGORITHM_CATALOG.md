@@ -6,11 +6,11 @@
 
 Human-readable view of the algorithm-traceability registry. The source of truth is [`docs/algorithms/algorithm_registry.yaml`](algorithms/algorithm_registry.yaml); this file is generated. See [`docs/ALGORITHM_TRACEABILITY_POLICY.md`](ALGORITHM_TRACEABILITY_POLICY.md) for the naming, citation and classification policy.
 
-**56 entries.**
+**57 entries.**
 
-Implementation class: adaptation (11), delegated_library (9), exact (16), exact_reformulation (1), heuristic (9), standard_implementation (10)
+Implementation class: adaptation (11), delegated_library (9), exact (16), exact_reformulation (1), heuristic (10), standard_implementation (10)
 
-Verification status: identifier_verified_content_pending (2), unverifiable (9), verified_primary_source (43), verified_secondary_source (2)
+Verification status: identifier_verified_content_pending (2), unverifiable (10), verified_primary_source (43), verified_secondary_source (2)
 
 ## Index
 
@@ -59,6 +59,7 @@ Verification status: identifier_verified_content_pending (2), unverifiable (9), 
 | [`LUNARIS-HEUR-INTP-001`](#lunarisheurintp001) | Latitude-clamped, longitude-periodic planetary grid sampling with missing-value fallback | heuristic | unverifiable |
 | [`LUNARIS-HEUR-ML-001`](#lunarisheurml001) | Multi-band SIREN variants and physics-informed input encodings (Lunaris-specific) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-ML-002`](#lunarisheurml002) | Low-degree leakage penalty on the residual-potential error (Lunaris-specific) | heuristic | unverifiable |
+| [`LUNARIS-HEUR-ML-003`](#lunarisheurml003) | Adjoint-weighted arc loss and trajectory-aware checkpoint selection (Lunaris-specific) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-001`](#lunarisheursh001) | Pole-stable spherical-harmonic order truncation (stable-m limit) | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-002`](#lunarisheursh002) | Degree-switched spherical-harmonic evaluation with a cubic-Hermite (smoothstep) altitude blend | heuristic | unverifiable |
 | [`LUNARIS-HEUR-SH-003`](#lunarisheursh003) | Spectrum-weighted spherical-harmonic truncation-degree recommendation | adaptation | verified_primary_source |
@@ -1692,6 +1693,35 @@ Verification status: identifier_verified_content_pending (2), unverifiable (9), 
 - **Validated by**:
   - `tests/test_st_lrps_trajectory_aware.py`
 - **See also**: [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003), [`LUNARIS-ALG-SH-001`](#lunarisalgsh001)
+
+<a id="lunarisheurml003"></a>
+### LUNARIS-HEUR-ML-003 -- Adjoint-weighted arc loss and trajectory-aware checkpoint selection (Lunaris-specific)
+
+- **Slug**: `adjoint_weighted_arc_loss`
+- **Category**: optimization | **Domain**: ML | **Status**: active
+- **Classification**: heuristic
+- **Verification**: unverifiable | **Scientific status**: implemented_and_tested
+- **Primary reference**: Lunaris-specific; no external primary reference.
+- **Mathematical contract**:
+  - Inputs: stored reference arcs (body-fixed positions, true residual acceleration, quadrature-weighted adjoint velocity sensitivities of the along-track error at the final time, from tools/st_lrps_arc_proxy.py)
+  - Outputs: first-order along-track errors s_k of the surrogate per arc; a loss term with expected gradient grad(1/2 mean_k s_k^2 / s_ref^2) and a validation metric (geometric mean of |s_k|)
+  - Exactness: first_order_linearisation
+  - Preserves: linear in the surrogate acceleration error, so the stored weights are model independent
+- **Implementing symbols**:
+  - `src/lunaris/surrogate/st_lrps/training/arc_loss.py` -- `ArcLossTerm` (torch_implementation)
+  - `src/lunaris/surrogate/st_lrps/training/arc_loss.py` -- `residual_accel_fn` (torch_implementation)
+- **Lunaris modifications**:
+  - The adjoint of the trajectory linearised around a reference arc (base-field gravity gradient through the analytic degree) turns a propagation-level error into a weighted sum over stored points; exact values are computed without a parameter graph and the gradient uses an unbiased subsample estimate.
+- **Assumptions**:
+  - first-order (linear) response of the trajectory to the residual-field error
+  - the stored arcs are representative of the orbits the model will serve
+- **Limitations**:
+  - Integrator error of the propagated comparison is not modelled; below ~150 km perilune the proxy and RK4 dt 15 s propagations agree less (Pearson 0.60, n = 8) than above (0.98-0.99).
+  - One scalar per arc is a weak constraint; arcs used for training, checkpoint selection and evaluation must be disjoint. No training result yet.
+- **Validated by**:
+  - `tests/test_st_lrps_arc_loss.py`
+  - `tests/test_st_lrps_arc_proxy.py`
+- **See also**: [`LUNARIS-ALG-OPT-003`](#lunarisalgopt003), [`LUNARIS-ALG-PHZ-001`](#lunarisalgphz001)
 
 ## Optimization (OPT)
 
