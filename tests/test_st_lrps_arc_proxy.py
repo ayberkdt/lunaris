@@ -129,3 +129,15 @@ def test_quaternion_matrix_is_a_rotation():
     m = ap.quat_to_matrix(q)
     np.testing.assert_allclose(m @ m.T, np.eye(3), atol=1e-12)
     assert np.linalg.det(m) == pytest.approx(1.0)
+
+
+def test_scoring_refuses_a_model_with_other_residual_degrees(tmp_path):
+    import json
+
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "config.json").write_text(json.dumps({"artifact_contract": {"base_degree": 20, "target_degree": 200}}))
+    with pytest.raises(ValueError, match="learns degrees"):
+        ap.check_degrees({"base_degree": 25, "ref_degree": 200}, run)
+    (run / "config.json").write_text(json.dumps({"degree_min": 25, "degree_max": 200}))
+    ap.check_degrees({"base_degree": 25, "ref_degree": 200}, run)

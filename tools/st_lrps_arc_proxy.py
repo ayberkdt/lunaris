@@ -258,12 +258,33 @@ def cache_key(proxy: Path, run_dir: Path, prefer: str) -> str:
     return hashlib.sha256(ident.encode("utf-8")).hexdigest()
 
 
+def check_degrees(manifest: dict, run_dir: Path) -> None:
+    """Refuse a run whose residual degrees differ from the proxy's.
+
+    The stored true residual covers (base_degree, ref_degree]; a model trained
+    on another baseline predicts a different field, and its score would be
+    meaningless (a base-20 model scored ~55 m against a base-25 proxy).
+    """
+    cfg = json.loads((Path(run_dir) / "config.json").read_text(encoding="utf-8-sig"))
+    contract = cfg.get("artifact_contract") or {}
+    base = contract.get("base_degree", cfg.get("degree_min"))
+    ref = contract.get("target_degree", cfg.get("degree_max"))
+    if base is None or ref is None:
+        raise ValueError(f"{run_dir}: config.json records no base/target degree")
+    if (int(base), int(ref)) != (int(manifest["base_degree"]), int(manifest["ref_degree"])):
+        raise ValueError(
+            f"{run_dir} learns degrees ({base}, {ref}] but the proxy stores the residual of "
+            f"({manifest['base_degree']}, {manifest['ref_degree']}]; build a proxy with matching degrees."
+        )
+
+
 def score_run(proxy: Path, run_dir: Path, device: str = "cuda", prefer: str = "best") -> dict:
     """Per-orbit predicted along-track errors and their summary for one checkpoint of a run."""
     from lunaris.surrogate.st_lrps.runtime.canonical_runtime import load_surrogate_force_model
 
     proxy = Path(proxy)
     manifest = json.loads((proxy / "proxy_manifest.json").read_text(encoding="utf-8"))
+    check_degrees(manifest, Path(run_dir))
     rt = load_surrogate_force_model(Path(run_dir), device=device, prefer=prefer)
     rows = []
     files = sorted(proxy.glob("orbit_*.npz"))
