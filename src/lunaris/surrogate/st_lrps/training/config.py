@@ -240,6 +240,12 @@ class TrainConfig:
     arc_loss_orbits: int = 2
     arc_loss_subsample: int = 4096
     arc_loss_s_ref_m: float = 1.0
+    # Trajectory-aware validation: exact proxy errors of VALIDATION orbits
+    # (disjoint from arc-loss and evaluation orbits) every arc_val_every
+    # epochs, logged as val_arc_gmean_m / val_arc_rms_m; best_metric "arc_val"
+    # selects the checkpoint on val_arc_gmean_m (then arc_val_every must be 1).
+    arc_val_data: str | None = None
+    arc_val_every: int = 1
     # Altitude ceiling of the low-altitude potential RMSE metric
     # (val_u_low_rmse_m2_s2), the field quantity that sets orbit-energy error.
     potential_metric_alt_max_km: float = 300.0
@@ -266,6 +272,7 @@ class TrainConfig:
     # "direction_loss": val direction loss only (experimental, not recommended alone).
     # "hybrid_rel": hybrid + hybrid_relative_beta * val_loss_rel (relative acceleration loss).
     # "potential_low": val_u_low_rmse_m2_s2 (low-altitude potential RMS, the orbit-energy proxy).
+    # "arc_val": val_arc_gmean_m (needs --arc-val-data and --arc-val-every 1).
     best_metric: str = "hybrid"
     hybrid_direction_alpha: float = 0.30
     hybrid_relative_beta: float = 0.30
@@ -923,6 +930,11 @@ def parse_args() -> TrainConfig:
                            help="Points per orbit in the gradient estimate.")
     group_dir.add_argument("--arc-loss-s-ref-m", type=float, default=_TC_DEFAULTS["arc_loss_s_ref_m"],
                            help="Along-track error scale [m] of the arc loss.")
+    group_dir.add_argument("--arc-val-data", type=str, default=_TC_DEFAULTS["arc_val_data"],
+                           help="tools/st_lrps_arc_proxy.py build directory of VALIDATION orbits; logs "
+                                "val_arc_gmean_m and enables --best-metric arc_val.")
+    group_dir.add_argument("--arc-val-every", type=int, default=_TC_DEFAULTS["arc_val_every"],
+                           help="Epochs between trajectory-aware validations (1 with --best-metric arc_val).")
     group_dir.add_argument("--potential-metric-alt-max-km", type=float,
                            default=_TC_DEFAULTS["potential_metric_alt_max_km"],
                            help="Altitude ceiling of the logged low-altitude potential RMSE (m^2/s^2).")
@@ -942,7 +954,7 @@ def parse_args() -> TrainConfig:
                            help="Additional settled epochs after the direction-loss ramp before auto best-checkpoint tracking starts.")
     group_dir.add_argument("--best-metric",
                            choices=["val_total_loss", "val_base_loss", "total_loss", "direction_loss", "hybrid",
-                                    "hybrid_rel", "potential_low"],
+                                    "hybrid_rel", "potential_low", "arc_val"],
                            default=_TC_DEFAULTS['best_metric'],
                            help="Metric used for best-checkpoint selection. "
                                 "'hybrid': val_base_loss + alpha * val_loss_dir (default). "
@@ -1689,6 +1701,8 @@ def parse_args() -> TrainConfig:
         arc_loss_orbits=max(1, int(a.arc_loss_orbits)),
         arc_loss_subsample=max(1, int(a.arc_loss_subsample)),
         arc_loss_s_ref_m=float(a.arc_loss_s_ref_m),
+        arc_val_data=(str(a.arc_val_data) if a.arc_val_data else None),
+        arc_val_every=max(1, int(a.arc_val_every)),
         relative_loss_floor_abs=float(max(0.0, a.relative_loss_floor_abs)),
         output_envelope_power=float(max(0.0, a.output_envelope_power)),
         output_envelope_auto=bool(a.output_envelope_auto),

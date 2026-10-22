@@ -81,6 +81,14 @@ class ArcLossTerm:
             total += float((w[i : i + self.chunk] * (a - a_true[i : i + self.chunk])).sum())
         return total
 
+    def evaluate_all(self, accel: AccelFn, device: torch.device, dtype: torch.dtype) -> dict[str, float]:
+        """Exact errors of every stored orbit: geometric mean of |s| and RMS [m]."""
+        s = np.array([self.exact_error(accel, k, device, dtype) for k in range(len(self.orbits))])
+        return {
+            "arc_gmean_m": float(np.exp(np.mean(np.log(np.abs(s) + 1e-9)))),
+            "arc_rms_m": float(np.sqrt(np.mean(s**2))),
+        }
+
     def term(
         self, accel: AccelFn, device: torch.device, dtype: torch.dtype
     ) -> tuple[torch.Tensor, dict[str, float]]:

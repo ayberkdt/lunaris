@@ -15,7 +15,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 SUPPORTED_BEST_METRICS = (
-    "val_total_loss", "val_base_loss", "hybrid", "direction_loss", "hybrid_rel", "potential_low",
+    "val_total_loss", "val_base_loss", "hybrid", "direction_loss", "hybrid_rel", "potential_low", "arc_val",
 )
 LOWER_IS_BETTER = True
 
@@ -158,6 +158,8 @@ def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:
         return "val_loss_dir"
     if metric == "potential_low":
         return "val_u_low_rmse_m2_s2"
+    if metric == "arc_val":
+        return "val_arc_gmean_m"
     if metric == "hybrid_rel":
         beta = float(_cfg_get(cfg, "hybrid_relative_beta", 0.30))
         return f"val_base_loss + {alpha:.2f} * val_loss_dir + {beta:.2f} * val_loss_rel"
@@ -226,6 +228,11 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
                 "has no samples below potential_metric_alt_max_km."
             )
         score = u_low
+    elif metric == "arc_val":
+        arc = val_stats.get("arc_gmean_m", val_stats.get("val_arc_gmean_m"))
+        if arc is None or not math.isfinite(float(arc)):
+            raise ValueError("best_metric='arc_val' needs val_arc_gmean_m every epoch (--arc-val-every 1).")
+        score = float(arc)
     else:  # pragma: no cover - normalize_best_metric guards this.
         raise ValueError(metric)
 
@@ -330,6 +337,8 @@ def flatten_epoch_metrics(
         "val_accel_rmse_m_s2": _optional_float(val_stats, "accel_rmse_m_s2", "val_accel_rmse_m_s2", default=None),
         "val_u_low_rmse_m2_s2": _optional_float(val_stats, "u_low_rmse_m2_s2", "val_u_low_rmse_m2_s2", default=None),
         "val_loss_low_degree": _optional_float(val_stats, "loss_low_degree", "val_loss_low_degree", default=None),
+        "val_arc_gmean_m": _optional_float(val_stats, "arc_gmean_m", "val_arc_gmean_m", default=None),
+        "val_arc_rms_m": _optional_float(val_stats, "arc_rms_m", "val_arc_rms_m", default=None),
         "val_mask_frac": _optional_float(val_stats, "mask_frac", "val_mask_frac", default=None),
         "checkpoint_score": _optional_float(checkpoint_report, "score", default=None),
         "checkpoint_formula": checkpoint_report.get("formula"),
@@ -477,6 +486,8 @@ HISTORY_FIELDNAMES = [
     "val_accel_rmse_m_s2",
     "val_u_low_rmse_m2_s2",
     "val_loss_low_degree",
+    "val_arc_gmean_m",
+    "val_arc_rms_m",
     "val_mask_frac",
     "checkpoint_score",
     "checkpoint_formula",

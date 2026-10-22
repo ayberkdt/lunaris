@@ -102,3 +102,22 @@ def test_arc_flags_reach_the_train_config(monkeypatch, tmp_path):
     assert (cfg.arc_loss_orbits, cfg.arc_loss_subsample, cfg.arc_loss_s_ref_m) == (3, 2048, 0.5)
     monkeypatch.setattr(sys, "argv", ["lunaris-train", "--train-data", "t.h5", "--val-data", "v.h5"])
     assert parse_args().arc_loss_weight == 0.0
+
+
+def test_evaluate_all_reports_geometric_mean_and_rms(tmp_path):
+    term = ArcLossTerm(_write_proxy(tmp_path / "p", n_orbits=3))
+    model = _Linear()
+    s = np.array([float(_exact_s(model, o)) for o in term.orbits])
+    out = term.evaluate_all(model.accel, torch.device("cpu"), torch.float64)
+    assert out["arc_rms_m"] == pytest.approx(float(np.sqrt(np.mean(s**2))), rel=1e-10)
+    assert out["arc_gmean_m"] == pytest.approx(float(np.exp(np.mean(np.log(np.abs(s))))), rel=1e-6)
+
+
+def test_arc_val_checkpoint_metric():
+    from lunaris.surrogate.st_lrps.training.metrics import compute_checkpoint_score
+
+    stats = {"val_total_loss": 1.0, "val_loss_u": 0.1, "val_loss_a": 0.2, "arc_gmean_m": 0.02}
+    score, report = compute_checkpoint_score(stats, {"best_metric": "arc_val"})
+    assert score == 0.02 and report["formula"] == "val_arc_gmean_m"
+    with pytest.raises(ValueError, match="arc_val"):
+        compute_checkpoint_score({**stats, "arc_gmean_m": None}, {"best_metric": "arc_val"})

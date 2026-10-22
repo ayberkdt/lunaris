@@ -692,6 +692,20 @@ class STLRPSTrainer:
             self._arc_accel = residual_accel_fn(model, loss_fn)
             logger.info("Arc loss: %d orbits from %s, weight %.3g every %d steps",
                         len(self.arc_loss.orbits), cfg.arc_loss_data, cfg.arc_loss_weight, cfg.arc_loss_every)
+        self.arc_val: ArcLossTerm | None = None
+        if getattr(cfg, "arc_val_data", None):
+            self.arc_val = ArcLossTerm(
+                cfg.arc_val_data,
+                expected_base_degree=getattr(cfg, "degree_min", None),
+                expected_ref_degree=getattr(cfg, "degree_max", None),
+            )
+            self._arc_val_accel = residual_accel_fn(model, loss_fn)
+            logger.info("Trajectory-aware validation: %d orbits from %s every %d epoch(s)",
+                        len(self.arc_val.orbits), cfg.arc_val_data, int(cfg.arc_val_every))
+        elif str(getattr(cfg, "best_metric", "")) == "arc_val":
+            raise ValueError("--best-metric arc_val needs --arc-val-data")
+        if str(getattr(cfg, "best_metric", "")) == "arc_val" and int(getattr(cfg, "arc_val_every", 1)) != 1:
+            raise ValueError("--best-metric arc_val needs --arc-val-every 1")
         self.weights = weights
         self.device = device
         self.cfg = cfg
@@ -4203,6 +4217,17 @@ def _run_training_loop(session: _TrainingSession) -> str:
             _prev_mse_a = _cur_mse_a
 
             va = trainer.run_epoch(val_loader,   is_train=False, epoch=epoch, max_batches=cfg.max_val_batches)
+            if (
+                trainer.arc_val is not None
+                and not va.get("nan_detected")
+                and (epoch + 1) % int(cfg.arc_val_every) == 0
+            ):
+                _was_training = trainer.model.training
+                trainer.model.eval()
+                va.update(trainer.arc_val.evaluate_all(trainer._arc_val_accel, trainer.device, torch.float32))
+                trainer.model.train(_was_training)
+                logger.info("[val ] epoch=%s trajectory proxy: gmean |s| %.4g m, RMS %.4g m",
+                            epoch + 1, va["arc_gmean_m"], va["arc_rms_m"])
 
             # Same explosion handling for validation. Without it a NaN/Inf
             # validation loss reaches compute_checkpoint_score()'s finite-value
