@@ -288,15 +288,25 @@ def parse_levels(text: str) -> dict[str, int]:
     return {ch.upper(): (1 if ch.isupper() else -1) for ch in text}
 
 
-def promoted_run(levels: dict[str, int], stage: str, seed: int = SEED) -> Run:
-    """Full-data run of one level combination at a promotion stage."""
+def promoted_run(
+    levels: dict[str, int], stage: str, seed: int = SEED, arc_val_data: Path | None = None
+) -> Run:
+    """Full-data run of one level combination at a promotion stage.
+
+    With ``arc_val_data`` (a proxy build of validation orbits) the checkpoint
+    is selected on the trajectory-level validation error instead of
+    ``potential_low``.
+    """
     if stage not in STAGE_FLAGS:
         raise ValueError(f"stage must be one of {sorted(STAGE_FLAGS)}, got {stage!r}")
     i = BASE_FLAGS.index("--seed")
     base = BASE_FLAGS[: i + 1] + (str(seed),) + BASE_FLAGS[i + 2 :]
+    selection: tuple[str, ...] = ()
+    if arc_val_data is not None:
+        selection = ("--arc-val-data", str(arc_val_data), "--arc-val-every", "1", "--best-metric", "arc_val")
     return Run(
         f"DoE_{stage}_{_signs(levels)}_Seed{seed}", stage, levels,
-        base + CORRECTION_FLAGS + _factor_flags(levels) + STAGE_FLAGS[stage],
+        base + CORRECTION_FLAGS + _factor_flags(levels) + STAGE_FLAGS[stage] + selection,
         f"Promoted {_signs(levels)} at stage {stage}.",
     )
 
@@ -649,6 +659,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_pr.add_argument("--seed", type=int, default=SEED)
     p_pr.add_argument("--data-dir", type=Path, required=True)
     p_pr.add_argument("--out-root", type=Path, required=True)
+    p_pr.add_argument("--arc-val-data", type=Path, default=None,
+                      help="proxy build of validation orbits: select the checkpoint on val_arc_gmean_m")
     p_an = sub.add_parser("analyze", help="main effects of a phase; writes doe_<phase>_<at>_effects.*")
     p_an.add_argument("--out-root", type=Path, required=True)
     p_an.add_argument("--phase", default="phase1", choices=["phase1", "foldover", "all"])
@@ -680,7 +692,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"wrote {path.relative_to(REPO_ROOT)}")
         return 1 if bad else 0
     if a.cmd == "promote":
-        run = promoted_run(parse_levels(a.levels), a.stage, a.seed)
+        run = promoted_run(parse_levels(a.levels), a.stage, a.seed, a.arc_val_data)
         print(subprocess.list2cmdline(_command(run, a.data_dir, a.out_root)))
         return 0
     if a.cmd in ("commands", "run"):

@@ -241,3 +241,13 @@ def test_arc_proxy_becomes_the_primary_response(monkeypatch, tmp_path):
     assert report["effects"]["arc_proxy_gmean_m"]["effects"]["B"] == pytest.approx(-0.5, abs=0.02)
     assert report["recommended_levels"]["B"] == +1
     assert seen == {"last"}       # --at final scores the final checkpoint
+
+
+def test_promotion_can_select_on_validation_orbits(monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    from lunaris.surrogate.st_lrps.training.config import parse_args
+
+    run = doe.promoted_run(doe.parse_levels("ABcDef"), "final", arc_val_data=tmp_path / "val_orbits")
+    monkeypatch.setattr(sys, "argv", ["lunaris-train", *doe._command(run, tmp_path, tmp_path)[3:]])
+    cfg = parse_args()
+    assert (cfg.best_metric, cfg.arc_val_every, cfg.arc_val_data) == ("arc_val", 1, str(tmp_path / "val_orbits"))
