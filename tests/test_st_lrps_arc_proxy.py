@@ -150,3 +150,16 @@ def test_adjoint_gradient_defaults_to_the_reference_arc_dynamics():
     assert ap.gradient_degree(args) == 200
     args.gradient_degree = 25
     assert ap.gradient_degree(args) == 25
+
+
+def test_roughness_ratio_is_one_for_the_true_field_and_grows_with_high_frequency_noise():
+    t = np.arange(0.0, 2000.0, 5.0)
+    r_fix = np.stack([np.full_like(t, 1.838e6), 0 * t, 0 * t], axis=1)   # 100 km altitude
+    a_true = np.stack([np.sin(t / 60.0), np.cos(t / 90.0), 0 * t], axis=1) * 1e-4
+    num, den = ap.roughness_sums(a_true, a_true, r_fix)
+    assert math.isclose(math.sqrt(num / den), 1.0)
+    rough = a_true + 1e-6 * np.stack([np.sin(t / 3.0), 0 * t, 0 * t], axis=1)
+    num, den = ap.roughness_sums(rough, a_true, r_fix)
+    assert math.sqrt(num / den) > 1.5
+    high = r_fix * 1.2                                                      # ~470 km: excluded
+    assert ap.roughness_sums(rough, a_true, high) == (0.0, 0.0)

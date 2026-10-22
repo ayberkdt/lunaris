@@ -224,24 +224,28 @@ def test_levels_string_is_validated():
 
 
 def test_arc_proxy_becomes_the_primary_response(monkeypatch, tmp_path):
-    planted = {}
+    planted, rough = {}, {}
     for run in doe.build_runs("all"):
         if not run.levels:
             continue
         _write_history(tmp_path / run.name, 1e-3 * (1.0 + _noise(run.name)), epochs=doe.FIDELITY_EPOCHS)
         planted[run.name] = 10.0 ** (-1.0 - 0.25 * run.levels["B"] + _noise(run.name))
+        rough[run.name] = 1.4 * 10.0 ** (0.1 * run.levels["E"] + _noise(run.name))
     seen = set()
 
     def fake(run_dir, proxy, device, prefer):
         seen.add(prefer)
-        return planted[Path(run_dir).name]
+        return {"gmean_abs_along_track_m": planted[Path(run_dir).name],
+                "roughness_ratio_below_300km": rough[Path(run_dir).name]}
 
-    monkeypatch.setattr(doe, "_arc_proxy_gmean", fake)
+    monkeypatch.setattr(doe, "_arc_proxy_summary", fake)
     report = doe.analyze(tmp_path, "all", "final", arc_proxy=tmp_path / "proxy")
     assert report["primary_response"] == "arc_proxy_gmean_m"
     assert report["effects"]["arc_proxy_gmean_m"]["effects"]["B"] == pytest.approx(-0.5, abs=0.02)
     assert report["recommended_levels"]["B"] == +1
     assert seen == {"last"}       # --at final scores the final checkpoint
+    assert report["effects"]["arc_proxy_roughness"]["effects"]["E"] == pytest.approx(0.2, abs=0.02)
+    assert report["primary_response"] == "arc_proxy_gmean_m"
 
 
 def test_promotion_can_select_on_validation_orbits(monkeypatch, tmp_path):

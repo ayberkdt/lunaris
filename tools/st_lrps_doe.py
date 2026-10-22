@@ -434,7 +434,7 @@ def rsm_analyze(runs: list[Run], factors: list[RSMFactor], out_root: Path,
             missing.append(r.name)
             continue
         if arc_proxy:
-            val = _arc_proxy_gmean(run_dir, Path(arc_proxy), device, "last")
+            val = float(_arc_proxy_summary(run_dir, Path(arc_proxy), device, "last")["gmean_abs_along_track_m"])
         else:
             val = float(_history(run_dir)[-1][key])
         coded.append((float(c1), float(c2)))
@@ -639,8 +639,12 @@ def _arc_proxy_module():
     return module
 
 
-def _arc_proxy_gmean(run_dir: Path, proxy: Path, device: str, prefer: str = "last") -> float:
-    """Geometric-mean |predicted along-track error| [m] of the ``prefer`` checkpoint, cached per run.
+def _arc_proxy_summary(run_dir: Path, proxy: Path, device: str, prefer: str = "last") -> dict:
+    """Proxy summary of the ``prefer`` checkpoint, cached per run.
+
+    Used: the geometric-mean |predicted along-track error| [m] and the
+    roughness ratio below 300 km (surrogate vs true residual, > 1 costs extra
+    fixed-step RK4 error).
 
     The geometric mean weighs every proxy orbit equally on a log scale; the
     RMS is dominated by the few lowest-perilune orbits and is noisy across
@@ -654,12 +658,12 @@ def _arc_proxy_gmean(run_dir: Path, proxy: Path, device: str, prefer: str = "las
     cache = run_dir / "evals" / f"arc_proxy_{prefer}.json"
     if cache.is_file():
         rep = json.loads(cache.read_text(encoding="utf-8"))
-        if rep["summary"].get("cache_key") == key and "gmean_abs_along_track_m" in rep["summary"]:
-            return float(rep["summary"]["gmean_abs_along_track_m"])
+        if rep["summary"].get("cache_key") == key and "roughness_ratio_below_300km" in rep["summary"]:
+            return dict(rep["summary"])
     rep = module.score_run(Path(proxy), run_dir, device, prefer=prefer)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(rep, indent=1), encoding="utf-8")
-    return float(rep["summary"]["gmean_abs_along_track_m"])
+    return dict(rep["summary"])
 
 
 def analyze(
@@ -670,9 +674,11 @@ def analyze(
     With ``arc_proxy`` (a ``tools/st_lrps_arc_proxy.py build`` directory) every
     complete run is also scored at trajectory level: the geometric mean over
     the proxy's reference orbits of the |predicted along-track error| at the final time,
-    for the checkpoint the runtime loads. That becomes the primary response.
+    for the checkpoint the runtime loads. That becomes the primary response;
+    the proxy's roughness ratio is reported as a secondary one.
     """
-    responses = ((("arc_proxy_gmean_m", True),) if arc_proxy else ()) + RESPONSES
+    proxy_responses = (("arc_proxy_gmean_m", True), ("arc_proxy_roughness", True))
+    responses = (proxy_responses if arc_proxy else ()) + RESPONSES
     design = {r.name for r in design_runs(phase)}
     runs = build_runs(phase) if phase != "foldover" else build_runs("all")
     rows: list[dict] = []
@@ -692,9 +698,11 @@ def analyze(
             entry[key] = pick.get(key)
         if arc_proxy and entry["status"] == "complete":
             # Score the checkpoint the other responses describe.
-            entry["arc_proxy_gmean_m"] = _arc_proxy_gmean(
+            summary = _arc_proxy_summary(
                 out_root / r.name, Path(arc_proxy), device, "last" if at == "final" else "best"
             )
+            entry["arc_proxy_gmean_m"] = float(summary["gmean_abs_along_track_m"])
+            entry["arc_proxy_roughness"] = float(summary["roughness_ratio_below_300km"])
         rows.append(entry)
 
     design_rows = [
@@ -741,7 +749,8 @@ def _write_report(report: dict, out_root: Path) -> Path:
     tag = f"doe_{report['phase']}_{report['at']}"
     (out_root / f"{tag}_effects.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     with open(out_root / f"{tag}_runs.csv", "w", newline="", encoding="utf-8") as fh:
-        keys = ["name", "status", "epoch", *FACTOR_KEYS, "arc_proxy_gmean_m", *(k for k, _ in RESPONSES)]
+        keys = ["name", "status", "epoch", *FACTOR_KEYS, "arc_proxy_gmean_m", "arc_proxy_roughness",
+                *(k for k, _ in RESPONSES)]
         w = csv.DictWriter(fh, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         for row in report["runs"]:

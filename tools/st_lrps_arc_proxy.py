@@ -259,6 +259,26 @@ def score_arrays(a_model: np.ndarray, a_true: np.ndarray, weight: np.ndarray) ->
     return float(np.sum(weight * (np.asarray(a_model, dtype=np.float64) - a_true)))
 
 
+def roughness_sums(a_model: np.ndarray, a_true: np.ndarray, r_fix: np.ndarray,
+                   alt_max_km: float = 300.0, r_ref: float = R_REF_M) -> tuple[float, float]:
+    """Squared 4th time differences of the model and true residual below ``alt_max_km``.
+
+    RK4's local step error scales with the 4th time derivative of the force
+    along the arc, so sqrt(sum_model / sum_true) > 1 means the surrogate is
+    rougher than the field it replaces and a fixed-step propagation pays an
+    extra step error. On the 103-116 km Plan D orbits the dt-15 s RK4 step
+    error of the surrogate leg was 1.6-2.3x that of the SH200 leg; the pooled
+    ratio on 64 test orbits was 1.39 (H1 40-epoch 2.14, 2026-09-17 run 1.20).
+    """
+    def d4(a: np.ndarray) -> np.ndarray:
+        return a[4:] - 4.0 * a[3:-1] + 6.0 * a[2:-2] - 4.0 * a[1:-3] + a[:-4]
+
+    low = ((np.linalg.norm(r_fix, axis=1) - r_ref) / 1e3 < alt_max_km)[2:-2]
+    model = d4(np.asarray(a_model, dtype=np.float64))[low]
+    true = d4(np.asarray(a_true, dtype=np.float64))[low]
+    return float(np.sum(model**2)), float(np.sum(true**2))
+
+
 def cache_key(proxy: Path, run_dir: Path, prefer: str) -> str:
     """Identity of a score: proxy manifest content and the scored checkpoint file."""
     import hashlib
@@ -300,11 +320,14 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda", prefer: str = "b
     check_degrees(manifest, Path(run_dir))
     rt = load_surrogate_force_model(Path(run_dir), device=device, prefer=prefer)
     rows = []
+    rough_model = rough_true = 0.0
     files = sorted(proxy.glob("orbit_*.npz"))
     for i, p in enumerate(files, start=1):
         print(f"scoring orbit {i}/{len(files)}", file=sys.stderr, flush=True)
         z = np.load(p)
         a_nn = np.asarray(rt.predict_residual_accel(z["r_fix"]), dtype=np.float64).reshape(-1, 3)
+        num, den = roughness_sums(a_nn, z["a_true"], z["r_fix"])
+        rough_model, rough_true = rough_model + num, rough_true + den
         rows.append({"sid": int(p.stem.split("_")[1]), "hp_km": float(z["hp_km"]),
                      "along_track_m": score_arrays(a_nn, z["a_true"], z["weight"])})
     s = np.array([r["along_track_m"] for r in rows])
@@ -320,6 +343,10 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda", prefer: str = "b
         "median_abs_along_track_m": float(np.median(np.abs(s))),
         "p95_abs_along_track_m": float(np.percentile(np.abs(s), 95)),
         "max_abs_along_track_m": float(np.max(np.abs(s))),
+        # > 1: rougher than the true residual below 300 km (extra fixed-step RK4 error).
+        "roughness_ratio_below_300km": (
+            float(math.sqrt(rough_model / rough_true)) if rough_true > 0.0 else float("nan")
+        ),
     }
     return {"summary": summary, "orbits": rows}
 
