@@ -279,6 +279,10 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda", prefer: str = "b
         "cache_key": cache_key(proxy, Path(run_dir), prefer), "orbits": len(rows),
         "duration_days": manifest["duration_s"] / 86400.0,
         "rms_along_track_m": float(math.sqrt(np.mean(s**2))),
+        # Geometric mean of |s|: every orbit counts equally on a log scale. The
+        # RMS is set by the few lowest orbits, whose error moved 3x between
+        # checkpoints 8 epochs apart at the LR floor (Plan D best vs last).
+        "gmean_abs_along_track_m": float(np.exp(np.mean(np.log(np.abs(s) + 1e-9)))),
         "median_abs_along_track_m": float(np.median(np.abs(s))),
         "p95_abs_along_track_m": float(np.percentile(np.abs(s), 95)),
         "max_abs_along_track_m": float(np.max(np.abs(s))),

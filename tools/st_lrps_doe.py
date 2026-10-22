@@ -487,8 +487,12 @@ def _arc_proxy_module():
     return module
 
 
-def _arc_proxy_rms(run_dir: Path, proxy: Path, device: str, prefer: str = "last") -> float:
-    """RMS predicted along-track error [m] of the ``prefer`` checkpoint, cached per run.
+def _arc_proxy_gmean(run_dir: Path, proxy: Path, device: str, prefer: str = "last") -> float:
+    """Geometric-mean |predicted along-track error| [m] of the ``prefer`` checkpoint, cached per run.
+
+    The geometric mean weighs every proxy orbit equally on a log scale; the
+    RMS is dominated by the few lowest-perilune orbits and is noisy across
+    neighbouring checkpoints.
 
     The cache is reused only for the same proxy content (manifest hash) and
     the same checkpoint file (name, size and mtime).
@@ -498,12 +502,12 @@ def _arc_proxy_rms(run_dir: Path, proxy: Path, device: str, prefer: str = "last"
     cache = run_dir / "evals" / f"arc_proxy_{prefer}.json"
     if cache.is_file():
         rep = json.loads(cache.read_text(encoding="utf-8"))
-        if rep["summary"].get("cache_key") == key:
-            return float(rep["summary"]["rms_along_track_m"])
+        if rep["summary"].get("cache_key") == key and "gmean_abs_along_track_m" in rep["summary"]:
+            return float(rep["summary"]["gmean_abs_along_track_m"])
     rep = module.score_run(Path(proxy), run_dir, device, prefer=prefer)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(rep, indent=1), encoding="utf-8")
-    return float(rep["summary"]["rms_along_track_m"])
+    return float(rep["summary"]["gmean_abs_along_track_m"])
 
 
 def analyze(
@@ -512,11 +516,11 @@ def analyze(
     """Main effects of the screening responses.
 
     With ``arc_proxy`` (a ``tools/st_lrps_arc_proxy.py build`` directory) every
-    complete run is also scored at trajectory level: the RMS over the proxy's
-    reference orbits of the predicted along-track error at the final time,
+    complete run is also scored at trajectory level: the geometric mean over
+    the proxy's reference orbits of the |predicted along-track error| at the final time,
     for the checkpoint the runtime loads. That becomes the primary response.
     """
-    responses = ((("arc_proxy_rms_m", True),) if arc_proxy else ()) + RESPONSES
+    responses = ((("arc_proxy_gmean_m", True),) if arc_proxy else ()) + RESPONSES
     design = {r.name for r in design_runs(phase)}
     runs = build_runs(phase) if phase != "foldover" else build_runs("all")
     rows: list[dict] = []
@@ -536,7 +540,7 @@ def analyze(
             entry[key] = pick.get(key)
         if arc_proxy and entry["status"] == "complete":
             # Score the checkpoint the other responses describe.
-            entry["arc_proxy_rms_m"] = _arc_proxy_rms(
+            entry["arc_proxy_gmean_m"] = _arc_proxy_gmean(
                 out_root / r.name, Path(arc_proxy), device, "last" if at == "final" else "best"
             )
         rows.append(entry)
@@ -585,7 +589,7 @@ def _write_report(report: dict, out_root: Path) -> Path:
     tag = f"doe_{report['phase']}_{report['at']}"
     (out_root / f"{tag}_effects.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     with open(out_root / f"{tag}_runs.csv", "w", newline="", encoding="utf-8") as fh:
-        keys = ["name", "status", "epoch", *FACTOR_KEYS, "arc_proxy_rms_m", *(k for k, _ in RESPONSES)]
+        keys = ["name", "status", "epoch", *FACTOR_KEYS, "arc_proxy_gmean_m", *(k for k, _ in RESPONSES)]
         w = csv.DictWriter(fh, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         for row in report["runs"]:

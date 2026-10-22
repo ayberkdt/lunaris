@@ -235,9 +235,9 @@ def test_arc_proxy_becomes_the_primary_response(monkeypatch, tmp_path):
         seen.add(prefer)
         return planted[Path(run_dir).name]
 
-    monkeypatch.setattr(doe, "_arc_proxy_rms", fake)
+    monkeypatch.setattr(doe, "_arc_proxy_gmean", fake)
     report = doe.analyze(tmp_path, "all", "final", arc_proxy=tmp_path / "proxy")
-    assert report["primary_response"] == "arc_proxy_rms_m"
-    assert report["effects"]["arc_proxy_rms_m"]["effects"]["B"] == pytest.approx(-0.5, abs=0.02)
+    assert report["primary_response"] == "arc_proxy_gmean_m"
+    assert report["effects"]["arc_proxy_gmean_m"]["effects"]["B"] == pytest.approx(-0.5, abs=0.02)
     assert report["recommended_levels"]["B"] == +1
     assert seen == {"last"}       # --at final scores the final checkpoint
