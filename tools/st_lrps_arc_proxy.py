@@ -178,7 +178,11 @@ def gradient_degree(args: argparse.Namespace) -> int:
     on SH200 arcs the SH25-minus-SH200 response of a 103-116 km perilune orbit
     came out 0.8-41% off; with the degree-200 gradient it matched to within 0.2%.
     """
-    return int(args.ref_degree if args.gradient_degree is None else args.gradient_degree)
+    degree = int(args.ref_degree if args.gradient_degree is None else args.gradient_degree)
+    if not 0 <= degree <= int(args.ref_degree):
+        # The coefficient tables are built up to ref_degree only.
+        raise SystemExit(f"--gradient-degree {degree} must lie in [0, {args.ref_degree}]")
+    return degree
 
 
 def build(args: argparse.Namespace) -> int:
@@ -268,7 +272,10 @@ def roughness_sums(a_model: np.ndarray, a_true: np.ndarray, r_fix: np.ndarray,
     rougher than the field it replaces and a fixed-step propagation pays an
     extra step error. On the 103-116 km Plan D orbits the dt-15 s RK4 step
     error of the surrogate leg was 1.6-2.3x that of the SH200 leg; the pooled
-    ratio on 64 test orbits was 1.39 (H1 40-epoch 2.14, 2026-09-17 run 1.20).
+    ratio below 300 km on 64 test orbits was 1.37 (H1 40-epoch 2.11,
+    2026-09-17 run 1.22). ``score_run`` pools the raw sums over orbits, so the
+    lowest orbits, where the residual and its derivatives are largest,
+    dominate the ratio; that is where the extra step error arises.
     """
     def d4(a: np.ndarray) -> np.ndarray:
         return a[4:] - 4.0 * a[3:-1] + 6.0 * a[2:-2] - 4.0 * a[1:-3] + a[:-4]
@@ -318,6 +325,13 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda", prefer: str = "b
     proxy = Path(proxy)
     manifest = json.loads((proxy / "proxy_manifest.json").read_text(encoding="utf-8"))
     check_degrees(manifest, Path(run_dir))
+    # Proxies built before --gradient-degree used the base-field gradient.
+    g_deg = int(manifest.get("gradient_degree", manifest["base_degree"]))
+    if g_deg != int(manifest["ref_degree"]):
+        print(f"warning: {proxy.name} uses a degree-{g_deg} adjoint gradient on degree-"
+              f"{manifest['ref_degree']} arcs. Fine for ranking small surrogate errors "
+              f"(Plan D: <=0.03 m change on the lowest orbits); large forcings need a rebuild.",
+              file=sys.stderr, flush=True)
     rt = load_surrogate_force_model(Path(run_dir), device=device, prefer=prefer)
     rows = []
     rough_model = rough_true = 0.0
@@ -332,7 +346,7 @@ def score_run(proxy: Path, run_dir: Path, device: str = "cuda", prefer: str = "b
                      "along_track_m": score_arrays(a_nn, z["a_true"], z["weight"])})
     s = np.array([r["along_track_m"] for r in rows])
     summary = {
-        "run_dir": str(run_dir), "proxy_dir": str(proxy), "checkpoint": prefer,
+        "run_dir": str(run_dir), "proxy_dir": str(proxy), "checkpoint": prefer, "gradient_degree": g_deg,
         "cache_key": cache_key(proxy, Path(run_dir), prefer), "orbits": len(rows),
         "duration_days": manifest["duration_s"] / 86400.0,
         "rms_along_track_m": float(math.sqrt(np.mean(s**2))),

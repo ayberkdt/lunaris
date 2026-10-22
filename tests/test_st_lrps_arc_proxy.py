@@ -150,6 +150,9 @@ def test_adjoint_gradient_defaults_to_the_reference_arc_dynamics():
     assert ap.gradient_degree(args) == 200
     args.gradient_degree = 25
     assert ap.gradient_degree(args) == 25
+    args.gradient_degree = 201                    # tables stop at ref_degree
+    with pytest.raises(SystemExit, match="gradient-degree"):
+        ap.gradient_degree(args)
 
 
 def test_roughness_ratio_is_one_for_the_true_field_and_grows_with_high_frequency_noise():
@@ -163,3 +166,20 @@ def test_roughness_ratio_is_one_for_the_true_field_and_grows_with_high_frequency
     assert math.sqrt(num / den) > 1.5
     high = r_fix * 1.2                                                      # ~470 km: excluded
     assert ap.roughness_sums(rough, a_true, high) == (0.0, 0.0)
+
+
+def test_roughness_mask_selects_the_centred_samples_below_the_altitude_cut():
+    t = np.arange(0.0, 400.0, 5.0)
+    alt_km = np.where(t < 200.0, 100.0, 500.0)                              # first half low
+    r_fix = np.stack([1.738e6 + alt_km * 1e3, 0 * t, 0 * t], axis=1)
+    a_true = np.zeros((len(t), 3))
+    a_true[:, 0] = np.sin(t / 7.0)
+    spike = a_true.copy()
+    spike[60, 0] += 1.0                          # in the high part: must not count
+    assert ap.roughness_sums(spike, a_true, r_fix) == ap.roughness_sums(a_true, a_true, r_fix)
+    spike[10, 0] += 1.0                          # in the low part: counted with stencil weight 6^2
+    num, den = ap.roughness_sums(spike, a_true, r_fix)
+    d4 = lambda a: a[4:] - 4 * a[3:-1] + 6 * a[2:-2] - 4 * a[1:-3] + a[:-4]  # noqa: E731
+    low = (alt_km < 300.0)[2:-2]
+    assert math.isclose(num, float(np.sum(d4(spike)[low] ** 2)))
+    assert num > den

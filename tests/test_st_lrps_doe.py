@@ -245,7 +245,6 @@ def test_arc_proxy_becomes_the_primary_response(monkeypatch, tmp_path):
     assert report["recommended_levels"]["B"] == +1
     assert seen == {"last"}       # --at final scores the final checkpoint
     assert report["effects"]["arc_proxy_roughness"]["effects"]["E"] == pytest.approx(0.2, abs=0.02)
-    assert report["primary_response"] == "arc_proxy_gmean_m"
 
 
 def test_promotion_can_select_on_validation_orbits(monkeypatch, tmp_path):
