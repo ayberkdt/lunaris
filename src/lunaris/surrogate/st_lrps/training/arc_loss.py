@@ -25,9 +25,13 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+
+if TYPE_CHECKING:
+    from lunaris.surrogate.st_lrps.training.losses import SobolevLoss
 
 AccelFn = Callable[[torch.Tensor, bool], torch.Tensor]
 
@@ -110,7 +114,7 @@ class ArcLossTerm:
         return loss, stats
 
 
-def residual_accel_fn(model: torch.nn.Module, loss_fn: torch.nn.Module) -> AccelFn:
+def residual_accel_fn(model: torch.nn.Module, loss_fn: SobolevLoss) -> AccelFn:
     """Physical residual acceleration of ``model`` at body-fixed positions [m] -> [m/s²].
 
     ``create_graph=True`` keeps the parameter graph (training); ``False`` gives
