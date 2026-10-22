@@ -94,6 +94,7 @@ from lunaris.surrogate.st_lrps.networks.models import (
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract, resolve_dataset_hash
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
+from lunaris.surrogate.st_lrps.training.arc_loss import ArcLossTerm, residual_accel_fn
 from lunaris.surrogate.st_lrps.training.checkpoint_manager import (
     BestCheckpointTracker,
     resolve_best_ckpt_start_epoch,
@@ -633,6 +634,12 @@ class _EpochState:
     total_rel_a_mean: float = 0.0
     total_wtz_frac: float = 0.0
     total_accel_sq_err: float = 0.0
+    total_low_degree: float = 0.0
+    total_arc_sq: float = 0.0
+    arc_terms: int = 0
+    low_degree_batches: int = 0
+    total_u_low_sq: float = 0.0
+    total_u_low_count: float = 0.0
     total_a_norm_mean: float = 0.0
     total_angular_mean_deg: float = 0.0
     total_col_lap_diag: float = 0.0
@@ -669,6 +676,36 @@ class STLRPSTrainer:
         self.model = model
         self.loss_fn = loss_fn
         self.optimizer = optimizer
+        self.arc_loss: ArcLossTerm | None = None
+        if float(getattr(cfg, "arc_loss_weight", 0.0) or 0.0) > 0.0:
+            if not getattr(cfg, "arc_loss_data", None):
+                raise ValueError("--arc-loss-weight > 0 needs --arc-loss-data")
+            self.arc_loss = ArcLossTerm(
+                cfg.arc_loss_data,
+                orbits_per_step=int(cfg.arc_loss_orbits),
+                subsample=int(cfg.arc_loss_subsample),
+                s_ref_m=float(cfg.arc_loss_s_ref_m),
+                seed=int(getattr(cfg, "seed", 0) or 0),
+                expected_base_degree=getattr(cfg, "degree_min", None),
+                expected_ref_degree=getattr(cfg, "degree_max", None),
+            )
+            self._arc_accel = residual_accel_fn(model, loss_fn)
+            logger.info("Arc loss: %d orbits from %s, weight %.3g every %d steps",
+                        len(self.arc_loss.orbits), cfg.arc_loss_data, cfg.arc_loss_weight, cfg.arc_loss_every)
+        self.arc_val: ArcLossTerm | None = None
+        if getattr(cfg, "arc_val_data", None):
+            self.arc_val = ArcLossTerm(
+                cfg.arc_val_data,
+                expected_base_degree=getattr(cfg, "degree_min", None),
+                expected_ref_degree=getattr(cfg, "degree_max", None),
+            )
+            self._arc_val_accel = residual_accel_fn(model, loss_fn)
+            logger.info("Trajectory-aware validation: %d orbits from %s every %d epoch(s)",
+                        len(self.arc_val.orbits), cfg.arc_val_data, int(cfg.arc_val_every))
+        elif str(getattr(cfg, "best_metric", "")) == "arc_val":
+            raise ValueError("--best-metric arc_val needs --arc-val-data")
+        if str(getattr(cfg, "best_metric", "")) == "arc_val" and int(getattr(cfg, "arc_val_every", 1)) != 1:
+            raise ValueError("--best-metric arc_val needs --arc-val-every 1")
         self.weights = weights
         self.device = device
         self.cfg = cfg
@@ -893,6 +930,18 @@ class STLRPSTrainer:
                                 collocation_train_scalar=col_lap_scalar,
                             )
 
+                    if (
+                        self.arc_loss is not None
+                        and is_accum_boundary
+                        and state.optimizer_steps_done % int(self.cfg.arc_loss_every) == 0
+                    ):
+                        # One unscaled arc term per optimizer step (like the
+                        # collocation Laplacian above).
+                        arc_t, arc_stats = self.arc_loss.term(self._arc_accel, self.device, xb.dtype)
+                        scaled_loss = scaled_loss + float(self.cfg.arc_loss_weight) * arc_t
+                        state.total_arc_sq += float(arc_stats["arc_s_sq_mean_m2"])
+                        state.arc_terms += 1
+
                     self._backward_step(
                         state,
                         scaled_loss,
@@ -1005,6 +1054,11 @@ class STLRPSTrainer:
                 laplacian_subset_size=int(self.cfg.laplacian_subset_size),
                 laplacian_n_hutchinson=int(getattr(self.cfg, "n_hutchinson_samples", 4)),
                 laplacian_mode=self.laplacian_mode,
+                low_degree_lambda=float(getattr(self.cfg, "low_degree_loss_weight", 0.0)),
+                low_degree_lmax=int(getattr(self.cfg, "low_degree_lmax", 0)),
+                low_degree_alt_max_km=float(getattr(self.cfg, "low_degree_alt_max_km", 300.0)),
+                low_degree_radial_power=float(getattr(self.cfg, "low_degree_radial_power", 0.0)),
+                potential_metric_alt_max_km=float(getattr(self.cfg, "potential_metric_alt_max_km", 300.0)),
             )
 
     def _validate_numerics(
@@ -1058,6 +1112,8 @@ class STLRPSTrainer:
             "grad_norm": 0.0,
             "nan_detected": True,
             "accel_rmse_m_s2": float("nan"),
+            "u_low_rmse_m2_s2": float("nan"),
+            "loss_low_degree": float("nan"),
             "val_base_loss": float("nan"),
             "val_physics_loss": float("nan"),
             "val_total_loss": float("nan"),
@@ -1245,6 +1301,12 @@ class STLRPSTrainer:
         state.total_rel_a_mean += float(stats.get("rel_a_mean", 0.0)) * n_b
         state.total_wtz_frac += float(stats.get("wtz_frac", 0.0)) * n_b
         state.total_accel_sq_err += float(stats.get("accel_sq_err", 0.0)) * n_b
+        if stats.get("loss_low_degree") is not None:
+            # Per-batch cross-fitted estimate; batches too small to fit are skipped.
+            state.total_low_degree += float(stats["loss_low_degree"])
+            state.low_degree_batches += 1
+        state.total_u_low_sq += float(stats.get("u_low_sq_sum", 0.0))
+        state.total_u_low_count += float(stats.get("u_low_count", 0.0))
         a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
         state.total_a_norm_mean += a_norm_b * n_b
         state.a_norm_max = max(state.a_norm_max, a_norm_b)
@@ -1391,6 +1453,20 @@ class STLRPSTrainer:
             "wtz_frac": state.total_wtz_frac / samples_safe,
             # Unweighted residual-acceleration RMS over the epoch's samples [m/s²].
             "accel_rmse_m_s2": math.sqrt(max(0.0, state.total_accel_sq_err / samples_safe)),
+            # Unweighted residual-potential RMS below potential_metric_alt_max_km [m²/s²].
+            "u_low_rmse_m2_s2": (
+                math.sqrt(state.total_u_low_sq / state.total_u_low_count)
+                if state.total_u_low_count > 0 else float("nan")
+            ),
+            # RMS of the exact along-track errors of the arc-loss orbits [m].
+            "arc_s_rms_m": (
+                math.sqrt(state.total_arc_sq / state.arc_terms) if state.arc_terms > 0 else float("nan")
+            ),
+            "low_degree_batches": int(state.low_degree_batches),
+            "loss_low_degree": (
+                state.total_low_degree / state.low_degree_batches
+                if state.low_degree_batches > 0 else float("nan")
+            ),
             "loss_laplacian_diag": col_lap_diag_avg,
             "loss_laplacian_train": col_lap_train_avg,
             "lambda_laplacian_eff": col_lap_weight_eff,
@@ -1421,9 +1497,18 @@ def _lr_multiplier_for_epoch(
     warmup_epochs: int,
     min_lr_ratio: float,
     t_max: int | None,
+    schedule: str = "cosine",
+    decay_fraction: float = 0.2,
 ) -> float:
     """
-    Warm up linearly, then decay with a cosine schedule to ``min_lr_ratio``.
+    Warm up linearly, then decay to ``min_lr_ratio``.
+
+    ``"cosine"`` decays with a cosine over ``t_max``. ``"wsd"``
+    (warmup-stable-decay) holds the base LR and spends the last
+    ``decay_fraction`` of the post-warm-up epochs in a ``1 - sqrt(progress)``
+    cooldown that reaches ``min_lr_ratio`` on the final epoch; ``t_max`` is
+    ignored. A WSD run of any length ends annealed, so short runs of different
+    lengths are compared at the same point of their schedule.
     """
 
     epoch_i = max(0, int(epoch))
@@ -1434,12 +1519,27 @@ def _lr_multiplier_for_epoch(
     if warmup_i > 0 and epoch_i < warmup_i:
         return float((epoch_i + 1) / warmup_i)
 
+    if schedule == "wsd":
+        post = max(1, total_i - warmup_i)
+        n_decay = max(1, min(post, int(round(float(decay_fraction) * post))))
+        decay_start = total_i - n_decay
+        if epoch_i < decay_start:
+            return 1.0
+        progress = min(1.0, (epoch_i - decay_start + 1) / float(n_decay))
+        return float(min_ratio + (1.0 - min_ratio) * (1.0 - math.sqrt(progress)))
+    if schedule != "cosine":
+        raise ValueError(f"lr schedule must be 'cosine' or 'wsd', got {schedule!r}")
+
     decay_total = int(t_max) if t_max is not None else total_i
     decay_total = max(warmup_i + 1, decay_total)
     denom = max(1, decay_total - warmup_i - 1)
     progress = min(1.0, max(0.0, (epoch_i - warmup_i) / float(denom)))
     cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
     return float(min_ratio + (1.0 - min_ratio) * cosine)
+
+def _lr_schedule_kind(cfg: Any) -> str:
+    """Manifest/checkpoint name of the configured LR schedule."""
+    return "warmup_stable_decay" if str(getattr(cfg, "lr_schedule_mode", "cosine")) == "wsd" else "warmup_cosine"
 
 def _apply_lr_multiplier(optimizer: torch.optim.Optimizer, multiplier: float) -> None:
     for group in optimizer.param_groups:
@@ -2165,6 +2265,7 @@ def _fit_residual_scalers(
             target_scale_multiplier=float(getattr(cfg, "target_scale_multiplier", 6.0)),
             target_contract=target_contract,
             indices=(None if independent_val else train_indices),
+            u_center=str(getattr(cfg, "u_center", "mean")),
             split_provenance=scaler_split_provenance,
             gravity_model=_maybe_load_baseline_gravity_model(meta, target_contract),
         )
@@ -2646,6 +2747,13 @@ def _build_model_and_optim(
             "Output envelope: dU_scaled = rho^%g * NN(x), rho = r_ref/r (r_ref=%.1f m)",
             float(cfg.output_envelope_power), float(cfg.resolved_r_ref_m),
         )
+    _ld_lmax = int(getattr(cfg, "low_degree_lmax", 0) or 0)
+    if _ld_lmax > 0 and _ld_lmax > int(cfg.degree_min):
+        raise ValueError(
+            f"--low-degree-lmax {_ld_lmax} exceeds the dataset base degree {cfg.degree_min}; "
+            "the residual has real content above the base degree, so the leakage term would "
+            "penalise signal, not error."
+        )
     if cfg.activation.lower() == "sine" and int(getattr(cfg, "n_bands", 1)) > 1:
         if cfg.degree_max <= 0:
             raise ValueError(
@@ -3026,7 +3134,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             "use_radial_separation", "radial_append_raw",
             "use_radial_decay_encoding", "radial_decay_max_power", "radial_decay_append_raw",
             "use_real_sh_basis", "real_sh_degree", "real_sh_append_raw", "real_sh_include_radial",
-            "u_scale_mode", "a_scale_mode", "target_scale_multiplier",
+            "u_scale_mode", "u_center", "a_scale_mode", "target_scale_multiplier",
             "use_si", "dataset_name", "split_seed", "val_ratio", "seed",
         )
         _locked_changed = []
@@ -3569,7 +3677,11 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             "x_mean_policy": "origin_fixed",
             "x_scale_policy": "max_norm_from_origin",
             "lr_schedule": {
-                "kind": "warmup_cosine",
+                "kind": _lr_schedule_kind(cfg),
+                **(
+                    {"lr_decay_fraction": float(getattr(cfg, "lr_decay_fraction", 0.2))}
+                    if _lr_schedule_kind(cfg) == "warmup_stable_decay" else {}
+                ),
                 "warmup_epochs": int(cfg.warmup_epochs),
                 "min_lr_ratio": float(cfg.min_lr_ratio),
                 "t_max": (int(cfg.t_max) if cfg.t_max is not None else None),
@@ -4049,12 +4161,26 @@ def _run_training_loop(session: _TrainingSession) -> str:
                 warmup_epochs=cfg.warmup_epochs,
                 min_lr_ratio=cfg.min_lr_ratio,
                 t_max=cfg.t_max,
+                schedule=str(getattr(cfg, "lr_schedule_mode", "cosine")),
+                decay_fraction=float(getattr(cfg, "lr_decay_fraction", 0.2)),
             )
             _apply_lr_multiplier(opt, lr_scale)
             _ldir_log = _direction_loss_factor(epoch, cfg)
             if _ldir_log > 0.0 or epoch == cfg.direction_loss_start_epoch:
                 logger.info("[epoch %s] effective lambda_dir=%.4e", epoch+1, _ldir_log)
             tr = trainer.run_epoch(train_loader, is_train=True,  epoch=epoch, max_batches=cfg.max_train_batches)
+            if (
+                float(getattr(cfg, "low_degree_loss_weight", 0.0) or 0.0) > 0.0
+                and int(tr.get("low_degree_batches", 0) or 0) == 0
+                and not tr.get("nan_detected", False)
+            ):
+                raise RuntimeError(
+                    "--low-degree-loss-weight > 0 but the leakage term did not apply on any "
+                    f"training batch of epoch {epoch + 1}: no batch had 2 x 4 x (lmax+1)^2 = "
+                    f"{8 * (int(cfg.low_degree_lmax) + 1) ** 2} samples below "
+                    f"{cfg.low_degree_alt_max_km} km. Lower --low-degree-lmax or raise "
+                    "--low-degree-alt-max-km / --batch-size."
+                )
             _total_train_samples += int(tr.get("samples_seen", 0))
 
             # Epoch-level explosion detection: save failure manifest and stop on NaN.
@@ -4091,6 +4217,17 @@ def _run_training_loop(session: _TrainingSession) -> str:
             _prev_mse_a = _cur_mse_a
 
             va = trainer.run_epoch(val_loader,   is_train=False, epoch=epoch, max_batches=cfg.max_val_batches)
+            if (
+                trainer.arc_val is not None
+                and not va.get("nan_detected")
+                and (epoch + 1) % int(cfg.arc_val_every) == 0
+            ):
+                _was_training = trainer.model.training
+                trainer.model.eval()
+                va.update(trainer.arc_val.evaluate_all(trainer._arc_val_accel, trainer.device, torch.float32))
+                trainer.model.train(_was_training)
+                logger.info("[val ] epoch=%s trajectory proxy: gmean |s| %.4g m, RMS %.4g m",
+                            epoch + 1, va["arc_gmean_m"], va["arc_rms_m"])
 
             # Same explosion handling for validation. Without it a NaN/Inf
             # validation loss reaches compute_checkpoint_score()'s finite-value
@@ -4158,7 +4295,7 @@ def _run_training_loop(session: _TrainingSession) -> str:
             ckpt_config["epochs_since_improvement"] = int(epochs_without_improve)
 
             scheduler_state = {
-                "kind": "warmup_cosine",
+                "kind": _lr_schedule_kind(cfg),
                 "epoch": int(epoch),
                 "warmup_epochs": int(cfg.warmup_epochs),
                 "min_lr_ratio": float(cfg.min_lr_ratio),

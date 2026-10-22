@@ -9,11 +9,20 @@ launch strip schedules ``_refresh_layout`` from its ``event()`` override on the
 child (``RuntimeError: Internal C++ object already deleted``). Every single
 shot in the UI packages now names its widget as the receiver, so it dies with
 the widget.
+
+The in-process Qt tests below run in a fresh interpreter. ``_drain`` must
+process the deferred deletes of the widgets they destroy, and in a shared
+process that also runs the destructors of objects other tests left behind; one
+full-suite run died there with an access violation (not reproduced in five
+further runs). In a subprocess such a crash fails these tests only.
 """
 
 from __future__ import annotations
 
 import ast
+import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -52,6 +61,28 @@ def test_every_single_shot_names_a_receiver() -> None:
     )
 
 
+_ISOLATED_ENV = "LUNARIS_SINGLE_SHOT_ISOLATED"
+_in_isolation = pytest.mark.skipif(
+    os.environ.get(_ISOLATED_ENV) != "1",
+    reason="runs in a fresh interpreter through test_qt_single_shot_cases_in_a_fresh_process",
+)
+
+
+def test_qt_single_shot_cases_in_a_fresh_process(tmp_path) -> None:
+    pytest.importorskip("PySide6")
+    env = dict(os.environ, **{_ISOLATED_ENV: "1", "QT_QPA_PLATFORM": "offscreen"})
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "pytest", str(Path(__file__)), "-q", "-p", "no:randomly",
+            "-p", "no:cacheprovider", "--basetemp", str(tmp_path / "bt"),
+            "-k", "receiver_single_shot_dies or launch_strip_destroyed",
+        ],
+        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=600, check=False,
+    )
+    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-4000:]
+    assert re.search(r"\b3 passed\b", result.stdout), result.stdout[-2000:]
+
+
 @pytest.fixture()
 def qt_errors(monkeypatch):
     pytest.importorskip("PySide6")
@@ -75,6 +106,7 @@ def _drain() -> None:
     loop.exec()
 
 
+@_in_isolation
 def test_receiver_single_shot_dies_with_its_widget(qt_errors) -> None:
     import shiboken6
     from PySide6 import QtCore, QtWidgets
@@ -98,6 +130,7 @@ def test_receiver_single_shot_dies_with_its_widget(qt_errors) -> None:
     qt_errors.clear()
 
 
+@_in_isolation
 @pytest.mark.parametrize("how", ["delete", "parent_deleted"])
 def test_launch_strip_destroyed_mid_layout_runs_no_callback(qt_errors, how) -> None:
     import shiboken6

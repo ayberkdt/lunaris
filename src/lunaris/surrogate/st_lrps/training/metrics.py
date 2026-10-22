@@ -14,7 +14,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_BEST_METRICS = ("val_total_loss", "val_base_loss", "hybrid", "direction_loss", "hybrid_rel")
+SUPPORTED_BEST_METRICS = (
+    "val_total_loss", "val_base_loss", "hybrid", "direction_loss", "hybrid_rel", "potential_low", "arc_val",
+)
 LOWER_IS_BETTER = True
 
 _WARNED_ALIASES: set[str] = set()
@@ -130,6 +132,20 @@ def _val_physics_loss(stats: Mapping[str, Any], *, base: float, total: float) ->
     return float(total - base)
 
 
+def _val_u_low_rmse(stats: Mapping[str, Any]) -> float | None:
+    for key in ("u_low_rmse_m2_s2", "val_u_low_rmse_m2_s2"):
+        value = stats.get(key)
+        if value is not None:
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError(
+                    "best_metric='potential_low' needs a finite val_u_low_rmse_m2_s2; the "
+                    "validation set has no samples below potential_metric_alt_max_km."
+                )
+            return value
+    return None
+
+
 def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:
     """Human-readable formula for the canonical checkpoint score."""
     metric = normalize_best_metric(best_metric)
@@ -140,6 +156,10 @@ def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:
         return "val_base_loss"
     if metric == "direction_loss":
         return "val_loss_dir"
+    if metric == "potential_low":
+        return "val_u_low_rmse_m2_s2"
+    if metric == "arc_val":
+        return "val_arc_gmean_m"
     if metric == "hybrid_rel":
         beta = float(_cfg_get(cfg, "hybrid_relative_beta", 0.30))
         return f"val_base_loss + {alpha:.2f} * val_loss_dir + {beta:.2f} * val_loss_rel"
@@ -173,7 +193,9 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
     """Compute the scalar score used for best-checkpoint selection.
 
     Supported canonical ``best_metric`` values are ``val_total_loss``,
-    ``val_base_loss``, ``hybrid``, and ``direction_loss``. The historical
+    ``val_base_loss``, ``hybrid``, ``direction_loss``, ``hybrid_rel`` and
+    ``potential_low`` (the unweighted low-altitude residual-potential RMS,
+    the field quantity that sets orbit-energy and along-track error). The historical
     ``total_loss`` value is accepted as an alias for ``val_total_loss`` with a
     warning.
     """
@@ -198,6 +220,19 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[fl
         score = base + alpha * loss_dir
     elif metric == "hybrid_rel":
         score = base + alpha * loss_dir + beta * loss_rel
+    elif metric == "potential_low":
+        u_low = _val_u_low_rmse(val_stats)
+        if u_low is None:
+            raise KeyError(
+                "best_metric='potential_low' needs val_u_low_rmse_m2_s2; the validation set "
+                "has no samples below potential_metric_alt_max_km."
+            )
+        score = u_low
+    elif metric == "arc_val":
+        arc = val_stats.get("arc_gmean_m", val_stats.get("val_arc_gmean_m"))
+        if arc is None or not math.isfinite(float(arc)):
+            raise ValueError("best_metric='arc_val' needs val_arc_gmean_m every epoch (--arc-val-every 1).")
+        score = float(arc)
     else:  # pragma: no cover - normalize_best_metric guards this.
         raise ValueError(metric)
 
@@ -280,6 +315,9 @@ def flatten_epoch_metrics(
         "train_rel_a_mean": _optional_float(train_stats, "rel_a_mean", "train_rel_a_mean", default=None),
         "train_wtz_frac": _optional_float(train_stats, "wtz_frac", "train_wtz_frac", default=None),
         "train_accel_rmse_m_s2": _optional_float(train_stats, "accel_rmse_m_s2", "train_accel_rmse_m_s2", default=None),
+        "train_u_low_rmse_m2_s2": _optional_float(train_stats, "u_low_rmse_m2_s2", "train_u_low_rmse_m2_s2", default=None),
+        "train_loss_low_degree": _optional_float(train_stats, "loss_low_degree", "train_loss_low_degree", default=None),
+        "train_arc_s_rms_m": _optional_float(train_stats, "arc_s_rms_m", "train_arc_s_rms_m", default=None),
         "train_mask_frac": _optional_float(train_stats, "mask_frac", "train_mask_frac", default=None),
         "val_loss_total": val_total,
         "val_loss_base": val_base,
@@ -297,6 +335,10 @@ def flatten_epoch_metrics(
         "val_rel_a_mean": _optional_float(val_stats, "rel_a_mean", "val_rel_a_mean", default=None),
         "val_wtz_frac": _optional_float(val_stats, "wtz_frac", "val_wtz_frac", default=None),
         "val_accel_rmse_m_s2": _optional_float(val_stats, "accel_rmse_m_s2", "val_accel_rmse_m_s2", default=None),
+        "val_u_low_rmse_m2_s2": _optional_float(val_stats, "u_low_rmse_m2_s2", "val_u_low_rmse_m2_s2", default=None),
+        "val_loss_low_degree": _optional_float(val_stats, "loss_low_degree", "val_loss_low_degree", default=None),
+        "val_arc_gmean_m": _optional_float(val_stats, "arc_gmean_m", "val_arc_gmean_m", default=None),
+        "val_arc_rms_m": _optional_float(val_stats, "arc_rms_m", "val_arc_rms_m", default=None),
         "val_mask_frac": _optional_float(val_stats, "mask_frac", "val_mask_frac", default=None),
         "checkpoint_score": _optional_float(checkpoint_report, "score", default=None),
         "checkpoint_formula": checkpoint_report.get("formula"),
@@ -422,6 +464,9 @@ HISTORY_FIELDNAMES = [
     "train_rel_a_mean",
     "train_wtz_frac",
     "train_accel_rmse_m_s2",
+    "train_u_low_rmse_m2_s2",
+    "train_loss_low_degree",
+    "train_arc_s_rms_m",
     "train_mask_frac",
     "val_loss_total",
     "val_loss_base",
@@ -439,6 +484,10 @@ HISTORY_FIELDNAMES = [
     "val_rel_a_mean",
     "val_wtz_frac",
     "val_accel_rmse_m_s2",
+    "val_u_low_rmse_m2_s2",
+    "val_loss_low_degree",
+    "val_arc_gmean_m",
+    "val_arc_rms_m",
     "val_mask_frac",
     "checkpoint_score",
     "checkpoint_formula",

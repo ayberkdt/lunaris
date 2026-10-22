@@ -334,6 +334,15 @@ class MultiScaleSirenMLP(nn.Module):
     use_residual:
         Use ``SirenResBlock`` for shared layers.  Always ``True`` for this
         class; the parameter exists for API symmetry.
+    band_init:
+        ``"legacy"`` initialises band 0 with the SIREN first-layer rule and
+        every other band with the hidden-layer rule ``U(±√(6/n)/w0)``. The
+        ``w0`` in that bound cancels the ``w0`` in ``sin(w0·Wx)``, so every
+        band after the first starts with the same ``w0``-independent
+        frequency ``√(6/n)`` (below band 0's ``w0_0/n`` for the shipped
+        bands). ``"siren_first"`` uses the first-layer rule ``U(±1/n)`` for
+        every band, so band ``k`` starts at frequency ``w0_k/n`` as the band
+        spectrum intends. Weights loaded from a checkpoint are unaffected.
     """
 
     def __init__(
@@ -345,8 +354,11 @@ class MultiScaleSirenMLP(nn.Module):
         dropout: float = 0.0,
         use_residual: bool = True,
         output_dim: int = 1,
+        band_init: str = "legacy",
     ):
         super().__init__()
+        if band_init not in ("legacy", "siren_first"):
+            raise ValueError(f"band_init must be 'legacy' or 'siren_first', got {band_init!r}")
         self.output_dim = int(output_dim)
         if self.output_dim <= 0:
             raise ValueError(f"output_dim must be positive, got {self.output_dim}")
@@ -376,7 +388,7 @@ class MultiScaleSirenMLP(nn.Module):
         self.band_layers: nn.ModuleList = nn.ModuleList()
         for i, (w0, bw_i) in enumerate(zip(self.w0_bands, band_widths, strict=False)):
             lin = nn.Linear(in_dim, bw_i)
-            if i == 0:
+            if i == 0 or band_init == "siren_first":
                 siren_init_first_(lin)      # uniform [-1/n, 1/n], frequency-agnostic
             else:
                 siren_init_hidden_(lin, w0)
@@ -848,52 +860,67 @@ class RealSHBasisEncoding(nn.Module):
         return self.n_angular + (1 if self.include_radial else 0) + (3 if self.append_raw else 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        L = self.degree_max
         r = torch.norm(x, dim=-1, keepdim=True).clamp_min(self.eps)   # (N, 1)
-        n = x / r
-        nx = n[:, 0:1]
-        ny = n[:, 1:2]
-        t = n[:, 2:3]                                                 # cosθ
-        ones = torch.ones_like(t)
-
-        # C_m = sinθ^m cos(mφ), S_m = sinθ^m sin(mφ) via complex-power recurrence.
-        C: list[torch.Tensor] = [ones]
-        S: list[torch.Tensor] = [torch.zeros_like(t)]
-        for _m in range(1, L + 1):
-            C.append(C[-1] * nx - S[-1] * ny)
-            S.append(C[-2] * ny + S[-1] * nx)
-
-        # Q[(l, m)] = P̄_{l,m}(t) / sinθ^m  (polynomial in t; sinθ^m carried by C/S).
-        Q: dict[tuple[int, int], torch.Tensor] = {(0, 0): ones}
-        sec = 1.0
-        for m in range(1, L + 1):
-            sec *= math.sqrt((2 * m + 1) / (2 * m))   # constant sectoral seed (no sinθ)
-            Q[(m, m)] = sec * ones
-        for m in range(L + 1):
-            for l in range(m + 1, L + 1):  # noqa: E741  # l = SH degree (standard notation)
-                a = math.sqrt((2 * l - 1) * (2 * l + 1) / ((l - m) * (l + m)))
-                if l - 2 >= m:
-                    b = math.sqrt(
-                        (2 * l + 1) * (l + m - 1) * (l - m - 1)
-                        / ((2 * l - 3) * (l - m) * (l + m))
-                    )
-                    Q[(l, m)] = a * t * Q[(l - 1, m)] - b * Q[(l - 2, m)]
-                else:
-                    Q[(l, m)] = a * t * Q[(l - 1, m)]
-
-        sqrt2 = math.sqrt(2.0)
         feats: list[torch.Tensor] = []
         if self.include_radial:
             feats.append(r)
-        for l in range(L + 1):  # noqa: E741  # l = SH degree (standard notation)
-            feats.append(Q[(l, 0)])                       # Y_{l,0}
-            for m in range(1, l + 1):
-                base = sqrt2 * Q[(l, m)]
-                feats.append(base * C[m])                 # cos term
-                feats.append(base * S[m])                 # sin term
+        feats.append(real_sh_basis_4pi(x / r, self.degree_max))
         if self.append_raw:
             feats.append(x)
         return torch.cat(feats, dim=-1)
+
+
+def real_sh_basis_4pi(n: torch.Tensor, degree_max: int) -> torch.Tensor:
+    """4π fully-normalized real spherical harmonics of unit vectors ``n``.
+
+    Returns ``(N, (degree_max+1)**2)`` columns ordered ``Y_{0,0}``, then per
+    degree ``l``: ``Y_{l,0}, Y_{l,1}^cos, Y_{l,1}^sin, ..., Y_{l,l}^sin``
+    (geodesy convention, Condon-Shortley phase omitted). The recurrence is the
+    pole-safe one documented on :class:`RealSHBasisEncoding`; ``n`` must
+    already be normalized.
+    """
+    L = int(degree_max)
+    if L < 0:
+        raise ValueError(f"real_sh_basis_4pi degree_max must be >= 0, got {L}")
+    nx = n[:, 0:1]
+    ny = n[:, 1:2]
+    t = n[:, 2:3]                                                 # cosθ
+    ones = torch.ones_like(t)
+
+    # C_m = sinθ^m cos(mφ), S_m = sinθ^m sin(mφ) via complex-power recurrence.
+    C: list[torch.Tensor] = [ones]
+    S: list[torch.Tensor] = [torch.zeros_like(t)]
+    for _m in range(1, L + 1):
+        C.append(C[-1] * nx - S[-1] * ny)
+        S.append(C[-2] * ny + S[-1] * nx)
+
+    # Q[(l, m)] = P̄_{l,m}(t) / sinθ^m  (polynomial in t; sinθ^m carried by C/S).
+    Q: dict[tuple[int, int], torch.Tensor] = {(0, 0): ones}
+    sec = 1.0
+    for m in range(1, L + 1):
+        sec *= math.sqrt((2 * m + 1) / (2 * m))   # constant sectoral seed (no sinθ)
+        Q[(m, m)] = sec * ones
+    for m in range(L + 1):
+        for l in range(m + 1, L + 1):  # noqa: E741  # l = SH degree (standard notation)
+            a = math.sqrt((2 * l - 1) * (2 * l + 1) / ((l - m) * (l + m)))
+            if l - 2 >= m:
+                b = math.sqrt(
+                    (2 * l + 1) * (l + m - 1) * (l - m - 1)
+                    / ((2 * l - 3) * (l - m) * (l + m))
+                )
+                Q[(l, m)] = a * t * Q[(l - 1, m)] - b * Q[(l - 2, m)]
+            else:
+                Q[(l, m)] = a * t * Q[(l - 1, m)]
+
+    sqrt2 = math.sqrt(2.0)
+    feats: list[torch.Tensor] = []
+    for l in range(L + 1):  # noqa: E741  # l = SH degree (standard notation)
+        feats.append(Q[(l, 0)])                       # Y_{l,0}
+        for m in range(1, l + 1):
+            base = sqrt2 * Q[(l, m)]
+            feats.append(base * C[m])                 # cos term
+            feats.append(base * S[m])                 # sin term
+    return torch.cat(feats, dim=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -1245,6 +1272,7 @@ def build_model_from_config(
                     dropout=dropout,
                     use_residual=True,
                     output_dim=output_dim,
+                    band_init=str(_cfg_value(cfg, "band_init", "legacy")),
                 )
         else:
             backbone = SirenMLP(
@@ -1570,6 +1598,7 @@ __all__ = [
     "RadialDecayEncoding",
     "PhysicalRadialDecayEncoding",
     "RealSHBasisEncoding",
+    "real_sh_basis_4pi",
     "PhysicsNet",
     "siren_init_first_",
     "siren_init_hidden_",

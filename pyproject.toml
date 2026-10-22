@@ -332,6 +332,7 @@ files = [
   "src/lunaris/surrogate/st_lrps/training/config.py",
   "src/lunaris/surrogate/st_lrps/training/config_summary.py",
   "src/lunaris/surrogate/st_lrps/training/losses.py",
+  "src/lunaris/surrogate/st_lrps/training/arc_loss.py",
   "src/lunaris/surrogate/st_lrps/training/metrics.py",
   "src/lunaris/surrogate/st_lrps/training/checkpoint_manager.py",
   "src/lunaris/surrogate/st_lrps/training/periodic_eval.py",

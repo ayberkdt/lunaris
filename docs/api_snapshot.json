@@ -306,6 +306,7 @@
       "compute_architecture_signature",
       "compute_harmonic_w0_bands",
       "get_output_head_params",
+      "real_sh_basis_4pi",
       "reconstruct_model_from_artifacts",
       "siren_init_first_",
       "siren_init_hidden_"

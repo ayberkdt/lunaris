@@ -858,6 +858,7 @@ def load_surrogate_force_model(
     allow_config_mismatch: bool = False,
     strict_domain: bool = False,
     paper_safe: bool = False,
+    prefer: str = "best",
 ) -> BaseSurrogateRuntime:
     """
     Load a trained surrogate force model from a run directory.
@@ -888,6 +889,9 @@ def load_surrogate_force_model(
         False (research mode), an incomplete legacy artifact still loads, but
         the runtime records the missing-field list with ``legacy_override=True``
         in ``paper_safe_metadata`` and emits a RuntimeWarning.
+    prefer : str
+        ``"best"`` (default) loads ``ckpt_best.pt`` when present, ``"last"``
+        loads ``ckpt_last.pt`` (e.g. the end of a warmup-stable-decay run).
     Returns
     -------
     SurrogateForceModel
@@ -910,10 +914,10 @@ def load_surrogate_force_model(
     model, scaler, cfg, report = reload_model_from_artifact_run_dir(
         run_dir,
         dev,
-        prefer="best",
+        prefer=prefer,
         allow_config_mismatch=allow_config_mismatch,
     )
-    _, ckpt = load_best_or_last(layout, prefer="best", device=dev)
+    _, ckpt = load_best_or_last(layout, prefer=prefer, device=dev)
     contract_report = validate_checkpoint_contract(
         ckpt,
         cfg=cfg,

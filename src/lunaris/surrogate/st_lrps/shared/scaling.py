@@ -347,6 +347,7 @@ def fit_scaler_streaming(
     target_scale_multiplier: float = 6.0,
     target_contract: TargetContract | None = None,
     indices: np.ndarray | None = None,
+    u_center: str = "mean",
     split_provenance: Mapping[str, Any] | None = None,
     gravity_model: GravityModel | None = None,
 ) -> ScalerPack:
@@ -365,6 +366,12 @@ def fit_scaler_streaming(
         The x (input) scale is always origin-fixed max-radius and is unaffected.
     target_scale_multiplier : float
         RMS expansion factor used by the ``"rms"``/``"hybrid"`` target modes.
+    u_center : str
+        ``"mean"`` (default) subtracts the train-sample mean of ΔU. ``"zero"``
+        keeps ΔU uncentred: a residual of degrees ``> base_degree >= 0`` has
+        zero mean over every sphere, so a nonzero sample mean is a sampling
+        artefact, and a ``rho**p`` output envelope cannot represent the
+        constant it would add to the target at high altitude.
     indices : np.ndarray, optional
         When given, the scaler is fit **only** on these dataset rows (the train
         split). This is the leakage-safe path: validation/test/OOD rows never
@@ -513,6 +520,10 @@ def fit_scaler_streaming(
 
     _mult = float(target_scale_multiplier)
     u_mean, u_scale = u_stats.finalize(mode=str(u_scale_mode), multiplier=_mult)
+    if str(u_center) == "zero":
+        u_mean = np.zeros_like(u_mean)
+    elif str(u_center) != "mean":
+        raise ValueError(f"u_center must be 'mean' or 'zero', got {u_center!r}")
     a_mean, a_scale = a_stats.finalize(mode=str(a_scale_mode), multiplier=_mult)
 
     logger.info("  x : mean=[0,0,0] (fixed -> Moon CoM), max_r=%.3e m", x_scale)
@@ -536,6 +547,7 @@ def fit_scaler_streaming(
         "base_degree": int(contract.base_degree),
         "target_degree": int(contract.target_degree),
         "u_scale_mode": str(u_scale_mode),
+        "u_center": str(u_center),
         "a_scale_mode": str(a_scale_mode),
         "target_scale_multiplier": float(target_scale_multiplier),
     }
