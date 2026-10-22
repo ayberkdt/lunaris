@@ -26,6 +26,8 @@ Sub-commands::
     python tools/st_lrps_doe.py run      --data-dir DIR --out-root DIR [--phase ...] [--only NAME ...]
     python tools/st_lrps_doe.py analyze  --out-root DIR [--phase ...] [--at final|best]
     python tools/st_lrps_doe.py promote  --levels ABcDef --stage confirm|final --data-dir DIR --out-root DIR
+    python tools/st_lrps_doe.py rsm --action commands|run|analyze --levels ABcDef \
+        --factor w_u:--w-u:1:30:log --factor ldl:--low-degree-loss-weight:10:1000:log --out-root DIR
 
 ``run`` trains sequentially and skips runs whose ``history.jsonl`` already
 reaches the final epoch; it puts this checkout's ``src`` first on
@@ -309,6 +311,146 @@ def promoted_run(
         base + CORRECTION_FLAGS + _factor_flags(levels) + STAGE_FLAGS[stage] + selection,
         f"Promoted {_signs(levels)} at stage {stage}.",
     )
+
+
+def launch(runs: list[Run], data_dir: Path, out_root: Path, *, dry: bool) -> int:
+    """Print (``dry``) or train ``runs`` sequentially with skip/resume/stale handling."""
+    for r in runs:
+        cmd = _command(r, data_dir, out_root)
+        if dry:
+            print(subprocess.list2cmdline(cmd))
+            continue
+        run_dir = out_root / r.name
+        action = plan_launch(r, run_dir, data_dir)
+        if action == "skip":
+            print(f"[skip] {r.name} (complete, same flags)")
+            continue
+        if action == "stale":
+            print(f"[stale] {run_dir} exists but was not launched with this run's flags "
+                  f"(or has no checkpoint to resume); move it away and rerun.")
+            return 2
+        if action == "resume":
+            cmd = resume_command(r, data_dir, run_dir)
+        else:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / FLAGS_FILE).write_text(json.dumps(_launch_record(r, data_dir)), encoding="utf-8")
+        print(f"[{action}] {r.name}  (log: {out_root / (r.name + '.log')})", flush=True)
+        out_root.mkdir(parents=True, exist_ok=True)
+        with open(out_root / f"{r.name}.log", "a", encoding="utf-8") as log:
+            rc = subprocess.run(
+                cmd, cwd=REPO_ROOT, env=_train_env(), stdout=log, stderr=subprocess.STDOUT, check=False
+            ).returncode
+        if rc != 0:
+            print(f"[fail] {r.name} exit {rc}; see {r.name}.log")
+            return rc
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# Response surface (second stage): two continuous factors around the winner
+# --------------------------------------------------------------------------- #
+#
+# Once screening has fixed the binary choices, one or two continuous knobs
+# (e.g. the potential weight and the leakage or arc-loss weight) are tuned
+# with a face-centred central composite design: the 3 x 3 grid of coded
+# levels {-1, 0, +1}, plus two centre replicates on other seeds to estimate
+# noise (11 runs), and a full quadratic model fitted by least squares
+# (Box & Wilson 1951). With so few runs this is more transparent than a
+# Gaussian-process optimiser and still locates an interior optimum.
+
+
+@dataclass(frozen=True)
+class RSMFactor:
+    name: str
+    flag: str
+    lo: float
+    hi: float
+    log: bool
+
+    def value(self, coded: float) -> float:
+        if self.log:
+            return float(10.0 ** (math.log10(self.lo) + (coded + 1.0) / 2.0 * math.log10(self.hi / self.lo)))
+        return float(self.lo + (coded + 1.0) / 2.0 * (self.hi - self.lo))
+
+
+def parse_rsm_factor(text: str) -> RSMFactor:
+    """``name:--flag:lo:hi[:log]``."""
+    parts = text.split(":")
+    if len(parts) not in (4, 5) or not parts[1].startswith("--"):
+        raise ValueError(f"factor must be name:--flag:lo:hi[:log], got {text!r}")
+    log = len(parts) == 5 and parts[4] == "log"
+    lo, hi = float(parts[2]), float(parts[3])
+    if not lo < hi or (log and lo <= 0.0):
+        raise ValueError(f"factor {parts[0]!r}: need lo < hi (and lo > 0 for log)")
+    return RSMFactor(parts[0], parts[1], lo, hi, log)
+
+
+def _rsm_points() -> list[tuple[int, int, int]]:
+    """Coded (x1, x2, seed) of the face-centred CCD: 3 x 3 grid plus two centre replicates."""
+    return [(c1, c2, SEED) for c2 in (-1, 0, 1) for c1 in (-1, 0, 1)] + [(0, 0, SEED + 1), (0, 0, SEED + 2)]
+
+
+def rsm_runs(levels: dict[str, int], factors: list[RSMFactor]) -> list[Run]:
+    """Face-centred CCD for two factors at screening fidelity, centre replicated on seeds 43 and 44."""
+    if len(factors) != 2:
+        raise ValueError("the response-surface stage takes exactly two factors")
+    runs = []
+    for c1, c2, seed in _rsm_points():
+        extra: list[str] = []
+        for fac, c in zip(factors, (c1, c2), strict=True):
+            extra += [fac.flag, f"{fac.value(c):.6g}"]
+        flags = list(BASE_FLAGS + CORRECTION_FLAGS + _factor_flags(levels) + FIDELITY_FLAGS) + extra
+        if seed != SEED:
+            flags[flags.index("--seed") + 1] = str(seed)
+        tag = f"{factors[0].name}{c1:+d}_{factors[1].name}{c2:+d}".replace("+", "p").replace("-", "m")
+        runs.append(Run(f"DoE_RSM_{_signs(levels)}_{tag}_Seed{seed}", "rsm", levels, tuple(flags),
+                        f"Response-surface point ({c1}, {c2}) seed {seed}."))
+    return runs
+
+
+def fit_quadratic(x: list[tuple[float, float]], y: list[float]) -> dict:
+    """Least-squares y = b0 + b1 x1 + b2 x2 + b12 x1 x2 + b11 x1^2 + b22 x2^2 and its minimum on [-1, 1]^2."""
+    import numpy as np
+
+    X = np.array([[1.0, a, b, a * b, a * a, b * b] for a, b in x])
+    beta, *_ = np.linalg.lstsq(X, np.asarray(y, dtype=float), rcond=None)
+    grid = np.linspace(-1.0, 1.0, 201)
+    g1, g2 = np.meshgrid(grid, grid, indexing="ij")
+    pred = (beta[0] + beta[1] * g1 + beta[2] * g2 + beta[3] * g1 * g2 + beta[4] * g1**2 + beta[5] * g2**2)
+    i, j = np.unravel_index(int(np.argmin(pred)), pred.shape)
+    resid = np.asarray(y) - X @ beta
+    return {"beta": [float(b) for b in beta], "x_opt": [float(grid[i]), float(grid[j])],
+            "y_opt": float(pred[i, j]), "residual_rms": float(np.sqrt(np.mean(resid**2)))}
+
+
+def rsm_analyze(runs: list[Run], factors: list[RSMFactor], out_root: Path,
+                arc_proxy: Path | None, device: str) -> dict:
+    """Fit the quadratic surface to log10 of the primary response (proxy if given)."""
+    key = "arc_proxy_gmean_m" if arc_proxy else RESPONSES[0][0]
+    coded, ys, missing = [], [], []
+    for r, (c1, c2, _seed) in zip(runs, _rsm_points(), strict=True):
+        run_dir = out_root / r.name
+        if not _is_complete(run_dir):
+            missing.append(r.name)
+            continue
+        if arc_proxy:
+            val = _arc_proxy_gmean(run_dir, Path(arc_proxy), device, "last")
+        else:
+            val = float(_history(run_dir)[-1][key])
+        coded.append((float(c1), float(c2)))
+        ys.append(math.log10(val))
+    if missing:
+        return {"response": key, "incomplete": missing}
+    fit = fit_quadratic(coded, ys)
+    centre = [y for (a, b), y in zip(coded, ys, strict=True) if a == 0.0 and b == 0.0]
+    fit["response"] = f"log10 {key}"
+    fit["centre_replicate_sd"] = float(statistics.stdev(centre)) if len(centre) > 1 else None
+    fit["optimum"] = {
+        "coded": fit["x_opt"],
+        "values": {fac.name: fac.value(c) for fac, c in zip(factors, fit["x_opt"], strict=True)},
+        "predicted": float(10.0 ** fit["y_opt"]),
+    }
+    return fit
 
 
 def render_scenarios(phase: str) -> str:
@@ -661,6 +803,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_pr.add_argument("--out-root", type=Path, required=True)
     p_pr.add_argument("--arc-val-data", type=Path, default=None,
                       help="proxy build of validation orbits: select the checkpoint on val_arc_gmean_m")
+    p_rsm = sub.add_parser("rsm", help="two-factor response surface around chosen levels (11 runs)")
+    p_rsm.add_argument("--action", choices=["commands", "run", "analyze"], required=True)
+    p_rsm.add_argument("--levels", required=True, help="screening levels, e.g. ABcDef")
+    p_rsm.add_argument("--factor", action="append", required=True,
+                       help="name:--flag:lo:hi[:log], given twice")
+    p_rsm.add_argument("--data-dir", type=Path, default=Path("."))
+    p_rsm.add_argument("--out-root", type=Path, required=True)
+    p_rsm.add_argument("--arc-proxy", type=Path, default=None)
+    p_rsm.add_argument("--device", default="cuda")
     p_an = sub.add_parser("analyze", help="main effects of a phase; writes doe_<phase>_<at>_effects.*")
     p_an.add_argument("--out-root", type=Path, required=True)
     p_an.add_argument("--phase", default="phase1", choices=["phase1", "foldover", "all"])
@@ -697,41 +848,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if a.cmd in ("commands", "run"):
         runs = [r for r in build_runs(a.phase) if not a.only or r.name in a.only]
-        for r in runs:
-            cmd = _command(r, a.data_dir, a.out_root)
-            if a.cmd == "commands":
-                print(subprocess.list2cmdline(cmd))
-                continue
-            run_dir = a.out_root / r.name
-            action = plan_launch(r, run_dir, a.data_dir)
-            if action == "skip":
-                print(f"[skip] {r.name} (complete, same flags)")
-                continue
-            if action == "stale":
-                print(f"[stale] {run_dir} exists but was not launched with this run's flags "
-                      f"(or has no checkpoint to resume); move it away and rerun.")
-                return 2
-            if action == "resume":
-                cmd = resume_command(r, a.data_dir, run_dir)
-            else:
-                run_dir.mkdir(parents=True, exist_ok=True)
-                (run_dir / FLAGS_FILE).write_text(
-                    json.dumps(_launch_record(r, a.data_dir)), encoding="utf-8"
-                )
-            print(f"[{action}] {r.name}  (log: {a.out_root / (r.name + '.log')})", flush=True)
-            a.out_root.mkdir(parents=True, exist_ok=True)
-            with open(a.out_root / f"{r.name}.log", "a", encoding="utf-8") as log:
-                rc = subprocess.run(
-                    cmd, cwd=REPO_ROOT, env=_train_env(), stdout=log, stderr=subprocess.STDOUT, check=False
-                ).returncode
-            if rc != 0:
-                print(f"[fail] {r.name} exit {rc}; see {r.name}.log")
-                return rc
-        if a.cmd == "run":
+        rc = launch(runs, a.data_dir, a.out_root, dry=(a.cmd == "commands"))
+        if rc == 0 and a.cmd == "run":
             print(f"done: {len(runs)} run(s) of {a.phase} complete in {a.out_root}. "
                   f"Next: python tools/st_lrps_doe.py analyze --out-root {a.out_root} --phase {a.phase} "
                   "--arc-proxy <proxy dir>")
-        return 0
+        return rc
+    if a.cmd == "rsm":
+        factors = [parse_rsm_factor(f) for f in a.factor]
+        runs = rsm_runs(parse_levels(a.levels), factors)
+        if a.action == "analyze":
+            fit = rsm_analyze(runs, factors, a.out_root, a.arc_proxy, a.device)
+            print(json.dumps(fit, indent=1))
+            if "optimum" in fit:
+                print("Next: promote the optimum by appending "
+                      + " ".join(f"{fac.flag} {fit['optimum']['values'][fac.name]:.4g}" for fac in factors)
+                      + " to the promote command.")
+            return 0
+        rc = launch(runs, a.data_dir, a.out_root, dry=(a.action == "commands"))
+        if rc == 0 and a.action == "run":
+            print(f"done: {len(runs)} response-surface run(s) in {a.out_root}. Next: rerun with --action analyze.")
+        return rc
     report = analyze(a.out_root, a.phase, a.at, a.arc_proxy, a.device)
     path = _write_report(report, a.out_root)
     print(path.read_text(encoding="utf-8"))

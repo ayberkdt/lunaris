@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import itertools
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -251,3 +252,28 @@ def test_promotion_can_select_on_validation_orbits(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["lunaris-train", *doe._command(run, tmp_path, tmp_path)[3:]])
     cfg = parse_args()
     assert (cfg.best_metric, cfg.arc_val_every, cfg.arc_val_data) == ("arc_val", 1, str(tmp_path / "val_orbits"))
+
+
+
+def test_response_surface_design_and_fit(monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    from lunaris.surrogate.st_lrps.training.config import parse_args
+
+    factors = [doe.parse_rsm_factor("w_u:--w-u:1:30:log"), doe.parse_rsm_factor("ldl:--low-degree-loss-weight:10:1000:log")]
+    runs = doe.rsm_runs(doe.parse_levels("ABcDef"), factors)
+    assert len(runs) == 11 and len({r.name for r in runs}) == 11
+    monkeypatch.setattr(sys, "argv", ["lunaris-train", *doe._command(runs[0], tmp_path, tmp_path)[3:]])
+    cfg = parse_args()
+    assert (cfg.w_u, cfg.low_degree_loss_weight) == pytest.approx((1.0, 10.0))   # (-1, -1) overrides A/C
+    monkeypatch.setattr(sys, "argv", ["lunaris-train", *doe._command(runs[-1], tmp_path, tmp_path)[3:]])
+    cfg = parse_args()
+    assert cfg.seed == doe.SEED + 2 and cfg.w_u == pytest.approx(math.sqrt(30.0), rel=1e-5)
+    # planted quadratic with its minimum at coded (0.4, -0.5)
+    for r, (c1, c2, _seed) in zip(runs, doe._rsm_points(), strict=True):
+        y = -2.0 + 0.5 * (c1 - 0.4) ** 2 + 0.3 * (c2 + 0.5) ** 2
+        _write_history(tmp_path / r.name, 10.0**y, epochs=doe.FIDELITY_EPOCHS)
+    fit = doe.rsm_analyze(runs, factors, tmp_path, None, "cpu")
+    assert fit["optimum"]["coded"] == pytest.approx([0.4, -0.5], abs=0.011)
+    assert fit["optimum"]["values"]["w_u"] == pytest.approx(factors[0].value(0.4), rel=0.02)
+    with pytest.raises(ValueError, match="name:--flag"):
+        doe.parse_rsm_factor("w_u:w-u:1:30")
