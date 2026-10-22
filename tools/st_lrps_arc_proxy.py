@@ -158,14 +158,14 @@ def _sh_eval(xyz: np.ndarray, tables: tuple, nmax: int, nmin: int) -> tuple[np.n
     return np.asarray(u).reshape(-1), np.asarray(a).reshape(-1, 3)
 
 
-def _base_gradient(r_fix: np.ndarray, tables: tuple, base_degree: int, step_m: float = 20.0) -> np.ndarray:
-    """Body-fixed gravity gradient of degrees 0..base_degree (incl. μ/r), central differences."""
+def _gravity_gradient(r_fix: np.ndarray, tables: tuple, degree: int, step_m: float = 20.0) -> np.ndarray:
+    """Body-fixed gravity gradient of degrees 0..degree (incl. μ/r), central differences."""
     g = np.empty((len(r_fix), 3, 3))
     for k in range(3):
         e = np.zeros(3)
         e[k] = step_m
-        _, ap = _sh_eval(r_fix + e, tables, base_degree, -1)
-        _, am = _sh_eval(r_fix - e, tables, base_degree, -1)
+        _, ap = _sh_eval(r_fix + e, tables, degree, -1)
+        _, am = _sh_eval(r_fix - e, tables, degree, -1)
         g[:, :, k] = (ap - am) / (2.0 * step_m)
     return 0.5 * (g + np.transpose(g, (0, 2, 1)))
 
@@ -228,7 +228,7 @@ def build(args: argparse.Namespace) -> int:
         th, rh, vh = th[:keep], rh[:keep], vh[:keep]
         rot_h = np.stack([quat_to_matrix(ephem.get_inertial_to_fixed_rotation(float(x))) for x in th])
         r_fix_h = np.einsum("nij,nj->ni", rot_h, rh)
-        g_in = np.einsum("nji,njk,nkl->nil", rot_h, _base_gradient(r_fix_h, tables, gradient_degree(args)), rot_h)
+        g_in = np.einsum("nji,njk,nkl->nil", rot_h, _gravity_gradient(r_fix_h, tables, gradient_degree(args)), rot_h)
         tt, rr, vv, rot, r_fix = th[0::2], rh[0::2], vh[0::2], rot_h[0::2], r_fix_h[0::2]
         _, a_true = _sh_eval(r_fix, tables, args.ref_degree, args.base_degree)
         c = along_track_unit(rr[-1], vv[-1])
