@@ -9,8 +9,9 @@ propagation that replaces the residual field by a surrogate is
 
 where p = (p_r, p_v) solves the adjoint of the linearised dynamics around the
 reference arc, ṗ_r = -G p_v, ṗ_v = -p_r, p(T) = (î(T), 0), î the along-track
-unit vector at T and G the gravity gradient of the base field (degrees 0..N_base,
-including μ/r). The response is linear in f, so ``build`` stores, once per
+unit vector at T and G the gravity gradient of the dynamics that produced the
+reference arc (degrees 0..N_ref including μ/r for an SH200 arc; set by
+``--gradient-degree``). The response is linear in f, so ``build`` stores, once per
 orbit, the reference positions in the body-fixed frame, the true residual
 acceleration there and the quadrature-weighted adjoint p_v (rotated into the
 body-fixed frame). ``score`` then needs one surrogate evaluation per stored
@@ -169,6 +170,17 @@ def _base_gradient(r_fix: np.ndarray, tables: tuple, base_degree: int, step_m: f
     return 0.5 * (g + np.transpose(g, (0, 2, 1)))
 
 
+def gradient_degree(args: argparse.Namespace) -> int:
+    """Degree of the adjoint's gravity gradient: the reference arc's own dynamics by default.
+
+    The adjoint linearises around the reference arc, so G must be the gradient
+    of the field that propagated it. With the base-field gradient (degree 25)
+    on SH200 arcs the SH25-minus-SH200 response of a 103-116 km perilune orbit
+    came out 0.8-41% off; with the degree-200 gradient it matched to within 0.2%.
+    """
+    return int(args.ref_degree if args.gradient_degree is None else args.gradient_degree)
+
+
 def build(args: argparse.Namespace) -> int:
     from lunaris.physics.ephemeris import EphemerisManager
     from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import (
@@ -212,7 +224,7 @@ def build(args: argparse.Namespace) -> int:
         th, rh, vh = th[:keep], rh[:keep], vh[:keep]
         rot_h = np.stack([quat_to_matrix(ephem.get_inertial_to_fixed_rotation(float(x))) for x in th])
         r_fix_h = np.einsum("nij,nj->ni", rot_h, rh)
-        g_in = np.einsum("nji,njk,nkl->nil", rot_h, _base_gradient(r_fix_h, tables, args.base_degree), rot_h)
+        g_in = np.einsum("nji,njk,nkl->nil", rot_h, _base_gradient(r_fix_h, tables, gradient_degree(args)), rot_h)
         tt, rr, vv, rot, r_fix = th[0::2], rh[0::2], vh[0::2], rot_h[0::2], r_fix_h[0::2]
         _, a_true = _sh_eval(r_fix, tables, args.ref_degree, args.base_degree)
         c = along_track_unit(rr[-1], vv[-1])
@@ -228,6 +240,7 @@ def build(args: argparse.Namespace) -> int:
     (out / "proxy_manifest.json").write_text(json.dumps({
         "benchmark_dir": str(bench), "series": args.series, "step_s": args.step,
         "base_degree": args.base_degree, "ref_degree": args.ref_degree,
+        "gradient_degree": gradient_degree(args),
         "duration_s": float(tt[-1]), "orbits": rows,
         "quantity": "first-order along-track position error at the final time [m]",
     }, indent=1), encoding="utf-8")
@@ -336,6 +349,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     b.add_argument("--step", type=float, default=5.0, help="resampling step [s]")
     b.add_argument("--base-degree", type=int, default=25)
     b.add_argument("--ref-degree", type=int, default=200)
+    b.add_argument("--gradient-degree", type=int, default=None,
+                   help="degree of the gravity gradient in the adjoint (default: ref degree, i.e. the "
+                        "dynamics of the reference arc)")
     s = sub.add_parser("score", help="predicted along-track error of one training run")
     s.add_argument("--proxy", required=True)
     s.add_argument("--run-dir", required=True)

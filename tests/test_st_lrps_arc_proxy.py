@@ -141,3 +141,12 @@ def test_scoring_refuses_a_model_with_other_residual_degrees(tmp_path):
         ap.check_degrees({"base_degree": 25, "ref_degree": 200}, run)
     (run / "config.json").write_text(json.dumps({"degree_min": 25, "degree_max": 200}))
     ap.check_degrees({"base_degree": 25, "ref_degree": 200}, run)
+
+
+def test_adjoint_gradient_defaults_to_the_reference_arc_dynamics():
+    import argparse
+
+    args = argparse.Namespace(ref_degree=200, base_degree=25, gradient_degree=None)
+    assert ap.gradient_degree(args) == 200
+    args.gradient_degree = 25
+    assert ap.gradient_degree(args) == 25
