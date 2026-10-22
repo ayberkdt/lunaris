@@ -315,7 +315,7 @@ def promoted_run(
 
 def launch(runs: list[Run], data_dir: Path, out_root: Path, *, dry: bool) -> int:
     """Print (``dry``) or train ``runs`` sequentially with skip/resume/stale handling."""
-    for r in runs:
+    for i, r in enumerate(runs, start=1):
         cmd = _command(r, data_dir, out_root)
         if dry:
             print(subprocess.list2cmdline(cmd))
@@ -323,7 +323,7 @@ def launch(runs: list[Run], data_dir: Path, out_root: Path, *, dry: bool) -> int
         run_dir = out_root / r.name
         action = plan_launch(r, run_dir, data_dir)
         if action == "skip":
-            print(f"[skip] {r.name} (complete, same flags)")
+            print(f"[skip] ({i}/{len(runs)}) {r.name} (complete, same flags)")
             continue
         if action == "stale":
             print(f"[stale] {run_dir} exists but was not launched with this run's flags "
@@ -334,7 +334,7 @@ def launch(runs: list[Run], data_dir: Path, out_root: Path, *, dry: bool) -> int
         else:
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / FLAGS_FILE).write_text(json.dumps(_launch_record(r, data_dir)), encoding="utf-8")
-        print(f"[{action}] {r.name}  (log: {out_root / (r.name + '.log')})", flush=True)
+        print(f"[{action}] ({i}/{len(runs)}) {r.name}  (log: {out_root / (r.name + '.log')})", flush=True)
         out_root.mkdir(parents=True, exist_ok=True)
         with open(out_root / f"{r.name}.log", "a", encoding="utf-8") as log:
             rc = subprocess.run(
