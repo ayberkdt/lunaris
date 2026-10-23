@@ -686,10 +686,16 @@ class LauncherWindow(QtWidgets.QWidget):
                     QtGui.QFont(app.font()), QtGui.QPalette(app.palette()),
                 )
             apply_premium_dark_theme(app)
-            # Install the Studio's wheel guard once for the shared application.
-            if not getattr(self, "_studio_wheel_guard", None):
-                self._studio_wheel_guard = NoWheelOnSpinFilter(app)
-                app.installEventFilter(self._studio_wheel_guard)
+            # Install the Studio's wheel guard once per application, not per
+            # launcher: the QApplication outlives its launchers, and every
+            # app-level filter runs in Python on every event of every widget
+            # (with 80 filters, one style change over 2200 widgets took 22 s
+            # instead of 0.65 s; the test suite hung on it).
+            guard = app.findChild(NoWheelOnSpinFilter)
+            if guard is None:
+                guard = NoWheelOnSpinFilter(app)
+                app.installEventFilter(guard)
+            self._studio_wheel_guard = guard
 
         return StudioMainWindow()
 
