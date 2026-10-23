@@ -22,7 +22,12 @@
 #
 # (use the index that matches the driver and publishes the pinned torch version;
 # see pytorch.org). Then torch comes from that index and the lock's torch, triton,
-# nvidia-* and cuda-* pins are skipped.
+# nvidia-* and cuda-* pins are skipped. An index without the pinned version also
+# needs LUNARIS_TORCH_VERSION. For a driver older than 525 (no CUDA 12 build runs),
+# CUDA 11.8 needs a driver >= 450 and its newest torch is 2.7.1 (checked
+# 2026-10-23; the CPU suite passes with torch 2.7.1 on CPython 3.11):
+#
+#   LUNARIS_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118 #   LUNARIS_TORCH_VERSION=2.7.1 bash hpc/setup_env.sh
 
 set -euo pipefail
 
@@ -78,8 +83,15 @@ source "${VENV_DIR}/bin/activate"
 python -m pip install --upgrade pip
 
 cd "${_PROJECT_ROOT}"
+if [[ -n "${LUNARIS_TORCH_VERSION:-}" && -z "${LUNARIS_TORCH_INDEX_URL:-}" ]]; then
+  echo "error: LUNARIS_TORCH_VERSION needs LUNARIS_TORCH_INDEX_URL (the PyTorch index that publishes it)." >&2
+  exit 64
+fi
 if [[ -n "${LUNARIS_TORCH_INDEX_URL:-}" ]]; then
   _torch_pin="$(awk -F'[ =]+' '/^torch==/ {print $1 "==" $2; exit}' "${_LOCK}")"
+  if [[ -n "${LUNARIS_TORCH_VERSION:-}" ]]; then
+    _torch_pin="torch==${LUNARIS_TORCH_VERSION}"
+  fi
   # In a reused venv the lock's build (same version, no local tag) already
   # satisfies the pin, so pip would keep it: remove it first, with the lock's
   # CUDA 13 runtime packages (nvidia-*, cuda-*) that the other build replaces.
