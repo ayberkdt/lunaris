@@ -107,6 +107,12 @@ if [[ -n "${LUNARIS_MODULES:-}" ]]; then
   if ! command -v module >/dev/null 2>&1; then
     _lunaris_env_fail "LUNARIS_MODULES is set (${LUNARIS_MODULES}) but the 'module' command does not exist in this shell"
   else
+    # The module function and the modulefiles it evaluates are site code: under
+    # `set -u` one unset variable in them ends the job (even inside `if`) before
+    # the message below can say which module failed. Relax it for these calls.
+    _lunaris_nounset=0
+    case "$-" in *u*) _lunaris_nounset=1 ;; esac
+    set +u
     for _mod in ${LUNARIS_MODULES}; do
       if ! module load "${_mod}"; then
         _lunaris_env_fail "module load ${_mod} failed (find valid names with: module avail)"
@@ -115,6 +121,7 @@ if [[ -n "${LUNARIS_MODULES:-}" ]]; then
     # Environment Modules 3.x exits 0 on an unknown module; compare against the
     # terse list (names are matched case-insensitively, with or without version).
     _lunaris_loaded="$(module -t list 2>&1 || true)"
+    [[ ${_lunaris_nounset} -eq 1 ]] && set -u
     for _mod in ${LUNARIS_MODULES}; do
       _found=0
       while IFS= read -r _line; do
