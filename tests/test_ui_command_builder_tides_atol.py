@@ -20,14 +20,17 @@ from pathlib import Path
 
 import pytest
 
-from lunaris.cli.options import parse_args
-from lunaris.ui.core.command_builder import (
+# lunaris.ui imports PySide6; without it this module must skip, not error.
+pytest.importorskip("PySide6")
+
+from lunaris.cli.options import parse_args  # noqa: E402
+from lunaris.ui.core.command_builder import (  # noqa: E402
     build_batch_command,
     build_command,
     build_preflight_snapshot,
 )
-from lunaris.ui.pages.data_files_page import DataFilesState
-from lunaris.ui.pages.result_exports_page import OutputPageState
+from lunaris.ui.pages.data_files_page import DataFilesState  # noqa: E402
+from lunaris.ui.pages.result_exports_page import OutputPageState  # noqa: E402
 
 
 class _Gravity:
