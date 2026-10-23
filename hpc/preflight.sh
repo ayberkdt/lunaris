@@ -278,7 +278,8 @@ if [[ -s "${LUNARIS_DATA_DIR}/gravity_models/jggrx_1800f_sha.tab" || -s "${LUNAR
 else
   warn "lunar gravity file missing: ${LUNARIS_DATA_DIR}/gravity_models/jggrx_1800f_sha.tab (needed by lunar spherical-harmonic runs: lunaris-data download --group gravity)"
 fi
-_n_h5="$(find "${LUNARIS_DATA_DIR}/datasets" -maxdepth 2 -name '*.h5' -size +0 2>/dev/null | wc -l)"
+# Depth 3 reaches a staged suite: datasets/cloud_suites/<suite id>/*.h5.
+_n_h5="$(find "${LUNARIS_DATA_DIR}/datasets" -maxdepth 3 -name '*.h5' -size +0 2>/dev/null | wc -l)"
 if [[ "${_n_h5}" -gt 0 ]]; then
   pass "${_n_h5} non-empty HDF5 cloud file(s) under ${LUNARIS_DATA_DIR}/datasets"
 else

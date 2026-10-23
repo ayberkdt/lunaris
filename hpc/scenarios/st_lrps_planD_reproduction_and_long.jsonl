@@ -1,0 +1,39 @@
+# Plan D on UHeM: a reproduction and a longer schedule of the same recipe.
+#
+# Source: the Plan D run of 2026-09-20 (suite moon_deg25to200_alt100to1000km_20260704_103234,
+# 512x5 residual SIREN, potential_autograd residual SH25 -> SH200, 1,848,321 parameters,
+# best epoch 792 of 800). The flags are its recorded command line (command.txt,
+# sha256 be488c527336ba2cbd2b40aa731e79f1ac59c973e4bfc23fe0ce085dc0668f9f) with
+# repeated flags resolved the argparse way (the later value wins: --epochs 800,
+# --t-max 780, --min-lr-ratio 0.01, --patience 150, --direction-loss-floor-abs 1e-7)
+# and the data and output paths removed (the launcher and the submit line supply
+# them). Resolved with the trainer parser of 2026-10-23, line 0 matches the run's
+# config.json in 146 of 152 TrainConfig fields; the other 6 (degree_min/max,
+# w0_bands, x_scale_m, resolved_r_ref_m, output_envelope_power) are filled in from
+# the dataset at run time. The training code itself has changed since that run, so
+# line 0 tests whether the recipe still gives the same model, not bit equality.
+#
+#   0  PlanD_Reproduction_800ep  - the recipe as it ran: 800 epochs, cosine t_max 780
+#   1  PlanD_Long_1000ep_tmax980 - the same recipe with the cosine stretched to
+#                                  1000 epochs (t_max 980; same 20-epoch tail as line 0)
+#
+# Both lines share seed 42 and split seed 42, so their val/test splits are the same.
+# Walltime: Plan D's 800 epochs took 43.4 h of epoch time on a GTX 1660 Ti (median
+# 195 s/epoch, history.csv), so line 1 needs about 54 h at that speed; 4 days
+# leaves room for the evaluations. a100q allows 10 days (UHeM wiki, Altay page).
+# Submit both at once (one A100 each), from the repo root on the login node:
+#
+#   set -a; . hpc/cluster.env; set +a
+#   SUITE="$LUNARIS_DATA_DIR/datasets/cloud_suites/moon_deg25to200_alt100to1000km_20260704_103234"
+#   hpc/submit.sh scenario --array=0-1 --time=4-00:00:00 -- \
+#     hpc/scenarios/st_lrps_planD_reproduction_and_long.jsonl \
+#     --train-data "$SUITE/train_hybrid_10M.h5" \
+#     --val-data   "$SUITE/val_uniform_2M.h5" \
+#     --test-data  "$SUITE/test_uniform_2M.h5" \
+#     --ood-data   "$SUITE/ood_combined_1000k.h5" \
+#     --suite-manifest "$SUITE/manifest.json"
+#
+# Continue after a walltime stop: the same command with --resume right after the
+# JSONL path.
+{"name":"PotentialAutograd_PlanD_Reproduction_800ep_Seed42","entrypoint":"lunaris-train","description":"Plan D recipe exactly as it ran on 2026-09-20 (800 epochs, warmup-cosine t_max 780, min LR ratio 0.01, patience 150): does the recipe still produce the Plan D model?","runtime_model_kind":"potential_autograd","tags":["potential_autograd","reproduction","plan_d","sh25-to-sh200","2-band","seed42"],"flags":["--runtime-model-kind","potential_autograd","--split-seed","42","--dataset-name","data","--hidden","512","--depth","5","--activation","sine","--w0-first","30.0","--w0-hidden","30.0","--dropout","0.0","--model-preset","recommended_physical_radial_decay","--no-fourier","--epochs","800","--batch-size","8192","--lr","7e-05","--weight-decay","1e-06","--output-head-lr-mult","1.0","--max-grad-norm","0.5","--t-max","780","--warmup-epochs","5","--min-lr-ratio","0.01","--patience","150","--w-u","1.0","--w-a","1.0","--gradnorm-mode","ntk_init","--gradnorm-w-a-min","0.05","--gradnorm-w-a-max","2.0","--potential-only-epochs","10","--accel-ramp-epochs","80","--accel-min-factor","0.05","--a-sign","auto","--use-si","--direction-loss-weight","0.1","--direction-loss-start-epoch","30","--direction-loss-ramp-epochs","70","--direction-loss-floor-abs","1e-7","--best-ckpt-start-epoch","-1","--checkpoint-settle-epochs","5","--use-altitude-balanced-loss","--altitude-bin-width-km","50.0","--altitude-min-km","100.0","--altitude-max-km","1000.0","--use-radial-cross-loss","--radial-loss-weight","0.05","--cross-loss-weight","0.05","--use-laplacian-regularization","--laplacian-weight","1e-06","--laplacian-every-n-batches","1000","--laplacian-subset-size","512","--num-workers","4","--cache-rows","65536","--fit-rows","2000000","--seed","42","--log-every-mode","fixed","--log-every","500","--auto-preload-mb","2048.0","--pin-memory","--use-residual-blocks","--n-bands","2","--grad-accumulation-steps","1","--n-hutchinson-samples","2","--periodic-eval-count","10","--periodic-eval-dataset","val","--periodic-eval-max-samples","200000","--periodic-eval-device","auto","--output-envelope-auto","--relative-loss-weight","0.05","--relative-loss-floor-abs","1e-8","--best-metric","hybrid_rel","--hybrid-relative-beta","0.3","--ema-decay","0.999"]}
+{"name":"PotentialAutograd_PlanD_Long_1000ep_tmax980_Seed42","entrypoint":"lunaris-train","description":"Plan D recipe with the cosine schedule stretched to 1000 epochs (t_max 980); every other flag as in the reproduction line: does longer training improve on Plan D?","runtime_model_kind":"potential_autograd","tags":["potential_autograd","plan_d","long_schedule","sh25-to-sh200","2-band","seed42"],"flags":["--runtime-model-kind","potential_autograd","--split-seed","42","--dataset-name","data","--hidden","512","--depth","5","--activation","sine","--w0-first","30.0","--w0-hidden","30.0","--dropout","0.0","--model-preset","recommended_physical_radial_decay","--no-fourier","--epochs","1000","--batch-size","8192","--lr","7e-05","--weight-decay","1e-06","--output-head-lr-mult","1.0","--max-grad-norm","0.5","--t-max","980","--warmup-epochs","5","--min-lr-ratio","0.01","--patience","150","--w-u","1.0","--w-a","1.0","--gradnorm-mode","ntk_init","--gradnorm-w-a-min","0.05","--gradnorm-w-a-max","2.0","--potential-only-epochs","10","--accel-ramp-epochs","80","--accel-min-factor","0.05","--a-sign","auto","--use-si","--direction-loss-weight","0.1","--direction-loss-start-epoch","30","--direction-loss-ramp-epochs","70","--direction-loss-floor-abs","1e-7","--best-ckpt-start-epoch","-1","--checkpoint-settle-epochs","5","--use-altitude-balanced-loss","--altitude-bin-width-km","50.0","--altitude-min-km","100.0","--altitude-max-km","1000.0","--use-radial-cross-loss","--radial-loss-weight","0.05","--cross-loss-weight","0.05","--use-laplacian-regularization","--laplacian-weight","1e-06","--laplacian-every-n-batches","1000","--laplacian-subset-size","512","--num-workers","4","--cache-rows","65536","--fit-rows","2000000","--seed","42","--log-every-mode","fixed","--log-every","500","--auto-preload-mb","2048.0","--pin-memory","--use-residual-blocks","--n-bands","2","--grad-accumulation-steps","1","--n-hutchinson-samples","2","--periodic-eval-count","10","--periodic-eval-dataset","val","--periodic-eval-max-samples","200000","--periodic-eval-device","auto","--output-envelope-auto","--relative-loss-weight","0.05","--relative-loss-floor-abs","1e-8","--best-metric","hybrid_rel","--hybrid-relative-beta","0.3","--ema-decay","0.999"]}
