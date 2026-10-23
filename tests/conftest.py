@@ -194,6 +194,44 @@ def pytest_ignore_collect(collection_path: Path, config) -> bool:
     return False
 
 
+_SESSION: pytest.Session | None = None
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    global _SESSION
+    _SESSION = session
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config) -> None:
+    """Leave without interpreter finalization once a Qt application exists.
+
+    The UI tests leave their windows alive: a full CPU selection ends with one
+    QApplication and ~5900 top-level widgets (measured 2026-10-23). Destroying
+    them crashes: during interpreter finalization on the Linux CI runner (exit
+    139/134 after the test summary), and on Windows too when they are deleted
+    here explicitly (access violation in the deferred deletes, QtWebEngine and
+    QtDataVisualization loaded). Nothing is left to do by now: the reports,
+    coverage data and summary are written. So end the process with pytest's own
+    exit status and skip the teardown altogether. POSIX only: ``_exit(2)`` runs
+    no library destructors there, while on Windows ``os._exit`` still detaches
+    every DLL and crashes the same way, and a normal Windows exit is clean
+    (measured 2026-10-23).
+    """
+    import logging
+    import sys
+
+    if os.name != "posix":
+        return
+    qt_core = sys.modules.get("PySide6.QtCore")
+    if _SESSION is None or qt_core is None or qt_core.QCoreApplication.instance() is None:
+        return
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(int(_SESSION.exitstatus))
+
+
 def pytest_collection_modifyitems(config, items):
     """Auto-skip tests when their prerequisites are unavailable."""
     data_available = _lunaris_data_available()
