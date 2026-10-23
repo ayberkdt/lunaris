@@ -157,9 +157,22 @@ def test_staging_never_overwrites_a_remote_artifact(tmp_path: Path) -> None:
     existing.mkdir(parents=True)
     (existing / "keep.txt").write_text("theirs", encoding="utf-8")
     run = _bash(_HPC / "stage_artifacts.sh", "me@login", "--model", str(suite), env=env, cwd=tmp_path)
-    assert run.returncode == 1
-    assert "SKIP" in run.stdout
+    assert run.returncode == 1  # not made by this script: no hash list to vouch for it
+    assert "incomplete or unverified" in run.stdout
     assert sorted(p.name for p in existing.iterdir()) == ["keep.txt"]
+
+
+def test_a_rerun_accepts_a_complete_copy_and_flags_a_partial_one(tmp_path: Path) -> None:
+    env = _fake_ssh(tmp_path)
+    suite = _suite(tmp_path)
+    args = ("me@login", "--suite", str(suite))
+    assert _bash(_HPC / "stage_artifacts.sh", *args, env=env, cwd=tmp_path).returncode == 0
+    rerun = _bash(_HPC / "stage_artifacts.sh", *args, env=env, cwd=tmp_path)
+    assert rerun.returncode == 0 and "not copied again" in rerun.stdout
+    remote = tmp_path / "remote_home" / "lunaris_data" / "datasets" / "cloud_suites" / "suite_20260704"
+    (remote / "train.h5").unlink()  # a transfer cut off half way
+    partial = _bash(_HPC / "stage_artifacts.sh", *args, env=env, cwd=tmp_path)
+    assert partial.returncode == 1 and "incomplete or unverified" in partial.stdout
 
 
 def test_staging_reports_a_copy_that_fails_its_hash(tmp_path: Path) -> None:

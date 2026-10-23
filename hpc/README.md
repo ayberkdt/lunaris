@@ -53,7 +53,8 @@ hpc/submit.sh scenario --array=0-1 --time=4-00:00:00 -- \
 hpc/submit.sh scenario --array=0-20%7 --time=3-00:00:00 -- \
     hpc/scenarios/st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl \
     --train-data "$SUITE/train_hybrid_10M.h5" --val-data "$SUITE/val_uniform_2M.h5" \
-    --test-data "$SUITE/test_uniform_2M.h5" --ood-data "$SUITE/ood_combined_1000k.h5"
+    --test-data "$SUITE/test_uniform_2M.h5" --ood-data "$SUITE/ood_combined_1000k.h5" \
+    --suite-manifest "$SUITE/manifest.json"
 ```
 
 Runs land in `$LUNARIS_OUTPUT_DIR/training/<scenario name>`. The staged Plan D

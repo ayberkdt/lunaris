@@ -63,7 +63,8 @@ echo "Job scratch  : ${LUNARIS_JOB_SCRATCH:-<none>}"
 section "site configuration"
 if [[ -f "${_HPC_DIR}/cluster.env" ]]; then
   pass "hpc/cluster.env found"
-  if grep -q $'\r' "${_HPC_DIR}/cluster.env"; then
+  # -U: grep builds for Windows (Git Bash) drop the CR without it; no-op on Linux.
+  if grep -qU $'\r' "${_HPC_DIR}/cluster.env"; then
     fail "hpc/cluster.env has CRLF line endings: every value ends in a carriage return. Fix: sed -i 's/\\r\$//' hpc/cluster.env"
   else
     pass "hpc/cluster.env has LF line endings"

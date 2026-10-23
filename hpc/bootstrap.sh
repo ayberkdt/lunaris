@@ -105,12 +105,16 @@ fi
 _cfg_file="${_CLUSTER_ENV}"
 [[ -f "${_cfg_file}" ]] || _cfg_file="${_HPC_DIR}/clusters/${profile}.env.example"
 # A CRLF copy leaves a carriage return in every value (partition "a100q\r").
-if grep -q $'\r' "${_cfg_file}"; then
+# -U: grep builds for Windows (Git Bash) drop the CR without it; no-op on Linux.
+if grep -qU $'\r' "${_cfg_file}"; then
   config_state="FAIL"; config_note="CRLF line endings; fix with: sed -i 's/\r\$//' hpc/cluster.env"
 fi
 _record "site config" "${config_state}" "${config_note}"
 if [[ "${config_state}" == "FAIL" ]]; then
+  # Sourcing a CRLF file breaks on its first compound line; stop before it.
   echo "error: ${config_note}" >&2
+  echo "Not ready. Next: fix that, then rerun  bash hpc/bootstrap.sh"
+  exit 1
 fi
 
 # Site values for the remaining steps. `set -a` exports them like the jobs do.
@@ -272,7 +276,7 @@ if [[ ${dry_run} -eq 0 && "${_n_h5}" -eq 0 ]]; then
   echo "  bash hpc/stage_artifacts.sh <user>@<login-host> --suite <suite dir> [--model <run dir>]"
   echo "or generate one on the cluster: hpc/submit.sh generate -- ... (hpc/README.md)."
 else
-  _srun="srun -p ${LUNARIS_PARTITION:-<gpu partition>}${LUNARIS_ACCOUNT:+ -A ${LUNARIS_ACCOUNT}}${LUNARIS_QOS:+ --qos=${LUNARIS_QOS}} --gres=${LUNARIS_GRES:-gpu:1} -t 10"
+  _srun="srun -p ${LUNARIS_PARTITION:-<gpu partition>}${LUNARIS_ACCOUNT:+ -A ${LUNARIS_ACCOUNT}}${LUNARIS_QOS:+ --qos=${LUNARIS_QOS}} --gres=${LUNARIS_GRES:-gpu:1}${LUNARIS_CPUS_PER_TASK:+ -c ${LUNARIS_CPUS_PER_TASK}} -t 10"
   echo "Ready. Next: check a GPU node with  ${_srun} bash hpc/preflight.sh"
   echo "then submit a job (hpc/README.md)."
 fi

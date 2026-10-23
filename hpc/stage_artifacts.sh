@@ -21,9 +21,11 @@
 #
 # The defaults match hpc/clusters/uhem_altay.env.example ($HOME/lunaris_data and
 # $HOME/lunaris_outputs). An artifact that already exists on the cluster is not
-# touched: delete or rename it there first. One ssh connection per artifact: the
-# hash list travels with the files and the cluster checks it (sha256sum -c) right
-# after unpacking. Exit status 0 when every artifact arrived intact.
+# touched: a complete copy (its hash list checks out) counts as done, an
+# incomplete one is reported so you can delete it there and rerun. One ssh
+# connection per artifact: the hash list travels with the files and the cluster
+# checks it (sha256sum -c) right after unpacking. Exit status 0 when every
+# artifact is on the cluster intact.
 
 set -euo pipefail
 
@@ -95,13 +97,19 @@ for i in "${!paths[@]}"; do
   printf -v q_dest '%q' "${dest}"
   printf -v q_name '%q' "${name}"
   printf -v q_sums '%q' "${sums}"
-  remote="set -e; d=${q_dest}; [ ! -e \"\$d\"/${q_name} ] || { echo \"exists: \$d/\"${q_name} >&2; exit 17; }"
+  # An existing copy is never touched. It is checked against the hash list a
+  # finished copy left beside it: 18 = complete and intact, 17 = incomplete or
+  # damaged (e.g. a transfer cut off by a VPN drop) or not made by this script.
+  remote="set -e; d=${q_dest}; if [ -e \"\$d\"/${q_name} ]; then"
+  remote+=" if [ -f \"\$d\"/${q_sums} ] && (cd \"\$d\" && sha256sum -c --quiet ${q_sums} >/dev/null 2>&1); then exit 18; fi;"
+  remote+=" echo \"exists: \$d/\"${q_name} >&2; exit 17; fi"
   remote+="; mkdir -p \"\$d\" && tar -xf - -C \"\$d\" && cd \"\$d\" && sha256sum -c --quiet ${q_sums}"
   rc=0
   tar -cf - -C "${work}" "${sums}" -C "${parent}" "${name}" | ssh "${host}" "${remote}" || rc=$?
   case "${rc}" in
     0)  results+=("OK    ${dest}/${name}  (${n_files} files, SHA-256 checked on the cluster)") ;;
-    17) results+=("SKIP  ${dest}/${name}  (already on the cluster; not overwritten)"); failed=1 ;;
+    18) results+=("OK    ${dest}/${name}  (already on the cluster, SHA-256 checked; not copied again)") ;;
+    17) results+=("FAIL  ${dest}/${name}  (on the cluster but incomplete or unverified: delete it there, then rerun)"); failed=1 ;;
     *)  results+=("FAIL  ${dest}/${name}  (ssh/tar/sha256sum exit ${rc})"); failed=1 ;;
   esac
 done
@@ -113,7 +121,7 @@ echo
 if [[ ${dry_run} -eq 1 ]]; then
   echo "Dry run: nothing copied. Next: rerun without --dry-run."
 elif [[ ${failed} -eq 1 ]]; then
-  echo "Not every artifact arrived. Next: fix the SKIP/FAIL lines above and rerun with only those."
+  echo "Not every artifact arrived. Next: fix the FAIL lines above and rerun with only those."
   exit 1
 else
   echo "All artifacts arrived intact. Next, on the cluster: lunaris-data validate --data <file.h5> for each suite file."

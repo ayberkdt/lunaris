@@ -81,10 +81,14 @@ cd "${_PROJECT_ROOT}"
 if [[ -n "${LUNARIS_TORCH_INDEX_URL:-}" ]]; then
   _torch_pin="$(awk -F'[ =]+' '/^torch==/ {print $1 "==" $2; exit}' "${_LOCK}")"
   # In a reused venv the lock's build (same version, no local tag) already
-  # satisfies the pin, so pip would keep it: remove it first.
-  if python -m pip show torch >/dev/null 2>&1; then
-    echo "==> Removing the installed torch/triton so the ${LUNARIS_TORCH_INDEX_URL} build replaces them"
-    python -m pip uninstall -y torch triton
+  # satisfies the pin, so pip would keep it: remove it first, with the lock's
+  # CUDA 13 runtime packages (nvidia-*, cuda-*) that the other build replaces.
+  _old_stack="$(python -m pip freeze 2>/dev/null | awk -F'[=@ ]' 'tolower($1) ~ /^(torch|triton|nvidia-|cuda-)/ {print $1}')"
+  if [[ -n "${_old_stack}" ]]; then
+    echo "==> Removing the installed torch stack so the ${LUNARIS_TORCH_INDEX_URL} build replaces it:"
+    echo "    ${_old_stack//$'\n'/ }"
+    # shellcheck disable=SC2086
+    python -m pip uninstall -y ${_old_stack}
   fi
   echo "==> Installing ${_torch_pin} from ${LUNARIS_TORCH_INDEX_URL}"
   python -m pip install --index-url "${LUNARIS_TORCH_INDEX_URL}" "${_torch_pin}"
