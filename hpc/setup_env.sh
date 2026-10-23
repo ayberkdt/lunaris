@@ -27,7 +27,8 @@
 # CUDA 11.8 needs a driver >= 450 and its newest torch is 2.7.1 (checked
 # 2026-10-23; the CPU suite passes with torch 2.7.1 on CPython 3.11):
 #
-#   LUNARIS_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118 #   LUNARIS_TORCH_VERSION=2.7.1 bash hpc/setup_env.sh
+#   LUNARIS_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118 \
+#   LUNARIS_TORCH_VERSION=2.7.1 bash hpc/setup_env.sh
 
 set -euo pipefail
 

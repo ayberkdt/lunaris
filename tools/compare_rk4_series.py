@@ -86,7 +86,7 @@ def compare_pair(name: str, dir_a: Path, dir_b: Path):
         # scenario's initial state, so it must match exactly.
         if not (np.array_equal(pA[0], pB[0]) and np.array_equal(vA[0], vB[0])):
             raise SystemExit(f"[{name}] scenario {sid}: initial states differ; the series come from "
-                             "different scenario sets (seed, sampler or mode)")
+                             "different scenario sets (seed, sampler or mode) or different --torch-dtype")
         if mA["frame_mode"] is not None and mB["frame_mode"] is not None and mA["frame_mode"] != mB["frame_mode"]:
             raise SystemExit(f"[{name}] scenario {sid}: frames differ ({mA['frame_mode']} vs {mB['frame_mode']})")
         dt_a, dt_b = mA["rk4_dt_s"], mB["rk4_dt_s"]
