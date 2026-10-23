@@ -224,10 +224,17 @@ if os.environ.get("PF_GPU") == "1":
             if cuda_major not in need:
                 out("WARN", f"torch CUDA {torch.version.cuda}: no minimum driver known for CUDA {cuda_major}, driver is {driver}")
             elif driver_major < need[cuda_major]:
+                # The lock's torch (2.13.0) is also published for CUDA 12.6 and
+                # 12.9 (download.pytorch.org, checked 2026-10-23); CUDA 12.x runs
+                # on any driver >= 525.
+                if driver_major >= need[12]:
+                    fix = ("on the login node: LUNARIS_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126 "
+                           "bash hpc/setup_env.sh")
+                else:
+                    fix = "no CUDA build of the locked torch runs on this driver: use a node with a newer driver"
                 out("FAIL", (
                     f"driver {driver} is too old for torch built with CUDA {torch.version.cuda} "
-                    f"(needs >= {need[cuda_major]}): install a torch build for an older CUDA "
-                    "(LUNARIS_TORCH_INDEX_URL=<pytorch wheel index> bash hpc/setup_env.sh) or use a node with a newer driver"
+                    f"(needs >= {need[cuda_major]}); {fix}"
                 ))
             else:
                 out("PASS", f"driver {driver} >= {need[cuda_major]} required by torch CUDA {torch.version.cuda}")

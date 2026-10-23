@@ -60,6 +60,53 @@ Runs land in `$LUNARIS_OUTPUT_DIR/training/<scenario name>`. The staged Plan D
 model sits in `$LUNARIS_OUTPUT_DIR/training/planD_20260920_141322/run` for comparison. Follow a job with
 `squeue -u $USER` and `tail -f lunaris_scenario_<job>_<task>.out`.
 
+### 3) The trained weights on orbits
+
+The Plan D study's 1024 frozen orbits (seed 42, scrambled Sobol, bounded
+Keplerian: perilune 100-985 km, apolune up to 1000 km, e up to 0.2), 5 days,
+fixed-step RK4 in float64 on the GPU. The SH200 reference is integrated once and
+shared by every model; each model gets its own run.
+
+RK4 step: 10 s. Measured 2026-10-23 (RK4 in the GL1800F field to degree 200,
+1 day, against RK4 at 2.5 s): at 80 km perilune the position error is 3.8 cm at
+10 s, 0.23 m at 15 s, 5.4 m at 30 s and 57 m at 60 s (circular orbit; 2.9 cm,
+0.16 m, 3.0 m, 71 m for 80 x 1000 km), so 15 s is converged but 10 s keeps a
+6x margin below the lowest perilune of this set. The degree-200 Nyquist bound
+at 80 km is 16.6 s for a circular orbit and 11.8 s at escape speed. Both series
+of a pair must use the same step: the comparison tool refuses mixed steps.
+
+```bash
+COMMON=(--gpu-batch-compare --truth sh25 --random-scenarios 1024 --scenario-seed 42
+        --sampling-method sobol_scrambled --scenario-mode bounded_keplerian
+        --duration-days 5 --dt-out 60 --rk4-dt-s 10 --torch-dtype float64
+        --cache-truth --cache-trajectories --workers 60)
+BENCH="$LUNARIS_OUTPUT_DIR/gravity_benchmark"
+# Reference, once: SH25 and SH200 (the --truth sh25 DOP853 run is a tool placeholder).
+hpc/submit.sh benchmark --time=2-00:00:00 -- "${COMMON[@]}" --gpu-models sh25,sh200 \
+    --output-dir "$BENCH/ref_rk4dt10"
+# One per model: Plan D as staged, and the two UHeM runs.
+for RUN in planD_20260920_141322/run PotentialAutograd_PlanD_Reproduction_800ep_Seed42 \
+           PotentialAutograd_PlanD_Long_1000ep_tmax980_Seed42; do
+  hpc/submit.sh benchmark --time=1-00:00:00 -- "${COMMON[@]}" --gpu-models st_lrps \
+      --st-lrps-mode gpu_rk4 --st-lrps-model-dir "$LUNARIS_OUTPUT_DIR/training/$RUN" \
+      --output-dir "$BENCH/$(echo "$RUN" | cut -d/ -f1)_rk4dt10"
+done
+# Pairs (login node, seconds): A = model error, B = what SH25 alone misses.
+M="benchmark_cache/models"
+python tools/compare_rk4_series.py --out "$BENCH/compare_rk4dt10" \
+    --series sh200="$BENCH/ref_rk4dt10/$M/sh200" --series sh25="$BENCH/ref_rk4dt10/$M/sh25" \
+    --series planD="$BENCH/planD_20260920_141322_rk4dt10/$M/st_lrps" \
+    --series r800="$BENCH/PotentialAutograd_PlanD_Reproduction_800ep_Seed42_rk4dt10/$M/st_lrps" \
+    --series r1000="$BENCH/PotentialAutograd_PlanD_Long_1000ep_tmax980_Seed42_rk4dt10/$M/st_lrps" \
+    --pair A_planD=planD,sh200 --pair A_r800=r800,sh200 --pair A_r1000=r1000,sh200 \
+    --pair B_sh25=sh25,sh200 --pair r800_vs_planD=r800,planD
+```
+
+`summary.json` gives each pair's final and RMS position difference (mean,
+median, P95, max) and the RIC split. The local 2026-09-23 study (RK4 15 s, n=256
+orbits for SH200): pair A median 1.1 cm, P95 0.69 m, max 2.5 m; pair B median
+18.4 m.
+
 ## The same, step by step
 
 ```bash
