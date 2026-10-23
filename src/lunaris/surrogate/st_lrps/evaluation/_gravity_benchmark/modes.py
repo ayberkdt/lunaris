@@ -109,6 +109,7 @@ from .results_io import (
 from .types import (
     _METRICS_FIELDNAMES,
     BatchModelResult,
+    GpuBatchTask,
     GravityModelCache,
     Scenario,
     TruthTrajectorySet,
@@ -748,6 +749,18 @@ def _run_cpu_adaptive_surrogate_series(
     )
 
 
+def _gpu_task_failure_is_fatal(task: GpuBatchTask, args: argparse.Namespace) -> bool:
+    """Whether a failed GPU model series aborts the run.
+
+    Always under ``--fail-fast``; and for the ST-LRPS series under
+    ``--require-st-lrps``, so a run without the surrogate series cannot exit 0
+    (a batch job would otherwise "succeed" with no ST-LRPS result).
+    """
+    if args.fail_fast:
+        return True
+    return task.model_name == "st_lrps" and bool(getattr(args, "require_st_lrps", False))
+
+
 def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ephem: Any) -> None:
     """New validation workflow: SH200 DOP853 truth vs GPU RK4 SH/ST-LRPS."""
 
@@ -1036,7 +1049,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
             results.append(result)
         except Exception as exc:
             print(f"[gpu-batch] ERROR {task.display_name}: {exc}", flush=True)
-            if args.fail_fast:
+            if _gpu_task_failure_is_fatal(task, args):
                 raise
             completed_gpu += 1
             results.append(BatchModelResult(
