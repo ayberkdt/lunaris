@@ -151,6 +151,10 @@ if command -v sacctmgr >/dev/null 2>&1; then
   sacctmgr -n -P show assoc user="${USER:-}" format=account,partition,qos 2>&1 || true
 fi
 if command -v module >/dev/null 2>&1; then
+  # The profile's Python module name was not confirmed from UHeM's docs (their
+  # module list page is gone): the lock needs a CPython 3.11 one.
+  echo "--- module avail Python (a 3.11 one goes first in LUNARIS_MODULES)"
+  module -t avail Python 2>&1 | grep -i "3\.11" | head -n 20 || true
   echo "--- module avail CUDA (name for LUNARIS_MODULES)"
   module -t avail CUDA 2>&1 | head -n 20 || true
 else
