@@ -109,7 +109,6 @@ from .results_io import (
 from .types import (
     _METRICS_FIELDNAMES,
     BatchModelResult,
-    GpuBatchTask,
     GravityModelCache,
     Scenario,
     TruthTrajectorySet,
@@ -749,16 +748,18 @@ def _run_cpu_adaptive_surrogate_series(
     )
 
 
-def _gpu_task_failure_is_fatal(task: GpuBatchTask, args: argparse.Namespace) -> bool:
-    """Whether a failed GPU model series aborts the run.
-
-    Always under ``--fail-fast``; and for the ST-LRPS series under
-    ``--require-st-lrps``, so a run without the surrogate series cannot exit 0
-    (a batch job would otherwise "succeed" with no ST-LRPS result).
-    """
-    if args.fail_fast:
-        return True
-    return task.model_name == "st_lrps" and bool(getattr(args, "require_st_lrps", False))
+def _raise_if_required_st_lrps_failed(args: argparse.Namespace, results: list[BatchModelResult]) -> None:
+    """Under ``--require-st-lrps``, fail the run once its reports are written if an
+    ST-LRPS series failed: by an exception, or by the ``status="failed"`` that the
+    integration returns for its own errors and non-finite states. Otherwise a
+    batch job would exit 0 with no ST-LRPS result."""
+    if not getattr(args, "require_st_lrps", False):
+        return
+    failed = [r for r in results
+              if str(r.model_name).startswith("st_lrps") and getattr(r, "status", "") == "failed"]
+    if failed:
+        reasons = "; ".join(f"{r.display_name}: {r.failure_reason}" for r in failed)
+        raise RuntimeError(f"--require-st-lrps: the ST-LRPS series failed ({reasons})")
 
 
 def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ephem: Any) -> None:
@@ -1049,7 +1050,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
             results.append(result)
         except Exception as exc:
             print(f"[gpu-batch] ERROR {task.display_name}: {exc}", flush=True)
-            if _gpu_task_failure_is_fatal(task, args):
+            if args.fail_fast:
                 raise
             completed_gpu += 1
             results.append(BatchModelResult(
@@ -1117,6 +1118,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         print("  metrics/gpu_batch_summary.json")
         print("  plots/")
         print("  reports/gpu_batch_validation_report.pdf")
+        _raise_if_required_st_lrps_failed(args, results)
         return
 
     progress.emit_progress(
@@ -1239,6 +1241,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     print("  metrics/gpu_batch_summary.json")
     print("  plots/")
     print("  reports/gpu_batch_validation_report.pdf")
+    _raise_if_required_st_lrps_failed(args, results)
 
 
 # =============================================================================
