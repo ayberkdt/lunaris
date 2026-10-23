@@ -2142,6 +2142,174 @@ def _maybe_load_baseline_gravity_model(
     return GravityModel.from_file(str(path), requested_degree=int(target_contract.base_degree))
 
 
+# Dataset-contract keys a warm start may change: which rows were drawn, where,
+# how many and by which tool. The rest of the contract is the physics of the
+# labels (gravity file hash, degrees, frame, conventions, units) and must
+# match; the gravity model's name and path vary by machine, its sha256 does not.
+_INIT_FREE_DATASET_KEYS = frozenset({
+    "altitude_max_km", "altitude_min_km", "content_sha256", "created_at_utc", "dataset_id",
+    "dataset_layout", "generator_name", "generator_version", "n_samples", "random_seed",
+    "repo_commit_sha", "sampling_policy", "source_gravity_file_path", "source_gravity_model",
+    "split_policy",
+})
+# The scaler is copied from the source, so its contract is checked by value
+# (``_fit_residual_scalers``), not through the provenance it carries.
+_INIT_FREE_ARTIFACT_KEYS = frozenset({
+    "altitude_max_km", "altitude_min_km", "dataset_contract", "scaler_contract",
+})
+
+
+def _init_comparable(config: Mapping[str, Any]) -> dict[str, Any]:
+    """``config`` without the data-identity fields a warm start may change."""
+    out = dict(config)
+    ds = out.get("dataset_contract")
+    if isinstance(ds, Mapping):
+        out["dataset_contract"] = {k: v for k, v in ds.items() if k not in _INIT_FREE_DATASET_KEYS}
+    art = out.get("artifact_contract")
+    if isinstance(art, Mapping):
+        out["artifact_contract"] = {k: v for k, v in art.items() if k not in _INIT_FREE_ARTIFACT_KEYS}
+    return out
+
+
+def _refuse_init_into_source(out_dir: Path, source_run_dir: Path) -> None:
+    """A warm start writes a new run; it must not share a directory with its source."""
+    out_r = Path(out_dir).expanduser().resolve()
+    src = Path(source_run_dir).expanduser().resolve()
+    if out_r == src or src in out_r.parents or out_r in src.parents:
+        raise ValueError(
+            f"--init-from source {src} and --out {out_r} overlap. A warm start trains into a "
+            "new run directory and never writes the source; choose a separate --out."
+        )
+
+
+def _init_source_record(layout: Any, ckpt_path: Path, ckpt: Mapping[str, Any]) -> dict[str, Any]:
+    """Provenance of a warm start, with the hashes that prove the source stayed untouched."""
+    files = {"checkpoint": Path(ckpt_path), "scaler": layout.scaler_json, "config": layout.config_json}
+    return {
+        "run_dir": str(layout.run_dir),
+        "checkpoint_path": str(ckpt_path),
+        "checkpoint_kind": ckpt.get("kind"),
+        "epoch_display": ckpt.get("epoch_display"),
+        "architecture_signature": (ckpt.get("config") or {}).get("architecture_signature"),
+        "sha256": {name: compute_file_sha256(path) for name, path in files.items() if path.is_file()},
+    }
+
+
+def _verify_init_source_unchanged(record: Mapping[str, Any], layout: Any) -> None:
+    """Fail loudly if any source file a warm start read has changed since it started.
+
+    The outcome is recorded in the warm run's manifest either way.
+    """
+    run_dir = Path(record["run_dir"])
+    paths = {"checkpoint": Path(record["checkpoint_path"]), "scaler": run_dir / "scaler.json",
+             "config": run_dir / "config.json"}
+    try:
+        changed = sorted(
+            name for name, digest in record["sha256"].items()
+            if not paths[name].is_file() or compute_file_sha256(paths[name]) != digest
+        )
+        update_run_manifest(layout, {"init_from_source_unchanged": not changed})
+    except OSError as exc:
+        # An unreadable file is not evidence of a change; do not let it replace the
+        # run's own outcome (an interrupted run must still exit resumable).
+        logger.warning("[init] could not verify the source run (%s); recorded as unknown.", exc)
+        with contextlib.suppress(OSError):
+            update_run_manifest(layout, {"init_from_source_unchanged": None})
+        return
+    if changed:
+        raise RuntimeError(f"[init] source run files changed during the warm start: {changed} in {run_dir}")
+    logger.info("[init] source run unchanged (%s verified by SHA-256).", ", ".join(sorted(record["sha256"])))
+
+
+# The runtime flags inputs beyond this normalized radius r / x_scale as
+# extrapolation (canonical_runtime ``exceeds_scaler_radius``).
+_RUNTIME_MAX_NORMALIZED_RADIUS = 1.05
+
+
+def _check_warm_start_data(
+    cfg: TrainConfig,
+    source: ScalerPack,
+    *,
+    meta: DatasetMeta,
+    dset_name: str,
+    dataset_content_sha: str | None,
+    independent_val: bool,
+    split_policy: str,
+    split_seed: int,
+    n_train: int,
+    n_val: int,
+    split_manifest: Mapping[str, Any],
+) -> None:
+    """Refuse warm-start data the inherited scaler or the source's training rows make unsafe.
+
+    - Altitude: the inherited input scale fixes the radius the network was
+      trained to cover; data beyond the runtime's extrapolation limit would be
+      trained on and then flagged as extrapolation at inference.
+    - Leakage: a held-out file (val/test/OOD) must not be the file the source
+      weights were trained on, and re-splitting the source's own file with a
+      different split moves source-training rows into validation.
+    """
+    from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
+
+    alt_max_km = getattr(meta, "alt_max_km", None)
+    r_ref_m = getattr(meta, "r_ref_m", None)
+    if alt_max_km is not None and r_ref_m is not None:
+        rho = (float(r_ref_m) + 1000.0 * float(alt_max_km)) / float(source.x.scale)
+        if rho > _RUNTIME_MAX_NORMALIZED_RADIUS:
+            raise ValueError(
+                f"[init] the warm-start data reaches {float(alt_max_km):.0f} km, normalized radius "
+                f"{rho:.3f} with the source's input scale {float(source.x.scale):.0f} m; the runtime "
+                f"treats > {_RUNTIME_MAX_NORMALIZED_RADIUS} as extrapolation. Such a range needs a new "
+                "model, not a warm start."
+            )
+    else:
+        logger.warning("[init] dataset metadata has no altitude maximum or r_ref; altitude check skipped.")
+    lineage = _training_lineage(source.provenance or {})
+    trained = {str(e["dataset_content_sha256"]) for e in lineage if e.get("dataset_content_sha256")}
+    if not trained:
+        logger.warning("[init] source scaler records no training-data hash; leakage check skipped.")
+        return
+    held_out: dict[str, str | None] = {}
+    if independent_val:
+        held_out["val"] = split_manifest.get("val_file_sha256")
+    for name in ("test_data", "ood_data"):
+        path = getattr(cfg, name, None)
+        if path and Path(path).is_file():
+            held_out[name] = content_sha256_for_hdf5_dataset(Path(path), dataset_name=dset_name)
+    leaked = [name for name, sha in held_out.items() if sha and sha in trained]
+    if leaked:
+        raise ValueError(
+            f"[init] {', '.join(leaked)} is a file the source weights (or their ancestors) were "
+            "trained on; it cannot be held out in a warm start."
+        )
+    if independent_val:
+        return
+    for entry in lineage:
+        if entry.get("dataset_content_sha256") != dataset_content_sha:
+            continue
+        before = (entry.get("split_policy"), entry.get("split_seed"), entry.get("train_count"), entry.get("val_count"))
+        now = (split_policy, int(split_seed), int(n_train), int(n_val))
+        if before != now:
+            raise ValueError(
+                "[init] the warm start re-splits a file the weights were trained on differently "
+                f"(then {before}, now {now}); validation would contain rows the weights trained on."
+            )
+
+
+def _training_lineage(provenance: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every training set behind a scaler's weights, oldest first, with the split used on it.
+
+    A scaler fit by its own run describes one set; each warm start appends
+    the set it trained on, so held-out checks see the whole chain.
+    """
+    lineage = provenance.get("training_data_lineage")
+    if isinstance(lineage, list) and lineage:
+        return [dict(e) for e in lineage]
+    return [{key: provenance.get(key) for key in (
+        "dataset_content_sha256", "split_policy", "split_seed", "train_count", "val_count",
+    )}]
+
+
 def _fit_residual_scalers(
     cfg: TrainConfig,
     *,
@@ -2162,6 +2330,7 @@ def _fit_residual_scalers(
     n_val: int,
     split_manifest: dict[str, Any],
     dataset_contract_obj: DatasetContract,
+    inherited_scaler_path: Path | None = None,
 ) -> ScalerPack:
     """Fit (or load) the residual ΔU/Δa scalers and record their provenance.
 
@@ -2170,6 +2339,12 @@ def _fit_residual_scalers(
     ONLY (``indices=train_indices`` for single-file datasets; the dedicated
     train file for independent-file datasets), and the train-only ``fit_scope``
     provenance is written alongside.
+
+    With ``inherited_scaler_path`` (warm start) the source run's scaler is
+    copied instead: the loaded weights were trained against exactly those
+    scales, and refitting on new data would move them. Its train-only fit
+    provenance (on the source run's training data) is kept and the warm
+    start's dataset is recorded next to it.
     """
     scaler_path = layout.scaler_json
     scaler_hash_info: dict[str, Any]
@@ -2187,7 +2362,37 @@ def _fit_residual_scalers(
         or (_manifest.get("train_file_sha256") if independent_val else None)
         or content_sha256_for_hdf5_dataset(primary_path, dataset_name=dset_name)
     )
-    if scaler_path.exists():
+    if inherited_scaler_path is not None:
+        source = ScalerPack.load_json(Path(inherited_scaler_path))
+        _check_warm_start_data(
+            cfg, source, meta=meta, dset_name=dset_name, dataset_content_sha=dataset_content_sha,
+            independent_val=independent_val, split_policy=split_policy, split_seed=split_seed,
+            n_train=n_train, n_val=n_val, split_manifest=_manifest,
+        )
+        if scaler_path.exists():
+            existing = ScalerPack.load_json(scaler_path)
+            if (existing.x, existing.u, existing.a) != (source.x, source.u, source.a):
+                raise ValueError(
+                    f"{scaler_path} differs from the warm-start source scaler {inherited_scaler_path}; "
+                    "use a fresh output directory."
+                )
+        provenance = dict(source.provenance or {})
+        provenance["inherited_from"] = {
+            "scaler_path": str(inherited_scaler_path),
+            "scaler_file_sha256": compute_file_sha256(Path(inherited_scaler_path)),
+            "warm_start_dataset_content_sha256": dataset_content_sha,
+        }
+        provenance["training_data_lineage"] = _training_lineage(source.provenance or {}) + [{
+            "dataset_content_sha256": dataset_content_sha,
+            "split_policy": ("independent_files" if independent_val else split_policy),
+            "split_seed": int(split_seed),
+            "train_count": int(n_train),
+            "val_count": int(n_val),
+        }]
+        scaler = ScalerPack(x=source.x, u=source.u, a=source.a, provenance=provenance)
+        logger.info("[init] scaler inherited from %s (not refit).", inherited_scaler_path)
+        scaler_hash_info = write_scaler_json(layout, scaler)
+    elif scaler_path.exists():
         logger.info("Loading existing scaler from %s", scaler_path.name)
         scaler = ScalerPack.load_json(scaler_path)
         # A scaler is train data, not a generic cache.  Reusing it in a fresh
@@ -2208,6 +2413,17 @@ def _fit_residual_scalers(
         }
         stored_provenance = dict(getattr(scaler, "provenance", {}) or {})
         mismatches = []
+        inherited = stored_provenance.get("inherited_from")
+        if isinstance(inherited, Mapping):
+            # Resuming a warm start: the scaler's top-level split provenance
+            # describes the source run's data. The identity to hold is the data
+            # and split this run started on, the last lineage entry.
+            own = _training_lineage(stored_provenance)[-1]
+            for key in ("dataset_content_sha256", "split_policy", "split_seed", "train_count", "val_count"):
+                expected = expected_provenance[key]
+                if own.get(key) != expected:
+                    mismatches.append((f"training_data_lineage[-1].{key}", own.get(key), expected))
+            expected_provenance = {}
         for key, expected in expected_provenance.items():
             # Independent-file runs intentionally have no in-file split hashes.
             if expected is None and key.endswith("_index_hash"):
@@ -2705,6 +2921,8 @@ def _build_model_and_optim(
     _resume_requested: bool,
     _resume_ckpt: dict[str, Any] | None,
     _resume_ckpt_path: Path | None,
+    _init_ckpt: Mapping[str, Any] | None = None,
+    _init_ckpt_path: Path | None = None,
 ) -> _ModelBundle:
     """Build the model, GradNorm weights, Sobolev loss, and AdamW optimizer.
 
@@ -2789,6 +3007,35 @@ def _build_model_and_optim(
                 _missing, _unexpected,
             )
         logger.info("[resume] model weights restored from %s", _resume_ckpt_path)
+
+    if _init_ckpt is not None:
+        # Warm start: weights only. The signature covers the network, its
+        # encoding, the degree range and the input scale, so an equal signature
+        # means the weights mean the same function here as in the source run.
+        _src_sig = str((_init_ckpt.get("config") or {}).get("architecture_signature") or "")
+        _new_sig = compute_architecture_signature(cfg)
+        if _src_sig != _new_sig:
+            raise ValueError(
+                f"[init] architecture signature {_new_sig} differs from the source checkpoint's "
+                f"{_src_sig!r}: the warm start needs the source's network flags (hidden, depth, "
+                "bands, encoding, model preset) and its degree range."
+            )
+        _isd = _init_ckpt.get("model_state_dict") or _init_ckpt.get("model")
+        if _isd is None:
+            raise RuntimeError("[init] source checkpoint has no model_state_dict.")
+        model.load_state_dict(_isd, strict=True)
+        logger.info(
+            "[init] model weights loaded from %s (epoch %s); optimizer, schedule and losses start fresh.",
+            _init_ckpt_path, _init_ckpt.get("epoch_display"),
+        )
+        _src_gn = (_init_ckpt.get("training_state") or {}).get("gradnorm_weights") or {}
+        if _src_gn:
+            # ntk_init recalibrates w_a on the loaded (converged) weights; to keep the
+            # source's loss balance pass --gradnorm-mode fixed --w-u/--w-a with these.
+            logger.info(
+                "[init] source loss balance at its checkpoint: w_u=%s w_a=%s (this run: mode=%s, w_u=%s, w_a=%s)",
+                _src_gn.get("w_u"), _src_gn.get("w_a"), cfg.gradnorm_mode, cfg.w_u, cfg.w_a,
+            )
 
     # Log architecture details (equivalent to old manual logging, but from the built model)
     _n_bands_built = max(1, int(getattr(cfg, "n_bands", 1)))
@@ -3029,6 +3276,7 @@ class _TrainingSession:
     _resume_best_epoch: int
     _resume_epochs_without_improve: int
     _resume_global_step: int
+    _init_source: dict[str, Any] | None = None
 
 
 def build_training_session(cfg: TrainConfig) -> _TrainingSession:
@@ -3060,6 +3308,23 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         benchmark=bool(getattr(cfg, "benchmark_cudnn", False)),
     )
     device = get_device()
+    # Warm start: resolve and guard the source BEFORE anything is created, so a
+    # wrong --out never gets the chance to write into the source run.
+    _init_layout: Any = None
+    _init_ckpt: dict[str, Any] | None = None
+    _init_ckpt_path: Path | None = None
+    _init_source: dict[str, Any] | None = None
+    if getattr(cfg, "init_from", None):
+        if getattr(cfg, "resume_from", None):
+            raise ValueError("--init-from and --resume-from are exclusive.")
+        _init_layout, _init_ckpt_path, _init_ckpt = resolve_resume_checkpoint(
+            cfg.init_from,
+            prefer=str(getattr(cfg, "init_checkpoint", "best")),
+            device=torch.device("cpu"),
+            trust_artifact=bool(getattr(cfg, "trust_artifact", False)),
+        )
+        _refuse_init_into_source(Path(cfg.out), _init_layout.run_dir)
+        _init_source = _init_source_record(_init_layout, _init_ckpt_path, _init_ckpt)
     layout = ensure_run_layout(Path(cfg.out))
     outdir = layout.run_dir
     run_created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -3480,6 +3745,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         n_val=n_val,
         split_manifest=split_manifest,
         dataset_contract_obj=dataset_contract_obj,
+        inherited_scaler_path=(_init_layout.scaler_json if _init_layout is not None else None),
     )
 
     # 7b. Single pre-training preflight gate (go/no-go). Runs after the dataset,
@@ -3559,6 +3825,8 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         _resume_requested=_resume_requested,
         _resume_ckpt=_resume_ckpt,
         _resume_ckpt_path=_resume_ckpt_path,
+        _init_ckpt=_init_ckpt,
+        _init_ckpt_path=_init_ckpt_path,
     )
     model = _mb.model
     opt = _mb.opt
@@ -3745,6 +4013,16 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     atomic_write_json(config_path, payload)
     payload_readback = json.loads(config_path.read_text(encoding="utf-8"))
     verify_critical_config_fields_match(payload_readback, payload)
+    if _init_ckpt is not None:
+        # Warm-start gate: same network and target physics as the source; only
+        # the rows of the dataset (where, how many) may differ.
+        try:
+            verify_critical_config_fields_match(
+                _init_comparable(payload_readback), _init_comparable(dict(_init_ckpt.get("config") or {}))
+            )
+        except RuntimeError as _iexc:
+            raise RuntimeError(f"[init] new run is not compatible with the source checkpoint: {_iexc}") from _iexc
+        logger.info("[init] network and target contract match the source checkpoint.")
     if _resume_requested:
         # Compatibility gate: the rebuilt config must agree with the resumed
         # checkpoint on architecture/dataset/scaler-critical fields.
@@ -3795,6 +4073,8 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             "dataset_safety_overrides": dataset_snapshot.get("dataset_safety_overrides"),
             "dataset_hash": resolve_dataset_hash(payload.get("dataset_contract")),
             "w0_bands": payload.get("w0_bands"),
+            # Only a warm start writes the record; a later resume of that run keeps it.
+            **({"init_from": _init_source} if _init_source is not None else {}),
             "status": "running",
         },
     )
@@ -3829,6 +4109,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         _resume_best_epoch=_resume_best_epoch,
         _resume_epochs_without_improve=_resume_epochs_without_improve,
         _resume_global_step=_resume_global_step,
+        _init_source=_init_source,
     )
 
 
@@ -4737,11 +5018,17 @@ def train(cfg: TrainConfig) -> str:
     """Main execution pipeline: build the training session (setup phases 1-10),
     then run the Sobolev training loop (phase 11). Returns the final run status
     (``"completed"``, ``"interrupted"`` or ``"failed"``)."""
+    session: _TrainingSession | None = None
     try:
         session = build_training_session(cfg)
         return _run_training_loop(session)
     finally:
-        _detach_run_logs()
+        try:
+            # Also after a failed or interrupted loop: the source must still be intact.
+            if session is not None and session._init_source:
+                _verify_init_source_unchanged(session._init_source, session.layout)
+        finally:
+            _detach_run_logs()
 
 
 # ---------------------------------------------------------------------------
