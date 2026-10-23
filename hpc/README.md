@@ -37,7 +37,7 @@ bash hpc/stage_artifacts.sh <user>@altay.uhem.itu.edu.tr \
 bash hpc/bootstrap.sh --profile uhem_altay
 #    then set LUNARIS_ACCOUNT in hpc/cluster.env from the spart / sacctmgr output
 set -a; . hpc/cluster.env; set +a
-srun -p a100q ${LUNARIS_ACCOUNT:+-A "$LUNARIS_ACCOUNT"} --gres=gpu:1 -n 64 -t 15 bash hpc/preflight.sh
+srun -p a100q ${LUNARIS_ACCOUNT:+-A "$LUNARIS_ACCOUNT"} --gres=gpu:1 -c 64 -t 15 bash hpc/preflight.sh
 
 # 1) Plan D: line 0 = the recipe as it ran (800 epochs), line 1 = the cosine
 #    stretched to 1000 epochs. Two A100 jobs side by side.
