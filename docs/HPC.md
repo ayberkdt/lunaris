@@ -197,7 +197,13 @@ unless the interpreter is CPython 3.11. The lock pins `torch==2.13.0`, built for
 CUDA 13, which needs an NVIDIA driver `>= 580` on the GPU nodes. For an older
 driver, run `LUNARIS_TORCH_INDEX_URL=<PyTorch wheel index for your driver> bash hpc/setup_env.sh`:
 torch then comes from that index, and the lock's torch, triton, `nvidia-*` and
-`cuda-*` pins are skipped.
+`cuda-*` pins are skipped (and removed first from a reused venv). The CUDA 12.6
+index also publishes torch 2.13.0 (driver `>= 525`). For a driver from 450 to
+524 the CUDA 11.8 index stops at torch 2.7.1, so name the version too:
+`LUNARIS_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118 LUNARIS_TORCH_VERSION=2.7.1 bash hpc/setup_env.sh`
+(the CPU suite passes with torch 2.7.1 on CPython 3.11; checked 2026-10-23).
+`hpc/preflight.sh`, run inside a GPU job, prints the command that fits the
+node's driver.
 
 Verify the headless entry points are available:
 
