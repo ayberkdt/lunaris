@@ -76,15 +76,24 @@ RK4 step: 10 s. Measured 2026-10-23 (RK4 in the GL1800F field to degree 200,
 at 80 km is 16.6 s for a circular orbit and 11.8 s at escape speed. Both series
 of a pair must use the same step: the comparison tool refuses mixed steps.
 
+Walltime: the GPU series cost the same per step for 1 or 16 orbits (launch
+bound; measured 2026-10-23 on a GTX 1660 Ti: SH200 2.2 s/step, SH25 0.31 s/step;
+ST-LRPS about 0.5 s/step). 5 days at 10 s are 43 200 steps: about 27 h for SH200,
+4 h for SH25 and 6 h per ST-LRPS model at that speed. A GPU series has no partial
+checkpoint, so its job must finish inside the walltime.
+
 ```bash
 COMMON=(--gpu-batch-compare --truth sh25 --random-scenarios 1024 --scenario-seed 42
         --sampling-method sobol_scrambled --scenario-mode bounded_keplerian
         --duration-days 5 --dt-out 60 --rk4-dt-s 10 --torch-dtype float64
         --cache-truth --cache-trajectories --workers 60)
 BENCH="$LUNARIS_OUTPUT_DIR/gravity_benchmark"
-# Reference, once: SH25 and SH200 (the --truth sh25 DOP853 run is a tool placeholder).
-hpc/submit.sh benchmark --time=2-00:00:00 -- "${COMMON[@]}" --gpu-models sh25,sh200 \
-    --output-dir "$BENCH/ref_rk4dt10"
+# Reference, once, as two jobs side by side: SH25 and SH200 (the --truth sh25
+# DOP853 run is a tool placeholder).
+hpc/submit.sh benchmark --time=1-00:00:00 -- "${COMMON[@]}" --gpu-models sh25 \
+    --output-dir "$BENCH/ref_sh25_rk4dt10"
+hpc/submit.sh benchmark --time=3-00:00:00 -- "${COMMON[@]}" --gpu-models sh200 \
+    --output-dir "$BENCH/ref_sh200_rk4dt10"
 # One per model: Plan D as staged, and the two UHeM runs.
 for RUN in planD_20260920_141322/run PotentialAutograd_PlanD_Reproduction_800ep_Seed42 \
            PotentialAutograd_PlanD_Long_1000ep_tmax980_Seed42; do
@@ -97,7 +106,7 @@ done
 module load "${LUNARIS_MODULES%% *}"
 M="benchmark_cache/models"
 "$LUNARIS_VENV/bin/python" tools/compare_rk4_series.py --out "$BENCH/compare_rk4dt10" \
-    --series sh200="$BENCH/ref_rk4dt10/$M/sh200" --series sh25="$BENCH/ref_rk4dt10/$M/sh25" \
+    --series sh200="$BENCH/ref_sh200_rk4dt10/$M/sh200" --series sh25="$BENCH/ref_sh25_rk4dt10/$M/sh25" \
     --series planD="$BENCH/planD_20260920_141322_rk4dt10/$M/st_lrps" \
     --series r800="$BENCH/PotentialAutograd_PlanD_Reproduction_800ep_Seed42_rk4dt10/$M/st_lrps" \
     --series r1000="$BENCH/PotentialAutograd_PlanD_Long_1000ep_tmax980_Seed42_rk4dt10/$M/st_lrps" \
