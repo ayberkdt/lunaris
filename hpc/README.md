@@ -93,8 +93,10 @@ for RUN in planD_20260920_141322/run PotentialAutograd_PlanD_Reproduction_800ep_
       --output-dir "$BENCH/$(echo "$RUN" | cut -d/ -f1)_rk4dt10"
 done
 # Pairs (login node, seconds): A = model error, B = what SH25 alone misses.
+# Needs only numpy: the profile's Python module and the venv's interpreter.
+module load "${LUNARIS_MODULES%% *}"
 M="benchmark_cache/models"
-python tools/compare_rk4_series.py --out "$BENCH/compare_rk4dt10" \
+"$LUNARIS_VENV/bin/python" tools/compare_rk4_series.py --out "$BENCH/compare_rk4dt10" \
     --series sh200="$BENCH/ref_rk4dt10/$M/sh200" --series sh25="$BENCH/ref_rk4dt10/$M/sh25" \
     --series planD="$BENCH/planD_20260920_141322_rk4dt10/$M/st_lrps" \
     --series r800="$BENCH/PotentialAutograd_PlanD_Reproduction_800ep_Seed42_rk4dt10/$M/st_lrps" \
