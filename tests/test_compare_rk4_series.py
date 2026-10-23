@@ -48,6 +48,8 @@ def test_a_known_offset_lands_on_the_right_ric_axes(tmp_path: Path) -> None:
     i_hat = vel / np.linalg.norm(vel, axis=1, keepdims=True)
     c_hat = np.array([0.0, 0.0, 1.0])
     shifted = pos + 3.0 * r_hat + 4.0 * i_hat + 12.0 * c_hat  # |offset| = 13 m
+    shifted[0] = pos[0]  # both series start from the scenario's initial state
+    w = np.sqrt((len(t) - 1) / len(t))  # RMS over the samples after t0
     for sid in (0, 1):
         _write(tmp_path / "ref", sid, t, pos, vel)
         _write(tmp_path / "model", sid, t, shifted, vel)
@@ -59,11 +61,12 @@ def test_a_known_offset_lands_on_the_right_ric_axes(tmp_path: Path) -> None:
     s = json.loads((out / "summary.json").read_text(encoding="utf-8"))["A"]
     assert s["n_scenarios"] == 2 and s["rk4_dt_s"] == 15.0 and s["series"] == ["m", "r"]
     assert s["final_pos_err_m"]["median"] == pytest.approx(13.0, rel=1e-9)
-    assert s["ric_rms_m"]["radial"] == pytest.approx(3.0, rel=1e-9)
-    assert s["ric_rms_m"]["along"] == pytest.approx(4.0, rel=1e-9)
-    assert s["ric_rms_m"]["cross"] == pytest.approx(12.0, rel=1e-9)
+    assert s["ric_rms_m"]["radial"] == pytest.approx(3.0 * w, rel=1e-9)
+    assert s["ric_rms_m"]["along"] == pytest.approx(4.0 * w, rel=1e-9)
+    assert s["ric_rms_m"]["cross"] == pytest.approx(12.0 * w, rel=1e-9)
     curves = np.load(out / "ensemble_rms_vs_time.npz")
-    np.testing.assert_allclose(curves["A"], 13.0, rtol=1e-9)
+    assert curves["A"][0] == 0.0
+    np.testing.assert_allclose(curves["A"][1:], 13.0, rtol=1e-9)
     np.testing.assert_array_equal(curves["t_s"], t)
     assert len((out / "per_scenario.csv").read_text(encoding="utf-8").splitlines()) == 3
 
@@ -73,6 +76,15 @@ def test_series_integrated_with_different_steps_are_refused(tmp_path: Path) -> N
     _write(tmp_path / "a", 0, t, pos, vel, dt=15.0)
     _write(tmp_path / "b", 0, t, pos, vel, dt=60.0)
     with pytest.raises(SystemExit, match="RK4 steps differ"):
+        _tool().main(["--out", str(tmp_path / "out"), "--series", f"a={tmp_path / 'a'}",
+                      "--series", f"b={tmp_path / 'b'}", "--pair", "X=a,b"])
+
+
+def test_series_from_different_scenario_sets_are_refused(tmp_path: Path) -> None:
+    t, pos, vel = _orbit()
+    _write(tmp_path / "a", 0, t, pos, vel)
+    _write(tmp_path / "b", 0, t, pos * 1.001, vel)  # same id, another orbit
+    with pytest.raises(SystemExit, match="initial states differ"):
         _tool().main(["--out", str(tmp_path / "out"), "--series", f"a={tmp_path / 'a'}",
                       "--series", f"b={tmp_path / 'b'}", "--pair", "X=a,b"])
 
