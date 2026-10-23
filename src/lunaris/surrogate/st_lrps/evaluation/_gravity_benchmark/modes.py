@@ -748,6 +748,20 @@ def _run_cpu_adaptive_surrogate_series(
     )
 
 
+def _raise_if_required_st_lrps_failed(args: argparse.Namespace, results: list[BatchModelResult]) -> None:
+    """Under ``--require-st-lrps``, fail the run once its reports are written if an
+    ST-LRPS series failed: by an exception, or by the ``status="failed"`` that the
+    integration returns for its own errors and non-finite states. Otherwise a
+    batch job would exit 0 with no ST-LRPS result."""
+    if not getattr(args, "require_st_lrps", False):
+        return
+    failed = [r for r in results
+              if str(r.model_name).startswith("st_lrps") and getattr(r, "status", "") == "failed"]
+    if failed:
+        reasons = "; ".join(f"{r.display_name}: {r.failure_reason}" for r in failed)
+        raise RuntimeError(f"--require-st-lrps: the ST-LRPS series failed ({reasons})")
+
+
 def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ephem: Any) -> None:
     """New validation workflow: SH200 DOP853 truth vs GPU RK4 SH/ST-LRPS."""
 
@@ -1104,6 +1118,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         print("  metrics/gpu_batch_summary.json")
         print("  plots/")
         print("  reports/gpu_batch_validation_report.pdf")
+        _raise_if_required_st_lrps_failed(args, results)
         return
 
     progress.emit_progress(
@@ -1226,6 +1241,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     print("  metrics/gpu_batch_summary.json")
     print("  plots/")
     print("  reports/gpu_batch_validation_report.pdf")
+    _raise_if_required_st_lrps_failed(args, results)
 
 
 # =============================================================================

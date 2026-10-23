@@ -30,6 +30,8 @@ _EXPECTED_COUNTS = {
     # 2^(6-3) screening design + 2 anchors, and its fold-over (tools/st_lrps_doe.py).
     "st_lrps_trajectory_doe_phase1.jsonl": 10,
     "st_lrps_trajectory_doe_foldover.jsonl": 7,
+    # Plan D as it ran (800 epochs) and with the cosine stretched to 1000 epochs.
+    "st_lrps_planD_reproduction_and_long.jsonl": 2,
 }
 
 _REQUIRED_FIELDS = ("name", "entrypoint", "description", "runtime_model_kind", "flags")
@@ -306,3 +308,36 @@ def test_restart_if_no_checkpoint_restarts_only_this_scenarios_own_directory(tmp
     assert launcher.main([*base, "--restart-if-no-checkpoint"]) == 0
     (run_dir / "scenario.json").write_text(json.dumps({"name": "SomeOtherRun"}), encoding="utf-8")
     assert launcher.main([*base, "--restart-if-no-checkpoint"]) == 2  # not ours: still refused
+
+
+def _flag_values(flags):
+    """Map each flag to its value (None for a switch); a repeated flag is refused."""
+    out = {}
+    for i, tok in enumerate(flags):
+        if not tok.startswith("--"):
+            continue
+        assert tok not in out, f"flag {tok} repeated"
+        nxt = flags[i + 1] if i + 1 < len(flags) else None
+        out[tok] = nxt if nxt is not None and not nxt.startswith("--") else None
+    return out
+
+
+def test_plan_d_lines_pin_the_recorded_recipe_and_differ_only_in_the_schedule():
+    """Line 0 is Plan D's recorded command (2026-09-20, later value of each repeated
+    flag); line 1 stretches only the cosine. A drift here changes what the UHeM
+    reproduction measures."""
+    reproduction, long_run = (
+        _flag_values(s["flags"]) for s in _parse_lines(_SCENARIO_DIR / "st_lrps_planD_reproduction_and_long.jsonl")
+    )
+    recorded = {
+        "--hidden": "512", "--depth": "5", "--n-bands": "2", "--activation": "sine",
+        "--w0-first": "30.0", "--w0-hidden": "30.0", "--model-preset": "recommended_physical_radial_decay",
+        "--epochs": "800", "--t-max": "780", "--warmup-epochs": "5", "--min-lr-ratio": "0.01",
+        "--lr": "7e-05", "--batch-size": "8192", "--patience": "150", "--ema-decay": "0.999",
+        "--best-metric": "hybrid_rel", "--direction-loss-floor-abs": "1e-7", "--seed": "42", "--split-seed": "42",
+    }
+    assert {k: reproduction.get(k) for k in recorded} == recorded
+    assert long_run["--epochs"] == "1000" and long_run["--t-max"] == "980"
+    assert {k: v for k, v in long_run.items() if k not in ("--epochs", "--t-max")} == {
+        k: v for k, v in reproduction.items() if k not in ("--epochs", "--t-max")
+    }

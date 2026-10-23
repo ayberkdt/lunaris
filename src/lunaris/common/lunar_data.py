@@ -32,9 +32,23 @@ LUNAR_GM_REL_TOL: float = 5.0e-4
 
 # Project root for editable checkouts; external data can be overridden by env.
 _REPO_ROOT = project_root_from_file(__file__)
-DEFAULT_LUNAR_GRAVITY_PATH = (
-    data_dir_from_root(_REPO_ROOT) / "gravity_models" / "jggrx_1800f_sha.tab.txt"
-)
+
+# Coefficient file names in priority order, as in lunaris.core.config: a
+# `lunaris-data download` installs the canonical PDS name, a checkout may hold
+# the text-wrapped `.txt` copy (both are aliases in data/data_sources.json).
+_GRAVITY_FILE_NAMES: tuple[str, ...] = ("jggrx_1800f_sha.tab", "jggrx_1800f_sha.tab.txt")
+
+
+def _default_lunar_gravity_path(data_dir: Path) -> Path:
+    """First existing coefficient file under ``data_dir/gravity_models`` (else the ``.txt`` name)."""
+    gravity_dir = data_dir / "gravity_models"
+    for name in _GRAVITY_FILE_NAMES:
+        if (gravity_dir / name).is_file():
+            return gravity_dir / name
+    return gravity_dir / _GRAVITY_FILE_NAMES[-1]
+
+
+DEFAULT_LUNAR_GRAVITY_PATH = _default_lunar_gravity_path(data_dir_from_root(_REPO_ROOT))
 
 
 def resolve_lunar_gravity_path(path: str | Path | None = None) -> Path:

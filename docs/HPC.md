@@ -29,6 +29,52 @@ config file and use the helper scripts in `hpc/` (see
 [`hpc/README.md`](../hpc/README.md)). The rest of this guide is the reference for
 what those scripts do and the individual workflows.
 
+### From a fresh clone (one command)
+
+On a cluster **login node** (the downloads need internet access, which compute
+nodes often lack), right after `git clone`:
+
+```bash
+bash hpc/bootstrap.sh --profile uhem_altay
+```
+
+It runs the manual steps below in order and ends with an OK / WARN / FAIL summary
+and one next step. It copies the site profile to `hpc/cluster.env` only when that
+file does not exist (an existing one is never overwritten) and refuses CRLF line
+endings. It prints `spart` (UHeM), `sinfo -s`, `sacctmgr`, `module avail CUDA` and `quota -s` for
+the profile's `>>> FILL IN` values. It builds the venv with `hpc/setup_env.sh`
+(skipped when the venv already has `lunaris-train`). It downloads the
+`full-gravity` data preset into `LUNARIS_DATA_DIR`: the NAIF SPICE kernels
+(`naif0012.tls`, `de440.bsp`, `pck00011.tpc`, `gm_de440.tpc`, the DE440 Moon
+frame kernels) and the GRAIL GL1800F gravity field (`jggrx_1800f_sha.tab` + its
+label), each checked against the SHA-256 in `data/data_sources.json`. Every file
+of the preset must then be present and valid; `lunaris-data verify` alone lets
+optional entries be missing. Last, it runs `hpc/preflight.sh`. A rerun is safe:
+verified files are not downloaded again. Options: `--skip-env`, `--skip-data`,
+`--dry-run`; `LUNARIS_DATA_PRESET` picks another preset.
+
+ST-LRPS cloud suites and finished training runs (for `--init-from` or
+evaluation) cannot be downloaded. Copy them from the workstation that has them:
+
+```bash
+bash hpc/stage_artifacts.sh <user>@<login-host> \
+    --suite outputs/datasets/cloud_suites/<suite id> \
+    --model outputs/training/<run dir>
+```
+
+Suites land in `$LUNARIS_DATA_DIR/datasets/cloud_suites/<name>`, runs in
+`$LUNARIS_OUTPUT_DIR/training/<name>` (defaults `lunaris_data` and
+`lunaris_outputs` under the remote `$HOME`, as in the Altay profile;
+`--remote-data` / `--remote-outputs` change them). The SHA-256 list travels with
+the files and the cluster checks it with `sha256sum -c` right after unpacking.
+An artifact that already exists on the cluster is not touched. Runs on Linux,
+macOS and Git Bash on Windows (needs `ssh`, `tar`, `sha256sum`); `--dry-run`
+lists what would be copied. A training run's `config.json` keeps the absolute
+paths of the machine that trained it, so pass `--data`, `--val-data`, ... with
+the cluster paths when you continue from it.
+
+### Manual steps
+
 ```bash
 # 1. Configure your cluster once: account, partition, modules, venv, storage.
 cp hpc/cluster.env.example hpc/cluster.env
@@ -151,7 +197,13 @@ unless the interpreter is CPython 3.11. The lock pins `torch==2.13.0`, built for
 CUDA 13, which needs an NVIDIA driver `>= 580` on the GPU nodes. For an older
 driver, run `LUNARIS_TORCH_INDEX_URL=<PyTorch wheel index for your driver> bash hpc/setup_env.sh`:
 torch then comes from that index, and the lock's torch, triton, `nvidia-*` and
-`cuda-*` pins are skipped.
+`cuda-*` pins are skipped (and removed first from a reused venv). The CUDA 12.6
+index also publishes torch 2.13.0 (driver `>= 525`). For a driver from 450 to
+524 the CUDA 11.8 index stops at torch 2.7.1, so name the version too:
+`LUNARIS_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118 LUNARIS_TORCH_VERSION=2.7.1 bash hpc/setup_env.sh`
+(the CPU suite passes with torch 2.7.1 on CPython 3.11; checked 2026-10-23).
+`hpc/preflight.sh`, run inside a GPU job, prints the command that fits the
+node's driver.
 
 Verify the headless entry points are available:
 

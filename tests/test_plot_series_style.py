@@ -38,6 +38,7 @@ def test_role_dashes_are_distinct_and_known() -> None:
 
 
 def test_color_dash_combination_unique_within_period() -> None:
+    pytest.importorskip("PySide6")  # lunaris.ui.core imports PySide6
     from lunaris.ui.core.plot_style import series_style
 
     viz = DESIGN_TOKENS.visualization
