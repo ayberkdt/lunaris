@@ -76,7 +76,7 @@ RK4 step: 10 s. Measured 2026-10-23 (RK4 in the GL1800F field to degree 200,
 at 80 km is 16.6 s for a circular orbit and 11.8 s at escape speed. Both series
 of a pair must use the same step: the comparison tool refuses mixed steps.
 
-Walltime: the GPU series cost the same per step for 1 or 16 orbits (launch
+Walltime: the GPU series cost the same per step for 1 to 1024 orbits (launch
 bound; measured 2026-10-23 on a GTX 1660 Ti: SH200 2.2 s/step, SH25 0.31 s/step;
 ST-LRPS about 0.5 s/step). 5 days at 10 s are 43 200 steps: about 27 h for SH200,
 4 h for SH25 and 6 h per ST-LRPS model at that speed. A GPU series has no partial
