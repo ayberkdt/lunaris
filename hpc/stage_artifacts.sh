@@ -21,8 +21,8 @@
 #
 # The defaults match hpc/clusters/uhem_altay.env.example ($HOME/lunaris_data and
 # $HOME/lunaris_outputs). An artifact that already exists on the cluster is not
-# touched: a complete copy (its hash list checks out) counts as done, an
-# incomplete one is reported so you can delete it there and rerun. One ssh
+# touched: a complete, identical copy counts as done; an incomplete or
+# different one is reported so you can delete it there and rerun. One ssh
 # connection per artifact: the hash list travels with the files and the cluster
 # checks it (sha256sum -c) right after unpacking. Exit status 0 when every
 # artifact is on the cluster intact.
@@ -97,11 +97,15 @@ for i in "${!paths[@]}"; do
   printf -v q_dest '%q' "${dest}"
   printf -v q_name '%q' "${name}"
   printf -v q_sums '%q' "${sums}"
-  # An existing copy is never touched. It is checked against the hash list a
-  # finished copy left beside it: 18 = complete and intact, 17 = incomplete or
-  # damaged (e.g. a transfer cut off by a VPN drop) or not made by this script.
+  # An existing copy is never touched. It counts as done (18) only when the hash
+  # list a finished copy left beside it equals the one just computed here and
+  # still checks out; otherwise (17) it is incomplete or damaged (e.g. a
+  # transfer cut off by a VPN drop), differs from this workstation's copy (the
+  # run changed since), or was not made by this script.
+  list_sha="$(sha256sum "${work}/${sums}" | cut -d' ' -f1)"
   remote="set -e; d=${q_dest}; if [ -e \"\$d\"/${q_name} ]; then"
-  remote+=" if [ -f \"\$d\"/${q_sums} ] && (cd \"\$d\" && sha256sum -c --quiet ${q_sums} >/dev/null 2>&1); then exit 18; fi;"
+  remote+=" if [ -f \"\$d\"/${q_sums} ] && [ \"\$(sha256sum \"\$d\"/${q_sums} | cut -d' ' -f1)\" = ${list_sha} ]"
+  remote+=" && (cd \"\$d\" && sha256sum -c --quiet ${q_sums} >/dev/null 2>&1); then exit 18; fi;"
   remote+=" echo \"exists: \$d/\"${q_name} >&2; exit 17; fi"
   remote+="; mkdir -p \"\$d\" && tar -xf - -C \"\$d\" && cd \"\$d\" && sha256sum -c --quiet ${q_sums}"
   rc=0
@@ -109,7 +113,7 @@ for i in "${!paths[@]}"; do
   case "${rc}" in
     0)  results+=("OK    ${dest}/${name}  (${n_files} files, SHA-256 checked on the cluster)") ;;
     18) results+=("OK    ${dest}/${name}  (already on the cluster, SHA-256 checked; not copied again)") ;;
-    17) results+=("FAIL  ${dest}/${name}  (on the cluster but incomplete or unverified: delete it there, then rerun)"); failed=1 ;;
+    17) results+=("FAIL  ${dest}/${name}  (on the cluster but incomplete, unverified or not this copy: delete it there, then rerun)"); failed=1 ;;
     *)  results+=("FAIL  ${dest}/${name}  (ssh/tar/sha256sum exit ${rc})"); failed=1 ;;
   esac
 done
