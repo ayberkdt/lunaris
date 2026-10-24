@@ -145,9 +145,12 @@ jobs:
         # documented in pyproject.toml [tool.coverage.report]). pytest-randomly
         # (installed via the dev extra) shuffles test order every run to surface
         # order-dependent state leakage like the earlier Qt-binding pollution.
+        # --cov-config is passed as a path so that test subprocesses started in
+        # another directory (tmp_path) still read branch=true; otherwise they
+        # write statement-only data and the final combine fails (exit 3).
         run: >-
           pytest tests/ -m "not slow and not requires_data and not requires_cuda" -q
-          --cov=lunaris --cov-report=term-missing:skip-covered
+          --cov=lunaris --cov-config=pyproject.toml --cov-report=term-missing:skip-covered
           --cov-report=xml --cov-report=html
 
       - name: Upload coverage report (xml + html)
@@ -256,7 +259,7 @@ jobs:
           tests/test_batch_gpu_policy.py
           tests/test_batch_result_validity.py
           -m "not slow and not requires_data and not requires_cuda" -q --assert=plain
-          --cov=lunaris
+          --cov=lunaris --cov-config=pyproject.toml
           --cov-report=term-missing:skip-covered
           --cov-fail-under=0
         

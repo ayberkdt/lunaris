@@ -56,3 +56,25 @@ def test_closing_the_studio_restores_the_application_look(app, monkeypatch) -> N
     win._on_workspace_closed()
 
     assert _look(app) == before
+
+
+def test_launchers_share_one_application_wheel_guard(app, monkeypatch) -> None:
+    """Every app-level filter runs in Python on every event of every widget;
+    one per launcher piled up in a long-lived application."""
+    from lunaris.surrogate.st_lrps.ui import embedding
+    from lunaris.ui.launcher import LauncherWindow
+    from lunaris.ui_foundation.event_filters import NoWheelOnSpinFilter
+
+    monkeypatch.setattr(embedding, "MainWindow", QtWidgets.QWidget)
+    # The guard is the subject, not the theme: an application-wide style change
+    # re-polishes every widget the suite has left alive, which is slow.
+    monkeypatch.setattr(embedding, "apply_premium_dark_theme", lambda _app: None)
+    guards = []
+    for _ in range(3):  # three launchers in one application
+        win = SimpleNamespace(show=lambda: None, raise_=lambda: None, activateWindow=lambda: None)
+        win._build_studio_window = LauncherWindow._build_studio_window.__get__(win)
+        win._build_studio_window().deleteLater()
+        guards.append(win._studio_wheel_guard)
+
+    assert len(app.findChildren(NoWheelOnSpinFilter)) == 1
+    assert guards[0] is guards[1] is guards[2]
