@@ -9,6 +9,10 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=16G
 #SBATCH --time=06:00:00
+# One Python process on one node (no srun/MPI). Stated explicitly: the UHeM
+# job examples give -N and -n on every job.
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 
 set -euo pipefail
 # Slurm runs a spooled copy of this script, so $0 does not point into hpc/:
