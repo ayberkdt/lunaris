@@ -22,6 +22,7 @@ import ast
 import importlib
 import importlib.util
 import os
+import sys
 import tempfile
 from functools import lru_cache
 
@@ -194,6 +195,24 @@ def pytest_ignore_collect(collection_path: Path, config) -> bool:
     return False
 
 
+@pytest.fixture(autouse=True)
+def _run_deferred_qt_deletes():
+    """Carry out the ``deleteLater()`` calls a test made.
+
+    The tests never run ``app.exec()``, and outside an event loop
+    ``processEvents()`` does not deliver DeferredDelete (checked: a widget is
+    still alive after ``deleteLater(); processEvents()``). So every window a
+    test or fixture handed to ``deleteLater()`` stayed alive: a random-order UI
+    run reached ~5000 top-level and ~93 000 widgets, and one application-wide
+    style change then took 106-159 s (2026-10-24), which stalled the theme
+    tests and a full run. Only the deletes the tests asked for are run here.
+    """
+    yield
+    qt_core = sys.modules.get("PySide6.QtCore")
+    if qt_core is not None and qt_core.QCoreApplication.instance() is not None:
+        qt_core.QCoreApplication.sendPostedEvents(None, qt_core.QEvent.Type.DeferredDelete)
+
+
 _SESSION: pytest.Session | None = None
 
 
@@ -219,7 +238,6 @@ def pytest_unconfigure(config) -> None:
     (measured 2026-10-23).
     """
     import logging
-    import sys
 
     if os.name != "posix":
         return
