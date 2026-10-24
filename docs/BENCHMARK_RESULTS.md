@@ -22,7 +22,40 @@ A benchmark result is accepted for documentation only when:
 - The output is not a quick, synthetic, legacy, or validation-failed run.
 
 Until those conditions are met, do not cite ST-LRPS orbit accuracy, speedup, or
-speed-accuracy trade-off numbers from this document.
+speed-accuracy trade-off numbers as paper-safe evidence. The
+[research-preview results](#research-preview-results) below may be cited only
+with that label, their configuration and their limits.
+
+## Research-preview results
+
+The README section "Results so far" quotes these runs. None of them meets the
+acceptance conditions above: there is no passing `validation_report.json`, the
+split is interpolation (no spatial-block split), and the runs come from one
+trained model on one laptop. The artifacts are local run folders under the
+git-ignored `outputs/`; the table names each one so a reader can ask for it or
+regenerate it.
+
+Model: run `st_lrps_train_20260920_141322_planD_dirfix`, `potential_autograd`,
+512×5 residual SIREN (1,848,321 parameters), `target_mode=residual`, SH25 →
+SH200 of GL1800F (`jggrx_1800f_sha.tab`), convention
+`4pi_geodesy_no_condon_shortley_v1`, best checkpoint epoch 792 of 800. Dataset:
+suite `moon_deg25to200_alt100to1000km_20260704_103234` (train content SHA-256
+`9801507d…cba7d2c1`), 100–1000 km, Moon-fixed frame. Hardware: one laptop with
+an NVIDIA GTX 1660 Ti.
+
+| Result | Configuration | Artifact (under `outputs/`) |
+|---|---|---|
+| Field accuracy: test, 60–100 km, 1000–1040 km | 2 M / 0.5 M / 0.5 M held-out points, residual acceleration against SH200 − SH25 | `training/<run>/evals/publication_eval/` (`evaluate_metrics.json`, `ood_low/`, `ood_high/`) |
+| Five-day orbit error | 256 orbits (first 256 of a 1024-orbit scrambled Sobol set, seed 42, bounded Keplerian, 100–1000 km), RK4 Δt = 15 s, float64, gravity only, reference SH200 RK4 on the CPU | `gravity_benchmark/comparison_rk4_dt15/summary.json` (pair A: ST-LRPS vs SH200; pair B: SH25 vs SH200) |
+| Per-orbit runtime | Same runs: GPU SH25 and GPU ST-LRPS over 1024 orbits, CPU SH200 over 256 | `gravity_benchmark/planD_1024_5day_rk4dt15_sh25truth/metrics/gpu_batch_runtime_metrics.csv`, `gravity_benchmark/planD_1024_5day_rk4dt15_cpu_sh200_first256/metrics/gpu_batch_runtime_metrics.csv` (commit `27e9ab86`) |
+| 60-day frozen-family check | 8 candidates, perilune 100–200 km, e = 0.03–0.06, i = 27–90°, ω₀ = 90°, RK4 Δt = 15 s, reference SH200 | `gravity_benchmark/comparison_rk4_dt60/frozen_60day_validation.csv` |
+| Frozen-search campaign wall time | 4096 orbits, 60 days, RK4 Δt = 30 s; time from stage 0 to the end of stage 1 (screening) in `manifest.json` | `frozen_search/v2_S_stlrps_n4096`, `frozen_search/v2_C_sh25_n4096`, `frozen_search/v3_S_stlrps_fullforce_n4096` (commit `27e9ab86`, uncommitted frozen-search options) |
+
+The campaign estimate for SH200 (about 74 days on the CPU) is not a run. It
+multiplies the measured CPU SH200 cost per five-day, Δt = 15 s orbit by the
+campaign's orbit count, arc length (×12) and step (÷2), then scales it by the ratio of the measured SH25
+campaign to the same estimate made for SH25. It compares a CPU estimate with a
+GPU run; an SH200 timing on the same GPU has not been measured.
 
 ## Benchmark Purpose
 
