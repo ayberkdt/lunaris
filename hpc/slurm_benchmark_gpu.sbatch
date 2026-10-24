@@ -6,6 +6,10 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
+# One Python process on one node (no srun/MPI). Stated explicitly: the UHeM
+# job examples give -N and -n on every job.
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 # SIGTERM to the batch shell 5 minutes before walltime. The benchmark has no
 # checkpoint of its own, but it keeps finished scenarios: the script prints how
 # to continue (same --output-dir plus --resume) before Slurm's kill.

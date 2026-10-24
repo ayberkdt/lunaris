@@ -98,6 +98,15 @@ def test_templates_do_not_source_relative_to_the_spooled_script(template):
     assert 'source "${_hpc_dir}/env_template.sh"' in text
 
 
+@pytest.mark.parametrize("template", _templates(), ids=lambda p: p.name)
+def test_templates_ask_for_one_task_on_one_node(template):
+    # Every template runs a single process; UHeM's job examples always give -N/-n.
+    text = template.read_text(encoding="utf-8")
+    assert re.search(r"^#SBATCH --nodes=1$", text, re.MULTILINE), template.name
+    assert re.search(r"^#SBATCH --ntasks=1$", text, re.MULTILINE), template.name
+    assert not re.search(r"^\s*(srun|mpirun)\b", text, re.MULTILINE), template.name
+
+
 def test_signal_templates_relay_to_their_program_and_keep_its_status():
     for name, program in (
         ("slurm_train_stlrps.sbatch", "lunaris-train"),

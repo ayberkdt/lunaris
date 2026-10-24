@@ -6,6 +6,10 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
+# One Python process on one node (no srun/MPI). Stated explicitly: the UHeM
+# job examples give -N and -n on every job.
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 # Send SIGTERM to the batch shell (B:) 30 minutes before the walltime limit so
 # the trainer can finish the current epoch (including its validation), save
 # ckpt_last, and exit 75 (resumable) instead of being killed mid-epoch. If one

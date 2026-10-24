@@ -5,6 +5,10 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
+# One Python process on one node (no srun/MPI). Stated explicitly: the UHeM
+# job examples give -N and -n on every job.
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 # CPU-only job on purpose: the spatial-cloud generator is a numba/NumPy
 # pipeline (no --gres line, and `hpc/submit.sh generate` skips the
 # LUNARIS_GRES injection so a GPU site profile does not leak a GPU request
