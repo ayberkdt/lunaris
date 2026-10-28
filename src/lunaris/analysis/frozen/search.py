@@ -942,8 +942,19 @@ class FrozenSearchPipeline:
             "screening_provenance": _json_safe(dict(self.screening.provenance)),
             "validation_backend": str(self.validation.backend_label),
             "validation_provenance": _json_safe(dict(self.validation.provenance)),
+            "sensitivity": self._sensitivity_contract(),
             "stages": {},
         }
+
+    def _sensitivity_contract(self) -> list[dict[str, Any]]:
+        """Label + provenance of each sensitivity backend (stage 3 reuses their output)."""
+        return [
+            {
+                "backend": str(extra.backend_label),
+                "provenance": _json_safe(dict(getattr(extra, "provenance", {}))),
+            }
+            for extra in self.sensitivity_validations
+        ]
 
     def _resume_contract(self) -> dict[str, Any]:
         """Everything that decides the stage outputs, as recorded in the manifest."""
@@ -959,6 +970,7 @@ class FrozenSearchPipeline:
             "screening_provenance": screening,
             "validation_backend": str(self.validation.backend_label),
             "validation_provenance": _json_safe(dict(self.validation.provenance)),
+            "sensitivity": self._sensitivity_contract(),
         }
 
     def _check_resume_contract(self, manifest: dict[str, Any]) -> None:
@@ -975,7 +987,12 @@ class FrozenSearchPipeline:
             "screening_provenance": dict(manifest.get("screening_provenance") or {}),
             "validation_backend": manifest.get("validation_backend"),
             "validation_provenance": manifest.get("validation_provenance") or {},
+            "sensitivity": manifest.get("sensitivity"),
         }
+        # Manifests written before the sensitivity set was recorded cannot be compared.
+        if stored["sensitivity"] is None:
+            current.pop("sensitivity")
+            stored.pop("sensitivity")
         for key in _RESUME_FREE_CONFIG_KEYS:
             stored["config"].pop(key, None)
         for key in _RESUME_FREE_PROVENANCE_KEYS:
@@ -1410,6 +1427,7 @@ class FrozenSearchPipeline:
         )
         payload = {
             "run_id": manifest["run_id"],
+            "element_frame": self.element_frame["frame"],
             "score_definition": self._score_definition(),
             "domain_guard": self.config.guard.to_dict(),
             "domain_exit_count": guard_result.n_exits,
@@ -1543,6 +1561,7 @@ class FrozenSearchPipeline:
 
         payload = {
             "run_id": manifest["run_id"],
+            "element_frame": self.element_frame["frame"],
             "validation_backend": str(self.validation.backend_label),
             "sensitivity_backends": [
                 str(p.backend_label) for p in self.sensitivity_validations
@@ -1607,6 +1626,7 @@ class FrozenSearchPipeline:
             families=_json_safe(families),
         )
         report["refinements"] = _json_safe(refinements)
+        report["element_frame"] = self.element_frame["frame"]
         _atomic_write_json(path, report)
         self._mark_stage(
             manifest,

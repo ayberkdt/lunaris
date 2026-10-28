@@ -35,7 +35,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from lunaris.common.paths import project_root_from_file
 
@@ -65,6 +65,13 @@ class TrainConfig:
     # Runtime marker (NOT a dataclass field — left unannotated so it is excluded
     # from asdict()/serialization).
     _altitude_bounds_explicit = False
+    # What the command line set explicitly (parse_args fills these). A config built
+    # in code leaves them at these defaults, i.e. "nothing was explicit".
+    _altitude_min_explicit = False
+    _altitude_max_explicit = False
+    _w0_explicit = False
+    _w_a_explicit = False
+    _explicit_run_preset_fields = cast("set[str] | None", None)  # run-preset fields given on argv
 
     data: str
     out: str
@@ -468,6 +475,19 @@ _ENCODING_FLAGS = (
 )
 
 
+# Values "recommended_physical_radial_decay" forces on the physical-decay options
+# (flag -> (cfg field, forced value)); an explicit conflicting flag is refused at parse.
+_RECOMMENDED_PHYSICAL_DECAY_FORCED: dict[str, tuple[str, Any]] = {
+    "--physical-radial-decay-max-power": ("physical_radial_decay_max_power", 4),
+    "--physical-radial-decay-append-raw": ("physical_radial_decay_append_raw", True),
+    "--no-physical-radial-decay-append-raw": ("physical_radial_decay_append_raw", True),
+    "--physical-radial-decay-include-unit": ("physical_radial_decay_include_unit", True),
+    "--no-physical-radial-decay-include-unit": ("physical_radial_decay_include_unit", True),
+    "--physical-radial-decay-include-r-scaled": ("physical_radial_decay_include_r_scaled", True),
+    "--no-physical-radial-decay-include-r-scaled": ("physical_radial_decay_include_r_scaled", True),
+}
+
+
 def apply_model_preset(cfg: TrainConfig) -> TrainConfig:
     """Apply named architecture presets in-place and return ``cfg``.
 
@@ -485,10 +505,8 @@ def apply_model_preset(cfg: TrainConfig) -> TrainConfig:
     implied: dict[str, bool] = dict.fromkeys(_ENCODING_FLAGS, False)
     if preset == "recommended_physical_radial_decay":
         implied["use_physical_radial_decay_encoding"] = True
-        cfg.physical_radial_decay_max_power = 4
-        cfg.physical_radial_decay_append_raw = True
-        cfg.physical_radial_decay_include_unit = True
-        cfg.physical_radial_decay_include_r_scaled = True
+        for _field, _forced in _RECOMMENDED_PHYSICAL_DECAY_FORCED.values():
+            setattr(cfg, _field, _forced)
     elif preset == "ablation_radial_separation":
         implied["use_radial_separation"] = True
     elif preset == "ablation_radial_decay_scaled":
@@ -683,6 +701,48 @@ def _validated_decay_fraction(value: Any) -> float:
     if not (0.0 < frac <= 1.0):
         raise ValueError(f"--lr-decay-fraction must be in (0, 1], got {frac}")
     return frac
+
+
+def _explicit_flag_names(argv_tokens: list[str]) -> frozenset[str]:
+    """Option names present on argv (``--name=value`` counts as ``--name``)."""
+
+    return frozenset(tok.split("=", 1)[0] for tok in argv_tokens if tok.startswith("--"))
+
+
+def _refuse_ineffective_options(a: argparse.Namespace, explicit: frozenset[str]) -> None:
+    """Refuse explicit options that the rest of the configuration would silently undo.
+
+    Only values given on the command line are judged; defaults never trigger this,
+    and an explicit value equal to what would be used anyway is accepted.
+    """
+
+    if int(a.patience) < 1:
+        raise ValueError(f"--patience must be >= 1, got {a.patience} (it used to be clipped to 1).")
+    if int(a.warmup_epochs) < 0:
+        raise ValueError(
+            f"--warmup-epochs must be >= 0, got {a.warmup_epochs} (it used to be clipped to 0)."
+        )
+    if "--output-envelope-auto" in explicit and "--output-envelope-power" in explicit:
+        raise ValueError(
+            "--output-envelope-auto sets the envelope power to degree_min + 1 from the dataset "
+            "and overrides --output-envelope-power; pass only one of them."
+        )
+    if str(a.model_preset).strip().lower() == "recommended_physical_radial_decay":
+        for flag, (field, forced) in _RECOMMENDED_PHYSICAL_DECAY_FORCED.items():
+            if flag in explicit and getattr(a, field) != forced:
+                raise ValueError(
+                    f"{flag} conflicts with --model-preset recommended_physical_radial_decay, "
+                    f"which forces {field}={forced!r} and would overwrite the flag. "
+                    "Use --model-preset custom to set the physical radial decay options by hand."
+                )
+
+
+def _w0_origin_note(w0: float, auto_w0: float, *, bands_ignore_w0: bool) -> str:
+    """Summary-line suffix for a w0 the user gave on the command line."""
+
+    if bands_ignore_w0:
+        return "[given, but UNUSED: n_bands>1 derives each band's w0 from the dataset degree range]"
+    return f"[user-specified, auto would be {auto_w0}]"
 
 
 def _default_outdir(base: Path) -> Path:
@@ -1516,6 +1576,8 @@ def parse_args() -> TrainConfig:
     # Name the preset instead: --model-preset custom for manual encoding
     # ablations, or the preset whose encoding the flag matches.
     argv_tokens = list(sys.argv[1:])
+    explicit_flags = _explicit_flag_names(argv_tokens)
+    _refuse_ineffective_options(a, explicit_flags)
     preset_explicit = any(
         tok == "--model-preset" or tok.startswith("--model-preset=")
         for tok in argv_tokens
@@ -1597,6 +1659,8 @@ def parse_args() -> TrainConfig:
     # 3. Auto-sync: read dataset metadata and print auto-detected parameters
     w0_first_val = a.w0_first
     w0_hidden_val = a.w0_hidden
+    # n_bands>1 SIREN derives each band's w0 from the degree range; the engine ignores these two.
+    _bands_ignore_w0 = int(a.n_bands) > 1 and str(a.activation).lower() == "sine"
 
     if data_path.suffix.lower() in (".h5", ".hdf5"):
         try:
@@ -1632,12 +1696,12 @@ def parse_args() -> TrainConfig:
                     w0_first_val = auto_w0
                     print(f"  w0_first     : {w0_first_val} [auto from degree_max={degree_max_meta}]")
                 else:
-                    print(f"  w0_first     : {w0_first_val} [user-specified, auto would be {auto_w0}]")
+                    print(f"  w0_first     : {w0_first_val} {_w0_origin_note(w0_first_val, auto_w0, bands_ignore_w0=_bands_ignore_w0)}")
                 if w0_hidden_val is None:
                     w0_hidden_val = auto_w0
                     print(f"  w0_hidden    : {w0_hidden_val} [auto from degree_max={degree_max_meta}]")
                 else:
-                    print(f"  w0_hidden    : {w0_hidden_val} [user-specified, auto would be {auto_w0}]")
+                    print(f"  w0_hidden    : {w0_hidden_val} {_w0_origin_note(w0_hidden_val, auto_w0, bands_ignore_w0=_bands_ignore_w0)}")
             else:
                 if w0_first_val is None:
                     w0_first_val = 30.0
@@ -1859,14 +1923,17 @@ def parse_args() -> TrainConfig:
         sys.exit(1)
     if cfg.ema_decay is not None and not (0.0 < float(cfg.ema_decay) < 1.0):
         raise ValueError(f"--ema-decay must be in (0, 1), got {cfg.ema_decay!r}")
-    cfg._altitude_bounds_explicit = any(
-        tok.split("=", 1)[0] in {"--altitude-min-km", "--altitude-max-km"}
-        for tok in argv_tokens
-    )
+    cfg._altitude_min_explicit = "--altitude-min-km" in explicit_flags
+    cfg._altitude_max_explicit = "--altitude-max-km" in explicit_flags
+    cfg._altitude_bounds_explicit = cfg._altitude_min_explicit or cfg._altitude_max_explicit
+    cfg._w0_explicit = bool({"--w0-first", "--w0-hidden"} & explicit_flags)
+    cfg._w_a_explicit = "--w-a" in explicit_flags
     # Run-level preset is applied BEFORE the architecture preset. It may flip the
     # split policy and reproducibility flags; an explicit conflicting flag under
-    # --run-preset paper is a hard error (see apply_run_preset).
-    apply_run_preset(cfg, detect_explicit_run_preset_fields(argv_tokens))
+    # --run-preset paper is a hard error (see apply_run_preset). The explicit set
+    # stays on cfg so the engine's re-application cannot overwrite those values.
+    cfg._explicit_run_preset_fields = detect_explicit_run_preset_fields(argv_tokens)
+    apply_run_preset(cfg, cfg._explicit_run_preset_fields)
     cfg = apply_model_preset(cfg)
     check_residual_block_support(cfg)
     return cfg

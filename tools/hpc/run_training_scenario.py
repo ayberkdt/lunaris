@@ -569,7 +569,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_provenance(run_dir, scenario, cmd, scenario_file, index)
         print(f"[scenario] provenance written -> {run_dir}")
     print(f"[scenario] launching {scenario['entrypoint']} ...")
-    returncode = run_forwarding_signals(cmd, cwd=str(_repo_root()))
+    child_env = None
+    if args.force:
+        # The trainer refuses to start fresh over a directory that holds
+        # checkpoints; --force is the explicit request to overwrite one.
+        child_env = {**os.environ, "LUNARIS_ALLOW_RUN_OVERWRITE": "1"}
+    returncode = run_forwarding_signals(cmd, cwd=str(_repo_root()), env=child_env)
     if returncode == EX_TEMPFAIL:
         print(
             f"[scenario] STOPPED {name} by a signal after saving its checkpoint "
@@ -595,7 +600,9 @@ _FORWARDED_SIGNALS = tuple(
 )
 
 
-def run_forwarding_signals(cmd: Sequence[str], *, cwd: str) -> int:
+def run_forwarding_signals(
+    cmd: Sequence[str], *, cwd: str, env: Mapping[str, str] | None = None
+) -> int:
     """Run ``cmd`` and forward SIGTERM/SIGUSR1/SIGINT to it while it runs.
 
     Slurm's ``--signal=B:TERM@600`` reaches only this launcher (the batch
@@ -603,7 +610,7 @@ def run_forwarding_signals(cmd: Sequence[str], *, cwd: str) -> int:
     ``ckpt_last`` before the walltime kill, so the launcher relays it instead
     of exiting and leaving the child to be killed with the job.
     """
-    proc = subprocess.Popen(cmd, cwd=cwd)
+    proc = subprocess.Popen(cmd, cwd=cwd, env=None if env is None else dict(env))
 
     def _relay(signum: int, _frame: Any) -> None:
         with contextlib.suppress(OSError):

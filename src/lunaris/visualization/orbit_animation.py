@@ -769,13 +769,15 @@ def render_orbit_animation_from_history(
     trail_coll = Line3DCollection(
         [], cmap=THEME.trail_cmap, norm=trail_norm, linewidths=2.2, alpha=0.98
     )
-    ax.add_collection3d(trail_coll)
+    # autolim=False: the collections start empty and matplotlib >= 3.10 raises in
+    # auto_scale_xyz for an empty collection; the limits are set explicitly below.
+    ax.add_collection3d(trail_coll, autolim=False)
 
     # Animated ground track trail (short, faint)
     gt_coll = Line3DCollection(
         [], cmap="cool", norm=trail_norm, linewidths=0.9, alpha=0.40
     )
-    ax.add_collection3d(gt_coll)
+    ax.add_collection3d(gt_coll, autolim=False)
 
     # Spacecraft marker
     sat, = ax.plot(

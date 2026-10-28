@@ -2183,6 +2183,67 @@ def _refuse_init_into_source(out_dir: Path, source_run_dir: Path) -> None:
         )
 
 
+def _refuse_fresh_run_over_existing(out_dir: Path) -> None:
+    """A fresh run must not start in a directory that already holds a run's results.
+
+    Checked before anything is created or written, because the manifest, command,
+    log and split files of the earlier run would otherwise be replaced first and the
+    refusal (the scaler provenance check) would come too late. Checkpoints (trained
+    weights) and a manifest marked "completed" count as results. Directories an
+    unfinished attempt left (manifest still "running"/"failed"/"interrupted" and no
+    checkpoint, which the HPC launcher restarts in place) and the launcher's own
+    scenario_* files do not. ``LUNARIS_ALLOW_RUN_OVERWRITE=1`` is the explicit
+    override; resuming uses ``--resume-from`` and never reaches this check.
+    """
+    out = Path(out_dir)
+    held: list[str] = []
+    checkpoints = sorted((out / "checkpoints").glob("*.pt")) if (out / "checkpoints").is_dir() else []
+    if checkpoints:
+        held.append(f"{len(checkpoints)} checkpoint(s) (e.g. {checkpoints[0].name})")
+    manifest = out / "run_manifest.json"
+    if manifest.is_file():
+        try:
+            status = str(json.loads(manifest.read_text(encoding="utf-8-sig")).get("status"))
+        except (OSError, ValueError, AttributeError):
+            status = "unreadable"
+        if status == "completed":
+            held.append("a run_manifest.json with status 'completed'")
+    if held and os.environ.get("LUNARIS_ALLOW_RUN_OVERWRITE", "").strip() != "1":
+        raise FileExistsError(
+            f"--out {out} already holds {' and '.join(held)}. A fresh run would overwrite its "
+            "manifest, command, log and provenance files. Continue it with --resume-from, "
+            "choose a new --out, or set LUNARIS_ALLOW_RUN_OVERWRITE=1 to overwrite on purpose."
+        )
+
+
+def _ignored_option_warnings(cfg: TrainConfig) -> list[str]:
+    """Options given explicitly that the resolved configuration cannot honour.
+
+    The values stay in the config (valid commands must not change); the run says so
+    in train.log and in the run manifest instead of dropping them silently.
+    """
+    found: list[str] = []
+    if (
+        bool(getattr(cfg, "_w0_explicit", False))
+        and str(cfg.activation).lower() == "sine"
+        and int(getattr(cfg, "n_bands", 1) or 1) > 1
+    ):
+        found.append(
+            f"--w0-first/--w0-hidden have no effect with n_bands={int(cfg.n_bands)}: every band's "
+            f"w0 is derived from the dataset degree range (w0_first={cfg.w0_first:g}, "
+            f"w0_hidden={cfg.w0_hidden:g} are recorded but not used)."
+        )
+    if bool(getattr(cfg, "_w_a_explicit", False)) and str(cfg.gradnorm_mode) == "ntk_init":
+        found.append(
+            f"--w-a={float(cfg.w_a):g} is only the starting value under --gradnorm-mode ntk_init: "
+            "it is replaced by the NTK gradient-norm ratio, clamped to "
+            f"[{float(cfg.gradnorm_w_a_min):g}, {float(cfg.gradnorm_w_a_max):g}] "
+            "(--gradnorm-w-a-min/--gradnorm-w-a-max); the value used is logged as 'NTK-init: w_a=...'. "
+            "Use --gradnorm-mode fixed to train with --w-a as given."
+        )
+    return found
+
+
 def _init_source_record(layout: Any, ckpt_path: Path, ckpt: Mapping[str, Any]) -> dict[str, Any]:
     """Provenance of a warm start, with the hashes that prove the source stayed untouched."""
     files = {"checkpoint": Path(ckpt_path), "scaler": layout.scaler_json, "config": layout.config_json}
@@ -2835,13 +2896,16 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
     # Dataset metadata is the authoritative training shell.  CLI values remain
     # available for deliberate experiments, but an ordinary run should not
     # silently retain the global 100--1000 km defaults for a different cloud.
-    if (
-        not bool(getattr(cfg, "_altitude_bounds_explicit", False))
-        and meta.alt_min_km is not None
-        and meta.alt_max_km is not None
+    # Each bound is overridden only when it was not given explicitly: setting just one
+    # must not drop the dataset value of the other.
+    if meta.alt_min_km is not None and meta.alt_max_km is not None and not (
+        bool(getattr(cfg, "_altitude_min_explicit", False))
+        and bool(getattr(cfg, "_altitude_max_explicit", False))
     ):
-        cfg.altitude_min_km = float(meta.alt_min_km)
-        cfg.altitude_max_km = float(meta.alt_max_km)
+        if not bool(getattr(cfg, "_altitude_min_explicit", False)):
+            cfg.altitude_min_km = float(meta.alt_min_km)
+        if not bool(getattr(cfg, "_altitude_max_explicit", False)):
+            cfg.altitude_max_km = float(meta.alt_max_km)
         logger.info(
             "Altitude-balanced loss bounds resolved from dataset metadata: [%.3f, %.3f] km",
             cfg.altitude_min_km, cfg.altitude_max_km,
@@ -3295,7 +3359,9 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     # posture), then the architecture preset. apply_run_preset is idempotent for
     # configs already resolved by parse_args; for programmatically built configs
     # it enforces the 'paper' posture before set_seed reads the flags below.
-    apply_run_preset(cfg)
+    # The fields parse_args saw on the command line are passed again so a soft
+    # preset cannot overwrite an explicit --split-policy / --deterministic.
+    apply_run_preset(cfg, getattr(cfg, "_explicit_run_preset_fields", None))
     apply_model_preset(cfg)
     if str(getattr(cfg, "runtime_model_kind", "potential_autograd")) == "force_direct":
         raise NotImplementedError(
@@ -3327,6 +3393,8 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         )
         _refuse_init_into_source(Path(cfg.out), _init_layout.run_dir)
         _init_source = _init_source_record(_init_layout, _init_ckpt_path, _init_ckpt)
+    if not getattr(cfg, "resume_from", None):
+        _refuse_fresh_run_over_existing(Path(cfg.out))
     layout = ensure_run_layout(Path(cfg.out))
     outdir = layout.run_dir
     run_created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -3510,6 +3578,10 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         },
     )
 
+    _ignored_warnings = _ignored_option_warnings(cfg)
+    for _msg in _ignored_warnings:
+        logger.warning("%s", _msg)
+
     command_line = write_command_txt(layout)
     _manifest_dict = {
         "schema_version": "st_lrps_run_manifest_v1",
@@ -3535,7 +3607,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         "history_csv_path": str(layout.history_csv),
         "history_jsonl_path": str(layout.history_jsonl),
         "determinism": _determinism_flags,
-        "warnings": [],
+        "warnings": list(_ignored_warnings),
         "evaluations": [],
     }
     if _resume_requested:

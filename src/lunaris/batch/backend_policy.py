@@ -46,9 +46,11 @@ Notes
   ``torch_cuda_sh`` when the requested physics is supported. This first runtime
   form is gravity-only; any added perturbation forces an explicit, recorded
   fallback (to ``numba_cuda_sh`` when it can honor the physics, else CPU).
-- CPU uses the SciPy DOP853 per-sample path and accepts every currently
-  implemented force flag; this support statement is not a claim that every
-  physical effect is modeled exactly.
+- CPU uses the single-run propagator per sample (SciPy DOP853 by default;
+  ``propagator.method`` may select another integrator, which the archive
+  records as ``integrator``) and accepts every currently implemented force
+  flag; this support statement is not a claim that every physical effect is
+  modeled exactly.
 """
 
 from __future__ import annotations
@@ -477,6 +479,8 @@ class BatchBackendPlan:
     reason: str = ""
     fallback_applied: bool = False
     fallback_reason: str = ""
+    # Default label of the CPU plan; the engine replaces it with the integrator
+    # ``propagator.method`` actually selects (see ``_cpu_integrator_provenance``).
     integrator: str = "adaptive (DOP853)"
     batch_note: str = ""
 

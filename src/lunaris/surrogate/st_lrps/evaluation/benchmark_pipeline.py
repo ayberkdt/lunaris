@@ -69,6 +69,11 @@ def run_configured_benchmark(
         allow_contract_mismatch = False
         allow_domain_extrapolation = False
 
+    if not bool(config.get("run_options", {}).get("synthetic", False)):
+        # Refuse options the harness cannot honour before any output exists.
+        _require_harness_gravity_file(config)
+        _legacy_gpu_integrator(str(config["propagation"].get("integrator", "RK4")))
+
     output_dir = _resolve_output_dir(config, out_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "figures").mkdir(parents=True, exist_ok=True)
@@ -192,7 +197,8 @@ def config_to_legacy_argv(config: Mapping[str, Any], output_dir: str | Path) -> 
         "--output-dir",
         str(output_dir),
     ]
-    if _eccentricity_mode(config) == "circular_to_elliptic":
+    # bounded_keplerian derives e from the altitude bounds and refuses ecc bounds.
+    if _eccentricity_mode(config) == "circular_to_elliptic" and str(scenario["type"]) != "bounded_keplerian":
         argv.extend(["--ecc-min", "0.0", "--ecc-max", "0.2"])
     model_dir = surrogate.get("model_dir")
     if model_dir:
@@ -326,6 +332,38 @@ def _gravity_file_identity_check(
         "configured_sha256": configured_sha,
         "artifact_sha256": artifact_sha,
     }
+
+
+def _harness_gravity_file() -> Path:
+    from lunaris.core.config import load_default_config
+
+    return Path(load_default_config().gravity.file_path)
+
+
+def _require_harness_gravity_file(config: Mapping[str, Any]) -> None:
+    """Refuse a ``truth.gravity_file`` other than the one the harness loads.
+
+    The harness always loads the default configuration's gravity file; a
+    different configured file would be recorded and never used.
+    """
+    truth = config.get("truth") if isinstance(config.get("truth"), Mapping) else {}
+    configured = truth.get("gravity_file")
+    if not configured:
+        return
+    configured_path = Path(str(configured))
+    if not configured_path.is_file():
+        raise ValueError(f"truth.gravity_file does not exist: {configured_path}")
+    from lunaris.common.provenance import sha256_file
+
+    harness_path = _harness_gravity_file()
+    if configured_path.resolve() != harness_path.resolve() and sha256_file(configured_path) != sha256_file(
+        harness_path
+    ):
+        raise ValueError(
+            f"truth.gravity_file {configured_path} differs from {harness_path}, the gravity file the "
+            "benchmark harness loads; it would be recorded but never used. Set truth.gravity_file to "
+            "null, or point the default data directory (LUNARIS_DATA_DIR) at the intended file."
+        )
 
 
 def _run_existing_harness(output_dir: Path, config: Mapping[str, Any]) -> None:
@@ -569,11 +607,20 @@ def _baseline_model_token(item: Mapping[str, Any]) -> str:
     return str(item.get("name", "")).lower()
 
 
+# propagation.integrator -> the harness's fixed-step GPU tier (RK4 step size: --rk4-dt-s).
+_GPU_TIER_BY_INTEGRATOR = {
+    "rk4": "medium", "medium": "medium", "rk2": "light", "light": "light", "robust": "robust",
+}
+
+
 def _legacy_gpu_integrator(value: str) -> str:
-    # The legacy harness exposes a single fixed-step integrator profile
-    # ("medium"); the actual RK4 step size is carried separately via --rk4-dt-s.
-    del value
-    return "medium"
+    tier = _GPU_TIER_BY_INTEGRATOR.get(str(value).strip().lower())
+    if tier is None:
+        raise ValueError(
+            f"propagation.integrator {value!r} has no GPU fixed-step tier in the benchmark "
+            f"harness; supported: {', '.join(sorted(_GPU_TIER_BY_INTEGRATOR))}."
+        )
+    return tier
 
 
 def _eccentricity_mode(config: Mapping[str, Any]) -> str:

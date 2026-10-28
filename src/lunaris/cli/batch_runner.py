@@ -271,8 +271,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default="follow_mission",
         help="Whether batch propagation follows the mission gravity setup or forces classical/ST-LRPS gravity.",
     )
-    g.add_argument("--batch-dt-s",               type=float, default=60.0,
-                   help="Fixed RK4 step size [s]")
+    g.add_argument("--batch-dt-s",               type=float, default=None,
+                   help="Fixed RK4 step size [s] of the GPU/torch batch backends "
+                        "(default 60). The CPU backend does not use it: it steps with "
+                        "--method / --user-max-step-s, and the run says so.")
     g.add_argument("--max-vram-gb",           type=float, default=4.0)
     g.add_argument("--batch-output-format",      choices=["hdf5", "npz"],
                    default="hdf5")
@@ -299,6 +301,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = _build_parser().parse_args(args=argv)
+    # True when neither --batch-output-path nor --out-dir picked the archive, i.e.
+    # the run would write the shared default archive.
+    args.batch_output_path_implicit = not (args.batch_output_path or args.out_dir)
     args.sh_degree = _resolve_batch_sh_degree(args)
     args.batch_output_path = _resolve_batch_output_path(args)
     return args
@@ -433,6 +438,10 @@ def _build_metrics(result: BatchPropagationResult, wall_time_s: float, batch_cfg
         "fallback_reason": diagnostics.get("fallback_reason"),
         "requested_sh_degree": diagnostics.get("requested_sh_degree"),
         "actual_sh_degree": diagnostics.get("actual_sh_degree"),
+        "integrator":       diagnostics.get("integrator"),
+        "requested_dt_s":   diagnostics.get("requested_dt_s"),
+        "effective_dt_s":   diagnostics.get("effective_dt_s"),
+        "batch_dt_s_applied": diagnostics.get("batch_dt_s_applied"),
         "device_name":      str(backend_diag.get("device_name", "") or ""),
         "threads_per_block": backend_diag.get("threads_per_block"),
         **impact_stats_block,
@@ -472,6 +481,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         cfg = apply_args_to_config(cfg, args)
     except Exception as exc:
         print(f"[BATCH][FATAL] Config init failed: {exc}", flush=True)
+        return 1
+
+    # Both overrides below force enable_sh=True. An explicit --enable-sh off with
+    # a backend/gravity mode that is an SH path used to be silently turned back
+    # on, so the run equalled the SH-on run. Refuse the contradiction instead.
+    if getattr(args, "enable_sh", None) is False and (
+        str(args.batch_gravity_mode) != "follow_mission" or str(args.batch_backend) != "auto"
+    ):
+        print(
+            "[BATCH][FATAL] --enable-sh off contradicts "
+            f"--batch-backend {args.batch_backend} / --batch-gravity-mode "
+            f"{args.batch_gravity_mode}: those select a spherical-harmonics or ST-LRPS "
+            "gravity path. Use --enable-sh on, or leave both at auto / follow_mission "
+            "for a point-mass batch.",
+            flush=True,
+        )
         return 1
 
     if str(args.batch_gravity_mode) != "follow_mission":
@@ -578,7 +603,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.surrogate_gravity_model_dir
                 else None
             ),
-            dt_s                  = float(args.batch_dt_s),
+            dt_s                  = 60.0 if args.batch_dt_s is None else float(args.batch_dt_s),
             max_vram_gb           = float(args.max_vram_gb),
             output_format         = cast(OutputFormat, str(args.batch_output_format)),
             output_path           = str(args.batch_output_path),
@@ -590,6 +615,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except Exception as exc:
         print(f"[BATCH][FATAL] BatchPropagationConfig build failed: {exc}", flush=True)
+        return 1
+
+    # An explicit path (or --out-dir) is replaced on purpose; the shared default
+    # archive is not something a run should silently overwrite.
+    default_archive = batch_cfg.output_path_resolved
+    if getattr(args, "batch_output_path_implicit", False) and default_archive.exists():
+        print(
+            f"[BATCH][FATAL] The default archive {default_archive} already exists and would "
+            "be overwritten. Pass --batch-output-path or --out-dir to choose where this run "
+            "writes, or move the old archive away.",
+            flush=True,
+        )
         return 1
 
     # ---- Surface / terrain assets -------------------------------------------
@@ -630,6 +667,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if int(result.n_valid) == 0:
         print("[BATCH][FATAL] every batch sample failed; no valid result to report.", flush=True)
         return 2
+    run_diag = getattr(result, "diagnostics", {}) or {}
+    if args.batch_dt_s is not None and run_diag.get("batch_dt_s_applied") is False:
+        print(
+            f"[BATCH][WARN] --batch-dt-s {float(args.batch_dt_s):g} was not applied: the CPU "
+            f"backend integrated with {run_diag.get('integrator')} (set --method and "
+            "--user-max-step-s to control its step). The archive records this.",
+            flush=True,
+        )
     try:
         metrics = _build_metrics(result, wall_time, batch_cfg)
         print(f"[BATCH_METRICS] {json.dumps(metrics)}", flush=True)

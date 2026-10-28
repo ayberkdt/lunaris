@@ -7,6 +7,21 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
+
+GEOMETRY_MODES = ("synthetic", "ephemeris")
+DEFAULT_SYNTHETIC_EPOCH_LABELS = ("synthetic-epoch-0", "synthetic-epoch-1", "synthetic-epoch-2")
+DEFAULT_EPHEMERIS_EPOCHS_UTC = ("2026-01-01T00:00:00Z", "2026-04-01T00:00:00Z", "2026-07-01T00:00:00Z")
+
+
+def is_calendar_epoch(value: str) -> bool:
+    """True if ``value`` parses as an ISO-8601 UTC date/time."""
+    try:
+        normalize_iso_datetime_to_utc_string(str(value), precision=6)
+    except (TypeError, ValueError):
+        return False
+    return True
+
 
 def _float_list(values: Iterable[float]) -> list[float]:
     out = [float(v) for v in values]
@@ -37,13 +52,9 @@ class PerturbationBudgetConfig:
     altitudes_km: list[float] = field(default_factory=lambda: [50.0, 100.0, 300.0, 1000.0, 3000.0])
     inclinations_deg: list[float] = field(default_factory=lambda: [0.0, 30.0, 60.0, 90.0])
     true_anomalies_deg: list[float] = field(default_factory=lambda: [0.0, 90.0, 180.0, 270.0])
-    epochs_utc: list[str] = field(
-        default_factory=lambda: [
-            "2026-01-01T00:00:00Z",
-            "2026-04-01T00:00:00Z",
-            "2026-07-01T00:00:00Z",
-        ]
-    )
+    # With geometry_mode="synthetic" these are labels only (calendar dates are
+    # refused); with geometry_mode="ephemeris" they must be UTC dates/times.
+    epochs_utc: list[str] = field(default_factory=lambda: list(DEFAULT_SYNTHETIC_EPOCH_LABELS))
     sh_degrees: list[int] = field(default_factory=lambda: [20, 30, 60, 100, 200])
     reference_sh_degree: int = 200
 
@@ -55,8 +66,10 @@ class PerturbationBudgetConfig:
     include_relativity: bool = True
     include_earth_j2: bool = True
 
-    # Sampling uses deterministic synthetic Sun/Earth geometry only; True is
-    # refused in __post_init__ until ephemeris-backed sampling exists.
+    # Sun/Earth geometry: "synthetic" is a deterministic toy geometry (epochs are
+    # labels); "ephemeris" samples SPICE at each epoch. Superseded legacy flag
+    # ``use_ephemeris=True`` is still refused; set geometry_mode instead.
+    geometry_mode: str = "synthetic"
     use_ephemeris: bool = False
     # Use synthetic gravity coefficients when no gravity_model_path is given.
     use_synthetic_gravity_fallback: bool = True
@@ -100,9 +113,21 @@ class PerturbationBudgetConfig:
             object.__setattr__(self, "reference_sh_degree", max(self.sh_degrees))
         if self.use_ephemeris:
             raise NotImplementedError(
-                "use_ephemeris=True is not implemented: perturbation-budget sampling "
-                "uses deterministic synthetic Sun/Earth geometry only."
+                "use_ephemeris=True is not supported: select SPICE-backed Sun/Earth "
+                "geometry with geometry_mode='ephemeris'."
             )
+        if self.geometry_mode not in GEOMETRY_MODES:
+            raise ValueError(f"geometry_mode must be one of {GEOMETRY_MODES}, got {self.geometry_mode!r}")
+        dated = [e for e in self.epochs_utc if is_calendar_epoch(e)]
+        if self.geometry_mode == "synthetic" and dated:
+            raise ValueError(
+                f"epochs {dated} are calendar dates but geometry_mode='synthetic' ignores them "
+                "(Sun/Earth geometry would not depend on the date). Use geometry_mode='ephemeris' "
+                "for date-dependent geometry, or non-date labels such as 'synthetic-epoch-0'."
+            )
+        if self.geometry_mode == "ephemeris" and len(dated) != len(self.epochs_utc):
+            bad = [e for e in self.epochs_utc if not is_calendar_epoch(e)]
+            raise ValueError(f"geometry_mode='ephemeris' needs UTC date/time epochs, got non-date epoch(s) {bad}")
         if any(a < 0.0 for a in self.altitudes_km):
             raise ValueError("altitudes_km must be non-negative")
         if self.spacecraft_mass_kg <= 0.0:

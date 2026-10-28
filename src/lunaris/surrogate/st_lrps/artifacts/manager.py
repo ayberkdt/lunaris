@@ -1725,9 +1725,15 @@ def reload_model_from_run_dir(
     *,
     prefer: str = "best",
     allow_config_mismatch: bool = False,
+    checkpoint_path: Path | str | None = None,
 ) -> tuple[torch.nn.Module, ScalerPack, dict[str, Any], dict[str, Any]]:
+    """Reload a run's model; ``checkpoint_path`` pins one exact file over ``prefer``."""
     layout = make_run_layout(resolve_run_dir(run_dir))
-    ckpt_path, ckpt = load_best_or_last(layout, prefer=prefer, device=device)
+    if checkpoint_path is not None:
+        ckpt_path = Path(checkpoint_path).expanduser().resolve()
+        ckpt = load_checkpoint(ckpt_path, device)
+    else:
+        ckpt_path, ckpt = load_best_or_last(layout, prefer=prefer, device=device)
 
     if layout.config_json.exists():
         cfg_json = json.loads(layout.config_json.read_text(encoding="utf-8"))

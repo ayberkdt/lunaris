@@ -7,6 +7,8 @@ from collections.abc import Iterable
 from dataclasses import replace
 
 from .config import (
+    DEFAULT_EPHEMERIS_EPOCHS_UTC,
+    GEOMETRY_MODES,
     PerturbationBudgetConfig,
     parse_csv_floats,
     parse_csv_ints,
@@ -24,7 +26,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--altitudes-km", default=None, help="Comma-separated altitudes in km.")
     parser.add_argument("--inclinations-deg", default=None, help="Comma-separated inclinations in degrees.")
     parser.add_argument("--true-anomalies-deg", default=None, help="Comma-separated true anomalies in degrees.")
-    parser.add_argument("--epochs", default=None, help="Comma-separated UTC epoch labels.")
+    parser.add_argument(
+        "--epochs",
+        default=None,
+        help="Comma-separated UTC epochs (dates need --geometry-mode ephemeris) or, for synthetic geometry, labels.",
+    )
+    parser.add_argument(
+        "--geometry-mode",
+        choices=list(GEOMETRY_MODES),
+        default=None,
+        help="Sun/Earth geometry: 'synthetic' toy geometry (default) or 'ephemeris' (SPICE at each epoch).",
+    )
     parser.add_argument("--sh-degrees", default=None, help="Comma-separated SH degrees, e.g. 20,30,60,100,200.")
     parser.add_argument("--gravity-model", default=None, help="Optional gravity model file path.")
     parser.add_argument("--out-dir", default=None, help="Output directory.")
@@ -59,6 +71,10 @@ def config_from_args(args: argparse.Namespace) -> PerturbationBudgetConfig:
         updates["inclinations_deg"] = parse_csv_floats(args.inclinations_deg)
     if args.true_anomalies_deg:
         updates["true_anomalies_deg"] = parse_csv_floats(args.true_anomalies_deg)
+    if args.geometry_mode:
+        updates["geometry_mode"] = args.geometry_mode
+        if args.geometry_mode == "ephemeris" and not args.epochs:
+            updates["epochs_utc"] = list(DEFAULT_EPHEMERIS_EPOCHS_UTC)
     if args.epochs:
         updates["epochs_utc"] = parse_csv_strings(args.epochs)
     if args.sh_degrees:

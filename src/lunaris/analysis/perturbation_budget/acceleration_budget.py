@@ -74,6 +74,14 @@ def load_gravity_model_for_budget(config: PerturbationBudgetConfig) -> GravityMo
     max_degree = max(config.sh_degrees)
     if config.gravity_model_path:
         model = GravityModel.from_file(config.gravity_model_path, requested_degree=max_degree)
+        # from_file/accel_fixed clip silently to the file's degree, which would make
+        # SH<requested> identical to SH<file max> and skew the recommendation.
+        if max_degree > model.max_degree:
+            raise ValueError(
+                f"Requested SH degree {max_degree} exceeds the gravity model's maximum degree "
+                f"{model.max_degree} ({config.gravity_model_path}); lower --sh-degrees or use a "
+                "higher-degree gravity file."
+            )
         return GravityModelInfo(model=model, source=str(config.gravity_model_path), warning="")
     if not config.use_synthetic_gravity_fallback:
         raise ValueError("gravity_model_path is required when synthetic fallback is disabled")
@@ -107,13 +115,14 @@ def non_gravity_vectors(config: PerturbationBudgetConfig, sample: SampleState) -
     if config.include_third_body:
         vectors["Third Body Earth"] = calc_3rd_body_accel(sample.r_m, sample.earth_m, MU_EARTH)
         vectors["Third Body Sun"] = calc_3rd_body_accel(sample.r_m, sample.sun_m, MU_SUN)
-        if config.include_earth_j2:
-            vectors["Earth J2 Differential"] = calc_j2_oblate_diff_accel(
-                sample.r_m,
-                sample.earth_m,
-                mu_body=MU_EARTH,
-                params=EarthJ2Params(),
-            )
+
+    if config.include_earth_j2:
+        vectors["Earth J2 Differential"] = calc_j2_oblate_diff_accel(
+            sample.r_m,
+            sample.earth_m,
+            mu_body=MU_EARTH,
+            params=EarthJ2Params(),
+        )
 
     if config.include_srp:
         vectors["SRP"] = np.array(

@@ -42,6 +42,7 @@ from .compute import (
     _parse_model_list_csv,
     _synchronize_model_device_if_cuda,
     _torch_dtype_from_name,
+    _validate_gpu_batch_timing,
     evaluate_st_lrps_forces_batched,
     propagate_for_scenario,
     propagate_gpu_batch_model,
@@ -819,6 +820,10 @@ def _report_surrogate_envelope_excursions(args: argparse.Namespace, metrics_dir:
 
 def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ephem: Any) -> None:
     """New validation workflow: SH200 DOP853 truth vs GPU RK4 SH/ST-LRPS."""
+
+    # Before any output directory, scenario manifest or truth run exists.
+    if not getattr(args, "rebuild_metrics", False):
+        _validate_gpu_batch_timing(args)
 
     out_dir = Path(args.output_dir)
     truth_dir = out_dir / "truth"

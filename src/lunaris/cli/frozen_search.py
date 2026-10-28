@@ -172,8 +172,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--strict-frame",
-        action="store_true",
-        help="same frame guard as --paper-safe without the paper-safe label",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "run every backend in the rotating Moon-fixed frame and reject identity "
+            "frames (default); --no-strict-frame opts into the identity-frame "
+            "diagnostic, which evaluates the Moon-fixed field in the integration "
+            "frame and is not physically valid for a lunar frozen-orbit search"
+        ),
     )
     parser.add_argument("--refine-top-n", type=int, default=0,
                         help="stage-4 Nelder-Mead refinement for the top N candidates (0 = off)")
@@ -227,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         TorchSHScreeningPropagator,
         build_ephemeris_manager_for_frozen_search,
         normalize_third_body_selection,
+        require_exact_substeps,
     )
     from lunaris.common.frame_policy import (
         FRAME_MODE_IDENTITY_DIAGNOSTIC,
@@ -290,6 +297,15 @@ def main(argv: list[str] | None = None) -> int:
     if screening_backend == "st-lrps" and args.screening_device == "cpu":
         print("[FATAL] ST-LRPS screening requires a CUDA device", file=sys.stderr)
         return 2
+    try:
+        require_exact_substeps(
+            float(args.screening_dt_s),
+            float(args.screening_days) * 86_400.0,
+            float(args.screening_output_dt_s),
+        )
+    except ValueError as exc:
+        print(f"[FATAL] {exc}", file=sys.stderr)
+        return 2
 
     argp_choices: tuple[float, ...] | None = None
     if args.argp_choices:
@@ -328,13 +344,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     refinement = None
     if int(args.refine_top_n) > 0:
+        # The box is the search's own element box, so it always contains the candidates.
         refinement = RefinementConfig(
             bounds=RefinementBounds(
-                a_km=tuple(args.a_km),
-                e=tuple(args.e),
-                i_deg=tuple(args.i_deg),
+                a_km=bounds.a_km,
+                e=bounds.e,
+                i_deg=bounds.i_deg,
                 raan_deg=(0.0, 360.0),
-                argp_deg=(0.0, 360.0),
+                argp_deg=bounds.argp_deg,
                 ta_deg=(0.0, 360.0),
             ),
             max_iterations=int(args.refine_max_iterations),
@@ -445,6 +462,14 @@ def main(argv: list[str] | None = None) -> int:
         or strict_frame_required
         or screening_backend == "st-lrps"
     )
+    if not validation_needs_ephem or (screening_backend != "st-lrps" and not strict_frame_required):
+        message = (
+            "--no-strict-frame: the Moon-fixed gravity field is evaluated in the "
+            "integration frame (identity_diagnostic); results are not valid lunar "
+            "frozen-orbit evidence"
+        )
+        print(f"[WARNING] {message}", file=sys.stderr)
+        logger.warning(message)
     try:
         validation = ClassicalSHValidationPropagator(
             degree=int(args.validation_degree),

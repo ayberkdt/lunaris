@@ -159,7 +159,8 @@ def test_publication_eval_suite_outputs_summary_files(tmp_path):
 
     assert (tmp_path / "eval" / "summary_metrics.json").exists()
     assert (tmp_path / "eval" / "summary_metrics.csv").exists()
-    assert (tmp_path / "eval" / "altitude_binned_metrics.csv").exists()
+    assert (tmp_path / "eval" / "altitude_binned_metrics_suite.csv").exists()
+    assert (tmp_path / "eval" / "eval_suite_manifest.json").exists()
     summary = json.loads((tmp_path / "eval" / "summary_metrics.json").read_text(encoding="utf-8"))
     assert summary[0]["split"] == "test"
     assert summary[0]["rmse_a_vec"] == pytest.approx(2.0)

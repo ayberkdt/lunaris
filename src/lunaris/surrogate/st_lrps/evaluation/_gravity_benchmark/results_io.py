@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import json
 import math
 import os
@@ -225,6 +226,12 @@ def _write_scenario_manifest(
     out_dir: Path,
 ) -> None:
     metadata = _sampling_metadata(args, len(scenarios))
+    if scenarios:
+        # bounded_keplerian derives e from the altitude bounds; ecc_min/ecc_max do not apply.
+        metadata["realized_eccentricity_range"] = {
+            "min": min(float(s.e) for s in scenarios),
+            "max": max(float(s.e) for s in scenarios),
+        }
     rows = [_scenario_manifest_row(s, args, csv_mode=False) for s in scenarios]
     payload = {
         "metadata": metadata,
@@ -521,6 +528,38 @@ def _file_sha256(path: str | None) -> str | None:
     return sha256_file(path, missing_ok=True) if path else None
 
 
+@functools.lru_cache(maxsize=8)
+def _gravity_file_sha256(path: str, size: int, mtime_ns: int) -> str | None:
+    # size/mtime only key the memo so an edited file is hashed again.
+    return sha256_file(path, missing_ok=True)
+
+
+def _gravity_file_identity(path: str | Path) -> dict[str, Any]:
+    """File name + content hash of a gravity model (paths differ between machines)."""
+    p = Path(path)
+    try:
+        st = p.stat()
+    except OSError:
+        return {"gravity_file": p.name, "gravity_file_sha256": None}
+    return {
+        "gravity_file": p.name,
+        "gravity_file_sha256": _gravity_file_sha256(str(p), st.st_size, st.st_mtime_ns),
+    }
+
+
+@functools.lru_cache(maxsize=1)
+def _harness_gravity_identity() -> dict[str, Any]:
+    """Identity of the gravity file the harness loads (``load_default_config``)."""
+    from lunaris.core.config import load_default_config
+
+    try:
+        path = load_default_config().gravity.file_path
+    except (OSError, ImportError):
+        # Assets absent (e.g. a bare CI install): nothing to hash; the run itself fails later.
+        return {"gravity_file": None, "gravity_file_sha256": None}
+    return _gravity_file_identity(path)
+
+
 def _cache_metadata(args: argparse.Namespace) -> dict[str, Any]:
     weight_file = _find_st_lrps_weight_file(getattr(args, "st_lrps_model_dir", None))
     frame = _effective_frame_modes(args)
@@ -528,6 +567,13 @@ def _cache_metadata(args: argparse.Namespace) -> dict[str, Any]:
         "cache_schema_version": BENCHMARK_CACHE_SCHEMA_VERSION,
         "truth": str(args.truth).lower(),
         "truth_integrator": str(getattr(args, "truth_integrator", "DOP853")),
+        # Integrator settings and gravity file shape every cached trajectory.
+        # Defaults are the CLI defaults, for callers that build a partial namespace.
+        "integrator": str(getattr(args, "integrator", "DOP853")),
+        "rtol": float(getattr(args, "rtol", 1e-10)),
+        "atol": float(getattr(args, "atol", 1e-12)),
+        "max_step_s": float(getattr(args, "max_step", 30.0)),
+        **_harness_gravity_identity(),
         "duration_days": float(args.duration_days),
         "dt_out": float(args.dt_out),
         "rk4_dt_s": (
@@ -617,6 +663,25 @@ def _validate_cache_compatibility(
                 f"{field}={_manifest_value_text(old_value)} but current request uses "
                 f"{_manifest_value_text(new_value)}. Refusing to reuse cached trajectories."
             )
+    # Keys recorded only since the audit. A manifest from before cannot be checked
+    # for them: warn once instead of refusing every older cache.
+    recorded = [f for f in _NEW_CACHE_KEY_FIELDS if f in old_meta]
+    unverifiable = [f for f in _NEW_CACHE_KEY_FIELDS if f not in old_meta]
+    for field in recorded:
+        old_value = old_meta.get(field)
+        new_value = new_meta.get(field)
+        # Exact comparison: the 1e-12 absolute tolerance would equate atol 1e-12 and 1e-13.
+        if old_value != new_value:
+            _refuse(
+                "Existing benchmark cache uses "
+                f"{field}={_manifest_value_text(old_value)} but current request uses "
+                f"{_manifest_value_text(new_value)}. Refusing to reuse cached trajectories."
+            )
+    if unverifiable:
+        warnings.append(
+            "Existing benchmark cache manifest predates these keys, so they cannot be verified "
+            f"against the current request: {', '.join(unverifiable)}."
+        )
     if "st_lrps" in str(getattr(args, "models", "")) or "st_lrps" in str(getattr(args, "gpu_models", "")):
         for field in ("st_lrps_model_dir", "st_lrps_weight_file", "st_lrps_weight_sha256"):
             old_value = old_meta.get(field)
@@ -633,7 +698,9 @@ def _validate_cache_compatibility(
     # the ST-LRPS weight hash). A missing fingerprint is refused: without it the
     # fields outside the explicit list cannot be checked at all.
     old_fp = old.get("config_fingerprint")
-    new_fp = _config_fingerprint(args)
+    new_fp = _config_fingerprint(
+        args, _LEGACY_FINGERPRINT_FIELDS + tuple(f for f in _NEW_CACHE_KEY_FIELDS if f in old_meta)
+    )
     if not old_fp:
         _refuse(
             "Existing benchmark cache carries no config fingerprint, so drift in fields "
@@ -860,11 +927,17 @@ BENCHMARK_METADATA_SCHEMA_VERSION = 2
 # Cache-relevant config fields that define a deterministic compatibility key.
 # Mirrors the trajectory cache key so a fingerprint change implies the cached
 # trajectories were produced under a different configuration.
-_FINGERPRINT_FIELDS = (
+_LEGACY_FINGERPRINT_FIELDS = (
     "cache_schema_version", "truth", "truth_integrator", "duration_days", "dt_out",
     "rk4_dt_s", "gpu_rk4_dt_s_list", "st_lrps_rk4_dt", "gpu_integrator", "torch_dtype",
     "batch_frame_mode", "frame_interpolation", "st_lrps_weight_sha256",
 )
+# Added when the audit found them missing from the key. A manifest written before
+# that lacks them, so they are checked only where the manifest recorded them.
+_NEW_CACHE_KEY_FIELDS = (
+    "integrator", "rtol", "atol", "max_step_s", "gravity_file", "gravity_file_sha256",
+)
+_FINGERPRINT_FIELDS = _LEGACY_FINGERPRINT_FIELDS + _NEW_CACHE_KEY_FIELDS
 
 
 def _ensure_run_id(args: argparse.Namespace) -> str:
@@ -944,13 +1017,14 @@ def _device_info(args: argparse.Namespace) -> dict[str, Any]:
     return info
 
 
-def _config_fingerprint(args: argparse.Namespace) -> str:
+def _config_fingerprint(args: argparse.Namespace, fields: tuple[str, ...] | None = None) -> str:
     """Deterministic sha256 over the cache-relevant configuration.
 
     Used only to gate cache reuse and to stamp metadata — never alters physics.
+    ``fields`` restricts the hash to the keys an older manifest recorded.
     """
     meta = _cache_metadata(args)
-    canon = {k: meta.get(k) for k in _FINGERPRINT_FIELDS}
+    canon = {k: meta.get(k) for k in (_FINGERPRINT_FIELDS if fields is None else fields)}
     blob = json.dumps(canon, sort_keys=True, default=str)
     return sha256_text(blob)
 
@@ -1327,6 +1401,7 @@ def _write_run_metadata(
 def _truth_cache_metadata(args: argparse.Namespace, scenarios: list[Scenario]) -> dict[str, Any]:
     return {
         "truth": str(args.truth).lower(),
+        "truth_integrator": str(getattr(args, "truth_integrator", "DOP853")),
         "random_scenarios": int(len(scenarios)),
         "scenario_seed": int(args.scenario_seed),
         "scenario_mode": str(args.scenario_mode),
@@ -1354,6 +1429,41 @@ def _truth_cache_metadata(args: argparse.Namespace, scenarios: list[Scenario]) -
     }
 
 
+# Before the audit every truth was stored under this name whatever it was.
+_LEGACY_TRUTH_NPZ = "sh200_dop853_trajectories.npz"
+
+
+def _resolve_truth_cache_npz(cache_dir: Path, args: argparse.Namespace, scenarios: list[Scenario]) -> Path | None:
+    """The truth NPZ whose recorded metadata matches this request, else ``None``.
+
+    The file is named after the truth model and integrator. The legacy fixed name
+    is read only if its metadata matches every field it recorded; it never
+    recorded the integrator, so it is trusted for the default (DOP853) only.
+    """
+    meta_path = cache_dir / "truth_metadata.json"
+    if not meta_path.exists():
+        return None
+    try:
+        old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    new_meta = _truth_cache_metadata(args, scenarios)
+    npz_path = cache_dir / f"{_truth_cache_name(args)}_trajectories.npz"
+    if npz_path.exists() and old_meta == new_meta:
+        return npz_path
+    legacy_path = cache_dir / _LEGACY_TRUTH_NPZ
+    if (
+        legacy_path.exists()
+        and "truth_integrator" not in old_meta
+        and str(new_meta["truth_integrator"]).upper() == "DOP853"
+        and old_meta == {k: v for k, v in new_meta.items() if k != "truth_integrator"}
+    ):
+        print(f"[truth] WARNING: reading legacy truth cache {legacy_path.name}; it did not record "
+              "the truth integrator.", flush=True)
+        return legacy_path
+    return None
+
+
 def _truth_cache_available(cache_dir: Path, args: argparse.Namespace, scenarios: list[Scenario]) -> bool:
     """Cheap predicate: would ``_load_truth_cache`` produce a valid hit?
 
@@ -1361,26 +1471,14 @@ def _truth_cache_available(cache_dir: Path, args: argparse.Namespace, scenarios:
     Used only to decide the overall-progress weighting (truth weight collapses
     when truth is served from cache).
     """
-    meta_path = cache_dir / "truth_metadata.json"
-    npz_path = cache_dir / "sh200_dop853_trajectories.npz"
-    if not meta_path.exists() or not npz_path.exists():
-        return False
-    try:
-        old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        return old_meta == _truth_cache_metadata(args, scenarios)
-    except Exception:
-        return False
+    return _resolve_truth_cache_npz(cache_dir, args, scenarios) is not None
 
 
 def _load_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: list[Scenario]) -> TruthTrajectorySet | None:
-    meta_path = cache_dir / "truth_metadata.json"
-    npz_path = cache_dir / "sh200_dop853_trajectories.npz"
-    if not meta_path.exists() or not npz_path.exists():
+    npz_path = _resolve_truth_cache_npz(cache_dir, args, scenarios)
+    if npz_path is None:
         return None
     try:
-        old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if old_meta != _truth_cache_metadata(args, scenarios):
-            return None
         data = np.load(npz_path)
         t_common = data["t"]
         y_all = data["y"]
@@ -1389,7 +1487,7 @@ def _load_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: list
         y_by = {s.scenario_id: np.asarray(y_all[i], dtype=np.float64) for i, s in enumerate(scenarios)}
         rt_by = {s.scenario_id: float(runtime[i]) for i, s in enumerate(scenarios)}
         print(f"[truth] Reused cache: {npz_path}", flush=True)
-        return TruthTrajectorySet("sh200_dop853", t_by, y_by, rt_by)
+        return TruthTrajectorySet(_truth_cache_name(args), t_by, y_by, rt_by)
     except Exception as exc:
         print(f"[truth] Cache ignored: {exc}", flush=True)
         return None
@@ -1400,7 +1498,7 @@ def _save_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: list
     t0 = truth.t_by_scenario[scenarios[0].scenario_id]
     y_all = np.stack([truth.y_by_scenario[s.scenario_id] for s in scenarios], axis=0)
     runtime = np.asarray([truth.runtime_by_scenario[s.scenario_id] for s in scenarios], dtype=np.float64)
-    np.savez_compressed(cache_dir / "sh200_dop853_trajectories.npz", t=t0, y=y_all, runtime=runtime)
+    np.savez_compressed(cache_dir / f"{_truth_cache_name(args)}_trajectories.npz", t=t0, y=y_all, runtime=runtime)
     (cache_dir / "truth_metadata.json").write_text(
         json.dumps(_truth_cache_metadata(args, scenarios), indent=4),
         encoding="utf-8",
