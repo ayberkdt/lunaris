@@ -67,8 +67,15 @@ def test_cache_written_for_another_scenario_design_is_refused(tmp_path, extra) -
     _fill_cache(first, scenarios, cache_dir)
     assert rio._model_cache_completion(cache_dir, "sh200", scenarios)[0] == 8
 
+    manifest = tmp_path / rio.SCENARIO_MANIFEST_JSON
+    before = manifest.read_bytes()
     other = _bench_args("--random-scenarios", "8", *extra)
-    other_scenarios = rio.prepare_scenarios(other, tmp_path)
+    # Refused before the scenario manifest is rewritten for the new design...
+    with pytest.raises(rio.StaleScenarioCacheError):
+        rio.prepare_scenarios(other, tmp_path)
+    assert manifest.read_bytes() == before
+    # ...and at load time when the cache is shared from another output directory.
+    other_scenarios = rio.prepare_scenarios(other, tmp_path / "elsewhere")
     assert not np.array_equal(scenarios[0].initial_state, other_scenarios[0].initial_state)
     with pytest.raises(rio.StaleScenarioCacheError):
         rio._model_cache_completion(cache_dir, "sh200", other_scenarios)
@@ -101,28 +108,35 @@ def test_any_failed_series_makes_the_run_fail() -> None:
         modes._raise_if_any_model_failed([ok, bad])
 
 
-@pytest.mark.parametrize("status", ["running", None])
-def test_benchmark_refuses_to_pick_an_unfinished_model_implicitly(tmp_path, monkeypatch, status) -> None:
-    run = tmp_path / "run"
-    run.mkdir()
-    if status is not None:
-        (run / "run_manifest.json").write_text(json.dumps({"status": status}), encoding="utf-8")
-    monkeypatch.setattr(modes, "find_latest_st_lrps_model_dir", lambda: run)
-    with pytest.raises(RuntimeError, match="not 'completed'"):
-        modes._auto_find_st_lrps_dir()
+def _runs_with_status(tmp_path: Path, *statuses: str | None) -> list[Path]:
+    runs = []
+    for k, status in enumerate(statuses):
+        run = tmp_path / f"run{k}"
+        run.mkdir()
+        if status is not None:
+            (run / "run_manifest.json").write_text(json.dumps({"status": status}), encoding="utf-8")
+        runs.append(run)
+    return runs
 
 
-def test_benchmark_picks_a_completed_model(tmp_path, monkeypatch) -> None:
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "run_manifest.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
-    monkeypatch.setattr(modes, "find_latest_st_lrps_model_dir", lambda: run)
-    assert modes._auto_find_st_lrps_dir() == str(run)
+@pytest.mark.parametrize("newest", ["running", "interrupted", None])
+def test_benchmark_skips_an_unfinished_newest_model(tmp_path, monkeypatch, newest) -> None:
+    """The newest run by mtime may still be training; never benchmark it implicitly."""
+    runs = _runs_with_status(tmp_path, newest, "completed")
+    monkeypatch.setattr(modes, "discover_st_lrps_model_dirs", lambda: runs)
+    assert modes._auto_find_st_lrps_dir() == str(runs[1])
+
+
+def test_benchmark_finds_no_model_when_none_finished(tmp_path, monkeypatch) -> None:
+    runs = _runs_with_status(tmp_path, "running", "failed")
+    monkeypatch.setattr(modes, "discover_st_lrps_model_dirs", lambda: runs)
+    assert modes._auto_find_st_lrps_dir() is None
 
 
 # --------------------------------------------------------------------------- evaluation
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file modes")
 def test_evaluating_a_read_only_run_leaves_it_untouched(tmp_path) -> None:
     from lunaris.surrogate.st_lrps.artifacts.manager import append_run_evaluation, make_run_layout
 
@@ -182,10 +196,24 @@ def test_frozen_search_refuses_mismatched_third_body_sets(tmp_path, capsys) -> N
 
 
 def test_family_report_tolerates_metrics_nulled_by_json() -> None:
-    from lunaris.analysis.frozen import family_report
+    """stage3_validation.json stores NaN as null; float(None) used to raise."""
+    from lunaris.analysis.frozen.family_report import group_candidates_into_families
 
-    src = Path(family_report.__file__).read_text(encoding="utf-8")
-    assert "isinstance(mp.get(name), int | float)" in src
+    def member(idx: int, e_range: float | None) -> dict:
+        return {
+            "sample_index": idx,
+            "elements": {"a_km": 1880.0, "e": 0.05, "i_deg": 85.0, "argp_deg": 90.0},
+            "classification": {"status": "long_lived_not_frozen", "score": 1.0},
+            "metrics": {"e_range": e_range, "h_peri_range_m": None, "omega_span_rad": 0.2},
+        }
+
+    families = group_candidates_into_families(
+        json.loads(json.dumps([member(0, None), member(1, 0.004)])),
+        screening_backend="test", gravity_model={}, third_body={}, provenance={},
+    )
+    metrics = families[0]["stability_metrics"]
+    assert metrics["e_range_max"] == 0.004
+    assert np.isnan(metrics["h_peri_range_m_max"])
 
 
 def _model_dir_with_envelope(tmp_path: Path, lo: float = 100.0, hi: float = 1000.0) -> Path:
@@ -220,3 +248,72 @@ def test_frozen_search_screens_in_float64_by_default() -> None:
     from lunaris.cli import frozen_search
 
     assert frozen_search.build_parser().parse_args(["--out", "x"]).screening_torch_dtype == "float64"
+
+
+# --------------------------------------------------------------------------- second audit
+
+
+def _tiny_run(tmp_path: Path, file_cfg: dict, ckpt_cfg: dict) -> Path:
+    import torch
+
+    from lunaris.common.constants import MU_MOON
+    from lunaris.surrogate.runtime.networks import _build_model_from_config
+
+    run = tmp_path / "run"
+    (run / "checkpoints").mkdir(parents=True)
+    base = {"hidden": 8, "depth": 1, "activation": "tanh", "dropout": 0.0,
+            "resolved_mu_si": float(MU_MOON), "resolved_a_sign": 1.0,
+            "scaler_kind": "isometric", "degree_min": 0, "degree_max": 50}
+    scaler = {"x": {"mean": [0.0, 0.0, 0.0], "scale": 2_000_000.0},
+              "u": {"mean": [0.0], "scale": 1.0}, "a": {"mean": [0.0, 0.0, 0.0], "scale": 1.0}}
+    model = _build_model_from_config(base)
+    (run / "config.json").write_text(json.dumps({**base, **file_cfg}), encoding="utf-8")
+    (run / "scaler.json").write_text(json.dumps(scaler), encoding="utf-8")
+    torch.save({"model": model.state_dict(), "config": {**base, **ckpt_cfg}, "scaler": scaler},
+               run / "checkpoints" / "ckpt_best.pt")
+    return run
+
+
+def test_config_and_checkpoint_disagreeing_on_a_sign_is_refused(tmp_path, monkeypatch) -> None:
+    """The canonical runtime reads a_sign from config.json, this provider from the
+    checkpoint; a disagreement flipped the residual on one of the two paths."""
+    from lunaris.surrogate.runtime import SurrogateGravityModel
+
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
+    run = _tiny_run(tmp_path, {"resolved_a_sign": -1.0}, {"resolved_a_sign": 1.0})
+    with pytest.raises(ValueError, match="physics key"):
+        SurrogateGravityModel.from_model_dir(run, device_preference="cpu")
+
+
+def test_baseline_gravity_file_must_match_the_dataset_hash(tmp_path) -> None:
+    from lunaris.surrogate.runtime.gravity_provider import _check_baseline_file_matches_dataset
+
+    f = tmp_path / "field.tab"
+    f.write_bytes(b"coefficients")
+    import hashlib
+
+    good = hashlib.sha256(b"coefficients").hexdigest()
+    _check_baseline_file_matches_dataset(f, {"dataset_contract": {"source_gravity_file_sha256": good}}, tmp_path)
+    _check_baseline_file_matches_dataset(f, {}, tmp_path)  # unrecorded: not checked
+    with pytest.raises(ValueError, match="not the gravity file"):
+        _check_baseline_file_matches_dataset(
+            f, {"dataset_contract": {"source_gravity_file_sha256": "0" * 64}}, tmp_path
+        )
+
+
+def test_benchmark_reports_scenarios_below_the_trained_envelope(tmp_path, capsys) -> None:
+    """The runtime warned once and tagged nothing; a 76 km orbit was status ok."""
+    model = _model_dir_with_envelope(tmp_path)
+    metrics = tmp_path / "metrics"
+    metrics.mkdir()
+    (metrics / "gpu_batch_per_scenario_metrics.csv").write_text(
+        "scenario_id,model,min_alt_model_km,status\n"
+        "0,GPU_ST_LRPS_RK4,150.0,ok\n1,GPU_ST_LRPS_RK4,76.2,ok\n2,CPU_SH25_RK4,50.0,ok\n",
+        encoding="utf-8",
+    )
+    (metrics / "gpu_batch_summary.json").write_text("{}", encoding="utf-8")
+    out = modes._report_surrogate_envelope_excursions(SimpleNamespace(st_lrps_model_dir=str(model)), metrics)
+    assert [e["scenario_id"] for e in out["GPU_ST_LRPS_RK4"]["scenarios"]] == [1]
+    summary = json.loads((metrics / "gpu_batch_summary.json").read_text(encoding="utf-8"))
+    assert summary["surrogate_envelope_excursions"]["GPU_ST_LRPS_RK4"]["envelope_km"] == [100.0, 1000.0]
+    assert "lowest 76.2 km" in capsys.readouterr().out

@@ -42,6 +42,13 @@ def _load_gravity_model(gravity_file: str | None, degree: int) -> Any:
     return GravityModel.from_file(path=str(gravity_file), requested_degree=int(degree))
 
 
+def _propagator_default(field: str) -> object:
+    """Default of a PropagatorConfig field (the validation propagator relies on it)."""
+    from lunaris.common.type_defs import PropagatorConfig
+
+    return getattr(PropagatorConfig(), field)
+
+
 def normalize_third_body_selection(value: Any) -> tuple[str, ...]:
     """Normalize CLI/API third-body selectors to ``("sun", "earth")`` tokens."""
     if value is None:
@@ -445,6 +452,9 @@ class ClassicalSHValidationPropagator:
             "integrator": self._method,
             "rtol": self._rtol,
             "atol": self._atol,
+            # DOP853 at these tolerances converges over 60 days only with the
+            # Nyquist step cap (without it the 60-day drift was 7-500 m).
+            "use_nyquist_max_step": bool(_propagator_default("use_nyquist_max_step")),
         }
 
     def propagate(

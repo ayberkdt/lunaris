@@ -731,3 +731,44 @@ def test_pipeline_refinement_stage_runs_with_analytic_objective(tmp_path):
     assert len(refinements) == 1
     assert refinements[0]["validation_status"] == "requires_classical_sh_validation"
     assert refinements[0]["refined_score"] <= refinements[0]["original_score"]
+
+
+def test_fresh_run_rewrites_the_manifest_and_retires_old_checkpoints(tmp_path):
+    """--no-resume used to keep the old manifest: afterwards the correct config was
+    refused on resume and the stale one accepted. It also left the old stage-1 loop
+    checkpoints in place, which the integrator restores by sample/grid match."""
+    config = _config()
+    screening = KeplerScreeningPropagator()
+    validation = KeplerValidationPropagator("classical_sh_deg8")
+    FrozenSearchPipeline(config, screening=screening, validation=validation, out_dir=tmp_path).run(
+        resume=True
+    )
+    stale = tmp_path / "stage1_checkpoint" / "block_0000000_0000016"
+    stale.mkdir(parents=True)
+    changed = dataclasses.replace(config, n_samples=int(config.n_samples) + 1)
+    FrozenSearchPipeline(changed, screening=screening, validation=validation, out_dir=tmp_path).run(
+        resume=False
+    )
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["config"]["n_samples"] == int(changed.n_samples)
+    assert not (tmp_path / "stage1_checkpoint").exists()
+    assert any(p.name.startswith("stage1_checkpoint_retired_") for p in tmp_path.iterdir())
+    FrozenSearchPipeline(changed, screening=screening, validation=validation, out_dir=tmp_path).run(
+        resume=True
+    )
+    with pytest.raises(RuntimeError, match="different configuration"):
+        FrozenSearchPipeline(config, screening=screening, validation=validation, out_dir=tmp_path).run(
+            resume=True
+        )
+
+
+def test_resume_accepts_a_manifest_written_before_a_provenance_key_existed(tmp_path):
+    config = _config()
+    screening = KeplerScreeningPropagator()
+    validation = KeplerValidationPropagator("classical_sh_deg8")
+    FrozenSearchPipeline(config, screening=screening, validation=validation, out_dir=tmp_path).run(
+        resume=True
+    )
+    later = KeplerScreeningPropagator()
+    later.provenance = {**dict(later.provenance), "ephemeris_start_date": "2026-01-01"}
+    FrozenSearchPipeline(config, screening=later, validation=validation, out_dir=tmp_path).run(resume=True)

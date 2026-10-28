@@ -102,6 +102,8 @@ STAGE1_OUTPUT_FULL = "full"
 # Settings a resume may change without invalidating the stage files.
 _RESUME_FREE_CONFIG_KEYS = ("screening_checkpoint_interval_s",)
 _RESUME_FREE_PROVENANCE_KEYS = ("device",)
+# Provenance keys introduced after earlier run directories were written.
+_RESUME_KEYS_ADDED_LATER = ("ephemeris_start_date", "use_nyquist_max_step")
 
 
 def _contract_differences(stored: Any, current: Any, path: str = "") -> list[str]:
@@ -925,6 +927,9 @@ class FrozenSearchPipeline:
         path = self._manifest_path()
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
+        return self._new_manifest()
+
+    def _new_manifest(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -975,6 +980,11 @@ class FrozenSearchPipeline:
             stored["config"].pop(key, None)
         for key in _RESUME_FREE_PROVENANCE_KEYS:
             stored["screening_provenance"].pop(key, None)
+        # Keys added after a run directory was written are unrecorded, not different.
+        for section in ("screening_provenance", "validation_provenance"):
+            for key in _RESUME_KEYS_ADDED_LATER:
+                if key not in stored[section]:
+                    current[section].pop(key, None)
         diffs = _contract_differences(stored, current)
         if diffs:
             raise RuntimeError(
@@ -1078,6 +1088,14 @@ class FrozenSearchPipeline:
 
     def _stage1_checkpoint_dir(self) -> Path:
         return self.out_dir / STAGE1_CHECKPOINT_DIR
+
+    def _retire_stage1_checkpoints(self) -> None:
+        """Move a previous run's stage-1 checkpoints aside (kept, never reused)."""
+        cdir = self._stage1_checkpoint_dir()
+        if cdir.exists():
+            target = cdir.with_name(f"{cdir.name}_retired_{time.strftime('%Y%m%dT%H%M%S')}")
+            cdir.rename(target)
+            logger.warning("fresh run: previous stage-1 checkpoints moved to %s", target)
 
     def _screening_supports_checkpoint(self) -> bool:
         """True when the injected screening backend accepts ``checkpoint=``."""
@@ -1648,7 +1666,14 @@ class FrozenSearchPipeline:
 
     def run(self, *, resume: bool = True) -> dict[str, Any]:
         """Run all stages (respecting existing stage files when ``resume``)."""
-        manifest = self._load_manifest()
+        if resume:
+            manifest = self._load_manifest()
+        else:
+            # A fresh run must not inherit the old manifest (its config would then
+            # describe the previous run) nor the old stage-1 loop checkpoints, which
+            # the integrator restores whenever samples and grid match.
+            manifest = self._new_manifest()
+            self._retire_stage1_checkpoints()
         # A manifest without "element_frame" predates the element-frame fix and
         # measured elements in the integration frame, which is the current
         # identity-frame behaviour but not the lunar-equator one.

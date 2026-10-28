@@ -921,6 +921,11 @@ def load_best_or_last(
     order = [layout.ckpt_best, layout.ckpt_last] if prefer_l == "best" else [layout.ckpt_last, layout.ckpt_best]
     for candidate in order:
         if candidate.exists():
+            if candidate != order[0]:
+                logger.warning(
+                    "%s is missing; loading %s instead (%s).",
+                    order[0].name, candidate.name, layout.run_dir,
+                )
             return candidate, load_checkpoint(candidate, dev)
     raise FileNotFoundError(
         f"No checkpoint found in {layout.checkpoints_dir}. Expected {layout.ckpt_best.name} or {layout.ckpt_last.name}."
@@ -974,15 +979,9 @@ def append_run_evaluation(layout: RunLayout, evaluation: Mapping[str, Any]) -> N
     manifest["evaluations"] = evaluations
     manifest.setdefault("schema_version", RUN_MANIFEST_SCHEMA_VERSION)
     manifest["updated_at_utc"] = _utcnow_iso()
-    try:
-        atomic_write_json(layout.run_manifest_json, manifest)
-    except PermissionError as exc:
-        # A vaulted (read-only) model must stay evaluable: the evaluation's own
-        # outputs are already written elsewhere; only this cross-reference is lost.
-        logger.warning(
-            "Run directory %s is read-only; the evaluation was not recorded in its "
-            "run_manifest.json (%s).", layout.run_dir, exc,
-        )
+    # A writable manifest that still cannot be replaced (a lock that outlasts the
+    # retries) must fail loudly rather than silently drop the evaluation record.
+    atomic_write_json(layout.run_manifest_json, manifest)
 
 
 def resolve_run_dir(path_like: Path | str) -> Path:

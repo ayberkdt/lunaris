@@ -439,9 +439,23 @@ def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> list[Scenario]
     note = _sobol_note(str(getattr(args, "sampling_method", "random")), int(args.random_scenarios))
     if note:
         print(f"[scenarios] NOTE: {note}", flush=True)
+    # Refuse before the manifest and metadata are rewritten for the new design.
+    _refuse_cache_of_another_design(_benchmark_cache_dir(args, out_dir), scenarios)
     _write_scenarios_csv(scenarios, out_dir)
     _write_scenario_manifest(scenarios, args, out_dir)
     return scenarios
+
+
+def _refuse_cache_of_another_design(cache_dir: Path, scenarios: list[Scenario], probe: int = 8) -> None:
+    """Raise if the cache directory already holds trajectories of other scenarios."""
+    groups = [g for sub in ("truth", "models") if (cache_dir / sub).is_dir()
+              for g in sorted((cache_dir / sub).iterdir()) if g.is_dir()]
+    for group in groups:
+        for scenario in scenarios[:probe]:
+            path = group / f"scenario_{int(scenario.scenario_id):06d}.npz"
+            cached = _read_cached_trajectory(path)
+            if cached is not None:
+                _check_cached_scenario(path, cached.metadata, scenario)
 
 
 def _append_metrics_csv(metrics: dict, path: Path, write_header: bool) -> None:

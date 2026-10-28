@@ -31,7 +31,7 @@ from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagation.propagator import propagate
 from lunaris.core.state import create_state_from_keplerian
 from lunaris.surrogate.runtime import (
-    find_latest_st_lrps_model_dir,
+    discover_st_lrps_model_dirs,
 )
 from lunaris.surrogate.st_lrps.evaluation import progress
 
@@ -776,6 +776,47 @@ def _raise_if_any_model_failed(results: list[BatchModelResult]) -> None:
         )
 
 
+def _report_surrogate_envelope_excursions(args: argparse.Namespace, metrics_dir: Path) -> dict[str, Any]:
+    """Count ST-LRPS scenarios that went below the trained altitude envelope.
+
+    The runtime warns once per model instance and tags nothing, so an orbit that
+    dipped to 76 km was reported with status ok next to in-envelope orbits. This
+    writes the excursions into gpu_batch_summary.json and prints them.
+    """
+    model_dir = getattr(args, "st_lrps_model_dir", None)
+    csv_path = metrics_dir / "gpu_batch_per_scenario_metrics.csv"
+    if not model_dir or not csv_path.is_file():
+        return {}
+    try:
+        cfg = json.loads((Path(model_dir) / "config.json").read_text(encoding="utf-8-sig"))
+        lo, hi = float(cfg["altitude_min_km"]), float(cfg["altitude_max_km"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    out: dict[str, Any] = {}
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if "ST_LRPS" not in str(row.get("model", "")).upper():
+                continue
+            try:
+                amin = float(row.get("min_alt_model_km", "nan"))
+            except ValueError:
+                continue
+            if amin < lo - 1.0:
+                entry = out.setdefault(row["model"], {"envelope_km": [lo, hi], "scenarios": []})
+                entry["scenarios"].append({"scenario_id": int(row["scenario_id"]), "min_alt_model_km": amin})
+    summary_path = metrics_dir / "gpu_batch_summary.json"
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["surrogate_envelope_excursions"] = out
+        summary_path.write_text(json.dumps(summary, indent=4, default=str), encoding="utf-8")
+    for model, entry in out.items():
+        worst = min(e["min_alt_model_km"] for e in entry["scenarios"])
+        print(f"[gpu-batch] WARNING: {model}: {len(entry['scenarios'])} scenario(s) went below the "
+              f"trained envelope ({lo:g} km), lowest {worst:.1f} km; their errors are extrapolation "
+              "(listed in gpu_batch_summary.json surrogate_envelope_excursions).", flush=True)
+    return out
+
+
 def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ephem: Any) -> None:
     """New validation workflow: SH200 DOP853 truth vs GPU RK4 SH/ST-LRPS."""
 
@@ -1123,6 +1164,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         )
         _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected,
                                  _load_written_summary(metrics_dir))
+        _report_surrogate_envelope_excursions(args, metrics_dir)
         print(f"\n[gpu-batch] Complete -> {out_dir}", flush=True)
         print("  benchmark_cache/")
         print("  metrics/gpu_batch_per_scenario_metrics.csv")
@@ -1247,6 +1289,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     write_gpu_batch_report_pdf(args, aggregate_rows, runtime_rows, equivalent, selected, plots_dir, reports_dir)
     _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected, summary)
 
+    _report_surrogate_envelope_excursions(args, metrics_dir)
     print(f"\n[gpu-batch] Complete -> {out_dir}", flush=True)
     print("  metrics/gpu_batch_per_scenario_metrics.csv")
     print("  metrics/gpu_batch_aggregate_metrics.csv")
@@ -1991,24 +2034,23 @@ def run_random_scenario_mode(
 
 def _auto_find_st_lrps_dir() -> str | None:
     """
-    Return the newest valid surrogate run directory.
-    Uses surrogate.runtime.find_latest_st_lrps_model_dir which requires
-    config.json AND checkpoints/ckpt_best.pt (or ckpt_last.pt).
+    Return the newest finished surrogate run directory (config.json plus a
+    checkpoint, run_manifest status completed or migrated).
+
+    The newest run by mtime may still be training, with ckpt_best.pt changing
+    under the benchmark, so unfinished runs are skipped; an explicit
+    --st-lrps-model-dir is always honoured.
     """
-    result = find_latest_st_lrps_model_dir()
-    if result is None:
-        return None
-    # The newest run by mtime may still be training (its ckpt_best.pt changes under
-    # the benchmark). Never pick it implicitly; an explicit --st-lrps-model-dir is
-    # always honoured.
-    manifest = Path(result) / "run_manifest.json"
-    status = None
-    if manifest.is_file():
-        with contextlib.suppress(OSError, ValueError):
-            status = json.loads(manifest.read_text(encoding="utf-8-sig")).get("status")
-    if status != "completed":
-        raise RuntimeError(
-            f"Newest ST-LRPS run {result} has status {status!r}, not 'completed'; refusing "
-            "to benchmark it implicitly. Pass --st-lrps-model-dir explicitly."
-        )
-    return str(result)
+    for candidate in discover_st_lrps_model_dirs():
+        manifest = Path(candidate) / "run_manifest.json"
+        status = None
+        if manifest.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                status = json.loads(manifest.read_text(encoding="utf-8-sig")).get("status")
+        if status in _FINISHED_RUN_STATUSES:
+            return str(candidate)
+        print(f"[auto] skipping ST-LRPS run {candidate} (status {status!r})", flush=True)
+    return None
+
+
+_FINISHED_RUN_STATUSES = frozenset({"completed", "migrated"})
