@@ -392,6 +392,17 @@ not reported as `COMPLETED`. The job prints the resume command on exit 75:
   `--resume-from <run_dir>` falls back to the defaults for them. The trainer logs
   every setting that differs from the resumed run. A bare resume does restore the
   run's data files (including independent `--train-data`/`--val-data` files).
+  A resume writes into the resumed run directory, whatever `--out` says.
+- **Fine-tuning a finished model:** use `--init-from <run_dir> --out <new_dir>`
+  instead of `--resume-from`.
+  - It loads only the model weights (`--init-checkpoint best|last`, default `best`)
+    and the source run's scaler.
+  - The optimizer, LR schedule, GradNorm state, counters and losses start fresh
+    from the command line.
+  - The run trains into its own directory and refuses an `--out` that overlaps the
+    source. The source files are checked by SHA-256 when the run ends.
+  - The network flags and the target contract must match the source; the training
+    data may differ.
 - **Scenario array:** resubmit the same array with `--resume` after the JSONL path.
   Each task continues from its own `checkpoints/ckpt_last.pt` and starts fresh when
   there is none. The launcher reports exit 75 as `STOPPED` (resumable), not `FAILED`.

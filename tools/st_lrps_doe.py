@@ -142,7 +142,11 @@ BASE_FLAGS: tuple[str, ...] = (
     "--use-laplacian-regularization", "--laplacian-subset-size", "512",
     "--direction-loss-floor-abs", "1e-7", "--relative-loss-floor-abs", "1e-8",
     "--best-metric", "hybrid_rel", "--hybrid-relative-beta", "0.3",
-    "--fit-rows", "2000000", "--num-workers", "4", "--pin-memory",
+    # Preload pins one sampler for every run: with policy "auto" a run whose
+    # start finds little free RAM falls back to HDF5 streaming, which draws
+    # each batch from a contiguous 65k-row window instead of a full shuffle.
+    # Batches are gathered from memory in the main process, so no workers.
+    "--fit-rows", "2000000", "--preload-data", "--num-workers", "0", "--pin-memory",
     # Every run logs the cross-fitted leakage diagnostic at the same L.
     "--low-degree-lmax", "12",
 )

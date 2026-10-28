@@ -411,6 +411,13 @@ class TrainConfig:
     resume_strict: bool = True               # fail on architecture/dataset/scaler-critical mismatch
     resume_allow_longer_epochs: bool = True  # allow extending the epoch target on resume
     resume_append_history: bool = True       # preserve/append previous history by default
+    # Warm start (transfer). When init_from is set, only the model weights of a
+    # finished run are loaded; optimizer, LR schedule, GradNorm state, counters
+    # and losses come from THIS run, which writes to its own directory. The
+    # source run is read, never written, and its scaler is reused so the
+    # weights see inputs and targets at the scale they were trained on.
+    init_from: str | None = None
+    init_checkpoint: str = "best"            # "best" | "last" when init_from is a run directory
     # Security boundary: legacy checkpoints holding arbitrary pickled objects can
     # only be resumed with this explicit opt-in (or LUNARIS_TRUST_ARTIFACT=1);
     # full unpickling executes code embedded in the file.
@@ -661,6 +668,37 @@ def _validated_decay_fraction(value: Any) -> float:
 def _default_outdir(base: Path) -> Path:
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return base / "outputs" / "training" / f"st_lrps_train_{ts}"
+
+
+def _default_data_from_previous_run(a: argparse.Namespace, prev_cfg: dict) -> None:
+    """Fill the data paths of ``a`` from a previous run's config when none were given.
+
+    A run on independent files records ``data`` as a copy of its train file;
+    restoring ``data`` alone would re-split that file with seeded_random and
+    drop the validation file (the scaler provenance check then refuses the
+    resume). Restore the files the run used.
+    """
+    if a.data is not None or a.train_data is not None:
+        return
+    prev_train = prev_cfg.get("train_data_path") or prev_cfg.get("train_data")
+    prev_val = prev_cfg.get("val_data_path") or prev_cfg.get("val_data")
+    prev_data = prev_cfg.get("data")
+    if prev_train and prev_val:
+        a.train_data = str(prev_train)
+        a.val_data = a.val_data or str(prev_val)
+    elif prev_data:
+        a.data = str(prev_data)
+    else:
+        a.train_data = prev_train
+        a.val_data = a.val_data or prev_val
+    for _attr, _keys in (
+        ("test_data", ("test_data_path", "test_data")),
+        ("ood_data", ("ood_data_path", "ood_data")),
+    ):
+        if getattr(a, _attr, None) is None:
+            _prev = next((prev_cfg.get(k) for k in _keys if prev_cfg.get(k)), None)
+            if _prev:
+                setattr(a, _attr, str(_prev))
 
 
 def parse_args() -> TrainConfig:
@@ -1341,6 +1379,22 @@ def parse_args() -> TrainConfig:
     )
     ap.set_defaults(resume_append_history=True)
 
+    # Warm start (transfer)
+    group_init = ap.add_argument_group("Warm start (transfer)")
+    group_init.add_argument(
+        "--init-from", type=str, default=None,
+        help="Start from the model weights of a finished run (run directory, its "
+             "checkpoints/ directory, or a .pt file) and train them into a NEW run "
+             "directory with this run's optimizer, LR schedule and losses. The source "
+             "run is never written; its scaler is reused. The network and the target "
+             "contract must match the source; the training data may differ. "
+             "Exclusive with --resume-from.",
+    )
+    group_init.add_argument(
+        "--init-checkpoint", choices=["best", "last"], default="best",
+        help="Which checkpoint to load when --init-from is a run directory (default: best).",
+    )
+
     # Periodic Evaluation During Training (monitoring only; OFF by default)
     group_peval = ap.add_argument_group("Periodic Evaluation During Training (monitoring only)")
     peval_mode_group = group_peval.add_mutually_exclusive_group()
@@ -1464,6 +1518,17 @@ def parse_args() -> TrainConfig:
             f"without one the default preset {a.model_preset!r} would apply."
         )
 
+    if getattr(a, "init_from", None) and getattr(a, "resume_from", None):
+        ap.error("--init-from and --resume-from are exclusive: --resume-from continues a run "
+                 "in place, --init-from starts a new run from its weights.")
+    if getattr(a, "init_from", None):
+        # Without explicit data a warm start trains on the source run's files;
+        # dataset auto-discovery could otherwise pick an unrelated suite.
+        from lunaris.surrogate.st_lrps.artifacts.manager import resolve_run_dir as _resolve_run_dir
+        _src_cfg_path = _resolve_run_dir(Path(a.init_from).expanduser()) / "config.json"
+        if _src_cfg_path.is_file():
+            _default_data_from_previous_run(a, json.loads(_src_cfg_path.read_text(encoding="utf-8-sig")))
+
     # 0. Resume pre-resolution.
     # When --resume-from is given, default --data/--out from the previous run so
     # the user only needs `--resume-from <run> [--epochs N]`. Full checkpoint
@@ -1479,31 +1544,7 @@ def parse_args() -> TrainConfig:
                 prev_cfg = json.loads(prev_cfg_path.read_text(encoding="utf-8"))
             except Exception as _e:  # pragma: no cover - defensive
                 print(f"[RESUME] Warning: could not read previous config.json: {_e}")
-        # Infer data/out from the previous run when not explicitly provided.
-        # A run on independent files records ``data`` as a copy of its train
-        # file; restoring ``data`` alone would re-split that file with
-        # seeded_random and drop the validation file (the scaler provenance
-        # check then refuses the resume). Restore the files the run used.
-        if a.data is None and a.train_data is None:
-            prev_train = prev_cfg.get("train_data_path") or prev_cfg.get("train_data")
-            prev_val = prev_cfg.get("val_data_path") or prev_cfg.get("val_data")
-            prev_data = prev_cfg.get("data")
-            if prev_train and prev_val:
-                a.train_data = str(prev_train)
-                a.val_data = a.val_data or str(prev_val)
-            elif prev_data:
-                a.data = str(prev_data)
-            else:
-                a.train_data = prev_train
-                a.val_data = a.val_data or prev_val
-            for _attr, _keys in (
-                ("test_data", ("test_data_path", "test_data")),
-                ("ood_data", ("ood_data_path", "ood_data")),
-            ):
-                if getattr(a, _attr, None) is None:
-                    _prev = next((prev_cfg.get(k) for k in _keys if prev_cfg.get(k)), None)
-                    if _prev:
-                        setattr(a, _attr, str(_prev))
+        _default_data_from_previous_run(a, prev_cfg)
         if not a.out:
             a.out = str(resume_run_dir)
         print(f"[RESUME] Resuming run: {resume_run_dir}  (prefer={a.resume_checkpoint})")
@@ -1767,6 +1808,8 @@ def parse_args() -> TrainConfig:
         resume_checkpoint=str(getattr(a, "resume_checkpoint", "last")),
         resume_strict=(not bool(getattr(a, "resume_nonstrict", False))),
         resume_allow_longer_epochs=True,
+        init_from=(str(a.init_from) if getattr(a, "init_from", None) else None),
+        init_checkpoint=str(getattr(a, "init_checkpoint", "best")),
         resume_append_history=bool(getattr(a, "resume_append_history", True)),
         trust_artifact=bool(getattr(a, "trust_artifact", False)),
         periodic_eval_count=(int(a.periodic_eval_count) if a.periodic_eval_count is not None else None),
