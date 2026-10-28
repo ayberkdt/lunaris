@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 import sys
 from pathlib import Path
@@ -63,8 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--screening-torch-dtype",
         choices=("float32", "float64"),
-        default="float32",
-        help="ST-LRPS screening tensor dtype",
+        default="float64",
+        help=(
+            "ST-LRPS screening tensor dtype; float32 also integrates the state in "
+            "float32 (~0.8 m frame rotation error), so it is opt-in"
+        ),
     )
     parser.add_argument(
         "--hp-km",
@@ -191,6 +195,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _surrogate_altitude_envelope_km(model_dir: str | Path | None) -> tuple[float, float] | None:
+    """Trained altitude envelope recorded in an ST-LRPS run's config.json."""
+    if model_dir is None:
+        return None
+    try:
+        cfg = json.loads((Path(model_dir) / "config.json").read_text(encoding="utf-8-sig"))
+        return float(cfg["altitude_min_km"]), float(cfg["altitude_max_km"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -237,6 +252,38 @@ def main(argv: list[str] | None = None) -> int:
     if screening_third_body and screening_backend != "st-lrps":
         print(
             "[FATAL] --screening-third-body requires ST-LRPS screening",
+            file=sys.stderr,
+        )
+        return 2
+    if screening_backend == "st-lrps" and args.st_lrps_allow_extrapolation:
+        envelope = _surrogate_altitude_envelope_km(args.st_lrps_model_dir)
+        if envelope is None:
+            print(
+                "[FATAL] --st-lrps-allow-extrapolation needs the model's trained altitude "
+                f"envelope (altitude_min_km/altitude_max_km in {args.st_lrps_model_dir}/config.json)",
+                file=sys.stderr,
+            )
+            return 2
+        lo, hi = envelope
+        # 1 km slack: the search measures altitude from 1737.4 km, the surrogate from 1738 km.
+        if args.domain_alt_min_km < lo - 1.0 or args.domain_alt_max_km > hi + 1.0:
+            print(
+                "[FATAL] with --st-lrps-allow-extrapolation the domain window "
+                f"[{args.domain_alt_min_km:g}, {args.domain_alt_max_km:g}] km must lie inside the "
+                f"surrogate's trained envelope [{lo:g}, {hi:g}] km, otherwise extrapolated "
+                f"samples are scored as valid; pass --domain-alt-min-km {lo:g} "
+                f"--domain-alt-max-km {hi:g}",
+                file=sys.stderr,
+            )
+            return 2
+    if set(screening_third_body) != set(validation_third_body):
+        # Ranking with one force model and validating with another makes the
+        # validation errors measure the physics change, not the screening model.
+        print(
+            "[FATAL] screening and validation third-body terms differ "
+            f"(screening={','.join(screening_third_body) or 'none'}, "
+            f"validation={','.join(validation_third_body) or 'none'}); "
+            "pass the same --screening-third-body and --validation-third-body",
             file=sys.stderr,
         )
         return 2
@@ -433,6 +480,10 @@ def main(argv: list[str] | None = None) -> int:
     # than a hard-coded lunar constant.
     if validation.gravity_mu_m3s2 is not None:
         config = dataclasses.replace(config, mu_m3s2=float(validation.gravity_mu_m3s2))
+    # The epoch sets the lunar orientation and third-body geometry; record it so
+    # the manifest identifies the run and a resume with another epoch is refused.
+    for backend in (screening, validation):
+        backend.provenance["ephemeris_start_date"] = str(args.ephemeris_start_date)
     pipeline = FrozenSearchPipeline(
         config,
         screening=screening,

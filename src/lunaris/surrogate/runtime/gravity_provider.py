@@ -606,6 +606,22 @@ class SurrogateGravityModel:
             out[idx, :] = self.baseline_gravity_model.accel_fixed(row, degree=degree)
         return torch.as_tensor(out, device=x_phys.device, dtype=x_phys.dtype)
 
+    def _float64_baseline(self, pos: np.ndarray, *, with_potential: bool) -> tuple[np.ndarray | None, np.ndarray]:
+        """SH baseline potential/acceleration at the float64 positions, in float64.
+
+        The baseline is ~1e6 times the residual. Evaluating it at positions rounded
+        to the model dtype and summing in float32 (CPU artifacts load as float32)
+        quantized the total field to ~6e-8 m/s^2, comparable to the residual itself
+        at high altitude. Only the network runs in the model dtype.
+        """
+        x64 = torch.as_tensor(pos, device=self.device, dtype=torch.float64)
+        a = self._base_acceleration(x64).detach().cpu().numpy().astype(np.float64, copy=False)
+        u = (
+            self._base_potential(x64).detach().cpu().numpy().astype(np.float64, copy=False)
+            if with_potential else None
+        )
+        return u, a
+
     def _base_acceleration_torch(self, x_phys: torch.Tensor) -> torch.Tensor:
         """Return batched SH(degree_min) baseline acceleration on the tensor device."""
 
@@ -657,15 +673,10 @@ class SurrogateGravityModel:
                 self._force_runtime.predict_residual_potential(pos), dtype=np.float64
             ).reshape(-1, 1)
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
-            potential = torch.as_tensor(delta_u_np, device=self.device, dtype=self._torch_dtype)
-            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
             if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-                potential = potential + self._base_potential(x_phys)
-            return (
-                potential.detach().cpu().numpy().astype(np.float64, copy=False),
-                accel.detach().cpu().numpy().astype(np.float64, copy=False),
-            )
+                base_u, base_a = self._float64_baseline(pos, with_potential=True)
+                return delta_u_np + base_u, delta_a_np + base_a
+            return delta_u_np, delta_a_np
         with torch.enable_grad():
             x_scaled = self._scale_x(x_phys).requires_grad_(True)
             u_scaled = self.model(x_scaled)
@@ -682,12 +693,11 @@ class SurrogateGravityModel:
             accel = self.a_sign * grad_u_phys
             potential = self.a_sign * self._unscale_u(u_scaled)
 
-            if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-                potential = potential + self._base_potential(x_phys)
-
         u_np = potential.detach().cpu().numpy().astype(np.float64, copy=False)
         a_np = accel.detach().cpu().numpy().astype(np.float64, copy=False)
+        if self.training_mode == "residual_potential":
+            base_u, base_a = self._float64_baseline(pos, with_potential=True)
+            u_np, a_np = u_np + base_u, a_np + base_a
         return u_np, a_np
 
     def _acceleration_only_fixed(
@@ -715,10 +725,9 @@ class SurrogateGravityModel:
         x_phys = torch.as_tensor(pos, device=self.device, dtype=self._torch_dtype)
         if self._force_runtime is not None:
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
-            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
             if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-            return accel.detach().cpu().numpy().astype(np.float64, copy=False)
+                return delta_a_np + self._float64_baseline(pos, with_potential=False)[1]
+            return delta_a_np
         with torch.enable_grad():
             x_scaled = self._scale_x(x_phys).requires_grad_(True)
             u_scaled = self.model(x_scaled)
@@ -734,10 +743,10 @@ class SurrogateGravityModel:
             grad_u_phys = grad_u_scaled * (self._u_scale / self._x_scale)
             accel = self.a_sign * grad_u_phys
 
-            if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-
-        return accel.detach().cpu().numpy().astype(np.float64, copy=False)
+        a_np = accel.detach().cpu().numpy().astype(np.float64, copy=False)
+        if self.training_mode == "residual_potential":
+            a_np = a_np + self._float64_baseline(pos, with_potential=False)[1]
+        return a_np
 
     def acceleration_fixed(
         self,

@@ -762,6 +762,20 @@ def _raise_if_required_st_lrps_failed(args: argparse.Namespace, results: list[Ba
         raise RuntimeError(f"--require-st-lrps: the ST-LRPS series failed ({reasons})")
 
 
+def _raise_if_any_model_failed(results: list[BatchModelResult]) -> None:
+    """Exit non-zero once the reports are written if any requested series failed.
+
+    A failed series has no trajectories and no cache files (one non-finite orbit
+    fails its whole batch), so a driver that only checks the exit code must see it.
+    """
+    failed = [r for r in results if getattr(r, "status", "") == "failed"]
+    if failed:
+        reasons = "; ".join(f"{r.display_name}: {r.failure_reason}" for r in failed)
+        raise RuntimeError(
+            f"{len(failed)} of {len(results)} benchmark series failed and were not cached ({reasons})"
+        )
+
+
 def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ephem: Any) -> None:
     """New validation workflow: SH200 DOP853 truth vs GPU RK4 SH/ST-LRPS."""
 
@@ -1119,6 +1133,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         print("  plots/")
         print("  reports/gpu_batch_validation_report.pdf")
         _raise_if_required_st_lrps_failed(args, results)
+        _raise_if_any_model_failed(results)
         return
 
     progress.emit_progress(
@@ -1242,6 +1257,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     print("  plots/")
     print("  reports/gpu_batch_validation_report.pdf")
     _raise_if_required_st_lrps_failed(args, results)
+    _raise_if_any_model_failed(results)
 
 
 # =============================================================================
@@ -1515,7 +1531,7 @@ def run_random_scenario_mode(
             truth_rt = float("nan")
             if cache_enabled:
                 cached_truth = _load_cached_trajectory(
-                    _cached_truth_path(cache_dir, args, scenario.scenario_id)
+                    _cached_truth_path(cache_dir, args, scenario.scenario_id), scenario=scenario
                 )
                 if cached_truth is not None:
                     truth_res = cached_truth
@@ -1566,7 +1582,7 @@ def run_random_scenario_mode(
                 rt = float("nan")
                 if cache_enabled:
                     cached_model = _load_cached_trajectory(
-                        _cached_model_path(cache_dir, model, scenario.scenario_id)
+                        _cached_model_path(cache_dir, model, scenario.scenario_id), scenario=scenario
                     )
                     if cached_model is not None:
                         res = cached_model
@@ -1695,7 +1711,7 @@ def run_random_scenario_mode(
                     if m == truth_model
                     else _cached_model_path(cache_dir, m, selected_sc.scenario_id)
                 )
-                cached = _load_cached_trajectory(cache_path)
+                cached = _load_cached_trajectory(cache_path, scenario=selected_sc)
                 if cached is not None:
                     traj[m] = cached
                     continue
@@ -1736,7 +1752,7 @@ def run_random_scenario_mode(
                             if m == truth_model
                             else _cached_model_path(cache_dir, m, worst_sc.scenario_id)
                         )
-                        cached = _load_cached_trajectory(cache_path)
+                        cached = _load_cached_trajectory(cache_path, scenario=worst_sc)
                         if cached is not None:
                             traj_w[m] = cached
                             continue
@@ -1980,6 +1996,19 @@ def _auto_find_st_lrps_dir() -> str | None:
     config.json AND checkpoints/ckpt_best.pt (or ckpt_last.pt).
     """
     result = find_latest_st_lrps_model_dir()
-    if result is not None:
-        return str(result)
-    return None
+    if result is None:
+        return None
+    # The newest run by mtime may still be training (its ckpt_best.pt changes under
+    # the benchmark). Never pick it implicitly; an explicit --st-lrps-model-dir is
+    # always honoured.
+    manifest = Path(result) / "run_manifest.json"
+    status = None
+    if manifest.is_file():
+        with contextlib.suppress(OSError, ValueError):
+            status = json.loads(manifest.read_text(encoding="utf-8-sig")).get("status")
+    if status != "completed":
+        raise RuntimeError(
+            f"Newest ST-LRPS run {result} has status {status!r}, not 'completed'; refusing "
+            "to benchmark it implicitly. Pass --st-lrps-model-dir explicitly."
+        )
+    return str(result)

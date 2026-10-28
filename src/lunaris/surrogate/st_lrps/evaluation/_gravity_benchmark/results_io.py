@@ -377,6 +377,10 @@ def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> list[Scenario]
             target_count = existing_count
         else:
             target_count = int(args.random_scenarios)
+            # --scenario-limit caps the extension too; without this a 256-orbit
+            # cache plus --scenario-limit 512 silently computed all of them.
+            if getattr(args, "scenario_limit", None) is not None:
+                target_count = min(target_count, int(args.scenario_limit))
 
         if target_count < existing_count:
             raise ValueError(
@@ -698,7 +702,46 @@ def _save_cached_trajectory(
     return path
 
 
-def _load_cached_trajectory(path: Path) -> CachedTrajectory | None:
+_SCENARIO_CACHE_KEYS = ("hp_km", "ha_km", "a_km", "e", "inc_deg", "raan_deg", "argp_deg", "ta_deg")
+
+
+class StaleScenarioCacheError(ValueError):
+    """A cached trajectory belongs to a different scenario than the current one."""
+
+
+def _check_cached_scenario(path: Path, metadata: dict[str, Any], scenario: Scenario) -> None:
+    """Refuse a cache file written for another scenario design.
+
+    Cache files are keyed by scenario_id only, so a run with another seed, sampler,
+    mode or element bounds in the same cache directory would otherwise reuse the
+    old trajectories under the new scenario labels.
+    """
+    missing = [k for k in _SCENARIO_CACHE_KEYS if k not in metadata]
+    if missing:
+        raise StaleScenarioCacheError(
+            f"Cached trajectory {path} does not record its scenario elements {missing}; "
+            "cannot prove it belongs to scenario "
+            f"{scenario.scenario_id}. Use a new --output-dir/--cache-dir."
+        )
+    stored = tuple(float(metadata[k]) for k in _SCENARIO_CACHE_KEYS)
+    current = _scenario_numeric_tuple(scenario)
+    if not all(math.isclose(x, y, rel_tol=0.0, abs_tol=1e-9) for x, y in zip(stored, current, strict=True)):
+        raise StaleScenarioCacheError(
+            f"Cached trajectory {path} was written for a different scenario "
+            f"{scenario.scenario_id} (stored {dict(zip(_SCENARIO_CACHE_KEYS, stored, strict=True))}, "
+            f"current {dict(zip(_SCENARIO_CACHE_KEYS, current, strict=True))}). The cache "
+            "directory holds another scenario design; use a new --output-dir/--cache-dir."
+        )
+
+
+def _load_cached_trajectory(path: Path, *, scenario: Scenario | None = None) -> CachedTrajectory | None:
+    cached = _read_cached_trajectory(path)
+    if cached is not None and scenario is not None:
+        _check_cached_scenario(path, cached.metadata, scenario)
+    return cached
+
+
+def _read_cached_trajectory(path: Path) -> CachedTrajectory | None:
     if path.suffix != ".npz" or not path.exists() or path.name.endswith(".tmp"):
         return None
     try:
@@ -736,7 +779,7 @@ def _truth_cache_completion(
     missing: list[Scenario] = []
     for scenario in scenarios:
         path = _cached_truth_path(cache_dir, args, scenario.scenario_id)
-        if _load_cached_trajectory(path) is not None:
+        if _load_cached_trajectory(path, scenario=scenario) is not None:
             complete += 1
         else:
             missing.append(scenario)
@@ -752,7 +795,7 @@ def _model_cache_completion(
     missing: list[Scenario] = []
     for scenario in scenarios:
         path = _cached_model_path(cache_dir, model_name, scenario.scenario_id)
-        if _load_cached_trajectory(path) is not None:
+        if _load_cached_trajectory(path, scenario=scenario) is not None:
             complete += 1
         else:
             missing.append(scenario)
@@ -1393,7 +1436,8 @@ def build_truth_trajectory_set(
         print(f"[cache] Truth cache {_truth_cache_name(args)}: {complete}/{len(scenarios)} complete.",
               flush=True)
         for scenario in scenarios:
-            cached = _load_cached_trajectory(_cached_truth_path(cache_dir, args, scenario.scenario_id))
+            cached = _load_cached_trajectory(_cached_truth_path(cache_dir, args, scenario.scenario_id),
+                                             scenario=scenario)
             if cached is None:
                 continue
             t_by[scenario.scenario_id] = cached.t

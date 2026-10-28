@@ -165,9 +165,13 @@ ABLATION_REGISTRY: list[AblationSpec] = [
     ),
     AblationSpec(
         name="multiscale_no_resblocks",
-        description="Three-band multi-scale SIREN without residual blocks.",
-        cli_overrides=["--no-residual-blocks", "--n-bands", "3"],
-        expected_purpose="Legacy deviation: measure residual SIREN blocks.",
+        description="Three-band additive multi-band SIREN without residual blocks.",
+        # The default concat_shared trunk always uses residual blocks, so the old
+        # ["--no-residual-blocks", "--n-bands", "3"] trained the residual network
+        # under this label. The additive trunk honours the flag; compare this arm
+        # with additive_multiband (same trunk, residual blocks on).
+        cli_overrides=["--no-residual-blocks", "--n-bands", "3", "--multiscale-mode", "additive"],
+        expected_purpose="Legacy deviation: measure residual SIREN blocks (vs additive_multiband).",
         include_in_default_matrix=False,
     ),
     AblationSpec(

@@ -103,6 +103,7 @@ from lunaris.surrogate.st_lrps.training.config import (
     TrainConfig,
     apply_model_preset,
     apply_run_preset,
+    check_residual_block_support,
 )
 from lunaris.surrogate.st_lrps.training.config_summary import build_experiment_feature_summary
 from lunaris.surrogate.st_lrps.training.losses import (
@@ -2987,6 +2988,7 @@ def _build_model_and_optim(
     else:
         cfg.w0_bands = None
 
+    check_residual_block_support(cfg)
     model = build_model_from_config(
         cfg,
         in_dim=3,

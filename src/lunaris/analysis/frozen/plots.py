@@ -285,6 +285,8 @@ def generate_frozen_report_figures(
 
     from .search import (
         ELEMENT_FRAME_LUNAR_EQUATOR,
+        FROZEN_SCREENING_SCORE_DEFINITION,
+        SCREENING_SCORE_FROZEN,
         STAGE0_SAMPLES,
         STAGE1_SCREENING,
         STAGE2_CANDIDATES,
@@ -311,6 +313,9 @@ def generate_frozen_report_figures(
     frame_unknown = lunar_frame and frame_rotation is None
     if frame_unknown:
         logger.warning("manifest has no element_frame_rotation; element figures skipped")
+    # The histogram must show the score the run ranked with, not the v1 default.
+    frozen_score = manifest.get("config", {}).get("screening_score") == SCREENING_SCORE_FROZEN
+    score_definition = FROZEN_SCREENING_SCORE_DEFINITION if frozen_score else SCORE_DEFINITION
 
     samples_path = run_path / STAGE0_SAMPLES
     screening_path = run_path / STAGE1_SCREENING
@@ -319,7 +324,7 @@ def generate_frozen_report_figures(
             elements = np.asarray(data["elements"], dtype=np.float64)
         with np.load(screening_path, allow_pickle=False) as data:
             t_out = np.asarray(data["t_out"], dtype=np.float64)
-            if "Y_out" in data.files and not frame_unknown:
+            if "Y_out" in data.files and not frame_unknown and not frozen_score:
                 summary = summarize_ensemble(
                     data["t_out"],
                     rotate_states_element_frame(data["Y_out"], frame_rotation),
@@ -339,7 +344,7 @@ def generate_frozen_report_figures(
     if elements is not None and scores is not None:
         for fn in (plot_score_histogram,):
             path = fn(
-                scores, out_dir, source=source, frame=frame, score_definition=SCORE_DEFINITION
+                scores, out_dir, source=source, frame=frame, score_definition=score_definition
             )
             if path:
                 written.append(path)

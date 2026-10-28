@@ -1264,6 +1264,14 @@ def build_model_from_config(
                     output_dim=output_dim,
                 )
             else:
+                if not use_residual:
+                    # Training refuses this combination (check_residual_block_support);
+                    # artifacts trained before that guard carry the flag but were built
+                    # with residual blocks, so they must keep loading that way.
+                    logger.warning(
+                        "use_residual_blocks=False is ignored for n_bands>1 concat_shared: "
+                        "this trunk always uses residual blocks (the weights were trained so)."
+                    )
                 backbone = MultiScaleSirenMLP(
                     in_dim=backbone_in_dim,
                     hidden=hidden,

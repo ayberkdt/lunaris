@@ -961,13 +961,28 @@ def update_run_manifest(layout: RunLayout, updates: dict) -> None:
 
 
 def append_run_evaluation(layout: RunLayout, evaluation: Mapping[str, Any]) -> None:
+    target = Path(layout.run_manifest_json)
+    if target.exists() and not os.access(target, os.W_OK):
+        logger.warning(
+            "Run manifest %s is read-only (vaulted model); the evaluation was not "
+            "recorded there and the run directory was not touched.", target,
+        )
+        return
     manifest = read_run_manifest(layout)
     evaluations = list(manifest.get("evaluations") or [])
     evaluations.append(dict(evaluation))
     manifest["evaluations"] = evaluations
     manifest.setdefault("schema_version", RUN_MANIFEST_SCHEMA_VERSION)
     manifest["updated_at_utc"] = _utcnow_iso()
-    atomic_write_json(layout.run_manifest_json, manifest)
+    try:
+        atomic_write_json(layout.run_manifest_json, manifest)
+    except PermissionError as exc:
+        # A vaulted (read-only) model must stay evaluable: the evaluation's own
+        # outputs are already written elsewhere; only this cross-reference is lost.
+        logger.warning(
+            "Run directory %s is read-only; the evaluation was not recorded in its "
+            "run_manifest.json (%s).", layout.run_dir, exc,
+        )
 
 
 def resolve_run_dir(path_like: Path | str) -> Path:

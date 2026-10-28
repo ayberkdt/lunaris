@@ -98,6 +98,30 @@ STAGE1_CHECKPOINT_DIR = "stage1_checkpoint"
 
 STAGE1_SCREENING_SCHEMA_VERSION = 2
 STAGE1_OUTPUT_FULL = "full"
+
+# Settings a resume may change without invalidating the stage files.
+_RESUME_FREE_CONFIG_KEYS = ("screening_checkpoint_interval_s",)
+_RESUME_FREE_PROVENANCE_KEYS = ("device",)
+
+
+def _contract_differences(stored: Any, current: Any, path: str = "") -> list[str]:
+    """Leaf-level differences between two JSON-like trees, as 'path: a != b'."""
+    if isinstance(stored, dict) and isinstance(current, dict):
+        out: list[str] = []
+        for key in sorted(set(stored) | set(current)):
+            sub = f"{path}.{key}" if path else str(key)
+            if key not in stored or key not in current:
+                out.append(f"{sub}: {stored.get(key, '<absent>')!r} != {current.get(key, '<absent>')!r}")
+            else:
+                out.extend(_contract_differences(stored[key], current[key], sub))
+        return out
+    if isinstance(stored, list | tuple) and isinstance(current, list | tuple):
+        if len(stored) == len(current):
+            out = []
+            for k, (a, b) in enumerate(zip(stored, current, strict=True)):
+                out.extend(_contract_differences(a, b, f"{path}[{k}]"))
+            return out
+    return [] if stored == current else [f"{path}: {stored!r} != {current!r}"]
 STAGE1_OUTPUT_SUMMARY_ONLY = "summary_only"
 _STAGE1_OUTPUT_MODES = frozenset({STAGE1_OUTPUT_FULL, STAGE1_OUTPUT_SUMMARY_ONLY})
 
@@ -916,6 +940,49 @@ class FrozenSearchPipeline:
             "stages": {},
         }
 
+    def _resume_contract(self) -> dict[str, Any]:
+        """Everything that decides the stage outputs, as recorded in the manifest."""
+        config = dict(_json_safe(self.config.to_dict()))
+        for key in _RESUME_FREE_CONFIG_KEYS:
+            config.pop(key, None)
+        screening = dict(_json_safe(dict(self.screening.provenance)))
+        for key in _RESUME_FREE_PROVENANCE_KEYS:
+            screening.pop(key, None)
+        return {
+            "config": config,
+            "screening_backend": str(self.screening.backend_name),
+            "screening_provenance": screening,
+            "validation_backend": str(self.validation.backend_label),
+            "validation_provenance": _json_safe(dict(self.validation.provenance)),
+        }
+
+    def _check_resume_contract(self, manifest: dict[str, Any]) -> None:
+        """Refuse to resume stage files written with a different configuration.
+
+        Stage files are reused by existence alone, so without this a relaunch with a
+        corrected model dir, third-body set, degree or sample count would continue
+        from the old files under the new labels.
+        """
+        current = self._resume_contract()
+        stored = {
+            "config": dict(manifest.get("config") or {}),
+            "screening_backend": manifest.get("screening_backend"),
+            "screening_provenance": dict(manifest.get("screening_provenance") or {}),
+            "validation_backend": manifest.get("validation_backend"),
+            "validation_provenance": manifest.get("validation_provenance") or {},
+        }
+        for key in _RESUME_FREE_CONFIG_KEYS:
+            stored["config"].pop(key, None)
+        for key in _RESUME_FREE_PROVENANCE_KEYS:
+            stored["screening_provenance"].pop(key, None)
+        diffs = _contract_differences(stored, current)
+        if diffs:
+            raise RuntimeError(
+                f"cannot resume {self.out_dir}: its stage files were written with a "
+                f"different configuration ({'; '.join(diffs[:8])}). Use a new out_dir, "
+                "or --no-resume to recompute every stage."
+            )
+
     def _mark_stage(self, manifest: dict[str, Any], stage: str, filename: str, **extra: Any) -> None:
         manifest["stages"][stage] = {
             "file": filename,
@@ -1593,6 +1660,8 @@ class FrozenSearchPipeline:
                 f"{self.element_frame['frame']!r}; stage files from two element frames "
                 "cannot be mixed. Use a new out_dir or resume=False."
             )
+        if resume and self._manifest_path().exists():
+            self._check_resume_contract(manifest)
         manifest["element_frame"] = self.element_frame["frame"]
         manifest["element_frame_rotation_source"] = self.element_frame["rotation_source"]
         manifest["element_frame_rotation"] = _json_safe(self.element_frame_rotation)

@@ -467,7 +467,8 @@ def load_cached_truth_set(
     rt_by: dict[int, float] = {}
     missing: list[int] = []
     for scenario in scenarios:
-        cached = _load_cached_trajectory(_cached_truth_path(cache_dir, args, scenario.scenario_id))
+        cached = _load_cached_trajectory(_cached_truth_path(cache_dir, args, scenario.scenario_id),
+                                         scenario=scenario)
         if cached is None:
             missing.append(int(scenario.scenario_id))
             continue
@@ -494,7 +495,8 @@ def _cached_gpu_runtime_rows(
         device = ""
         backend = ""
         for scenario in scenarios:
-            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
+            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id),
+                                             scenario=scenario)
             if cached is None:
                 continue
             device = str(cached.metadata.get("device", device))
@@ -542,7 +544,8 @@ def _load_cached_gpu_batch_results(
         cached_by_scenario: list[CachedTrajectory] = []
         complete = True
         for scenario in scenarios:
-            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
+            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id),
+                                             scenario=scenario)
             if cached is None:
                 complete = False
                 break
@@ -622,7 +625,8 @@ def rebuild_gpu_batch_metrics_from_cache(
         disp = _model_display_name(model)
         sample_meta: dict[str, Any] = {}
         for scenario in scenarios:
-            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
+            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id),
+                                             scenario=scenario)
             if cached is None:
                 continue
             if not sample_meta:

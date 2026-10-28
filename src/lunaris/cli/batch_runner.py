@@ -190,7 +190,8 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--ldem-root",    type=str)
     g.add_argument("--albedo-root",  type=str)
     g.add_argument("--ldem-ppd",     type=int)
-    # Accepted but unused in batch path (orbit output goes to batch-output-path)
+    # Batch runs write one archive; --out-dir only relocates its default path
+    # (--batch-output-path wins when both are given).
     g.add_argument("--out-dir",        type=str)
     g.add_argument("--make-3d-plots",  type=str2bool)
     g.add_argument("--downsample-3d",  type=int)
@@ -259,8 +260,10 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--torch-sh-chunk-size", type=int, default=0,
                    help="Samples per GPU chunk on the torch_cuda_sh path (0 = auto/VRAM-aware).")
     g.add_argument("--gpu-device-id",         type=int,   default=0)
-    g.add_argument("--sh-degree",         type=int,   default=10,
-                   help="Requested SH degree. numba_cuda_sh supports degree <=24; higher degrees use torch_cuda_sh (PyTorch CUDA) or fall back explicitly. Never clipped.")
+    g.add_argument("--sh-degree",         type=int,   default=None,
+                   help="Requested SH degree of the batch propagator (default: --degree when "
+                        "given, else 10). numba_cuda_sh supports degree <=24; higher degrees use "
+                        "torch_cuda_sh (PyTorch CUDA) or fall back explicitly. Never clipped.")
     g.add_argument("--gpu-threads-per-block", type=int,   default=128)
     g.add_argument(
         "--batch-gravity-mode",
@@ -273,8 +276,9 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--max-vram-gb",           type=float, default=4.0)
     g.add_argument("--batch-output-format",      choices=["hdf5", "npz"],
                    default="hdf5")
-    g.add_argument("--batch-output-path",        type=str,
-                   default="outputs/ensemble/batch_output.h5")
+    g.add_argument("--batch-output-path",        type=str, default=None,
+                   help="Archive path (default: <--out-dir>/batch_output.h5, else "
+                        "outputs/ensemble/batch_output.h5).")
     g.add_argument(
         "--result-storage-mode",
         choices=["auto", "memory", "disk"],
@@ -294,7 +298,32 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    return _build_parser().parse_args(args=argv)
+    args = _build_parser().parse_args(args=argv)
+    args.sh_degree = _resolve_batch_sh_degree(args)
+    args.batch_output_path = _resolve_batch_output_path(args)
+    return args
+
+
+def _resolve_batch_sh_degree(args: argparse.Namespace) -> int:
+    """The batch kernels evaluate --sh-degree; follow --degree unless it is given.
+
+    With a fixed default of 10, ``--degree 200`` on a GPU path silently ran degree 10.
+    """
+    if getattr(args, "sh_degree", None) is not None:
+        return int(args.sh_degree)
+    if getattr(args, "degree", None) is not None:
+        return int(args.degree)
+    return 10
+
+
+def _resolve_batch_output_path(args: argparse.Namespace) -> str:
+    """Archive path; --out-dir used to be ignored, so a run silently replaced the
+    shared default archive."""
+    if getattr(args, "batch_output_path", None):
+        return str(args.batch_output_path)
+    if getattr(args, "out_dir", None):
+        return str(Path(args.out_dir) / "batch_output.h5")
+    return "outputs/ensemble/batch_output.h5"
 
 
 # =============================================================================

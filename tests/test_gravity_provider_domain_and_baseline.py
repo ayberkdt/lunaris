@@ -281,3 +281,35 @@ def test_base_potential_monopole_when_no_baseline():
     p = np.array([R_MOON + 100e3, 0.0, 0.0], dtype=np.float64)
     u = inst._base_potential(torch.as_tensor(p.reshape(1, 3))).item()
     assert u == pytest.approx(float(MU_MOON) / np.linalg.norm(p), rel=1e-12)
+
+
+def test_float32_artifact_keeps_the_sh_baseline_in_float64():
+    """CPU artifacts load as float32. The SH baseline is ~1e6 times the residual, so
+    evaluating it at float32-rounded positions and summing in float32 quantized the
+    total field to ~6e-8 m/s^2 (measured on Plan D L1000: comparable to the residual
+    above ~300 km). Only the network may run in the model dtype."""
+    N = 6
+    c, s = _synthetic_field(N)
+    gm = GravityModel.from_arrays(degree_max=N, r_ref=float(R_MOON), mu=float(MU_MOON),
+                                  c_coeffs_full=c, s_coeffs_full=s)
+
+    class _Runtime:
+        def predict_residual_potential(self, pos):
+            return np.zeros(np.asarray(pos).reshape(-1, 3).shape[0])
+
+        def predict_residual_accel(self, pos):
+            return np.tile(_C_RES, (np.asarray(pos).reshape(-1, 3).shape[0], 1))
+
+    inst = _bare(
+        _force_runtime=_Runtime(), a_sign=1.0, training_mode="residual_potential", device="cpu",
+        _torch_dtype=torch.float32, baseline_gravity_model=gm, baseline_degree=N,
+        _mu_tensor=torch.tensor(float(MU_MOON), dtype=torch.float32),
+    )
+    pts = _query_points() + np.array([0.0371, -0.0213, 0.0119])  # off the float32 grid
+    exact = np.stack([gm.accel_fixed(p, degree=N) for p in pts]) + _C_RES
+    a_only = inst._acceleration_only_fixed(pts)
+    _u, a_both = inst.predict_potential_and_acceleration_fixed(pts)
+    np.testing.assert_allclose(a_only, exact, rtol=0.0, atol=1e-13)
+    np.testing.assert_array_equal(a_only, a_both)  # both entry points stay bit-identical
+    u_exact = np.array([gm.potential_fixed(p, degree=N) for p in pts])
+    np.testing.assert_allclose(_u.reshape(-1), u_exact, rtol=1e-14)

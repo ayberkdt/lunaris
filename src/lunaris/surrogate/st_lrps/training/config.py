@@ -658,6 +658,26 @@ _TC_DEFAULTS: dict = {
 }
 
 
+def check_residual_block_support(cfg: Any) -> None:
+    """Refuse ``use_residual_blocks=False`` where the network would ignore it.
+
+    The default multi-scale trunk (``n_bands > 1``, ``multiscale_mode='concat_shared'``)
+    always uses residual blocks. Accepting ``--no-residual-blocks`` there trains the
+    residual network under a non-residual label; one A100 ablation run was lost that
+    way (a bit-identical copy of its baseline).
+    """
+    if (
+        not bool(getattr(cfg, "use_residual_blocks", True))
+        and int(getattr(cfg, "n_bands", 1) or 1) > 1
+        and str(getattr(cfg, "multiscale_mode", "concat_shared")).lower() == "concat_shared"
+    ):
+        raise ValueError(
+            "--no-residual-blocks has no effect with --n-bands > 1 and "
+            "--multiscale-mode concat_shared: that trunk always uses residual blocks. "
+            "Use --n-bands 1 or --multiscale-mode additive for a non-residual network."
+        )
+
+
 def _validated_decay_fraction(value: Any) -> float:
     frac = float(value)
     if not (0.0 < frac <= 1.0):
@@ -1847,7 +1867,9 @@ def parse_args() -> TrainConfig:
     # split policy and reproducibility flags; an explicit conflicting flag under
     # --run-preset paper is a hard error (see apply_run_preset).
     apply_run_preset(cfg, detect_explicit_run_preset_fields(argv_tokens))
-    return apply_model_preset(cfg)
+    cfg = apply_model_preset(cfg)
+    check_residual_block_support(cfg)
+    return cfg
 
 
 # =============================================================================
