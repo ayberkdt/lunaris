@@ -205,7 +205,15 @@ def _check_existing_archive(path: Path, overwrite: bool) -> None:
             f"Batch archive {path} already exists. Choose another output path, or set "
             "BatchPropagationConfig.overwrite_output=True to replace it."
         )
-    logger.warning("[BATCH] Existing archive %s will be replaced when this run finishes.", path)
+    # The digest names exactly which archive is lost, so a caller can tell whether
+    # a copy of it exists elsewhere.
+    from lunaris.common.provenance import sha256_file
+
+    logger.warning(
+        "[BATCH] Existing archive %s (sha256 %s) will be replaced when this run finishes.",
+        path,
+        sha256_file(path, suppress_errors=True) or "unreadable",
+    )
 
 
 class _HDF5Writer:

@@ -121,6 +121,7 @@ def _run_optional_output(
     *,
     debug_tracebacks: bool,
     import_warning: str,
+    failures: list[dict[str, str]] | None = None,
 ) -> None:
     try:
         operation()
@@ -128,6 +129,20 @@ def _run_optional_output(
         print(import_warning)
     except Exception as exc:
         _emit_optional_failure(stage, exc, debug_tracebacks=debug_tracebacks)
+        if failures is not None:
+            failures.append({"stage": stage, "error": f"{type(exc).__name__}: {exc}"})
+
+
+def record_output_failures(run_dir: Path, failures: list[dict[str, str]]) -> None:
+    """Add the requested outputs that failed to the run's ``run_diagnostics.json``."""
+    path = run_dir / "run_diagnostics.json"
+    payload: dict[str, Any] = {}
+    if path.is_file():
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+    payload["output_failures"] = failures
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
 
 
 def load_runtime_config(args: Namespace) -> SimConfig:
@@ -256,6 +271,33 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> EphemerisManager:
         spice_cfg,
         auto_fix_kernel_paths=True,
         need_moon_fixed_rotation=True,
+    )
+
+
+def resolve_output_dt(cfg: SimConfig, gravity_core: Any | None, y0: np.ndarray) -> SimConfig:
+    """Replace an unset ``output_dt_s`` by the spacing the propagator would derive.
+
+    Uses the propagator's own time-grid rule (one osculating period of ``y0``
+    over ``samples_per_period``, GM of the gravity model or the point mass), so
+    the value handed to the ephemeris tables is the one the run then uses.
+    """
+    if cfg.time.output_dt_s is not None:
+        return cfg
+    from types import SimpleNamespace
+
+    from lunaris.core.propagation.plans import resolve_time_grid_plan
+
+    plan = resolve_time_grid_plan(
+        dynamics=SimpleNamespace(grav=gravity_core),
+        y0=np.asarray(y0, dtype=np.float64),
+        cfg=cfg.propagator,
+        time_cfg=cfg.time,
+        verbose=False,
+    )
+    if plan.requested_output_dt_s is None:
+        raise ValueError("the time-grid plan derived no output spacing; set --output-dt-s")
+    return replace_sim_config(
+        cfg, time=replace(cfg.time, output_dt_s=float(plan.requested_output_dt_s))
     )
 
 
@@ -655,11 +697,14 @@ def render_optional_3d(result: PropagationResult, cfg: SimConfig, out_dir: Path)
 
     from lunaris.visualization.orbit_animation import render_orbit_animation
 
-    render_orbit_animation(
+    produced = render_orbit_animation(
         result=result,
         config=cfg,
         output_file=str(out_dir / "orbit_3d.mp4"),
     )
+    # The renderer reports its own failures by printing and returning None.
+    if not produced:
+        raise RuntimeError("the renderer produced no file (see the [3D] message above)")
 
 
 def integration_failure_message(result: PropagationResult) -> str | None:
@@ -697,10 +742,6 @@ def run_pipeline(args: Namespace) -> int:
         "Gravity model init failed", lambda: record_effective_sh_degree(cfg, gravity_core)
     )
     surface = _run_stage("Surface grids load failed", lambda: build_surface_provider_if_needed(cfg, args))
-    ephem_mgr = _run_stage(
-        "Ephemeris init failed",
-        lambda: build_ephemeris_if_needed(cfg, topo_requested=surface.topo_requested),
-    )
     y0, orbit_params = _run_stage("Orbit init failed", lambda: resolve_initial_state(cfg, args, mu=mu))
     effective_y0 = _y0_to_array(y0)[:6]
     cfg = replace_sim_config(
@@ -713,6 +754,16 @@ def run_pipeline(args: Namespace) -> int:
             vy=float(effective_y0[4]),
             vz=float(effective_y0[5]),
         ),
+    )
+    # The ephemeris tables need a fixed spacing, so --samples-per-period (which
+    # leaves output_dt_s unset) is turned into one from the initial orbit first.
+    cfg = _run_stage(
+        "Output grid resolution failed",
+        lambda: resolve_output_dt(cfg, gravity_core, effective_y0),
+    )
+    ephem_mgr = _run_stage(
+        "Ephemeris init failed",
+        lambda: build_ephemeris_if_needed(cfg, topo_requested=surface.topo_requested),
     )
     _run_stage("Run summary failed", lambda: print_summary(cfg, orbit_params, y0))
 
@@ -778,6 +829,7 @@ def run_pipeline(args: Namespace) -> int:
         }
     )
 
+    output_failures: list[dict[str, str]] = []
     _run_optional_output(
         "Plot/report failed",
         lambda: render_reports(
@@ -790,6 +842,7 @@ def run_pipeline(args: Namespace) -> int:
         ),
         debug_tracebacks=debug_tracebacks,
         import_warning="[WARN] analysis.reporting.manager not found; skipping plots.",
+        failures=output_failures,
     )
 
     _run_optional_output(
@@ -797,7 +850,24 @@ def run_pipeline(args: Namespace) -> int:
         lambda: render_optional_3d(run.result, cfg, run_dir),
         debug_tracebacks=debug_tracebacks,
         import_warning="[WARN] visualization.orbit_animation not found; skipping 3D render.",
+        failures=output_failures,
     )
+
+    if output_failures:
+        # The propagation itself completed and its record is kept, but a requested
+        # output is missing: say so in the run record and the exit code instead of
+        # closing with "[OK] Finished.".
+        _warn_optional_failure(
+            "Could not record failed outputs",
+            lambda: record_output_failures(run_dir, output_failures),
+        )
+        stages = "; ".join(f["stage"] for f in output_failures)
+        print(
+            f"[FAIL] Propagation completed but {len(output_failures)} requested output(s) "
+            f"failed ({stages}). Run record: {run_dir}",
+            flush=True,
+        )
+        return 1
 
     print("[OK] Finished.")
     return 0

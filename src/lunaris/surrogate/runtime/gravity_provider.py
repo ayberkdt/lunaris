@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,7 @@ import numpy as np
 
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.lunar_data import LUNAR_GM_REL_TOL
+from lunaris.common.provenance import sha256_file
 from lunaris.physics.spherical_harmonics import GravityModel
 from lunaris.physics.torch_spherical_harmonics import TorchSHGravityEvaluator
 from lunaris.surrogate.runtime.artifact import _find_checkpoint_for_run, _is_valid_surrogate_run
@@ -64,6 +65,42 @@ def _module_dtype(model: Any, default: Any | None = None) -> Any:
 
 def _dtype_name(dtype: Any) -> str:
     return str(dtype).replace("torch.", "")
+
+
+# Keys that change the computed field and are read from config.json by the
+# canonical runtime; config.json and the checkpoint must agree on them.
+_PHYSICS_CONFIG_KEYS = frozenset({
+    "resolved_a_sign", "a_sign", "resolved_mu_si", "resolved_r_ref_m",
+    "altitude_min_km", "altitude_max_km", "output_envelope_power",
+})
+
+
+_FILE_SHA_CACHE: dict[tuple[str, int, int], str] = {}
+
+
+def _check_baseline_file_matches_dataset(path: Path, config: Mapping[str, Any], run_dir: Path) -> None:
+    """The SH baseline must be the coefficient file the residual labels came from.
+
+    Configs do not record the baseline path, so the repository default is used;
+    a different file at that path would give SH25(wrong file) + residual silently.
+    Artifacts without a recorded dataset hash are not checked.
+    """
+    contract = config.get("dataset_contract")
+    expected = contract.get("source_gravity_file_sha256") if isinstance(contract, Mapping) else None
+    if not expected:
+        return
+    stat = Path(path).stat()
+    key = (str(Path(path).resolve()), int(stat.st_size), int(stat.st_mtime_ns))
+    actual = _FILE_SHA_CACHE.get(key)
+    if actual is None:
+        actual = str(sha256_file(path))
+        _FILE_SHA_CACHE[key] = actual
+    if actual.lower() != str(expected).lower():
+        raise ValueError(
+            f"[ST-LRPS] SH baseline file {path} (sha256 {actual[:12]}...) is not the gravity "
+            f"file the training labels were computed from (sha256 {str(expected)[:12]}...). "
+            f"Run dir: {run_dir}"
+        )
 
 
 def _cfg_values_differ(file_val: Any, ckpt_val: Any) -> bool:
@@ -251,6 +288,16 @@ class SurrogateGravityModel:
                 for key, ckpt_val in cfg_ckpt.items()
                 if key in cfg_file and _cfg_values_differ(cfg_file[key], ckpt_val)
             )
+            # The canonical runtime reads these from config.json while this provider
+            # takes the checkpoint's value, so a disagreement does not "take
+            # precedence": CPU and GPU paths would use different signs/constants.
+            physics_diverged = [k for k in diverged if k in _PHYSICS_CONFIG_KEYS]
+            if physics_diverged:
+                raise ValueError(
+                    "[ST-LRPS] config.json and the checkpoint's embedded config disagree "
+                    f"on physics key(s) {physics_diverged}; the runtimes would use "
+                    f"different values. Run dir: {run_dir}"
+                )
             if diverged:
                 shown = ", ".join(diverged[:8]) + (", ..." if len(diverged) > 8 else "")
                 warnings.warn(
@@ -395,6 +442,7 @@ class SurrogateGravityModel:
         deg_min, _deg_max = _extract_degree_metadata(config)
         if training_mode == "residual_potential" and int(deg_min) >= 2:
             baseline_path = _resolve_baseline_gravity_path(config)
+            _check_baseline_file_matches_dataset(baseline_path, config, run_dir)
             baseline_model = GravityModel.from_file(
                 str(baseline_path),
                 requested_degree=int(deg_min),
@@ -606,6 +654,28 @@ class SurrogateGravityModel:
             out[idx, :] = self.baseline_gravity_model.accel_fixed(row, degree=degree)
         return torch.as_tensor(out, device=x_phys.device, dtype=x_phys.dtype)
 
+    def _float64_baseline(self, pos: np.ndarray, *, with_potential: bool) -> tuple[np.ndarray | None, np.ndarray]:
+        """SH baseline potential/acceleration at the float64 positions, in float64.
+
+        The baseline is ~1e6 times the residual. Evaluating it at positions rounded
+        to the model dtype and summing in float32 (CPU artifacts load as float32)
+        quantized the total field to ~6e-8 m/s^2, comparable to the residual itself
+        at high altitude. Only the network runs in the model dtype.
+        """
+        if self.baseline_gravity_model is None:
+            # Point-mass baseline from the float64 GM (the model-dtype _mu_tensor is
+            # rounded: 1e-8 relative in float32, 1.6e-8 m/s^2 at 100 km).
+            gm = float(getattr(self, "GM_m3s2", None) or float(self._mu_tensor))
+            r = np.maximum(np.linalg.norm(pos, axis=1, keepdims=True), 1.0)
+            return (gm / r if with_potential else None), -gm * pos / r**3
+        x64 = torch.as_tensor(pos, device=self.device, dtype=torch.float64)
+        a = self._base_acceleration(x64).detach().cpu().numpy().astype(np.float64, copy=False)
+        u = (
+            self._base_potential(x64).detach().cpu().numpy().astype(np.float64, copy=False)
+            if with_potential else None
+        )
+        return u, a
+
     def _base_acceleration_torch(self, x_phys: torch.Tensor) -> torch.Tensor:
         """Return batched SH(degree_min) baseline acceleration on the tensor device."""
 
@@ -657,15 +727,10 @@ class SurrogateGravityModel:
                 self._force_runtime.predict_residual_potential(pos), dtype=np.float64
             ).reshape(-1, 1)
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
-            potential = torch.as_tensor(delta_u_np, device=self.device, dtype=self._torch_dtype)
-            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
             if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-                potential = potential + self._base_potential(x_phys)
-            return (
-                potential.detach().cpu().numpy().astype(np.float64, copy=False),
-                accel.detach().cpu().numpy().astype(np.float64, copy=False),
-            )
+                base_u, base_a = self._float64_baseline(pos, with_potential=True)
+                return delta_u_np + base_u, delta_a_np + base_a
+            return delta_u_np, delta_a_np
         with torch.enable_grad():
             x_scaled = self._scale_x(x_phys).requires_grad_(True)
             u_scaled = self.model(x_scaled)
@@ -682,12 +747,11 @@ class SurrogateGravityModel:
             accel = self.a_sign * grad_u_phys
             potential = self.a_sign * self._unscale_u(u_scaled)
 
-            if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-                potential = potential + self._base_potential(x_phys)
-
         u_np = potential.detach().cpu().numpy().astype(np.float64, copy=False)
         a_np = accel.detach().cpu().numpy().astype(np.float64, copy=False)
+        if self.training_mode == "residual_potential":
+            base_u, base_a = self._float64_baseline(pos, with_potential=True)
+            u_np, a_np = u_np + base_u, a_np + base_a
         return u_np, a_np
 
     def _acceleration_only_fixed(
@@ -715,10 +779,9 @@ class SurrogateGravityModel:
         x_phys = torch.as_tensor(pos, device=self.device, dtype=self._torch_dtype)
         if self._force_runtime is not None:
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
-            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
             if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-            return accel.detach().cpu().numpy().astype(np.float64, copy=False)
+                return delta_a_np + self._float64_baseline(pos, with_potential=False)[1]
+            return delta_a_np
         with torch.enable_grad():
             x_scaled = self._scale_x(x_phys).requires_grad_(True)
             u_scaled = self.model(x_scaled)
@@ -734,10 +797,10 @@ class SurrogateGravityModel:
             grad_u_phys = grad_u_scaled * (self._u_scale / self._x_scale)
             accel = self.a_sign * grad_u_phys
 
-            if self.training_mode == "residual_potential":
-                accel = accel + self._base_acceleration(x_phys)
-
-        return accel.detach().cpu().numpy().astype(np.float64, copy=False)
+        a_np = accel.detach().cpu().numpy().astype(np.float64, copy=False)
+        if self.training_mode == "residual_potential":
+            a_np = a_np + self._float64_baseline(pos, with_potential=False)[1]
+        return a_np
 
     def acceleration_fixed(
         self,

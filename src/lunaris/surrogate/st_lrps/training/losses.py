@@ -404,12 +404,14 @@ class GradNormWeights:
             _new_w_a = self._compute_grad_norm_ratio(loss_u, loss_a, shared_params)
             _gnw_logger = logging.getLogger(__name__)
             if self.last_gradnorm_status == "ok":
+                _configured_w_a = float(self.w_a)
                 self.w_a = _new_w_a
                 self._ntk_done = True   # freeze only on a valid computation
                 _gnw_logger.info(
-                    "NTK-init: w_a=%.4f (norm_u=%.3e, norm_a=%.3e, raw=%.4f; frozen for rest of "
-                    "training)",
+                    "NTK-init: w_a=%.4f (norm_u=%.3e, norm_a=%.3e, raw=%.4f clamped to [%.3g, %.3g]; "
+                    "configured w_a=%.4f replaced; frozen for rest of training)",
                     self.w_a, self.last_norm_u, self.last_norm_a, self.last_raw_ratio,
+                    float(self.w_a_min), float(self.w_a_max), _configured_w_a,
                 )
             else:
                 # Do NOT freeze: retry on a later step once gradients connect.

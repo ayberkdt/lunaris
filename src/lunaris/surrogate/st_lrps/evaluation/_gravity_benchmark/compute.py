@@ -20,7 +20,7 @@ import numpy as np
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.common.frame_policy import (
     FRAME_MODE_IDENTITY_DIAGNOSTIC,
     FRAME_MODE_MOON_FIXED_EPHEMERIS,
@@ -120,6 +120,41 @@ def _gpu_rk4_dt_values(args: argparse.Namespace) -> list[float]:
     if values:
         return values
     return [float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt)]
+
+
+def _is_whole_multiple(value: float, step: float) -> bool:
+    """True when ``value`` is an integer multiple of ``step`` (relative tolerance 1e-9)."""
+    ratio = float(value) / float(step)
+    return abs(ratio - round(ratio)) <= 1e-9 * max(1.0, abs(ratio))
+
+
+def _validate_gpu_batch_timing(args: argparse.Namespace) -> None:
+    """Refuse a GPU-batch time grid the fixed-step propagator cannot honour.
+
+    The output grid has ``round(duration / dt_out)`` snapshots and every RK4 step
+    must land on an output time, so the duration must be a whole number of
+    ``--dt-out`` steps and every RK4 step must divide ``--dt-out``. Rounding
+    either silently produces trajectories of another length or step than the
+    labels and metadata state.
+    """
+    dt_out = float(args.dt_out)
+    if dt_out <= 0.0:
+        raise ValueError("--dt-out must be positive.")
+    duration_s = float(args.duration_days) * DAY_S
+    if duration_s <= 0.0 or not _is_whole_multiple(duration_s, dt_out):
+        raise ValueError(
+            f"--duration-days {args.duration_days:g} ({duration_s:g} s) is not a multiple of "
+            f"--dt-out {dt_out:g} s ({duration_s / dt_out:.4f} output steps); every GPU-batch "
+            "row would fail time coverage. Choose a duration that is a whole number of "
+            "--dt-out steps."
+        )
+    for rk4_dt_s in _gpu_rk4_dt_values(args):
+        if rk4_dt_s > dt_out or not _is_whole_multiple(dt_out, rk4_dt_s):
+            raise ValueError(
+                f"rk4 step {rk4_dt_s:g} s does not divide --dt-out {dt_out:g} s; the step would be "
+                "silently rounded while the labels and metadata keep the requested value. "
+                "Choose a step that divides --dt-out exactly."
+            )
 
 
 def _build_gpu_batch_tasks(gpu_models: list[str], args: argparse.Namespace) -> list[GpuBatchTask]:
@@ -337,19 +372,22 @@ def propagate_gpu_batch_model(
 
     if rk4_dt_s <= 0.0 or output_dt_s <= 0.0:
         raise ValueError("rk4_dt_s and output_dt_s must be positive.")
-    if rk4_dt_s > output_dt_s:
-        print(f"[gpu-batch] WARNING: rk4_dt_s={rk4_dt_s} > output_dt_s={output_dt_s}; "
-              "using output_dt_s as the effective RK4 step.", flush=True)
-        rk4_dt_s = output_dt_s
-    steps_per_snap = max(1, round(output_dt_s / rk4_dt_s))
+    # The recorded step and snapshot grid must be the ones used: refuse, never round.
+    if rk4_dt_s > output_dt_s or not _is_whole_multiple(output_dt_s, rk4_dt_s):
+        raise ValueError(
+            f"rk4_dt_s={rk4_dt_s:g} does not divide output_dt_s={output_dt_s:g}; refusing to "
+            "round the step while the labels and metadata keep the requested value."
+        )
+    if duration_s <= 0.0 or not _is_whole_multiple(duration_s, output_dt_s):
+        raise ValueError(
+            f"duration_s={duration_s:g} is not a multiple of output_dt_s={output_dt_s:g}; "
+            "the snapshot grid would not cover the requested duration."
+        )
+    steps_per_snap = round(output_dt_s / rk4_dt_s)
     dt_eff = output_dt_s / steps_per_snap
-    frac = output_dt_s / rk4_dt_s
-    if abs(frac - round(frac)) > 1e-6:
-        print(f"[gpu-batch] WARNING: output_dt_s={output_dt_s} is not divisible by "
-              f"rk4_dt_s={rk4_dt_s}; effective dt={dt_eff:.6f}s.", flush=True)
 
     n_scenarios = int(y0_batch.shape[0])
-    n_snaps = max(1, round(duration_s / output_dt_s))
+    n_snaps = round(duration_s / output_dt_s)
     t_out = np.linspace(0.0, n_snaps * output_dt_s, n_snaps + 1, dtype=np.float64)
 
     requested_frame_mode = str(frame_mode)
@@ -579,6 +617,15 @@ def _validate_sampling_bounds(args: argparse.Namespace) -> None:
         raise ValueError("--altitude-min-km must be <= --altitude-max-km")
     if float(args.inc_min_deg) > float(args.inc_max_deg):
         raise ValueError("--inc-min-deg must be <= --inc-max-deg")
+    if str(args.scenario_mode) == "bounded_keplerian" and (
+        float(args.ecc_min) != 0.0 or float(args.ecc_max) != 0.0
+    ):
+        raise ValueError(
+            "--ecc-min/--ecc-max are not used with --scenario-mode bounded_keplerian: the "
+            "eccentricity is derived from the periapsis/apoapsis altitudes drawn within "
+            "--altitude-min-km/--altitude-max-km. Remove the eccentricity bounds or use "
+            "--scenario-mode near_circular_altitude."
+        )
     if str(args.scenario_mode) == "near_circular_altitude":
         if float(args.ecc_min) < 0.0 or float(args.ecc_max) >= 1.0:
             raise ValueError("near_circular_altitude requires 0 <= --ecc-min <= --ecc-max < 1")

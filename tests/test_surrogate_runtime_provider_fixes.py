@@ -150,6 +150,10 @@ def _points_in_envelope(n: int, seed: int = 0) -> np.ndarray:
 # 1) acceleration-only CPU path
 # ---------------------------------------------------------------------------
 
+# One float32 ulp of a ~1e-4 m/s^2 residual is ~1e-11 m/s^2.
+_ONE_POINT_ATOL = 1e-10
+
+
 def test_acceleration_only_path_is_bit_identical_canonical(tmp_path, monkeypatch):
     provider = SurrogateGravityModel.from_model_dir(
         _make_contract_run(tmp_path), device_preference="cpu"
@@ -171,7 +175,10 @@ def test_acceleration_only_path_is_bit_identical_canonical(tmp_path, monkeypatch
 
     assert np.any(a_batch != 0.0)
     assert np.array_equal(a_batch, a_full)
-    assert np.array_equal(a_single, a_full[7])
+    # One point vs a 64-row batch runs the float32 network with another BLAS
+    # kernel: the residual can differ by one float32 ulp (~7e-12 m/s^2 here).
+    # The float64 SH baseline no longer hides that by rounding the total.
+    np.testing.assert_allclose(a_single, a_full[7], rtol=0.0, atol=_ONE_POINT_ATOL)
     assert a_batch.shape == (64, 3) and a_single.shape == (3,)
     assert calls["potential"] == 0  # the discarded potential is no longer computed
 
@@ -188,7 +195,7 @@ def test_acceleration_only_path_is_bit_identical_legacy(tmp_path, monkeypatch):
     a_batch = provider.acceleration_fixed_batch(pts)
     assert np.any(a_batch != 0.0)
     assert np.array_equal(a_batch, a_full)
-    assert np.array_equal(provider.acceleration_fixed(pts[3]), a_full[3])
+    np.testing.assert_allclose(provider.acceleration_fixed(pts[3]), a_full[3], rtol=0.0, atol=_ONE_POINT_ATOL)
 
 
 # ---------------------------------------------------------------------------

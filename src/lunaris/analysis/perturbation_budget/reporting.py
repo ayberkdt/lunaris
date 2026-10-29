@@ -187,6 +187,7 @@ def _summary_markdown(
     warnings: Sequence[str],
     *,
     gravity_source: str,
+    geometry_source: str,
     runtime_s: float,
 ) -> str:
     ranking = _median_force_ranking(budget_rows)
@@ -199,8 +200,8 @@ def _summary_markdown(
         "## Configuration",
         "",
         f"- Gravity source: `{gravity_source}`",
-        # Sampling has only synthetic Sun/Earth geometry (use_ephemeris=True is refused).
-        "- Geometry source: `synthetic_geometry`",
+        f"- Geometry source: `{geometry_source}`",
+        f"- Epochs: {', '.join(config.epochs_utc)}",
         f"- Git commit: `{_git_commit()}`",
         f"- Runtime: {runtime_s:.3f} s",
         f"- Altitudes km: {', '.join(str(v) for v in config.altitudes_km)}",
@@ -237,7 +238,13 @@ def _summary_markdown(
             "",
             "## Limitations",
             "",
-            "- Sun/Earth geometry is deterministic and synthetic; ephemeris-backed geometry is not implemented.",
+            (
+                "- Sun/Earth geometry is SPICE-sampled at each epoch (Moon-centered, MOON_PA axes, no aberration "
+                "correction); the orbit is a circular state defined in those axes."
+                if geometry_source != "synthetic_geometry"
+                else "- Sun/Earth geometry is deterministic and synthetic (epochs are labels only); "
+                "use geometry_mode='ephemeris' for date-dependent geometry."
+            ),
             "- If no gravity model file is supplied, synthetic coefficients are used only for smoke testing and workflow validation.",
             "- Propagation-level ablation and detailed runtime benchmarking are scaffolded but not run by the MVP.",
             "",
@@ -258,8 +265,9 @@ def run_perturbation_budget(config: PerturbationBudgetConfig) -> PerturbationBud
     out = config.output_path
     out.mkdir(parents=True, exist_ok=True)
 
-    samples = generate_sample_states(config)
     gravity_info = load_gravity_model_for_budget(config)
+    samples = generate_sample_states(config)
+    geometry_source = samples[0].geometry_source if samples else "synthetic_geometry"
     budget_rows, sh_by_sample, forces_by_sample = compute_acceleration_budget(config, samples, gravity_info)
     sh_rows = compute_gravity_degree_sensitivity(config, samples, sh_by_sample, forces_by_sample)
     uncertainty_rows = compute_uncertainty_budget(config, samples, forces_by_sample)
@@ -278,21 +286,27 @@ def run_perturbation_budget(config: PerturbationBudgetConfig) -> PerturbationBud
         "runtime_budget": out / "runtime_budget.csv",
         "summary": out / "perturbation_budget_summary.md",
     }
-    _write_csv(paths["perturbation_budget"], budget_rows)
-    _write_csv(paths["gravity_degree_sensitivity"], sh_rows)
-    _write_csv(paths["force_model_uncertainty_budget"], uncertainty_rows_with_comparisons)
-    _write_csv(paths["recommended_gravity_degree_by_altitude"], recommendation_rows)
-    _write_csv(paths["propagation_ablation"], propagation_ablation_not_run())
+    def provenance(rows: Iterable[Mapping[str, object]]) -> list[dict[str, object]]:
+        # Every CSV states which gravity coefficients and Sun/Earth geometry produced it.
+        return [{**row, "gravity_source": gravity_info.source, "geometry_source": geometry_source} for row in rows]
+
+    _write_csv(paths["perturbation_budget"], provenance(budget_rows))
+    _write_csv(paths["gravity_degree_sensitivity"], provenance(sh_rows))
+    _write_csv(paths["force_model_uncertainty_budget"], provenance(uncertainty_rows_with_comparisons))
+    _write_csv(paths["recommended_gravity_degree_by_altitude"], provenance(recommendation_rows))
+    _write_csv(paths["propagation_ablation"], provenance(propagation_ablation_not_run()))
     _write_csv(
         paths["runtime_budget"],
-        [
-            {
-                "stage": "instantaneous_budget",
-                "sample_count": len(samples),
-                "wall_time_s": runtime_s,
-                "status": "completed",
-            }
-        ],
+        provenance(
+            [
+                {
+                    "stage": "instantaneous_budget",
+                    "sample_count": len(samples),
+                    "wall_time_s": runtime_s,
+                    "status": "completed",
+                }
+            ]
+        ),
     )
     (out / "config.json").write_text(json.dumps(config.to_dict(), indent=2), encoding="utf-8")
     paths["summary"].write_text(
@@ -302,6 +316,7 @@ def run_perturbation_budget(config: PerturbationBudgetConfig) -> PerturbationBud
             recommendation_rows,
             warnings,
             gravity_source=gravity_info.source,
+            geometry_source=geometry_source,
             runtime_s=runtime_s,
         ),
         encoding="utf-8",

@@ -173,7 +173,7 @@ class _StreamingMetrics:
             np.linalg.norm(a_pred, axis=1).clip(1e-30)
         )
         cos_sim = np.clip(cos_sim, -1.0, 1.0)
-        ang_rad = np.arccos(cos_sim)
+        ang_rad = vector_angle_rad(a_pred, a_true)
         self.sum_ang_rad += float(ang_rad.sum())
         self.sum_sq_ang_rad += float((ang_rad ** 2).sum())
         self.sum_cos_sim += float(cos_sim.sum())
@@ -548,6 +548,51 @@ def reload_model_from_run_dir(
     )
 
 
+def _explicit_checkpoint_file(path_like: Path | str) -> Path | None:
+    """The resolved path when ``path_like`` names a ``.pt`` checkpoint file, else ``None``."""
+    path = Path(path_like).expanduser().resolve()
+    return path if path.is_file() and path.suffix.lower() == ".pt" else None
+
+
+_DEFAULT_PLOT_SAMPLE_LIMIT = 500_000
+
+
+def _resolve_plot_limit(max_points_for_plots: int | None, plot_sample_limit: int | None) -> int:
+    """One plot-buffer cap from the two aliases; conflicting explicit values are an error."""
+    given = {
+        flag: int(value)
+        for flag, value in (
+            ("--max-points-for-plots", max_points_for_plots),
+            ("--plot-sample-limit", plot_sample_limit),
+        )
+        if value is not None
+    }
+    for flag, value in given.items():
+        if value < 1:
+            raise ValueError(f"{flag} must be >= 1, got {value}")
+    if len(set(given.values())) > 1:
+        raise ValueError(
+            "--max-points-for-plots and --plot-sample-limit both cap the plot buffers but "
+            f"disagree ({given}); pass only one of them."
+        )
+    return next(iter(given.values()), _DEFAULT_PLOT_SAMPLE_LIMIT)
+
+
+def _resolve_h5_dataset_name(path: Path, requested: str | None) -> str:
+    """``requested`` when it exists in ``path``; auto-pick only when no name was given."""
+    if requested is None:
+        return _discover_h5_dataset_name(path, preferred="data")
+    h5py = _load_h5py()
+    with h5py.File(path, "r") as handle:
+        if requested in handle and isinstance(handle[requested], h5py.Dataset):
+            return requested
+        available = sorted(str(k) for k, v in handle.items() if isinstance(v, h5py.Dataset))
+    raise ValueError(
+        f"HDF5 dataset {requested!r} not found in {path}. Available datasets: {available}. "
+        "Omit --dataset-name to auto-pick."
+    )
+
+
 def _discover_h5_dataset_name(path: Path, preferred: str = "data") -> str:
     h5py = _load_h5py()
     with h5py.File(path, "r") as handle:
@@ -895,9 +940,24 @@ def vector_cosine_and_angle_deg(
     t = np.asarray(a_true, dtype=np.float64)
     dot = np.sum(p * t, axis=1)
     denom = np.linalg.norm(p, axis=1) * np.linalg.norm(t, axis=1)
-    cossim = np.where(denom > 0.0, dot / np.maximum(denom, np.finfo(np.float64).tiny), 1.0)
+    cossim = np.where(denom > 0.0, dot / np.maximum(denom, np.finfo(np.float64).tiny), 0.0)
     cossim = np.clip(cossim, -1.0, 1.0)
-    return cossim, np.degrees(np.arccos(cossim))
+    return cossim, np.degrees(vector_angle_rad(p, t))
+
+
+def vector_angle_rad(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Angle between row vectors as atan2(|a x b|, a . b), in float64.
+
+    arccos of the cosine loses the angle below ~1e-7 rad (it returned exactly 0 at
+    1e-8 rad) and a zero vector made it 0 deg, so a network predicting nothing
+    looked perfectly aligned. A zero vector has no direction: its angle is 90 deg,
+    the same as the streaming accumulator reports.
+    """
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    ang = np.arctan2(np.linalg.norm(np.cross(a, b), axis=1), np.sum(a * b, axis=1))
+    zero = (np.linalg.norm(a, axis=1) == 0.0) | (np.linalg.norm(b, axis=1) == 0.0)
+    return np.where(zero, 0.5 * np.pi, ang)
 
 
 def altitude_km(x: np.ndarray, r_ref_m: float) -> np.ndarray:
@@ -940,8 +1000,10 @@ def _iter_altitude_bins(
     """Yield ``(lo_km, hi_km, mask, count)`` for each non-empty altitude bin.
 
     Bin edges snap outward to multiples of ``bin_km`` and bins are half-open
-    ``[lo, hi)``. Yields nothing when the altitudes have no finite extent, so
-    callers fall through to their own empty-result handling.
+    ``[lo, hi)`` except the last, which is closed so a maximum that falls on an
+    edge (1000 km for the shell) is counted. Yields nothing when the altitudes
+    have no finite extent, so callers fall through to their own empty-result
+    handling.
     """
     lo = float(np.nanmin(alt_km)) if alt_km.size else float("nan")
     hi = float(np.nanmax(alt_km)) if alt_km.size else float("nan")
@@ -953,6 +1015,8 @@ def _iter_altitude_bins(
     for i in range(len(edges) - 1):
         a0, a1 = edges[i], edges[i + 1]
         mask = (alt_km >= a0) & (alt_km < a1)
+        if i == len(edges) - 2:
+            mask |= alt_km == a1
         n = int(np.sum(mask))
         if n == 0:
             continue
@@ -1759,6 +1823,7 @@ def _finalize_evaluation_report(
     alt_bin_km,
     alt_km_all,
     ang_deg_all,
+    weights_source,
 ):
     """Assemble the evaluation report, write JSON/CSV artifacts, and print the summary.
 
@@ -1769,6 +1834,7 @@ def _finalize_evaluation_report(
     """
     report = {
         "metrics": metrics,
+        "weights_source": weights_source,
         "evaluation_mode": evaluation_mode,
         "memory_safe": streaming,
         "n_evaluated": int(total),
@@ -1867,6 +1933,7 @@ def _finalize_evaluation_report(
             "checkpoint_hash": recon_report.get("checkpoint_hash"),
             "checkpoint_kind": recon_report.get("checkpoint_kind"),
             "checkpoint_epoch": recon_report.get("checkpoint_epoch"),
+            "weights_source": weights_source,
             "dataset_path": str(data_path),
             "metrics_path": str(metrics_path),
             "report_path": str(report_path),
@@ -1900,22 +1967,35 @@ def evaluate(
     a_sign: float,
     r_ref_m: float,
     alt_bin_km: float,
-    dataset_name: str = "data",
+    dataset_name: str | None = None,
     start: int = 0,
     end: int | None = None,
-    max_points_for_plots: int = 500_000,
+    max_points_for_plots: int | None = None,
     streaming: bool = False,
-    topk_errors: int = 0,
+    topk_errors: int = 100,
     save_error_points: Path | None = None,
-    plot_sample_limit: int = 500_000,
+    plot_sample_limit: int | None = None,
     allow_config_mismatch: bool = False,
     prefer: str = "best",
     exclude_train_indices: Path | None = None,
     use_ema: bool = False,
     max_samples: int | None = None,
 ) -> None:
+    """Evaluate a run.
+
+    ``model_dir`` is a run directory, or a ``.pt`` checkpoint file to evaluate
+    exactly (``prefer`` then does not apply). ``dataset_name=None`` prefers
+    ``data`` and otherwise auto-picks the first 2-D HDF5 dataset; an explicit name
+    that is absent is an error. ``topk_errors=0`` disables top-K tracking.
+    """
+    _explicit_ckpt = _explicit_checkpoint_file(model_dir)
     model_dir = resolve_run_dir(model_dir)
     layout = make_run_layout(model_dir)
+    if int(topk_errors) < 0:
+        raise ValueError(f"topk_errors must be >= 0, got {topk_errors}")
+    if save_error_points is not None and int(topk_errors) == 0:
+        raise ValueError("--save-error-points requires --topk-errors > 0 (0 disables top-K tracking).")
+    _plot_limit = _resolve_plot_limit(max_points_for_plots, plot_sample_limit)
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1967,7 +2047,10 @@ def evaluate(
 
     # Read dataset metadata before checkpoint deserialization so cheap contract
     # mismatches fail early, even when a checkpoint file is missing or corrupt.
-    ds_meta = _read_eval_dataset_meta(data_path, dataset_name=dataset_name)
+    ds_meta = _read_eval_dataset_meta(data_path, dataset_name=dataset_name or "data")
+    dset_name: str | None = None
+    if Path(data_path).suffix.lower() in (".h5", ".hdf5"):
+        dset_name = _resolve_h5_dataset_name(Path(data_path), dataset_name)
     if layout.config_json.exists():
         cfg_preflight = json.loads(layout.config_json.read_text(encoding="utf-8"))
         if isinstance(cfg_preflight, Mapping):
@@ -1976,13 +2059,18 @@ def evaluate(
     _prefer = str(prefer or "best").strip().lower()
     if _prefer not in ("best", "last"):
         _prefer = "best"
-    ckpt_path, _ckpt_full = load_best_or_last(layout, prefer=_prefer, device=device)
+    if _explicit_ckpt is not None:
+        ckpt_path, _ckpt_full = _explicit_ckpt, load_checkpoint(_explicit_ckpt, device)
+    else:
+        ckpt_path, _ckpt_full = load_best_or_last(layout, prefer=_prefer, device=device)
     model, scaler, cfg, _recon_report = reload_model_from_artifact_run_dir(
         model_dir,
         device,
         prefer=_prefer,
         allow_config_mismatch=allow_config_mismatch,
+        checkpoint_path=_explicit_ckpt,
     )
+    weights_source = "ema" if use_ema else "raw"
     if use_ema:
         ema_state = _ckpt_full.get("ema_state_dict") if isinstance(_ckpt_full, Mapping) else None
         if not isinstance(ema_state, Mapping):
@@ -2210,13 +2298,7 @@ def evaluate(
     retained_limit = None if end is not None else max_samples
 
     if suffix in [".h5", ".hdf5"]:
-        dset_name = dataset_name
-        h5py = _load_h5py()
-        try:
-            with h5py.File(data_path, "r") as f:
-                _ = f[dset_name]
-        except Exception:
-            dset_name = _discover_h5_dataset_name(data_path, preferred=dataset_name)
+        assert dset_name is not None  # resolved above for every HDF5 path
         batch_iter = iter_h5_batches(
             data_path,
             dset_name,
@@ -2237,9 +2319,6 @@ def evaluate(
         )
     else:
         raise ValueError("Unsupported data format. Use .h5/.hdf5 or .pt")
-
-    # Resolve effective plot sample limit
-    _plot_limit = int(max(1, plot_sample_limit if plot_sample_limit > 0 else max_points_for_plots))
 
     # Streaming mode: use _StreamingMetrics for online accumulation without keeping full arrays
     # Non-streaming mode: accumulate full arrays (existing behaviour)
@@ -2264,9 +2343,15 @@ def evaluate(
             # No recorded envelope: keep the old estimate; the under/overflow
             # counters in the report show whether it actually covered the data.
             _alt_lo_km, _alt_hi_km = 0.0, max(1.0, float(alt_bin_km) * 20)
-        _sm = _StreamingMetrics(n_alt_bins=20, alt_min_km=_alt_lo_km, alt_max_km=_alt_hi_km)
-    _effective_topk = int(topk_errors) if int(topk_errors) > 0 else 100
-    _tk = _TopKErrors(_effective_topk)
+        # Bins are exactly alt_bin_km wide; the last one is extended to a full bin.
+        if not (math.isfinite(alt_bin_km) and alt_bin_km > 0):
+            raise ValueError(f"alt_bin_km must be a positive finite width, got {alt_bin_km}")
+        _n_alt_bins = max(1, math.ceil((_alt_hi_km - _alt_lo_km) / float(alt_bin_km) - 1e-9))
+        _alt_hi_km = _alt_lo_km + _n_alt_bins * float(alt_bin_km)
+        _sm = _StreamingMetrics(n_alt_bins=_n_alt_bins, alt_min_km=_alt_lo_km, alt_max_km=_alt_hi_km)
+    _effective_topk = int(topk_errors)
+    if _effective_topk > 0:
+        _tk = _TopKErrors(_effective_topk)
 
     u_true_all: list[np.ndarray] = []
     u_pred_all: list[np.ndarray] = []
@@ -2376,8 +2461,9 @@ def evaluate(
     inference_samples_per_sec = float(total / inference_time_s)
 
     # Export top-K error points if requested
-    _topk_export_path: Path | None = Path(save_error_points).resolve() if save_error_points is not None else (out_dir / "topk_worst.csv")
-    if _tk is not None and _topk_export_path is not None:
+    _topk_export_path: Path | None = None
+    if _tk is not None:
+        _topk_export_path = Path(save_error_points).resolve() if save_error_points is not None else (out_dir / "topk_worst.csv")
         _topk_export_path.parent.mkdir(parents=True, exist_ok=True)
         _tk.save_csv(_topk_export_path)
         print(f"[eval] Top-{_effective_topk} error points saved to {_topk_export_path}")
@@ -2399,6 +2485,9 @@ def evaluate(
                 "exact full-dataset percentiles skipped"
             ],
             "altitude_bin_range_km": _sm_res["alt_bin_range_km"],
+            "altitude_bin_width_km": float(alt_bin_km),
+            "altitude_bin_count": _sm_res["alt_bin_count"],
+            "altitude_bin_rmse_a_vec": _sm_res["alt_bin_rmse_a_vec"],
             "altitude_underflow_count": _sm_res["alt_underflow_count"],
             "altitude_overflow_count": _sm_res["alt_overflow_count"],
             "U": {
@@ -2497,7 +2586,7 @@ def evaluate(
         # Task 5: eval_report.json is the primary output (consistent with non-streaming mode).
         # evaluate_metrics.json is written as a compatibility alias.
         report_path = out_dir / "eval_report.json"
-        report_payload = {"metrics": metrics}
+        report_payload = {"metrics": metrics, "weights_source": weights_source}
         report_path.write_text(json.dumps(report_payload, indent=2))
         print(f"[eval] Streaming report saved to {report_path}")
         # Compatibility alias
@@ -2525,6 +2614,7 @@ def evaluate(
                 "checkpoint_hash": _recon_report.get("checkpoint_hash"),
                 "checkpoint_kind": _recon_report.get("checkpoint_kind"),
                 "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
+                "weights_source": weights_source,
                 "dataset_path": str(data_path),
                 "metrics_path": str(metrics_path),
                 "report_path": str(report_path),
@@ -2585,12 +2675,7 @@ def evaluate(
         a_base_np = compute_base_accel(x_t_all_for_base, mu_si, degree_min=-1).cpu().numpy()
         a_total_pred_np = a_base_np.astype(np.float64) + a_pred_vec_np.astype(np.float64)
         a_total_true_np = a_base_np.astype(np.float64) + a_true_vec_np.astype(np.float64)
-        eps_ang = 1e-18
-        dot_tot = np.sum(a_total_pred_np * a_total_true_np, axis=1)
-        na_tot_p = np.linalg.norm(a_total_pred_np, axis=1)
-        na_tot_t = np.linalg.norm(a_total_true_np, axis=1)
-        cossim_tot = np.clip(dot_tot / np.maximum(na_tot_p * na_tot_t, eps_ang), -1.0, 1.0)
-        ang_total_deg = np.degrees(np.arccos(cossim_tot))
+        ang_total_deg = np.degrees(vector_angle_rad(a_total_pred_np, a_total_true_np))
         total_ang_note = "point_mass_base_approximation"
 
     # ---- Norm-binned angular error by ||a_true|| magnitude ----
@@ -2925,8 +3010,7 @@ def evaluate(
     if suffix in [".h5", ".hdf5"]:
         h5py = _load_h5py()
         with h5py.File(data_path, "r") as f:
-            dsn = _discover_h5_dataset_name(data_path, preferred=dataset_name)
-            x_for_bench = np.asarray(f[dsn][0:bench_n, 0:3], dtype=np.float32, order="C")
+            x_for_bench = np.asarray(f[dset_name][0:bench_n, 0:3], dtype=np.float32, order="C")
     else:
         obj = safe_torch_load(data_path, map_location="cpu")
         t = obj["data"] if isinstance(obj, dict) and "data" in obj else obj
@@ -2952,6 +3036,7 @@ def evaluate(
         cpu,
         prefer=_prefer,
         allow_config_mismatch=allow_config_mismatch,
+        checkpoint_path=_explicit_ckpt,
     )
 
     throughput_points_per_sec["cpu"] = benchmark_throughput(
@@ -3005,6 +3090,7 @@ def evaluate(
         alt_bin_km=alt_bin_km,
         alt_km_all=alt_km_all,
         ang_deg_all=ang_deg_all,
+        weights_source=weights_source,
     )
 
 
@@ -3033,7 +3119,7 @@ def _a_sign_arg(text: str) -> float:
 def parse_args() -> argparse.Namespace:
     # allow_abbrev=False: a prefix of a flag must not silently bind to another option.
     ap = argparse.ArgumentParser(allow_abbrev=False)
-    ap.add_argument("--model-dir", "--run-dir", dest="model_dir", default=None, help="Directory containing config.json, scaler.json, and checkpoints/ckpt_best.pt or ckpt_last.pt. If omitted, auto-detects the newest lunar-compatible run near this script or via env ST_LRPS_MODEL_DIR.")
+    ap.add_argument("--model-dir", "--run-dir", dest="model_dir", default=None, help="Directory containing config.json, scaler.json, and checkpoints/ckpt_best.pt or ckpt_last.pt, or a .pt checkpoint file to evaluate exactly (--checkpoint-prefer is then ignored). If omitted, auto-detects the newest lunar-compatible run near this script or via env ST_LRPS_MODEL_DIR.")
     ap.add_argument("--data", default=None, help="Test dataset path (.h5/.hdf5/.pt). If omitted, auto-detect the newest lunar-compatible dataset near model-dir.")
     ap.add_argument("--train-sample-data", default=None, help="Optional small training-sample dataset for publication summary.")
     ap.add_argument("--val-data", default=None, help="Optional validation dataset. Evaluated into <out>/val when provided.")
@@ -3042,7 +3128,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ood-low-data", default=None, help="Optional low-altitude OOD dataset. Evaluated into <out>/ood_low.")
     ap.add_argument("--ood-high-data", default=None, help="Optional high-altitude OOD dataset. Evaluated into <out>/ood_high.")
     ap.add_argument("--use-config-datasets", action="store_true", help="Use test_data_path / ood_data_path from config.json when explicit paths are not supplied.")
-    ap.add_argument("--dataset-name", default="data", help="HDF5 dataset name (default: data, auto-fallback to first dataset).")
+    ap.add_argument("--dataset-name", default=None, help="HDF5 dataset name; an absent name is an error. If omitted, uses 'data' when present, else the first 2-D dataset.")
     ap.add_argument("--out", "--output-dir", dest="out", default=None, help="Output directory (default: <run-dir>/evals/eval_<dataset>_<timestamp>).")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     ap.add_argument("--batch-size", type=int, default=8192)
@@ -3066,17 +3152,18 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--checkpoint-prefer", choices=["best", "last"], default="best",
                     help="Which checkpoint to evaluate when both exist (default: best). "
                          "Periodic evaluation during training uses 'last'.")
-    ap.add_argument("--max-points-for-plots", type=int, default=500_000, help="Cap number of points kept for plots.")
+    ap.add_argument("--max-points-for-plots", type=int, default=None, help="Cap number of points kept for plots (default: 500000). Alias of --plot-sample-limit; giving both with different values is an error.")
     ap.add_argument("--streaming", action="store_true", default=False,
                     help="Use streaming (online) evaluation mode. Does not accumulate full arrays in memory. "
                          "Suitable for very large evaluation sets.")
-    ap.add_argument("--topk-errors", type=int, default=0,
-                    help="Track the top-K worst samples by acceleration error. "
-                         "Exported to CSV when --save-error-points is set.")
+    ap.add_argument("--topk-errors", type=int, default=100,
+                    help="Track the top-K worst samples by acceleration error (default: 100; "
+                         "0 disables). Written to <out>/topk_worst.csv, or to --save-error-points.")
     ap.add_argument("--save-error-points", type=str, default=None,
                     help="Path to save top-K error points CSV (requires --topk-errors > 0).")
-    ap.add_argument("--plot-sample-limit", type=int, default=500_000,
-                    help="Maximum number of points kept in plot buffers (default: 500000).")
+    ap.add_argument("--plot-sample-limit", type=int, default=None,
+                    help="Maximum number of points kept in plot buffers (default: 500000). "
+                         "Alias of --max-points-for-plots.")
     ap.add_argument("--allow-config-mismatch", action="store_true", default=False,
                     help="Permit evaluation when config.json and the checkpoint disagree on "
                          "architecture-critical fields. Unsafe: predictions may be meaningless.")
@@ -3171,7 +3258,7 @@ def _summary_row_from_report(split: str, report_path: Path, alt_bin_km: float) -
         "cross_mae": directional.get("accel_err_cross_radial_mae"),
         "altitude_min_km": metrics.get("altitude_min_km"),
         "altitude_max_km": metrics.get("altitude_max_km"),
-        "altitude_bin_width_km": float(alt_bin_km),
+        "altitude_bin_width_km": float(metrics.get("altitude_bin_width_km", alt_bin_km)),
         "inference_samples_per_sec": metrics.get("inference_samples_per_sec"),
         "inference_time_s": metrics.get("inference_time_s"),
         "device": metrics.get("device"),
@@ -3310,8 +3397,11 @@ def _write_publication_eval_suite(
     ]
     _write_rows_csv(out_root / "summary_metrics.csv", summary_rows, summary_fields)
     (out_root / "summary_metrics.json").write_text(json.dumps(summary_rows, indent=2), encoding="utf-8")
+    # Suite files carry a ``_suite`` marker / distinct name: the primary split is
+    # evaluated into ``out_root`` itself, so ``eval_manifest.json`` and
+    # ``altitude_binned_metrics.csv`` there are that split's own artifacts.
     _write_rows_csv(
-        out_root / "altitude_binned_metrics.csv",
+        out_root / "altitude_binned_metrics_suite.csv",
         altitude_rows,
         [
             "split", "altitude_bin_min_km", "altitude_bin_max_km", "n_samples",
@@ -3345,7 +3435,7 @@ def _write_publication_eval_suite(
         "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "summary_metrics_json": str(out_root / "summary_metrics.json"),
         "summary_metrics_csv": str(out_root / "summary_metrics.csv"),
-        "altitude_binned_metrics_csv": str(out_root / "altitude_binned_metrics.csv"),
+        "altitude_binned_metrics_csv": str(out_root / "altitude_binned_metrics_suite.csv"),
         "angular_error_metrics_csv": str(out_root / "angular_error_metrics.csv"),
         "radial_cross_metrics_csv": str(out_root / "radial_cross_metrics.csv"),
         "worst_cases_csv": str(out_root / "worst_cases.csv"),
@@ -3354,7 +3444,7 @@ def _write_publication_eval_suite(
             for split, data_path, eval_dir in completed_jobs
         ],
     }
-    (out_root / "eval_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (out_root / "eval_suite_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def main() -> None:
@@ -3388,6 +3478,12 @@ def main() -> None:
     if not model_dir.exists():
         raise FileNotFoundError(model_dir)
 
+    # A ``--model-dir <file>.pt`` evaluates exactly that checkpoint; evaluate()
+    # gets the original path (``model_dir`` above is already its run directory).
+    eval_model_ref = Path(args.model_dir).resolve() if args.model_dir else model_dir
+    if eval_model_ref.suffix.lower() == ".pt" and not eval_model_ref.is_file():
+        raise FileNotFoundError(eval_model_ref)
+
     # --- data auto-detect (existing behavior) ---
     data_path = Path(args.data).resolve() if args.data else None
     if data_path is None:
@@ -3409,7 +3505,7 @@ def main() -> None:
     # --- reference radius (altitude) ---
     r_ref_m_resolved: float | None = float(args.r_ref_m) if args.r_ref_m is not None else None
     if r_ref_m_resolved is None:
-        inferred = infer_r_ref_m_from_dataset(data_path, dataset_name=str(args.dataset_name))
+        inferred = infer_r_ref_m_from_dataset(data_path, dataset_name=str(args.dataset_name or "data"))
         if inferred is not None:
             r_ref_m_resolved = float(inferred)
             print(f"[auto] Using r_ref_m from dataset meta: {r_ref_m_resolved:g} m")
@@ -3459,8 +3555,9 @@ def main() -> None:
         ("train_sample_optional", train_sample_path),
         ("val", val_path),
         ("test", test_path),
+        ("ood", ood_path),
         ("ood_low", ood_low_path),
-        ("ood_high", ood_high_path or ood_path),
+        ("ood_high", ood_high_path),
     ):
         if maybe_path is None or maybe_path == data_path:
             continue
@@ -3472,7 +3569,7 @@ def main() -> None:
     for label, job_data_path, job_out_dir in jobs:
         print(f"[eval:{label}] dataset={job_data_path}")
         evaluate(
-            model_dir=model_dir,
+            model_dir=eval_model_ref,
             data_path=job_data_path,
             out_dir=job_out_dir,
             device=device,
@@ -3480,14 +3577,14 @@ def main() -> None:
             a_sign=float(args.a_sign),
             r_ref_m=float(r_ref_m_resolved),
             alt_bin_km=float(args.alt_bin_km),
-            dataset_name=str(args.dataset_name),
+            dataset_name=(str(args.dataset_name) if args.dataset_name is not None else None),
             start=int(args.start),
             end=resolved_end,
-            max_points_for_plots=int(args.max_points_for_plots),
+            max_points_for_plots=(int(args.max_points_for_plots) if args.max_points_for_plots is not None else None),
             streaming=bool(getattr(args, "streaming", False)),
-            topk_errors=int(getattr(args, "topk_errors", 0)),
+            topk_errors=int(getattr(args, "topk_errors", 100)),
             save_error_points=(Path(args.save_error_points) if getattr(args, "save_error_points", None) else None),
-            plot_sample_limit=int(getattr(args, "plot_sample_limit", 500_000)),
+            plot_sample_limit=(int(args.plot_sample_limit) if args.plot_sample_limit is not None else None),
             allow_config_mismatch=bool(getattr(args, "allow_config_mismatch", False)),
             prefer=str(getattr(args, "checkpoint_prefer", "best")),
             exclude_train_indices=exclude_train_indices_path,

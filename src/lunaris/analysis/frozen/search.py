@@ -98,6 +98,32 @@ STAGE1_CHECKPOINT_DIR = "stage1_checkpoint"
 
 STAGE1_SCREENING_SCHEMA_VERSION = 2
 STAGE1_OUTPUT_FULL = "full"
+
+# Settings a resume may change without invalidating the stage files.
+_RESUME_FREE_CONFIG_KEYS = ("screening_checkpoint_interval_s",)
+_RESUME_FREE_PROVENANCE_KEYS = ("device",)
+# Provenance keys introduced after earlier run directories were written.
+_RESUME_KEYS_ADDED_LATER = ("ephemeris_start_date", "use_nyquist_max_step")
+
+
+def _contract_differences(stored: Any, current: Any, path: str = "") -> list[str]:
+    """Leaf-level differences between two JSON-like trees, as 'path: a != b'."""
+    if isinstance(stored, dict) and isinstance(current, dict):
+        out: list[str] = []
+        for key in sorted(set(stored) | set(current)):
+            sub = f"{path}.{key}" if path else str(key)
+            if key not in stored or key not in current:
+                out.append(f"{sub}: {stored.get(key, '<absent>')!r} != {current.get(key, '<absent>')!r}")
+            else:
+                out.extend(_contract_differences(stored[key], current[key], sub))
+        return out
+    if isinstance(stored, list | tuple) and isinstance(current, list | tuple):
+        if len(stored) == len(current):
+            out = []
+            for k, (a, b) in enumerate(zip(stored, current, strict=True)):
+                out.extend(_contract_differences(a, b, f"{path}[{k}]"))
+            return out
+    return [] if stored == current else [f"{path}: {stored!r} != {current!r}"]
 STAGE1_OUTPUT_SUMMARY_ONLY = "summary_only"
 _STAGE1_OUTPUT_MODES = frozenset({STAGE1_OUTPUT_FULL, STAGE1_OUTPUT_SUMMARY_ONLY})
 
@@ -901,6 +927,9 @@ class FrozenSearchPipeline:
         path = self._manifest_path()
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
+        return self._new_manifest()
+
+    def _new_manifest(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -913,8 +942,73 @@ class FrozenSearchPipeline:
             "screening_provenance": _json_safe(dict(self.screening.provenance)),
             "validation_backend": str(self.validation.backend_label),
             "validation_provenance": _json_safe(dict(self.validation.provenance)),
+            "sensitivity": self._sensitivity_contract(),
             "stages": {},
         }
+
+    def _sensitivity_contract(self) -> list[dict[str, Any]]:
+        """Label + provenance of each sensitivity backend (stage 3 reuses their output)."""
+        return [
+            {
+                "backend": str(extra.backend_label),
+                "provenance": _json_safe(dict(getattr(extra, "provenance", {}))),
+            }
+            for extra in self.sensitivity_validations
+        ]
+
+    def _resume_contract(self) -> dict[str, Any]:
+        """Everything that decides the stage outputs, as recorded in the manifest."""
+        config = dict(_json_safe(self.config.to_dict()))
+        for key in _RESUME_FREE_CONFIG_KEYS:
+            config.pop(key, None)
+        screening = dict(_json_safe(dict(self.screening.provenance)))
+        for key in _RESUME_FREE_PROVENANCE_KEYS:
+            screening.pop(key, None)
+        return {
+            "config": config,
+            "screening_backend": str(self.screening.backend_name),
+            "screening_provenance": screening,
+            "validation_backend": str(self.validation.backend_label),
+            "validation_provenance": _json_safe(dict(self.validation.provenance)),
+            "sensitivity": self._sensitivity_contract(),
+        }
+
+    def _check_resume_contract(self, manifest: dict[str, Any]) -> None:
+        """Refuse to resume stage files written with a different configuration.
+
+        Stage files are reused by existence alone, so without this a relaunch with a
+        corrected model dir, third-body set, degree or sample count would continue
+        from the old files under the new labels.
+        """
+        current = self._resume_contract()
+        stored = {
+            "config": dict(manifest.get("config") or {}),
+            "screening_backend": manifest.get("screening_backend"),
+            "screening_provenance": dict(manifest.get("screening_provenance") or {}),
+            "validation_backend": manifest.get("validation_backend"),
+            "validation_provenance": manifest.get("validation_provenance") or {},
+            "sensitivity": manifest.get("sensitivity"),
+        }
+        # Manifests written before the sensitivity set was recorded cannot be compared.
+        if stored["sensitivity"] is None:
+            current.pop("sensitivity")
+            stored.pop("sensitivity")
+        for key in _RESUME_FREE_CONFIG_KEYS:
+            stored["config"].pop(key, None)
+        for key in _RESUME_FREE_PROVENANCE_KEYS:
+            stored["screening_provenance"].pop(key, None)
+        # Keys added after a run directory was written are unrecorded, not different.
+        for section in ("screening_provenance", "validation_provenance"):
+            for key in _RESUME_KEYS_ADDED_LATER:
+                if key not in stored[section]:
+                    current[section].pop(key, None)
+        diffs = _contract_differences(stored, current)
+        if diffs:
+            raise RuntimeError(
+                f"cannot resume {self.out_dir}: its stage files were written with a "
+                f"different configuration ({'; '.join(diffs[:8])}). Use a new out_dir, "
+                "or --no-resume to recompute every stage."
+            )
 
     def _mark_stage(self, manifest: dict[str, Any], stage: str, filename: str, **extra: Any) -> None:
         manifest["stages"][stage] = {
@@ -1011,6 +1105,14 @@ class FrozenSearchPipeline:
 
     def _stage1_checkpoint_dir(self) -> Path:
         return self.out_dir / STAGE1_CHECKPOINT_DIR
+
+    def _retire_stage1_checkpoints(self) -> None:
+        """Move a previous run's stage-1 checkpoints aside (kept, never reused)."""
+        cdir = self._stage1_checkpoint_dir()
+        if cdir.exists():
+            target = cdir.with_name(f"{cdir.name}_retired_{time.strftime('%Y%m%dT%H%M%S')}")
+            cdir.rename(target)
+            logger.warning("fresh run: previous stage-1 checkpoints moved to %s", target)
 
     def _screening_supports_checkpoint(self) -> bool:
         """True when the injected screening backend accepts ``checkpoint=``."""
@@ -1325,6 +1427,7 @@ class FrozenSearchPipeline:
         )
         payload = {
             "run_id": manifest["run_id"],
+            "element_frame": self.element_frame["frame"],
             "score_definition": self._score_definition(),
             "domain_guard": self.config.guard.to_dict(),
             "domain_exit_count": guard_result.n_exits,
@@ -1458,6 +1561,7 @@ class FrozenSearchPipeline:
 
         payload = {
             "run_id": manifest["run_id"],
+            "element_frame": self.element_frame["frame"],
             "validation_backend": str(self.validation.backend_label),
             "sensitivity_backends": [
                 str(p.backend_label) for p in self.sensitivity_validations
@@ -1522,6 +1626,7 @@ class FrozenSearchPipeline:
             families=_json_safe(families),
         )
         report["refinements"] = _json_safe(refinements)
+        report["element_frame"] = self.element_frame["frame"]
         _atomic_write_json(path, report)
         self._mark_stage(
             manifest,
@@ -1581,7 +1686,14 @@ class FrozenSearchPipeline:
 
     def run(self, *, resume: bool = True) -> dict[str, Any]:
         """Run all stages (respecting existing stage files when ``resume``)."""
-        manifest = self._load_manifest()
+        if resume:
+            manifest = self._load_manifest()
+        else:
+            # A fresh run must not inherit the old manifest (its config would then
+            # describe the previous run) nor the old stage-1 loop checkpoints, which
+            # the integrator restores whenever samples and grid match.
+            manifest = self._new_manifest()
+            self._retire_stage1_checkpoints()
         # A manifest without "element_frame" predates the element-frame fix and
         # measured elements in the integration frame, which is the current
         # identity-frame behaviour but not the lunar-equator one.
@@ -1593,6 +1705,8 @@ class FrozenSearchPipeline:
                 f"{self.element_frame['frame']!r}; stage files from two element frames "
                 "cannot be mixed. Use a new out_dir or resume=False."
             )
+        if resume and self._manifest_path().exists():
+            self._check_resume_contract(manifest)
         manifest["element_frame"] = self.element_frame["frame"]
         manifest["element_frame_rotation_source"] = self.element_frame["rotation_source"]
         manifest["element_frame_rotation"] = _json_safe(self.element_frame_rotation)

@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+from lunaris.common.constants import DAY_S
 
 # A failed in-package import must raise to the importer, not exit its process.
 from lunaris.physics.ephemeris import EphemerisManager
@@ -148,7 +151,7 @@ del _gb_mod, _gb_name
 # CLI
 # =============================================================================
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Lunar gravity model validation harness",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -371,7 +374,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--argp-deg", type=float, default=0.0)
     p.add_argument("--ta-deg", type=float, default=0.0)
 
-    return p.parse_args(argv)
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return _build_parser().parse_args(argv)
+
+
+# Options that ``--config`` mode reads; every other option is dropped by that mode.
+_CONFIG_MODE_DESTS = frozenset({
+    "config", "out", "output_dir", "model_dir", "st_lrps_model_dir", "scenario_count", "seed",
+    "dtype", "quick", "allow_validation_fail", "allow_contract_mismatch",
+    "allow_domain_extrapolation", "paper_safe",
+})
+
+
+def _explicit_options(argv: list[str]) -> set[str]:
+    """Option dests given on the command line (abbreviations included), even when
+    the value equals the default."""
+    parser = _build_parser()
+    for action in parser._actions:
+        action.default = argparse.SUPPRESS
+    return set(vars(parser.parse_args(argv)))
 
 
 
@@ -523,7 +547,11 @@ def _apply_common_aliases(args: argparse.Namespace) -> argparse.Namespace:
         args.torch_dtype = str(args.dtype)
     if getattr(args, "quick", False):
         args.random_scenarios = min(int(args.random_scenarios), 3)
-        args.duration_days = min(float(args.duration_days), 0.01)
+        if float(args.duration_days) > 0.01:
+            # Whole number of --dt-out steps: 0.01 d is 14.4 steps of 60 s, which
+            # the GPU-batch grid cannot cover.
+            steps = max(1, math.floor(0.01 * DAY_S / float(args.dt_out) + 1e-9))
+            args.duration_days = steps * float(args.dt_out) / DAY_S
     return args
 
 
@@ -612,8 +640,16 @@ def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = parse_args(raw_argv)
     if args.config:
+        explicit = _explicit_options(raw_argv)
+        ignored = sorted(explicit - _CONFIG_MODE_DESTS)
+        if ignored:
+            _build_parser().error(
+                "--config reads its settings from the config file and would silently drop: "
+                + ", ".join("--" + dest.replace("_", "-") for dest in ignored)
+                + ". Edit the config, or run without --config to use these flags."
+            )
         explicit_out = args.out
-        if explicit_out is None and "--output-dir" in raw_argv:
+        if explicit_out is None and "output_dir" in explicit:
             explicit_out = args.output_dir
         from .benchmark_pipeline import run_configured_benchmark
 

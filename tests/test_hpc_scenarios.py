@@ -278,7 +278,7 @@ def test_exit_75_is_reported_as_a_resumable_stop(tmp_path, monkeypatch, capsys):
     """Exit 75 (EX_TEMPFAIL) is the trainer's "stopped after saving ckpt_last":
     the launcher passes it through and says how to continue, not "FAILED"."""
     launcher = _load_launcher_module()
-    monkeypatch.setattr(launcher, "run_forwarding_signals", lambda cmd, *, cwd: 75)
+    monkeypatch.setattr(launcher, "run_forwarding_signals", lambda cmd, *, cwd, env=None: 75)
     code = launcher.main(
         [
             str(_SCENARIO_DIR / _SAMPLE_SCENARIO_FILE), "--index", "0",
@@ -341,3 +341,22 @@ def test_plan_d_lines_pin_the_recorded_recipe_and_differ_only_in_the_schedule():
     assert {k: v for k, v in long_run.items() if k not in ("--epochs", "--t-max")} == {
         k: v for k, v in reproduction.items() if k not in ("--epochs", "--t-max")
     }
+
+
+def test_force_lets_the_trainer_overwrite_and_plain_runs_do_not(tmp_path, monkeypatch):
+    """The trainer refuses a fresh run over checkpoints unless the launcher's
+    --force passes the explicit overwrite opt-in to the child process."""
+    launcher = _load_launcher_module()
+    seen: list = []
+    monkeypatch.setattr(
+        launcher, "run_forwarding_signals", lambda cmd, *, cwd, env=None: seen.append(env) or 0
+    )
+    common = [
+        str(_SCENARIO_DIR / _SAMPLE_SCENARIO_FILE), "--index", "0",
+        "--output-root", str(tmp_path / "training"),
+        "--train-data", "dummy_train.h5", "--val-data", "dummy_val.h5",
+    ]
+    assert launcher.main(common) == 0
+    assert launcher.main([*common, "--force"]) == 0
+    assert seen[0] is None
+    assert seen[1]["LUNARIS_ALLOW_RUN_OVERWRITE"] == "1"

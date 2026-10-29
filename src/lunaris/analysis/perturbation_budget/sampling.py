@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import cos, pi, sin, sqrt
 
 import numpy as np
@@ -33,12 +33,14 @@ def _deg2rad(value: float) -> float:
     return float(value) * pi / 180.0
 
 
-def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return deterministic representative Moon-centered Sun/Earth vectors."""
+def _synthetic_sun_earth(epoch_index: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return deterministic representative Moon-centered Sun/Earth vectors.
+
+    The geometry depends only on the epoch's position in the list; the epoch
+    string is a label (calendar dates are refused by the config).
+    """
     # Spread epochs through geometry without depending on SPICE kernels.
     phase = 2.0 * pi * (epoch_index % 12) / 12.0
-    if epoch_utc:
-        phase += (sum(ord(c) for c in epoch_utc) % 360) * pi / 180.0 / 17.0
     earth_distance_m = 384_400_000.0
     lunar_orbit_period_s = 27.321661 * DAY_S
     year_s = 365.25 * DAY_S
@@ -72,6 +74,39 @@ def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> tuple[np.ndarray, 
     return sun, earth, sun_vel, earth_vel
 
 
+EPHEMERIS_GEOMETRY_SOURCE = "ephemeris_spice_de440_moon_pa"
+
+
+def _ephemeris_sun_earth(epoch_utc: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Moon-centered Sun/Earth position [m] and velocity [m/s] at ``epoch_utc`` from SPICE.
+
+    Vectors are rotated J2000 -> MOON_PA at the epoch, i.e. expressed in the same
+    Moon-fixed axes in which the sampled spacecraft position is evaluated against
+    the gravity field. Velocities are inertial velocities expressed in those axes
+    (the rotation only; no omega x r term), matching how ``circular_state`` builds
+    the spacecraft velocity.
+    """
+    from lunaris.core.config import load_default_config
+    from lunaris.physics.ephemeris import EphemerisManager
+
+    cfg = load_default_config()
+    time_cfg = replace(cfg.time, start_date=str(epoch_utc), duration_s=3600.0, output_dt_s=60.0, t0_s=0.0)
+    manager = EphemerisManager.from_time_and_spice(
+        time_cfg,
+        replace(cfg.spice, include_third_body=True),
+        auto_fix_kernel_paths=True,
+        need_moon_fixed_rotation=True,
+    )
+    tables = manager.tables
+    to_fixed = manager.transform_inertial_to_fixed
+    return (
+        np.asarray(to_fixed(0.0, tables.r_sun_tab_m[0]), dtype=np.float64),
+        np.asarray(to_fixed(0.0, tables.r_earth_tab_m[0]), dtype=np.float64),
+        np.asarray(to_fixed(0.0, tables.v_sun_tab_m_s[0]), dtype=np.float64),
+        np.asarray(to_fixed(0.0, tables.v_earth_tab_m_s[0]), dtype=np.float64),
+    )
+
+
 def circular_state(altitude_km: float, inclination_deg: float, true_anomaly_deg: float) -> tuple[np.ndarray, np.ndarray]:
     """Generate a simple circular lunar orbit state in an inertial frame."""
     radius_m = float(R_MOON_MEAN) + float(altitude_km) * 1000.0
@@ -95,9 +130,13 @@ def circular_state(altitude_km: float, inclination_deg: float, true_anomaly_deg:
 
 def generate_sample_states(config: PerturbationBudgetConfig) -> list[SampleState]:
     samples: list[SampleState] = []
-    geometry_source = "synthetic_geometry"
+    use_ephemeris = config.geometry_mode == "ephemeris"
+    geometry_source = EPHEMERIS_GEOMETRY_SOURCE if use_ephemeris else "synthetic_geometry"
     for epoch_index, epoch in enumerate(config.epochs_utc):
-        sun, earth, sun_vel, earth_vel = _synthetic_sun_earth(epoch_index, epoch)
+        if use_ephemeris:
+            sun, earth, sun_vel, earth_vel = _ephemeris_sun_earth(epoch)
+        else:
+            sun, earth, sun_vel, earth_vel = _synthetic_sun_earth(epoch_index)
         for altitude in config.altitudes_km:
             for inc in config.inclinations_deg:
                 for anomaly in config.true_anomalies_deg:

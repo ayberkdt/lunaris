@@ -216,10 +216,11 @@ def group_candidates_into_families(
         metric_pool = [m.get("metrics", {}) for m in members]
 
         def _metric_max(name: str, pool: list[dict[str, Any]] = metric_pool) -> float:
+            # JSON round trips turn NaN into None; skip those instead of raising.
             vals = [
                 float(mp[name])
                 for mp in pool
-                if name in mp and np.isfinite(float(mp[name]))
+                if isinstance(mp.get(name), int | float) and np.isfinite(float(mp[name]))
             ]
             return float(max(vals)) if vals else float("nan")
 

@@ -31,15 +31,50 @@ from lunaris.common.frame_policy import FrameModeInput, resolve_frame_policy
 DEG2RAD = np.pi / 180.0
 
 
+def _resolve_gravity_file(gravity_file: str | None) -> str:
+    """Path of the gravity file in use (the configured default when none is given)."""
+    if gravity_file is None:
+        from lunaris.core.config import load_default_config
+
+        return str(load_default_config().gravity.file_path)
+    return str(gravity_file)
+
+
 def _load_gravity_model(gravity_file: str | None, degree: int) -> Any:
     """Load the classical SH gravity model used by both adapters."""
     from lunaris.physics.spherical_harmonics import GravityModel
 
-    if gravity_file is None:
-        from lunaris.core.config import load_default_config
+    path = _resolve_gravity_file(gravity_file)
+    model = GravityModel.from_file(path=path, requested_degree=int(degree))
+    # from_file clamps the degree to the file's; a label with the requested
+    # degree would then describe a lower-degree field.
+    if int(model.degree_max) < int(degree):
+        raise ValueError(
+            f"requested gravity degree {int(degree)} exceeds the degree "
+            f"{int(model.degree_max)} of {path}"
+        )
+    return model
 
-        gravity_file = str(load_default_config().gravity.file_path)
-    return GravityModel.from_file(path=str(gravity_file), requested_degree=int(degree))
+
+def require_exact_substeps(dt_s: float, duration_s: float, output_dt_s: float) -> None:
+    """Refuse a fixed step the batch loop would silently round to fit the output grid."""
+    from lunaris.common.batch_defs import build_fixed_step_grid_metadata
+
+    meta = build_fixed_step_grid_metadata(duration_s, output_dt_s, dt_s)
+    if abs(float(meta["effective_dt_s"]) - float(dt_s)) > 1e-9 * float(dt_s):
+        raise ValueError(
+            f"screening dt {float(dt_s):g} s does not divide the output interval "
+            f"{float(meta['effective_output_dt_s']):g} s; the batch loop would integrate "
+            f"with {float(meta['effective_dt_s']):g} s instead. Use a screening dt that "
+            "divides the output interval."
+        )
+
+
+def _propagator_default(field: str) -> object:
+    """Default of a PropagatorConfig field (the validation propagator relies on it)."""
+    from lunaris.common.type_defs import PropagatorConfig
+
+    return getattr(PropagatorConfig(), field)
 
 
 def normalize_third_body_selection(value: Any) -> tuple[str, ...]:
@@ -100,10 +135,12 @@ def _gravity_provenance(
         allow_identity_rotation=allow_identity_rotation,
         frame_mode=frame_mode,
     )
+    metadata = getattr(model, "metadata", None)
     return {
         "gravity_model": {
-            "name": str(getattr(model, "name", "unknown")),
-            "file": str(gravity_file) if gravity_file else "default_config",
+            "name": str(getattr(model, "name", None) or getattr(metadata, "model_id", "unknown")),
+            "file": _resolve_gravity_file(gravity_file),
+            "sha256": getattr(metadata, "source_sha256", None),
             "degree": int(degree),
             "loaded_degree_max": int(getattr(model, "degree_max", 0)),
         },
@@ -209,6 +246,7 @@ class TorchSHScreeningPropagator:
             device=self._device,
             chunk_size=chunk_size,
         )
+        self._dt_s = float(dt_s)
         self.backend_name = (
             "torch_cuda_sh" if self._device.type == "cuda" else "torch_cpu_sh"
         )
@@ -236,6 +274,7 @@ class TorchSHScreeningPropagator:
         *,
         checkpoint: Any = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        require_exact_substeps(self._dt_s, duration_s, output_dt_s)
         n = int(np.asarray(Y0).shape[0])
         ones = np.ones(n, dtype=np.float64)
         t_out, Y_out, impact_flags, t_impact = self._propagator.propagate(
@@ -322,6 +361,7 @@ class STLRPSScreeningPropagator:
             getattr(getattr(model, "_force_runtime", None), "runtime_model_kind", "")
             or getattr(model, "config", {}).get("runtime_model_kind", "potential_autograd")
         )
+        self._dt_s = float(dt_s)
         self.backend_name = backend_name
         self.provenance = {
             "backend": self.backend_name,
@@ -355,6 +395,7 @@ class STLRPSScreeningPropagator:
         *,
         checkpoint: Any = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        require_exact_substeps(self._dt_s, duration_s, output_dt_s)
         n = int(np.asarray(Y0).shape[0])
         ones = np.ones(n, dtype=np.float64)
         t_out, Y_out, impact_flags, t_impact = self._propagator.propagate(
@@ -445,6 +486,9 @@ class ClassicalSHValidationPropagator:
             "integrator": self._method,
             "rtol": self._rtol,
             "atol": self._atol,
+            # DOP853 at these tolerances converges over 60 days only with the
+            # Nyquist step cap (without it the 60-day drift was 7-500 m).
+            "use_nyquist_max_step": bool(_propagator_default("use_nyquist_max_step")),
         }
 
     def propagate(

@@ -50,7 +50,7 @@ def test_launcher_relays_sigterm_to_the_child(monkeypatch):
             handler(signal.SIGTERM, None)
             return 0
 
-    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, cwd: FakeProc())
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, cwd, env=None: FakeProc())
     before = signal.getsignal(signal.SIGTERM)
     assert launcher.run_forwarding_signals(["trainer"], cwd=".") == 0
     assert sent == [int(signal.SIGTERM)]

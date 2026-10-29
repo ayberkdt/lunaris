@@ -54,6 +54,10 @@ from lunaris.common.batch_defs import (
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.common.contracts.batch_archive import BATCH_ARCHIVE_SCHEMA_VERSION
+from lunaris.common.frame_policy import (
+    FRAME_MODE_IDENTITY_DIAGNOSTIC,
+    FRAME_MODE_MOON_FIXED_EPHEMERIS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +163,76 @@ def _batch_timestep_provenance(
         if diagnostics.get(key) is not None:
             meta[key] = diagnostics[key]
     return meta
+
+
+def _cpu_integrator_provenance(sim_cfg: Any, *, duration_s: float) -> dict[str, Any]:
+    """Integrator the CPU backend really used, and that ``batch_cfg.dt_s`` was not.
+
+    The CPU backend runs the single-run propagator per sample with
+    ``sim_cfg.propagator`` (``method``, ``user_max_step_s``, Nyquist step cap);
+    ``BatchPropagationConfig.dt_s`` is read only by the fixed-step GPU/torch
+    backends. The plan's hard-coded ``adaptive (DOP853)`` label was wrong
+    whenever ``--method`` named a fixed-step integrator.
+    """
+    from lunaris.core.propagation.plans import resolve_integration_plan
+
+    prop_cfg = sim_cfg.propagator
+    plan = resolve_integration_plan(prop_cfg, duration_s=float(duration_s))
+    method = str(prop_cfg.method)
+    label = f"fixed-step {method}" if plan.backend == "fixed_step" else f"adaptive ({plan.method})"
+    return {
+        "integrator": label,
+        "cpu_propagator_method": method,
+        "cpu_user_max_step_s": prop_cfg.user_max_step_s,
+        "batch_dt_s_applied": False,
+        "batch_dt_s_note": (
+            "CPU backend: the step comes from propagator.method / user_max_step_s / "
+            "the Nyquist cap; requested_dt_s was not used."
+        ),
+    }
+
+
+def _ephemeris_frame_name(ephem: Any, attr: str) -> str | None:
+    """A frame/observer name recorded on the ephemeris tables, if any."""
+    for owner in (getattr(ephem, "tables", None), ephem):
+        value = getattr(owner, attr, None) if owner is not None else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _archive_self_description(sim_cfg: Any, ephem: Any) -> dict[str, Any]:
+    """Units, frames, epoch and software identity that make an archive readable alone."""
+    from lunaris import __version__
+    from lunaris.common.provenance import resolve_repo_commit
+    from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
+
+    inertial = _ephemeris_frame_name(ephem, "inertial_frame")
+    observer = _ephemeris_frame_name(ephem, "observer")
+    if inertial is not None:
+        y_frame = f"{observer or 'MOON'}-centred {inertial}"
+    else:
+        y_frame = "Moon-centred inertial (no ephemeris attached; axes as in the initial state)"
+    fixed = _ephemeris_frame_name(ephem, "fixed_frame") or "unavailable (no ephemeris attached)"
+    # Same normalisation the ephemeris tables are built from.
+    start = normalize_iso_datetime_to_utc_string(
+        sim_cfg.time.start_date, precision=6
+    ).replace(".000000Z", "Z")
+    return {
+        "start_epoch_utc": start,
+        "t_units": "s since start_epoch_utc",
+        "Y_axes": ["time_index", "sample_index", "state_component"],
+        "Y_columns": ["x", "y", "z", "vx", "vy", "vz"],
+        "Y_units": ["m", "m", "m", "m/s", "m/s", "m/s"],
+        "Y_frame": y_frame,
+        "sc_samples_columns": ["mass_kg", "area_m2", "cd", "cr"],
+        "t_impact_units": "s since start_epoch_utc",
+        "impact_position_units": "m",
+        "impact_position_inertial_frame": y_frame,
+        "impact_position_fixed_frame": fixed,
+        "lunaris_version": __version__,
+        "git_commit": resolve_repo_commit() or "unavailable",
+    }
 
 
 def _force_model_fidelity_provenance(
@@ -1346,7 +1420,14 @@ class BatchPropagationEngine:
                     or getattr(_plan, "dtype", "float64"),
                 "model_dtype": backend_diag.get("model_dtype"),
                 "acceleration_output_dtype": backend_diag.get("acceleration_output_dtype"),
-                "frame_mode": backend_diag.get("frame_mode", "unknown"),
+                # The CPU backend reports no frame_mode of its own; it rotates with
+                # the attached ephemeris, or runs the identity diagnostic without.
+                "frame_mode": backend_diag.get("frame_mode")
+                    or (
+                        FRAME_MODE_MOON_FIXED_EPHEMERIS
+                        if getattr(self._dyn, "ephem", None) is not None
+                        else FRAME_MODE_IDENTITY_DIAGNOSTIC
+                    ),
                 # R12: records a research-mode terrain->sphere downgrade so the
                 # impact surface used is never ambiguous. None when terrain was
                 # honored or never requested.
@@ -1364,6 +1445,9 @@ class BatchPropagationEngine:
                 "physics_capabilities": _active_physics_capabilities(self._sim_cfg),
             }
             _plan_meta.update(_time_step_meta)
+            _plan_meta["batch_dt_s_applied"] = actual_backend_name in _FIXED_STEP_BATCH_BACKENDS
+            if actual_backend_name not in _FIXED_STEP_BATCH_BACKENDS:
+                _plan_meta.update(_cpu_integrator_provenance(cfg, duration_s=duration_s))
             _force_fidelity_meta = _force_model_fidelity_provenance(
                 self._sim_cfg,
                 backend_diag=backend_diag,
@@ -1464,7 +1548,12 @@ class BatchPropagationEngine:
                 detect_impact=bool(batch_cfg.impact_detection_enabled),
                 compute_impact_statistics=bool(batch_cfg.impact_statistics_enabled),
                 impact_frame_available=bool(getattr(self._dyn, "ephem", None) is not None),
-                **merge_archive_metadata(_provenance_hashes, _st_lrps_meta, _plan_meta),
+                **merge_archive_metadata(
+                    _provenance_hashes,
+                    _st_lrps_meta,
+                    _plan_meta,
+                    _archive_self_description(cfg, getattr(self._dyn, "ephem", None)),
+                ),
             )
             writer.write_final(
                 sc_samples,
@@ -1553,6 +1642,8 @@ class BatchPropagationEngine:
                     "third_body_mu_source": _plan_meta.get("third_body_mu_source"),
                     "mu_sun_m3s2": _plan_meta.get("mu_sun_m3s2"),
                     "mu_earth_m3s2": _plan_meta.get("mu_earth_m3s2"),
+                    "integrator": _plan_meta.get("integrator"),
+                    "batch_dt_s_applied": _plan_meta.get("batch_dt_s_applied"),
                     "requested_dt_s": _plan_meta.get("requested_dt_s"),
                     "effective_dt_s": _plan_meta.get("effective_dt_s"),
                     "steps_per_snapshot": _plan_meta.get("steps_per_snapshot"),
@@ -1620,6 +1711,8 @@ class BatchPropagationEngine:
                 "third_body_mu_source": _plan_meta.get("third_body_mu_source"),
                 "mu_sun_m3s2": _plan_meta.get("mu_sun_m3s2"),
                 "mu_earth_m3s2": _plan_meta.get("mu_earth_m3s2"),
+                "integrator": _plan_meta.get("integrator"),
+                "batch_dt_s_applied": _plan_meta.get("batch_dt_s_applied"),
                 "requested_dt_s": _plan_meta.get("requested_dt_s"),
                 "effective_dt_s": _plan_meta.get("effective_dt_s"),
                 "steps_per_snapshot": _plan_meta.get("steps_per_snapshot"),

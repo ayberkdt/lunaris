@@ -243,7 +243,9 @@ def test_cached_runtime_rows_skip_scenarios_without_measured_runtime(tmp_path: P
     monkeypatch.setattr(gm, "_cached_model_path", lambda cache_dir, model, sid: sid)
     monkeypatch.setattr(
         gm, "_load_cached_trajectory",
-        lambda sid: CachedTrajectory(t=np.arange(11.0), y=np.zeros((11, 6)), runtime_s=runtimes[sid], metadata={}),
+        lambda sid, scenario=None: CachedTrajectory(
+            t=np.arange(11.0), y=np.zeros((11, 6)), runtime_s=runtimes[sid], metadata={}
+        ),
     )
     scenarios = [SimpleNamespace(scenario_id=i) for i in range(3)]
     truth = SimpleNamespace(total_runtime_s=1.0, mean_runtime_s=1.0)

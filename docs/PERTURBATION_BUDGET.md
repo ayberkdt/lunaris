@@ -142,8 +142,19 @@ cadence; halving `output_dt_s` scales the position-interpolation terms by
 
 The current implementation covers instantaneous acceleration budgets, SH degree
 sensitivity, uncertainty budgets, recommendations, CLI output, and tests.
-Sun/Earth geometry is deterministic and synthetic (no SPICE ephemeris);
-`PerturbationBudgetConfig(use_ephemeris=True)` is refused rather than ignored.
+Sun/Earth geometry has two modes (`--geometry-mode`, `PerturbationBudgetConfig.geometry_mode`):
+
+- `synthetic` (default): deterministic directions that do not depend on any date.
+  Calendar-date `--epochs` are refused in this mode, because they would not
+  change the geometry.
+- `ephemeris`: Sun and Earth positions from SPICE (DE440) at each `--epochs`
+  UTC date, Moon-centred and rotated into MOON_PA. Requires the default SPICE
+  kernels.
+
+Every CSV carries `gravity_source` and `geometry_source` columns. Requested
+`--sh-degrees` above the gravity file's degree are refused. SRP, albedo and
+thermal terms are evaluated without eclipses. The legacy
+`PerturbationBudgetConfig(use_ephemeris=True)` is refused; use `geometry_mode`.
 
 Propagation-level ablation and detailed runtime comparisons are intentionally
 left as follow-up work because they require longer integrations and reference

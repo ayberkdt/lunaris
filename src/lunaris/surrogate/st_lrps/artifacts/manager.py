@@ -921,6 +921,11 @@ def load_best_or_last(
     order = [layout.ckpt_best, layout.ckpt_last] if prefer_l == "best" else [layout.ckpt_last, layout.ckpt_best]
     for candidate in order:
         if candidate.exists():
+            if candidate != order[0]:
+                logger.warning(
+                    "%s is missing; loading %s instead (%s).",
+                    order[0].name, candidate.name, layout.run_dir,
+                )
             return candidate, load_checkpoint(candidate, dev)
     raise FileNotFoundError(
         f"No checkpoint found in {layout.checkpoints_dir}. Expected {layout.ckpt_best.name} or {layout.ckpt_last.name}."
@@ -961,12 +966,21 @@ def update_run_manifest(layout: RunLayout, updates: dict) -> None:
 
 
 def append_run_evaluation(layout: RunLayout, evaluation: Mapping[str, Any]) -> None:
+    target = Path(layout.run_manifest_json)
+    if target.exists() and not os.access(target, os.W_OK):
+        logger.warning(
+            "Run manifest %s is read-only (vaulted model); the evaluation was not "
+            "recorded there and the run directory was not touched.", target,
+        )
+        return
     manifest = read_run_manifest(layout)
     evaluations = list(manifest.get("evaluations") or [])
     evaluations.append(dict(evaluation))
     manifest["evaluations"] = evaluations
     manifest.setdefault("schema_version", RUN_MANIFEST_SCHEMA_VERSION)
     manifest["updated_at_utc"] = _utcnow_iso()
+    # A writable manifest that still cannot be replaced (a lock that outlasts the
+    # retries) must fail loudly rather than silently drop the evaluation record.
     atomic_write_json(layout.run_manifest_json, manifest)
 
 
@@ -1711,9 +1725,15 @@ def reload_model_from_run_dir(
     *,
     prefer: str = "best",
     allow_config_mismatch: bool = False,
+    checkpoint_path: Path | str | None = None,
 ) -> tuple[torch.nn.Module, ScalerPack, dict[str, Any], dict[str, Any]]:
+    """Reload a run's model; ``checkpoint_path`` pins one exact file over ``prefer``."""
     layout = make_run_layout(resolve_run_dir(run_dir))
-    ckpt_path, ckpt = load_best_or_last(layout, prefer=prefer, device=device)
+    if checkpoint_path is not None:
+        ckpt_path = Path(checkpoint_path).expanduser().resolve()
+        ckpt = load_checkpoint(ckpt_path, device)
+    else:
+        ckpt_path, ckpt = load_best_or_last(layout, prefer=prefer, device=device)
 
     if layout.config_json.exists():
         cfg_json = json.loads(layout.config_json.read_text(encoding="utf-8"))
