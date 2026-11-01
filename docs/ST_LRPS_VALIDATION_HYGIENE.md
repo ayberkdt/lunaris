@@ -24,12 +24,16 @@ numbers. It doubles as the developer summary for the validation-hygiene work.
   the total field minus the declared baseline.
 * The runtime frame is **Moon-fixed / body-fixed Cartesian**
   (`moon_fixed_cartesian`). It is **not** an inertial / MCMF-inertial / PA model.
-* **Representation ceiling: the training target degree (SH60).** ST-LRPS learns
-  the residual field up to its training target; the SH61–100 band is
-  structurally unrepresentable for the surrogate and forms its irreducible
-  error floor against an SH100 numerical reference. When a benchmark uses SH100
-  truth, ST-LRPS is therefore *not expected* to approach the SH100 baseline —
-  that gap measures the ceiling, not a training failure. Quantitatively (from
+* **Representation ceiling: the training target degree.** ST-LRPS learns the
+  residual field up to its training target degree; any band between that
+  degree and a higher-degree numerical reference is structurally
+  unrepresentable for the surrogate and forms its irreducible error floor. The
+  model behind the README results is trained on SH25 → SH200 and benchmarked
+  against SH200, so it has no such band; SH200 itself is a numerical reference,
+  not the full GL1800F field. The example below is for an earlier SH60 target
+  benchmarked against SH100: there the SH61–100 band is the floor, ST-LRPS is
+  *not expected* to approach the SH100 baseline, and that gap measures the
+  ceiling, not a training failure. Quantitatively (from
   the real JGGRX 1800F coefficients, `validation/gravity/band_share_analysis.py`,
   1000 points, seed 20260718): at 80 km altitude the SH61–100 band carries
   **3.60%** of the non-spherical acceleration RMS (2.7e-5 m/s²) and the >100
