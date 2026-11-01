@@ -75,8 +75,8 @@ the arc (lowest 76 km); they carry 47 % of the summed surrogate error, and
 without them the largest surrogate error is 4.2 m.
 
 **Removing the direction-aware loss term makes the five-day orbit errors 1.33×
-larger; retraining the same 800-epoch recipe on another hardware and software
-stack changes them by 0.91×, an interval that includes one.**
+larger; a same-seed retraining of the 800-epoch recipe on another hardware and
+software stack changes them by 0.91×, an interval that includes one.**
 
 | Model (one training run each) | Orbit-error ratio to the 1000-epoch model | 95 % interval |
 |---|---:|---:|
@@ -89,10 +89,12 @@ stack changes them by 0.91×, an interval that includes one.**
 
 Geometric mean of the per-orbit error ratio over the 324 in-band orbits whose
 SH25 error exceeds 30 m, with a paired bootstrap interval; the two 800-epoch
-models differ by 0.91 (0.81–1.02). The intervals reflect the orbit sample, not
-run-to-run training variation. Without the input embedding the in-band orbit
-error falls, but the mean direction error above the band grows 3.1×: the
-embedding trades in-band accuracy for extrapolation.
+models differ by 0.91 (0.81–1.02). Every variant is one training run with the
+same seed and was trained from scratch, so the intervals reflect the orbit
+sample, not the variation between seeds. Without the input embedding the
+in-band orbit error falls and the mean direction error below the band drops by
+25 %; only above the band, where the residual is near 1e-11 m/s², does it grow
+(3.1×). On these single runs the model without the embedding is the better one.
 
 **On eight classical frozen-family candidates over 60 days, the surrogate
 reproduces the eccentricity change to within 0.14 %; SH25 alone misses up to
@@ -105,7 +107,9 @@ reproduces the eccentricity change to within 0.14 %; SH25 alone misses up to
 
 Candidates: perilune 100–200 km, e = 0.03–0.06, i = 27–90°, ω₀ = 90°, RK4
 Δt = 15 s, reference SH200. The reference changes reach Δe = 7.5e-3 and
-Δω = 107°.
+Δω = 107°. As the eccentricity grows, six of the eight candidates drift below
+the training band (daily-mean perilune down to 78–92 km), so this check is
+partly outside the band the surrogate was trained on.
 
 **A 4096-orbit, 60-day frozen-orbit screening ran in 51 h on a laptop GPU. The
 same campaign with SH200 on the CPU is estimated at about 73 days.**
@@ -124,7 +128,8 @@ limits:
 
 - The SH200 figure is not a campaign run. It scales the measured SH200 cost
   per five-day orbit (188 s on the CPU) to the campaign and calibrates it against
-  the measured SH25 campaign.
+  the measured SH25 campaign; calibrating against the surrogate campaign instead
+  gives about 34 days, so the estimate spans 34–73 days.
 - It compares a GPU run with a CPU run. On the same GPU the surrogate costs
   1.31× the SH25 baseline alone. An SH200 timing on the same GPU, or an
   interpolated field on the same hardware, has not been measured.
