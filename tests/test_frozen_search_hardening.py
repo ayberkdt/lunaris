@@ -359,6 +359,12 @@ def _dummy_gravity_model():
     return SimpleNamespace(name="dummy_sh", degree_max=8, R_ref_m=1.7374e6, GM_m3s2=MU)
 
 
+def _dummy_gravity_file(gravity_file):
+    # The provenance resolves the default gravity path through load_default_config(),
+    # which needs the SPICE data directory; the stubbed model has no file behind it.
+    return gravity_file or "dummy_gravity.tab"
+
+
 def test_classical_validation_ephemeris_without_third_body_is_rotating(monkeypatch):
     """A rotating Moon-fixed SH validation (ephemeris wired, no third-body) must
     report a non-identity frame that the strict-frame guard accepts."""
@@ -366,6 +372,7 @@ def test_classical_validation_ephemeris_without_third_body_is_rotating(monkeypat
     import lunaris.core.dynamics as dynamics_mod
 
     monkeypatch.setattr(backends, "_load_gravity_model", lambda *a, **k: _dummy_gravity_model())
+    monkeypatch.setattr(backends, "_resolve_gravity_file", _dummy_gravity_file)
     monkeypatch.setattr(dynamics_mod, "DynamicsEngine", lambda **kwargs: SimpleNamespace(**kwargs))
 
     prop = backends.ClassicalSHValidationPropagator(
@@ -383,6 +390,7 @@ def test_classical_validation_default_without_ephemeris_stays_diagnostic_identit
     import lunaris.core.dynamics as dynamics_mod
 
     monkeypatch.setattr(backends, "_load_gravity_model", lambda *a, **k: _dummy_gravity_model())
+    monkeypatch.setattr(backends, "_resolve_gravity_file", _dummy_gravity_file)
     monkeypatch.setattr(dynamics_mod, "DynamicsEngine", lambda **kwargs: SimpleNamespace(**kwargs))
 
     prop = backends.ClassicalSHValidationPropagator(degree=8, third_body=())
@@ -411,6 +419,7 @@ def test_torch_sh_screening_accepts_ephemeris_and_reports_rotating_frame(monkeyp
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setattr(backends, "_load_gravity_model", lambda *a, **k: _dummy_gravity_model())
+    monkeypatch.setattr(backends, "_resolve_gravity_file", _dummy_gravity_file)
     monkeypatch.setattr(dynamics_mod, "DynamicsEngine", lambda **kwargs: SimpleNamespace(**kwargs))
     monkeypatch.setattr(
         torch_sh_mod, "TorchSHBatchPropagator", lambda *a, **k: SimpleNamespace()

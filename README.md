@@ -38,8 +38,9 @@ own training, evaluation and Studio UI.
 
 These are measured results for **one trained model**: a 512×5 residual SIREN
 (1,848,321 parameters) that corrects an SH25 baseline toward the SH200 field of
-the GRAIL GL1800F model, trained on 100–1000 km altitude. Every number below
-comes from a run artifact listed in
+the GRAIL GL1800F model, trained on 100–1000 km altitude. The ablation table
+adds retrained variants of the same recipe. Every number below comes from a
+run artifact listed in
 [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md#research-preview-results).
 They are research-preview results, not paper-safe evidence (see
 [Status and limits](#status-and-limits)).
@@ -47,27 +48,53 @@ They are research-preview results, not paper-safe evidence (see
 **Inside its training band the surrogate matches the SH200 residual field to
 0.067° in direction on average; below 100 km it does not.**
 
-| Held-out set | Altitude [km] | Samples | Acceleration RMS error [m/s²] | Mean direction error [°] | Median magnitude error [%] |
+| Held-out set | Altitude [km] | Samples | Acceleration RMS error [m/s²] | Mean direction error [°] | Median relative error [%] |
 |---|---:|---:|---:|---:|---:|
 | Below the band | 60–100 | 0.5 M | 3.8e-5 | 2.7 | 2.8 |
-| Test | 100–1000 | 2 M | 1.9e-8 | 0.067 | 0.018 |
+| Test | 100–1000 | 2 M | 1.9e-8 | 0.067 | 0.064 |
 | Above the band | 1000–1040 | 0.5 M | 7.3e-12 | 0.72 | 1.3 |
 
 Errors are of the residual acceleration (SH200 minus SH25) in the Moon-fixed
-frame. The surrogate is never worse than leaving the correction out on the test
-set.
+frame; the relative error is ‖error‖ / ‖residual‖ per sample. The surrogate is
+never worse than leaving the correction out on the test set.
 
 **Over five days the surrogate ends a median 1.1 cm from the SH200 trajectory;
-the SH25 baseline alone ends 18 m away.**
+the SH25 baseline alone ends 20 m away.**
 
 | Gravity model | Median final error [m] | P95 [m] | Max [m] | Orbits within 10 m [%] |
 |---|---:|---:|---:|---:|
-| SH25 baseline alone | 18 | 1200 | 7000 | 40 |
-| SH25 + ST-LRPS | 0.011 | 0.69 | 2.5 | 100 |
+| SH25 baseline alone | 20 | 1200 | 12 000 | 41 |
+| SH25 + ST-LRPS | 0.011 | 0.72 | 64 | 99.7 |
 
-256 orbits (scrambled Sobol, 100–1000 km), 5 days, fixed-step RK4 with
-Δt = 15 s, float64, gravity only. The reference is SH200 under the same
-integrator. The correction cuts the median final error by a factor of 1730.
+768 orbits (a 1024-orbit scrambled Sobol set, 100–1000 km initial perilune and
+apolune, with orbits 512–767 held back as an untouched final test set), 5 days,
+fixed-step RK4 with Δt = 15 s, float64, gravity only. The reference is SH200
+under the same integrator. The correction cuts the median final error by a
+factor of about 1800. Eight orbits dip below the 100 km training band during
+the arc (lowest 76 km); they carry 47 % of the summed surrogate error, and
+without them the largest surrogate error is 4.2 m.
+
+**Removing the direction-aware loss term makes the five-day orbit errors 1.33×
+larger; a same-seed retraining of the 800-epoch recipe on another hardware and
+software stack changes them by 0.91×, an interval that includes one.**
+
+| Model (one training run each) | Orbit-error ratio to the 1000-epoch model | 95 % interval |
+|---|---:|---:|
+| 800 epochs, laptop (the model above) | 1.10 | 0.98–1.24 |
+| 800 epochs, A100, same data and seed | 1.00 | 0.90–1.11 |
+| 1000 epochs, A100 | 1 (reference) | |
+| No direction-aware loss term | 1.33 | 1.17–1.51 |
+| No physical input embedding | 0.83 | 0.74–0.93 |
+| No altitude balancing | 1.08 | 0.96–1.22 |
+
+Geometric mean of the per-orbit error ratio over the 324 in-band orbits whose
+SH25 error exceeds 30 m, with a paired bootstrap interval; the two 800-epoch
+models differ by 0.91 (0.81–1.02). Every variant is one training run with the
+same seed and was trained from scratch, so the intervals reflect the orbit
+sample, not the variation between seeds. Without the input embedding the
+in-band orbit error falls and the mean direction error below the band drops by
+25 %; only above the band, where the residual is near 1e-11 m/s², does it grow
+(3.1×). On these single runs the model without the embedding is the better one.
 
 **On eight classical frozen-family candidates over 60 days, the surrogate
 reproduces the eccentricity change to within 0.14 %; SH25 alone misses up to
@@ -80,46 +107,66 @@ reproduces the eccentricity change to within 0.14 %; SH25 alone misses up to
 
 Candidates: perilune 100–200 km, e = 0.03–0.06, i = 27–90°, ω₀ = 90°, RK4
 Δt = 15 s, reference SH200. The reference changes reach Δe = 7.5e-3 and
-Δω = 107°.
+Δω = 107°. As the eccentricity grows, six of the eight candidates drift below
+the training band (daily-mean perilune down to 78–92 km), so this check is
+partly outside the band the surrogate was trained on.
 
 **A 4096-orbit, 60-day frozen-orbit screening ran in 51 h on a laptop GPU. The
-same campaign with SH200 on the CPU is estimated at about 74 days.**
+same campaign with SH200 on the CPU is estimated at about 73 days.**
 
 | Run | Backend | Wall time [h] | Source |
 |---|---|---:|---|
 | ST-LRPS, gravity only | `gpu_st_lrps_potential` (GPU) | 51 | measured |
-| ST-LRPS + Sun/Earth | `gpu_st_lrps_third_body` (GPU) | 46 | measured |
+| ST-LRPS + Sun/Earth third body | `gpu_st_lrps_third_body` (GPU) | 46 | measured |
 | SH25 control | `torch_cpu_sh` (CPU) | 56 | measured |
-| SH200 | CPU | ≈ 1800 (74 days) | extrapolated |
+| SH200 | CPU | ≈ 1750 (73 days) | extrapolated |
 
 All runs: one laptop with an NVIDIA GTX 1660 Ti, RK4 Δt = 30 s, output every
-10 min. Read the cost numbers with these limits:
+10 min. The 30 s step has not been checked for convergence on its own (the
+five-day study compares 15 s and 60 s only). Read the cost numbers with these
+limits:
 
 - The SH200 figure is not a campaign run. It scales the measured SH200 cost
-  per five-day orbit (190 s on the CPU) to the campaign and calibrates it against
-  the measured SH25 campaign.
+  per five-day orbit (188 s on the CPU) to the campaign and calibrates it against
+  the measured SH25 campaign; calibrating against the surrogate campaign instead
+  gives about 34 days, so the estimate spans 34–73 days.
 - It compares a GPU run with a CPU run. On the same GPU the surrogate costs
-  1.27× the SH25 baseline alone. An SH200 timing on the same GPU has not been
-  measured.
-- In the five-day benchmark the surrogate took 14 s per orbit on the GPU, 13×
-  less than CPU SH200. Per-orbit cost depends on batch size, and the CPU SH200
-  series covered 256 orbits, not 1024.
-- Training took 43.6 h on the same GPU. At 13× per orbit it pays back after
-  about 900 five-day orbits.
+  1.31× the SH25 baseline alone. An SH200 timing on the same GPU, or an
+  interpolated field on the same hardware, has not been measured.
+- In the five-day benchmark the surrogate took 11.6 s per orbit on the GPU, 16×
+  less than CPU SH200; this ratio mixes two kinds of hardware. Per-orbit cost
+  depends on batch size, and the CPU SH200 series ran in batches of 256 orbits.
+  In the 1024-orbit series SH25 on the CPU (6.0 s per orbit) is faster than
+  SH25 on the GPU (8.9 s).
+- Training took 43.6 h on the same GPU. At 16× per orbit it pays back after
+  about 890 five-day orbits.
 
 ## Status and limits
 
 Read these notes before you use the results.
 
-> **ST-LRPS is a research preview.** The results above hold for one model, one
-> training run and the stated configurations. They are not a general accuracy,
-> speed, spatial-generalization or orbit-stability claim. The full paper-safe
-> evidence chain is not complete yet: spatial-block split, A0–A6 ablations,
-> curl/energy diagnostics and complete benchmark artifacts. Below the training
-> band (60–100 km) the median magnitude error rises from 0.018 % to 2.8 % and
-> the mean direction error from 0.067° to 2.7°, so do not use the surrogate
-> there. Use the classical spherical-harmonic engine for
-> production numbers. See
+> **ST-LRPS is a research preview.** The results above hold for the stated
+> models and configurations. They are not a general accuracy, speed,
+> spatial-generalization or orbit-stability claim.
+>
+> - *Measured so far:* field accuracy inside and just outside the training band;
+>   five-day orbit error against an SH200 reference on 768 orbits; one retraining
+>   on a second hardware and software stack; single-run ablations of the
+>   direction term, the input embedding and the altitude balancing; runtimes on
+>   one laptop.
+> - *Not yet done:* a spatial-block (generalization) split; several training
+>   seeds per configuration; the separate effects of the radial envelope and the
+>   relative-error term; a harmonicity (∇²ΔU = 0) analysis; validation below
+>   100 km; an SH200 timing on the same GPU; a convergence check of the 30 s
+>   step used by the frozen-orbit search; the single final evaluation on the
+>   held-back orbits 512–767; a passing `validation_report.json`.
+>
+> SH200 is the numerical reference of these experiments, not the full GL1800F
+> field (degree 1800), so centimetre agreement with SH200 is not centimetre
+> accuracy for the real Moon. Below the training band (60–100 km) the median
+> relative error rises from 0.064 % to 2.8 % and the mean direction error from
+> 0.067° to 2.7°, so do not use the surrogate there. Use the classical
+> spherical-harmonic engine for production numbers. See
 > [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) and
 > [docs/PAPER_SAFE_POLICY.md](docs/PAPER_SAFE_POLICY.md).
 

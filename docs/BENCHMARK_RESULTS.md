@@ -30,8 +30,9 @@ with that label, their configuration and their limits.
 
 The README section "Results so far" quotes these runs. None of them meets the
 acceptance conditions above: there is no passing `validation_report.json`, the
-split is interpolation (no spatial-block split), and the runs come from one
-trained model on one laptop. The artifacts are local run folders under the
+split is interpolation (no spatial-block split), and every model is a single
+training run (one laptop model; the retrained and ablated models ran on one
+A100). The artifacts are local run folders under the
 git-ignored `outputs/`; the table names each one so a reader can ask for it or
 regenerate it.
 
@@ -45,13 +46,14 @@ an NVIDIA GTX 1660 Ti.
 
 | Result | Configuration | Artifact (under `outputs/`) |
 |---|---|---|
-| Field accuracy: test, 60–100 km, 1000–1040 km | 2 M / 0.5 M / 0.5 M held-out points, residual acceleration against SH200 − SH25 | `training/<run>/evals/publication_eval/` (`evaluate_metrics.json`, `ood_low/`, `ood_high/`) |
-| Five-day orbit error | 256 orbits (first 256 of a 1024-orbit scrambled Sobol set, seed 42, bounded Keplerian, 100–1000 km), RK4 Δt = 15 s, float64, gravity only, reference SH200 RK4 on the CPU | `gravity_benchmark/comparison_rk4_dt15/summary.json` (pair A: ST-LRPS vs SH200; pair B: SH25 vs SH200) |
-| Per-orbit runtime | Same runs: GPU SH25 and GPU ST-LRPS over 1024 orbits, CPU SH200 over 256 | `gravity_benchmark/planD_1024_5day_rk4dt15_sh25truth/metrics/gpu_batch_runtime_metrics.csv`, `gravity_benchmark/planD_1024_5day_rk4dt15_cpu_sh200_first256/metrics/gpu_batch_runtime_metrics.csv` (commit `27e9ab86`) |
+| Field accuracy: test, 60–100 km, 1000–1040 km | 2 M / 0.5 M / 0.5 M held-out points, residual acceleration against SH200 − SH25; relative error = median of ‖error‖ / ‖residual‖ | `training/<run>/evals/publication_eval/` (`summary_metrics.csv`, `evaluate_metrics.json`, `ood_low/`, `ood_high/`) |
+| Five-day orbit error | 768 orbits (orbits 0–511 and 768–1023 of a 1024-orbit scrambled Sobol set, seed 42, bounded Keplerian, 100–1000 km; orbits 512–767 are held back as the final test set), RK4 Δt = 15 s, float64, gravity only, reference SH200 RK4 on the CPU | `gravity_benchmark/comparison_rk4_dt15_768/` (`summary.json`, `per_scenario.csv`, `analysis_768.json`; pair A: ST-LRPS vs SH200, pair B: SH25 vs SH200, pair C: SH25 GPU vs CPU) |
+| Retraining and ablations | Same 768 orbits; per-orbit error ratio to the 1000-epoch A100 model over the 324 in-band orbits with SH25 error above 30 m, paired bootstrap | `gravity_benchmark/comparison_rk4_dt15_768/per_scenario.csv` (pairs `A_planD`, `A_R800`, `A_L1000`, `A_no_radial`, `A_no_dir`, `A_no_altbal`), trajectories under `gravity_benchmark/rerun_20261026_idle/` |
+| Per-orbit runtime | GPU SH25 and GPU ST-LRPS over 1024 orbits and CPU SH200 over 256, each re-timed alone on an otherwise idle machine; CPU SH25 over 1024 | `gravity_benchmark/rerun_20261026_idle/planD_sh25_stlrps/metrics/gpu_batch_runtime_metrics.csv`, `gravity_benchmark/rerun_20261026_idle/cpu_sh200_first256/metrics/gpu_batch_runtime_metrics.csv`, `gravity_benchmark/planD_1024_5day_rk4dt15_cpu_sh25/metrics/gpu_batch_runtime_metrics.csv` |
 | 60-day frozen-family check | 8 candidates, perilune 100–200 km, e = 0.03–0.06, i = 27–90°, ω₀ = 90°, RK4 Δt = 15 s, reference SH200 | `gravity_benchmark/comparison_rk4_dt60/frozen_60day_validation.csv` |
 | Frozen-search campaign wall time | 4096 orbits, 60 days, RK4 Δt = 30 s; time from stage 0 to the end of stage 1 (screening) in `manifest.json` | `frozen_search/v2_S_stlrps_n4096`, `frozen_search/v2_C_sh25_n4096`, `frozen_search/v3_S_stlrps_fullforce_n4096` (commit `27e9ab86`, uncommitted frozen-search options) |
 
-The campaign estimate for SH200 (about 74 days on the CPU) is not a run. It
+The campaign estimate for SH200 (about 73 days on the CPU) is not a run. It
 multiplies the measured CPU SH200 cost per five-day, Δt = 15 s orbit by the
 campaign's orbit count, arc length (×12) and step (÷2), then scales it by the ratio of the measured SH25
 campaign to the same estimate made for SH25. It compares a CPU estimate with a
