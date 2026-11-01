@@ -512,6 +512,11 @@ def test_classical_validation_third_body_wires_flags_and_provenance(monkeypatch)
             self.kwargs = kwargs
 
     monkeypatch.setattr(backends, "_load_gravity_model", lambda *_args, **_kwargs: object())
+    # the provenance resolves the default gravity path through load_default_config(),
+    # which needs the SPICE data directory; the stubbed model has no file behind it
+    monkeypatch.setattr(
+        backends, "_resolve_gravity_file", lambda gravity_file: gravity_file or "dummy_gravity.tab"
+    )
     monkeypatch.setattr(dynamics_mod, "DynamicsEngine", DummyEngine)
     ephem = object()
     prop = backends.ClassicalSHValidationPropagator(
