@@ -63,33 +63,39 @@ the SH25 baseline alone ends 20 m away.**
 
 | Gravity model | Median final error [m] | P95 [m] | Max [m] | Orbits within 10 m [%] |
 |---|---:|---:|---:|---:|
-| SH25 baseline alone | 20 | 1200 | 12 000 | 41 |
-| SH25 + ST-LRPS | 0.011 | 0.72 | 64 | 99.7 |
+| SH25 baseline alone | 20 | 1200 | 12 000 | 42 |
+| SH25 + ST-LRPS | 0.011 | 0.73 | 64 | 99.8 |
 
-768 orbits (a 1024-orbit scrambled Sobol set, 100–1000 km initial perilune and
-apolune, with orbits 512–767 held back as an untouched final test set), 5 days,
-fixed-step RK4 with Δt = 15 s, float64, gravity only. The reference is SH200
-under the same integrator. The correction cuts the median final error by a
-factor of about 1800. Eight orbits dip below the 100 km training band during
-the arc (lowest 76 km); they carry 47 % of the summed surrogate error, and
-without them the largest surrogate error is 4.2 m.
+1024 orbits (a scrambled Sobol set, 100–1000 km initial perilune and apolune),
+5 days, fixed-step RK4 with Δt = 15 s, float64, gravity only. The reference is
+SH200 under the same integrator. The correction cuts the median final error by
+a factor of about 1900. Orbits 512–767 were held back as a final test set and
+compared for the first time on 2026-11-02, after every model had been fixed: on
+these 256 orbits the surrogate's median error is 0.009 m and its largest 6.6 m,
+against 20 m and 3200 m for SH25 alone. Thirteen orbits dip below the 100 km
+training band during the arc (lowest 76 km); they carry 44 % of the summed
+surrogate error, and without them the largest surrogate error is 4.2 m.
 
-**Removing the direction-aware loss term makes the five-day orbit errors 1.33×
-larger; a same-seed retraining of the 800-epoch recipe on another hardware and
-software stack changes them by 0.91×, an interval that includes one.**
+**Removing the direction-aware loss term makes the five-day orbit errors 1.34×
+larger. A same-seed retraining of the 800-epoch recipe on another hardware and
+software stack changes them by a factor of 0.88 (0.79–0.97).**
 
 | Model (one training run each) | Orbit-error ratio to the 1000-epoch model | 95 % interval |
 |---|---:|---:|
-| 800 epochs, laptop (the model above) | 1.10 | 0.98–1.24 |
-| 800 epochs, A100, same data and seed | 1.00 | 0.90–1.11 |
+| 800 epochs, laptop (the model above) | 1.11 | 0.99–1.23 |
+| 800 epochs, A100, same data and seed | 0.97 | 0.88–1.07 |
 | 1000 epochs, A100 | 1 (reference) | |
-| No direction-aware loss term | 1.33 | 1.17–1.51 |
-| No physical input embedding | 0.83 | 0.74–0.93 |
-| No altitude balancing | 1.08 | 0.96–1.22 |
+| No direction-aware loss term | 1.34 | 1.21–1.50 |
+| No physical input embedding | 0.80 | 0.72–0.89 |
+| No altitude balancing | 1.12 | 1.01–1.25 |
 
-Geometric mean of the per-orbit error ratio over the 324 in-band orbits whose
-SH25 error exceeds 30 m, with a paired bootstrap interval; the two 800-epoch
-models differ by 0.91 (0.81–1.02). Every variant is one training run with the
+Geometric mean of the per-orbit error ratio over the 427 in-band orbits whose
+SH25 error exceeds 30 m, with a paired bootstrap interval. On the 768 orbits
+evaluated before the held-out block was opened, two of these intervals still
+included one: the two 800-epoch models differed by 0.91 (0.81–1.02) and the
+model without altitude balancing by 1.08 (0.96–1.22). On the held-out block
+alone (103 such orbits) the order is unchanged, with the direction term at 1.39
+(1.13–1.73) and the embedding at 0.73 (0.58–0.91). Every variant is one training run with the
 same seed and was trained from scratch, so the intervals reflect the orbit
 sample, not the variation between seeds. Without the input embedding the
 in-band orbit error falls and the mean direction error below the band drops by
@@ -141,6 +147,21 @@ limits:
 - Training took 43.6 h on the same GPU. At 16× per orbit it pays back after
   about 890 five-day orbits.
 
+**With elements referred to the lunar equator, all 12 orbits shortlisted by a
+1024-orbit, 30-day search are quasi-frozen under SH200 validation, and their
+screening scores match the validation to within 0.032 %.**
+
+The search sampled inclinations of 45–95° to the lunar equator of epoch,
+perilune 110–150 km, e = 0.005–0.10 and ω₀ = 90° or 270°. It screened with
+ST-LRPS plus Sun/Earth attraction (RK4 Δt = 30 s) in 9.9 h and validated with
+SH200 plus Sun/Earth (DOP853) in 3.5 h, on the same laptop. The shortlist lies
+at 55–66°. Over 30 days, however, 810 of the 959 orbits that stay in the shell
+meet every quasi-frozen limit, so an arc this short does not single out the
+long-lived frozen families reported in the literature. The 4096-orbit searches
+above measured elements against the J2000 equator, which is tilted 22.0° to the
+lunar equator, so their inclinations and frozen labels are not lunar-equator
+results; their wall times and model comparisons do not depend on this.
+
 ## Status and limits
 
 Read these notes before you use the results.
@@ -150,7 +171,8 @@ Read these notes before you use the results.
 > spatial-generalization or orbit-stability claim.
 >
 > - *Measured so far:* field accuracy inside and just outside the training band;
->   five-day orbit error against an SH200 reference on 768 orbits; one retraining
+>   five-day orbit error against an SH200 reference on 1024 orbits, including
+>   the held-out block 512–767; one retraining
 >   on a second hardware and software stack; single-run ablations of the
 >   direction term, the input embedding and the altitude balancing; runtimes on
 >   one laptop.
@@ -158,8 +180,9 @@ Read these notes before you use the results.
 >   seeds per configuration; the separate effects of the radial envelope and the
 >   relative-error term; a harmonicity (∇²ΔU = 0) analysis; validation below
 >   100 km; an SH200 timing on the same GPU; a convergence check of the 30 s
->   step used by the frozen-orbit search; the single final evaluation on the
->   held-back orbits 512–767; a passing `validation_report.json`.
+>   step used by the frozen-orbit search; a lunar-equator frozen-orbit search
+>   over all inclinations and arcs longer than 30 days; a passing
+>   `validation_report.json`.
 >
 > SH200 is the numerical reference of these experiments, not the full GL1800F
 > field (degree 1800), so centimetre agreement with SH200 is not centimetre
