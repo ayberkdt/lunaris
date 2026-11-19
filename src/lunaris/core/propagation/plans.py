@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from decimal import Context, Decimal, localcontext
 from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
@@ -153,11 +154,37 @@ def ric_to_inertial_dv(state: np.ndarray, dv_ric_mps: tuple[float, float, float]
     return dv[0] * r_hat + dv[1] * i_hat + dv[2] * c_hat
 
 
+def _impulse_norm_and_mass(dv_inertial, mass_before, isp_s):
+    """Resolve positive norm/mass arithmetic before binary64 output conversion.
+
+    All terms are nonnegative; an isolated 96-digit Decimal context preserves
+    scale through the norm, g0/Isp factors and exponential/mass product. This is
+    bounded-precision arithmetic, not a universal correctly-rounded guarantee.
+    """
+    with localcontext(Context(prec=96)):
+        coordinates = tuple(Decimal.from_float(float(value)) for value in dv_inertial)
+        norm_decimal = sum((value * value for value in coordinates), Decimal(0)).sqrt()
+        dv_norm = float(norm_decimal)
+        if not math.isfinite(dv_norm):
+            raise ValueError("maneuver delta-v norm is outside finite binary64 range")
+        if isp_s is None:
+            return dv_norm, mass_before
+        exponent = norm_decimal / (Decimal.from_float(STANDARD_GRAVITY) * Decimal.from_float(isp_s))
+        # Even the largest binary64 initial mass cannot leave a representable
+        # positive result above this exponent; avoid evaluating enormous exp.
+        if exponent > 4096:
+            raise ValueError("post-maneuver mass is outside positive binary64 range")
+        mass_after = float(Decimal.from_float(mass_before) * (-exponent).exp())
+        if not math.isfinite(mass_after) or mass_after <= 0.0:
+            raise ValueError("post-maneuver mass is outside positive binary64 range")
+        return dv_norm, mass_after
+
+
 def apply_impulsive_maneuver(
     state: np.ndarray,
     maneuver: ImpulsiveManeuver,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Apply one burn and return the post-burn state plus provenance."""
+    """Apply one burn; reject genuinely unrepresentable outputs before return."""
     y = np.asarray(state, dtype=np.float64).reshape(-1).copy()
     if y.size not in {6, 7} or not np.all(np.isfinite(y)):
         raise ValueError("maneuvers require a finite 6- or 7-element state")
@@ -167,22 +194,25 @@ def apply_impulsive_maneuver(
         else ric_to_inertial_dv(y, maneuver.dv_mps)
     )
     mass_before = float(y[6]) if y.size == 7 else None
-    mass_after = mass_before
     if maneuver.isp_s is not None:
         if y.size != 7:
             raise ValueError("isp_s requires a 7-state trajectory with mass at y[6]")
         if mass_before is None or mass_before <= 0.0:
             raise ValueError("maneuver mass must be finite and positive")
-        dv_norm = float(np.linalg.norm(dv_inertial))
-        mass_after = mass_before * math.exp(-dv_norm / (STANDARD_GRAVITY * maneuver.isp_s))
+    dv_norm, mass_after = _impulse_norm_and_mass(dv_inertial, mass_before, maneuver.isp_s)
+    with np.errstate(over="ignore", invalid="ignore"):
+        velocity_after = y[3:6] + dv_inertial
+    if not np.all(np.isfinite(velocity_after)):
+        raise ValueError("maneuver velocity update is outside finite binary64 range")
+    if maneuver.isp_s is not None:
         y[6] = mass_after
-    y[3:6] += dv_inertial
+    y[3:6] = velocity_after
     record = {
         "t_burn_s": float(maneuver.t_burn_s),
         "frame": maneuver.frame,
         "dv_command_mps": list(maneuver.dv_mps),
         "dv_inertial_mps": dv_inertial.tolist(),
-        "dv_norm_mps": float(np.linalg.norm(dv_inertial)),
+        "dv_norm_mps": dv_norm,
         "mass_before_kg": mass_before,
         "mass_after_kg": mass_after,
         "output_state_semantics": "post_burn_single_timestamp",
