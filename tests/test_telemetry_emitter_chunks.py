@@ -122,7 +122,10 @@ def test_a_failing_writer_counts_every_dropped_line_and_keeps_the_sink(tmp_path,
     def broken_print(*_args, **_kwargs):
         raise BrokenPipeError("stdout closed")
 
-    monkeypatch.setattr("builtins.print", broken_print)
+    # Shadow print only inside the emitter module. Patching builtins.print
+    # also breaks numba, which calls print(..., file=io) while caching a fresh
+    # compile; with a cold cache the first rows then fail to build.
+    monkeypatch.setattr(telemetry, "print", broken_print, raising=False)
     assert emitter.emit_trajectory(t, states) == n
     assert emitter.diagnostics.writer_failures == n
     assert emitter.diagnostics.as_dict()["dropped_samples"] == n
