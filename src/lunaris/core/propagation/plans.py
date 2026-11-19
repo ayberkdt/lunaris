@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import math
-from decimal import Context, Decimal, localcontext
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from itertools import pairwise
 from typing import Any, Literal
